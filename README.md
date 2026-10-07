@@ -24,7 +24,7 @@ Status: scaffolding. Packages land in the order listed in `AGENTS.md`.
 ```sh
 pnpm install
 pnpm check        # build, typecheck, test, validate, lint, format
-pnpm dev          # demo site at apps/demo-site once it exists
+pnpm dev          # watch mode for every package; the demo site joins once apps/demo-site exists
 ```
 
 Node 22.16 or newer and pnpm 11 are required.

@@ -48,5 +48,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r up emdash@latest @emdash-cms/plugin-cli@latest @emdash-cms/plugin-test@latest @emdash-cms/plugin-types@latest @emdash-cms/sandbox-workerd@latest @emdash-cms/plugin-forms@latest
+      # minimum-release-age=0: pnpm 11 otherwise hides packages younger than 24 h, defeating "latest".
+      # First run must confirm `pnpm up` rewrites `catalog:` entries; if not, switch to editing pnpm-workspace.yaml.
+      - run: pnpm --config.minimum-release-age=0 -r up emdash@latest @emdash-cms/plugin-cli@latest @emdash-cms/plugin-test@latest @emdash-cms/plugin-types@latest @emdash-cms/sandbox-workerd@latest @emdash-cms/plugin-forms@latest
       - run: pnpm turbo run build typecheck test validate

@@ -1,5 +1,6 @@
-import { createPluginTestHost, type PluginTestHost } from "@emdash-cms/plugin-test";
 // Copyright 2026 Moorage. Licensed under FSL-1.1-MIT; see LICENSE.
+
+import { createPluginTestHost, type PluginTestHost } from "@emdash-cms/plugin-test";
 import { afterEach, describe, expect, it } from "vitest";
 
 let host: PluginTestHost | undefined;

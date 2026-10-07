@@ -5,9 +5,9 @@ no company website, no private services, no secrets, no customer data.
 
 ## Layout
 
-- `apps/demo-site` (package name `demo-site`, private): a copy of the EmDash `templates/marketing` site (Node adapter, SQLite, local uploads) with `sandboxRunner` and the forms plugin added. Installs every package for manual and Playwright testing.
-- `packages/plugin-*`: one EmDash plugin per package. Sandbox-capable plugins (seo, lead-delivery, site-health, restore, approvals) are scaffolded with `@emdash-cms/plugin-cli` and tested with `@emdash-cms/plugin-test`. Native plugins (analytics, popups) are built with tsdown and tested with Vitest plus Playwright on the demo site.
-- `packages/theme-marketing`: Astro components plus a copyable site template.
+- `apps/demo-site` (NOT created yet; package name `demo-site`, private): a copy of the EmDash `templates/marketing` site (Node adapter, SQLite, local uploads) with `sandboxRunner` and the forms plugin added. Installs every package for manual and Playwright testing.
+- `packages/plugin-*`: one EmDash plugin per package. Exists today: `plugin-seo` (scaffold). Sandbox-capable plugins (seo, lead-delivery, site-health, restore, approvals) are scaffolded with `@emdash-cms/plugin-cli` and tested with `@emdash-cms/plugin-test`. Native plugins (analytics, popups) are built with tsdown and tested with Vitest plus Playwright on the demo site.
+- `packages/theme-marketing` (NOT created yet): Astro components plus a copyable site template.
 - `packages/kit`: does not exist yet. Create it only when two packages need the same code; until then keep helpers inside each package.
 - `packages/typescript-config`: shared tsconfig presets (`base.json`, `library.json`).
 
@@ -23,7 +23,7 @@ Build order: seo, theme-marketing, analytics, lead-delivery, site-health, popups
 
 ## Rules
 
-- Licence is FSL-1.1-MIT. Every source file starts with `// Copyright <year> Moorage. Licensed under FSL-1.1-MIT; see LICENSE.` Every package has `"license": "FSL-1.1-MIT"` and a copy of `LICENSE`.
+- Licence is FSL-1.1-MIT. Every source file starts with `// Copyright <year> Moorage. Licensed under FSL-1.1-MIT; see LICENSE.` followed by a blank line (the import sorter leaves it on line 1 only when a blank line follows). Every package has `"license": "FSL-1.1-MIT"` and a copy of `LICENSE`.
 - Depend only on EmDash core, official `@emdash-cms/*` packages and our own packages. No third-party EmDash plugins. Extend official plugins by configuration, wrapping, or an upstream PR, never a fork.
 - Every plugin must solve its whole problem on a self-hosted EmDash site with no Moorage account and no key. No Moorage-specific fields in registry builds. The word "Moorage" never appears inside the EmDash admin UI.
 - One admin page per plugin, few settings, nothing a non-technical editor can break.

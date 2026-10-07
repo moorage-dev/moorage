@@ -1,4 +1,5 @@
 // Copyright 2026 Moorage. Licensed under FSL-1.1-MIT; see LICENSE.
+
 import { emdashPluginTest } from "@emdash-cms/plugin-test/config";
 import { defineConfig } from "vitest/config";
 
