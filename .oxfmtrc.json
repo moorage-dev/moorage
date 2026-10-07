@@ -1,0 +1,13 @@
+{
+	"useTabs": true,
+	"experimentalSortImports": {},
+	"ignorePatterns": [
+		"**/dist/**",
+		"**/node_modules/**",
+		"**/CHANGELOG.md",
+		"**/package.json",
+		"**/emdash-env.d.ts",
+		"**/worker-configuration.d.ts",
+		"planning/**"
+	]
+}

@@ -1,159 +1,34 @@
-# Turborepo starter
+# Moorage
 
-This Turborepo starter is maintained by the Turborepo core team.
+Plugins and a marketing theme for [EmDash](https://emdashcms.com), the open-source Astro CMS.
+Built by [Moorage](https://moorage.dev). Every package here
+runs on any EmDash site, self-hosted or on Moorage, with no account and no key.
 
-## Using this example
+## Packages
 
-Run the following command:
+| Package                         | What it does                                                                                                                                           | Format          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| `@moorage/plugin-seo`           | SEO & Schema Markup: structured data for more content types, SERP preview, noindex per collection, redirects import, IndexNow, site-wide hygiene score | sandbox-capable |
+| `@moorage/plugin-lead-delivery` | HubSpot, Mailchimp & Zapier Lead Delivery: signed delivery of form submissions with a log and retries                                                  | sandbox-capable |
+| `@moorage/plugin-site-health`   | Site Health & Broken Links: in-admin checks and a broken-link scan                                                                                     | sandbox-capable |
+| `@moorage/plugin-restore`       | Backup & Restore (Point in Time): restore the database to a minute                                                                                     | sandbox-capable |
+| `@moorage/plugin-approvals`     | Content Approval & Editorial Workflow: request, approve, send back                                                                                     | sandbox-capable |
+| `@moorage/plugin-analytics`     | Analytics & Cookie Consent: GA4, GTM, Clarity, Meta Pixel with consent mode                                                                            | native          |
+| `@moorage/plugin-popups`        | Popups, Slide-ins & Exit Intent, reusing EmDash forms                                                                                                  | native          |
+| `@moorage/theme-marketing`      | Content-complete marketing theme: components and a copyable site template                                                                              | Astro           |
 
-```sh
-npx create-turbo@latest
-```
+Status: scaffolding. Packages land in the order listed in `AGENTS.md`.
 
-## What's inside?
-
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `@next/eslint-plugin-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+## Develop
 
 ```sh
-cd my-turborepo
-turbo build
+pnpm install
+pnpm check        # build, typecheck, test, validate, lint, format
+pnpm dev          # demo site at apps/demo-site once it exists
 ```
 
-Without global `turbo`, use your package manager:
+Node 22.16 or newer and pnpm 11 are required.
 
-```sh
-cd my-turborepo
-npx turbo build
-pnpm exec turbo build
-pnpm exec turbo build
-```
+## Licence
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo build --filter=docs
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-```
-
-### Develop
-
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo dev
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo dev
-pnpm exec turbo dev
-pnpm exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-pnpm exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-pnpm exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+[FSL-1.1-MIT](LICENSE): free to use, modify and self-host; each release becomes MIT two years after it ships.

@@ -1,3 +1,35 @@
+# Moorage monorepo: conventions for agents and contributors
+
+This public repository contains only Moorage plugin and theme code for EmDash. Nothing else belongs here:
+no company website, no private services, no secrets, no customer data.
+
+## Layout
+
+- `apps/demo-site`: a local EmDash site (Node adapter, SQLite) that installs every package for manual and Playwright testing.
+- `packages/plugin-*`: one EmDash plugin per package. Sandbox-capable plugins (seo, lead-delivery, site-health, restore, approvals) are scaffolded with `@emdash-cms/plugin-cli` and tested with `@emdash-cms/plugin-test`. Native plugins (analytics, popups) are built with tsdown and tested with Vitest plus Playwright on the demo site.
+- `packages/theme-marketing`: Astro components plus a copyable site template.
+- `packages/kit`: private shared helpers, inlined into bundles, never published.
+- `packages/typescript-config`: shared tsconfig presets (`base.json`, `library.json`).
+
+Build order: seo, theme-marketing, analytics, lead-delivery, site-health, popups, restore, approvals.
+
+## Commands
+
+- `pnpm check` runs everything CI runs: build, typecheck, test, validate, lint, format check.
+- Per package: `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm validate` (sandbox-capable only).
+- `pnpm changeset` for every change to a publishable package.
+- Version pins for EmDash packages live in the `catalog` of `pnpm-workspace.yaml`; use `"catalog:"` in package manifests.
+
+## Rules
+
+- Licence is FSL-1.1-MIT. Every source file starts with `// Copyright <year> Moorage. Licensed under FSL-1.1-MIT; see LICENSE.` Every package has `"license": "FSL-1.1-MIT"` and a copy of `LICENSE`.
+- Depend only on EmDash core, official `@emdash-cms/*` packages and our own packages. No third-party EmDash plugins. Extend official plugins by configuration, wrapping, or an upstream PR, never a fork.
+- Every plugin must solve its whole problem on a self-hosted EmDash site with no Moorage account and no key. No Moorage-specific fields in registry builds. The word "Moorage" never appears inside the EmDash admin UI.
+- One admin page per plugin, few settings, nothing a non-technical editor can break.
+- Formatting: tabs, oxfmt. Linting: oxlint. TypeScript strict with `noUncheckedIndexedAccess` and `verbatimModuleSyntax`.
+- Commit messages: imperative, one line, no attribution lines.
+- A package is done when: manifest validates, tests are green, it runs on the demo site, Playwright covers any public-page output, README has install, settings, FAQ and changelog, a changeset exists.
+
 <!-- BEGIN:turborepo-agent-rules -->
 
 # This is NOT the Turborepo you know

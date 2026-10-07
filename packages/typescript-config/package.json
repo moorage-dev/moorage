@@ -1,9 +1,7 @@
 {
-  "name": "@repo/typescript-config",
+  "name": "@moorage/typescript-config",
   "version": "0.0.0",
   "private": true,
-  "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  }
+  "license": "FSL-1.1-MIT",
+  "files": ["base.json", "library.json"]
 }
