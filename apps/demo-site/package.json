@@ -12,7 +12,8 @@
 		"build": "astro build",
 		"preview": "astro preview",
 		"start": "node ./dist/server/entry.mjs",
-		"typecheck": "astro check"
+		"typecheck": "astro check",
+		"test:e2e": "playwright test"
 	},
 	"dependencies": {
 		"@astrojs/node": "catalog:",
@@ -32,6 +33,7 @@
 	},
 	"devDependencies": {
 		"@astrojs/check": "catalog:",
+		"@playwright/test": "catalog:",
 		"@types/react": "catalog:",
 		"@types/react-dom": "catalog:",
 		"typescript": "catalog:"
