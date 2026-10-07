@@ -2,7 +2,7 @@
 	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
 
 	"slug": "seo",
-	"publisher": "did:plc:placeholder-replace-before-publish",
+	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
 
 	"license": "FSL-1.1-MIT",
 	"author": { "name": "Moorage" },
