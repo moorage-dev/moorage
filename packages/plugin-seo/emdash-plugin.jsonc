@@ -1,0 +1,19 @@
+{
+	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+	"slug": "seo",
+	"publisher": "did:plc:placeholder-replace-before-publish",
+
+	"license": "FSL-1.1-MIT",
+	"author": { "name": "Moorage" },
+	"security": { "email": "security@moorage.dev" },
+
+	// Trust contract — what runtime APIs the plugin asks for.
+	// Empty arrays mean no extra privileges beyond logging,
+	// KV, and route/hook registration. Changing these between
+	// releases requires a version bump because installed
+	// users have consented to the old contract.
+	"capabilities": [],
+	"allowedHosts": [],
+	"storage": {},
+}

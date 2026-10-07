@@ -1,0 +1,43 @@
+{
+	"name": "@moorage/plugin-seo",
+	"version": "0.0.0",
+	"description": "SEO & Schema Markup for EmDash: structured data, SERP preview, noindex per collection, redirects import, IndexNow, site-wide hygiene score.",
+	"license": "FSL-1.1-MIT",
+	"type": "module",
+	"main": "dist/index.mjs",
+	"exports": {
+		".": {
+			"import": "./dist/index.mjs",
+			"types": "./dist/index.d.mts"
+		},
+		"./sandbox": "./dist/plugin.mjs"
+	},
+	"files": [
+		"dist",
+		"emdash-plugin.jsonc",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"validate": "emdash-plugin validate",
+		"build": "emdash-plugin build",
+		"dev": "emdash-plugin dev",
+		"typecheck": "tsc --noEmit",
+		"test": "emdash-plugin validate && vitest run",
+		"bundle": "emdash-plugin bundle",
+		"login": "emdash-plugin login",
+		"publish": "emdash-plugin publish",
+		"release:setup": "emdash-plugin release setup"
+	},
+	"peerDependencies": {
+		"emdash": ">=1.2.0"
+	},
+	"devDependencies": {
+		"@emdash-cms/plugin-cli": "catalog:",
+		"@emdash-cms/plugin-test": "catalog:",
+		"@moorage/typescript-config": "workspace:*",
+		"emdash": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
