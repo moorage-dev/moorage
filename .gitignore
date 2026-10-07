@@ -1,7 +1,7 @@
 # Private planning workspace and agent orientation (canonical copy lives outside the repo)
 /planning/
 /CLAUDE.md
-.claude/
+/.claude/
 
 # Dependencies
 node_modules
@@ -18,13 +18,15 @@ build
 .turbo
 .astro
 .wrangler
-.emdash/
+.emdash/migrations.json
 
 # Local databases and uploads (demo site)
 *.sqlite
 *.sqlite-*
 *.db
+*.db-*
 .data/
+uploads/
 
 # Test artefacts
 coverage

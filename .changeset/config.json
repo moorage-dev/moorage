@@ -5,5 +5,5 @@
 	"access": "public",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
-	"ignore": ["demo-site", "@moorage/kit"]
+	"ignore": ["demo-site", "@moorage/kit", "@moorage/typescript-config"]
 }

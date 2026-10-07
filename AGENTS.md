@@ -5,10 +5,10 @@ no company website, no private services, no secrets, no customer data.
 
 ## Layout
 
-- `apps/demo-site`: a local EmDash site (Node adapter, SQLite) that installs every package for manual and Playwright testing.
+- `apps/demo-site` (package name `demo-site`, private): a copy of the EmDash `templates/marketing` site (Node adapter, SQLite, local uploads) with `sandboxRunner` and the forms plugin added. Installs every package for manual and Playwright testing.
 - `packages/plugin-*`: one EmDash plugin per package. Sandbox-capable plugins (seo, lead-delivery, site-health, restore, approvals) are scaffolded with `@emdash-cms/plugin-cli` and tested with `@emdash-cms/plugin-test`. Native plugins (analytics, popups) are built with tsdown and tested with Vitest plus Playwright on the demo site.
 - `packages/theme-marketing`: Astro components plus a copyable site template.
-- `packages/kit`: private shared helpers, inlined into bundles, never published.
+- `packages/kit`: does not exist yet. Create it only when two packages need the same code; until then keep helpers inside each package.
 - `packages/typescript-config`: shared tsconfig presets (`base.json`, `library.json`).
 
 Build order: seo, theme-marketing, analytics, lead-delivery, site-health, popups, restore, approvals.
@@ -18,7 +18,8 @@ Build order: seo, theme-marketing, analytics, lead-delivery, site-health, popups
 - `pnpm check` runs everything CI runs: build, typecheck, test, validate, lint, format check.
 - Per package: `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm validate` (sandbox-capable only).
 - `pnpm changeset` for every change to a publishable package.
-- Version pins for EmDash packages live in the `catalog` of `pnpm-workspace.yaml`; use `"catalog:"` in package manifests.
+- Version pins live in the `catalog` of `pnpm-workspace.yaml`; use `"catalog:"` in package manifests. Native build scripts are allowed in `allowBuilds` there.
+- Scaffolding a sandbox-capable plugin: run `pnpm dlx @emdash-cms/plugin-cli init <slug> --dir packages/plugin-<slug> --yes` with the publisher, author and security flags, then delete the nested `pnpm-workspace.yaml` it writes, and rewrite `package.json` (name `@moorage/plugin-<slug>`, `catalog:` versions, FSL licence) and `tsconfig.json` (extend `@moorage/typescript-config/library.json`). The CLI's template targets a standalone repo, not a workspace.
 
 ## Rules
 

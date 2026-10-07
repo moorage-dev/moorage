@@ -2,15 +2,39 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# Pins shared by every package. Bump here, then `pnpm install`.
-# Re-check against the EmDash clone monthly.
+# Native build scripts pnpm 11 must be allowed to run (sandbox runner, demo site).
+allowBuilds:
+  workerd: true
+  esbuild: true
+  sharp: true
+  "@parcel/watcher": true
+
+# Pins shared by every package. Values match the EmDash clone's own catalog at the pinned
+# emdash version; bump together with `emdash`, then `pnpm install`.
+# Re-check monthly.
 catalog:
+  # EmDash
   emdash: 1.2.0
   "@emdash-cms/plugin-cli": 0.13.3
   "@emdash-cms/plugin-test": 0.2.8
   "@emdash-cms/plugin-types": 0.6.0
   "@emdash-cms/sandbox-workerd": 0.9.3
   "@emdash-cms/plugin-forms": 0.2.9
-  tsdown: ^0.23.0
-  vitest: ^5.0.3
+  workerd: ^1.0.0
+  # Demo site (templates/marketing in the clone)
+  astro: ^7.3.2
+  "@astrojs/node": ^11.1.5
+  "@astrojs/react": ^7.0.0
+  "@astrojs/check": ^0.9.10
+  astro-iconset: ^0.0.4
+  "@iconify-json/ph": ^1.2.2
+  react: 19.2.4
+  react-dom: 19.2.4
+  "@types/react": 19.2.14
+  "@types/react-dom": 19.2.3
+  # Build and test (plugin-test peers vitest ^4.1 and vite ^8; do not move to vitest 5 until it does)
+  tsdown: 0.20.3
+  vite: ^8.3.0
+  vitest: 4.1.10
+  "@playwright/test": ^1.58.0
   typescript: ~6.0.3

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 3 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,20 +14,39 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [22]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm turbo run build typecheck test validate
-      - name: Changeset present on PRs touching packages
+      - name: Playwright (demo site)
+        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
+        run: |
+          pnpm --filter demo-site exec playwright install --with-deps chromium
+          pnpm --filter demo-site exec playwright test
+      - name: Changeset present on PRs
         if: github.event_name == 'pull_request'
         run: pnpm changeset status --since=origin/${{ github.base_ref }}
+
+  # Nightly: does the repo still build and test against the newest EmDash?
+  emdash-latest:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r up emdash@latest @emdash-cms/plugin-cli@latest @emdash-cms/plugin-test@latest @emdash-cms/plugin-types@latest @emdash-cms/sandbox-workerd@latest @emdash-cms/plugin-forms@latest
+      - run: pnpm turbo run build typecheck test validate
