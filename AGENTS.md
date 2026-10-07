@@ -5,7 +5,7 @@ no company website, no private services, no secrets, no customer data.
 
 ## Layout
 
-- `apps/demo-site` (NOT created yet; package name `demo-site`, private): a copy of the EmDash `templates/marketing` site (Node adapter, SQLite, local uploads) with `sandboxRunner` and the forms plugin added. Installs every package for manual and Playwright testing.
+- `apps/demo-site` (NOT created yet; package name `demo-site`, private): a copy of the EmDash `templates/marketing` site (Node adapter, SQLite, local uploads) with `sandboxRunner` and the forms plugin added. Installs every package for manual and Playwright testing. It is a test fixture with fixed seed content, never a real site; real sites consume published versions from their own repos.
 - `packages/plugin-*`: one EmDash plugin per package. Exists today: `plugin-seo` (scaffold). Sandbox-capable plugins (seo, lead-delivery, site-health, restore, approvals) are scaffolded with `@emdash-cms/plugin-cli` and tested with `@emdash-cms/plugin-test`. Native plugins (analytics, popups) are built with tsdown and tested with Vitest plus Playwright on the demo site.
 - `packages/theme-marketing` (NOT created yet): Astro components plus a copyable site template.
 - `packages/kit`: does not exist yet. Create it only when two packages need the same code; until then keep helpers inside each package.
