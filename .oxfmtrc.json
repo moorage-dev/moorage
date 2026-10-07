@@ -8,6 +8,7 @@
 		"**/package.json",
 		"**/emdash-env.d.ts",
 		"**/worker-configuration.d.ts",
+		"apps/demo-site/.agents/**",
 		"planning/**"
 	]
 }

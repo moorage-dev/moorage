@@ -24,8 +24,17 @@ Status: scaffolding. Packages land in the order listed in `AGENTS.md`.
 ```sh
 pnpm install
 pnpm check        # build, typecheck, test, validate, lint, format
-pnpm dev          # watch mode for every package; the demo site joins once apps/demo-site exists
+pnpm dev          # watch mode for every package, plus the demo site on http://localhost:4321
 ```
+
+The demo site (`apps/demo-site`) needs a local `.env` once:
+
+```sh
+pnpm --filter demo-site exec emdash secrets generate --write .env
+echo "EMDASH_SITE_URL=http://localhost:4321" >> apps/demo-site/.env
+```
+
+Open `/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin` to sign in as a dev admin.
 
 Node 22.16 or newer and pnpm 11 are required.
 

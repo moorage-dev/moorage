@@ -1,0 +1,39 @@
+{
+	"name": "demo-site",
+	"version": "0.0.0",
+	"private": true,
+	"license": "MIT",
+	"type": "module",
+	"emdash": {
+		"seed": "seed/seed.json"
+	},
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build",
+		"preview": "astro preview",
+		"start": "node ./dist/server/entry.mjs",
+		"typecheck": "astro check"
+	},
+	"dependencies": {
+		"@astrojs/node": "catalog:",
+		"@astrojs/react": "catalog:",
+		"@cloudflare/kumo": "catalog:",
+		"@emdash-cms/plugin-forms": "catalog:",
+		"@emdash-cms/sandbox-workerd": "catalog:",
+		"@iconify-json/ph": "catalog:",
+		"@moorage/plugin-seo": "workspace:*",
+		"@phosphor-icons/react": "catalog:",
+		"astro": "catalog:",
+		"astro-iconset": "catalog:",
+		"emdash": "catalog:",
+		"react": "catalog:",
+		"react-dom": "catalog:",
+		"workerd": "catalog:"
+	},
+	"devDependencies": {
+		"@astrojs/check": "catalog:",
+		"@types/react": "catalog:",
+		"@types/react-dom": "catalog:",
+		"typescript": "catalog:"
+	}
+}

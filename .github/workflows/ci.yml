@@ -24,6 +24,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Throwaway .env (demo site)
+        if: hashFiles('apps/demo-site/package.json') != ''
+        run: |
+          pnpm --filter demo-site exec emdash secrets generate --write .env
+          echo "EMDASH_SITE_URL=http://localhost:4321" >> apps/demo-site/.env
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm turbo run build typecheck test validate
