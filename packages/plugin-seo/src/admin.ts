@@ -12,12 +12,24 @@ import {
 	type SiteIdentity,
 } from "./config.js";
 import { DAYS, formatDayHours, parseDayHours } from "./hours.js";
+import {
+	addMore,
+	checkList,
+	exportText,
+	IMPORT_KEY,
+	loadImport,
+	plural,
+	redirectsTab,
+	removeBatch,
+	stopImport,
+	type ImportState,
+} from "./redirects-admin.js";
 import { parseUrl } from "./url.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
 const ADMIN_ROLE = 50;
 
-const TAB = { overview: 0, identity: 1, types: 2 } as const;
+const TAB = { overview: 0, identity: 1, types: 2, redirects: 3 } as const;
 
 /** Plain business groups mapped to the schema.org type each one emits. */
 const BUSINESS_GROUPS: Array<{ value: string; label: string }> = [
@@ -84,23 +96,28 @@ interface PageState {
 	tab: number;
 	/** Collection whose "Change" form is open on the Page types tab. */
 	editing?: string;
+	/** The site's redirects as text, when the admin asked to see them. */
+	exported?: string;
 	toast?: BlockResponse["toast"];
 }
 
 interface AdminData {
 	config: SeoConfig;
 	collections: CollectionSchemaInfo[];
+	redirects: ImportState | null;
 }
 
 async function loadData(ctx: PluginContext): Promise<AdminData> {
-	const [raw, collections] = await Promise.all([
+	const [raw, collections, redirects] = await Promise.all([
 		ctx.kv.get(CONFIG_KEY),
 		ctx.schema?.listCollections() ?? [],
+		loadImport(ctx),
 	]);
 	return {
 		config: normalizeConfig(raw),
 		// Only collections with public pages have anything to describe to search engines.
 		collections: collections.filter((collection) => collection.routable && !collection.hidden),
+		redirects,
 	};
 }
 
@@ -535,6 +552,7 @@ function render(
 					{ label: "Overview", blocks: overviewTab(data) },
 					{ label: "Who you are", blocks: identityTab(data, ctx.site.name) },
 					{ label: "Page types", blocks: typesTab(data, state.editing) },
+					{ label: "Redirects", blocks: redirectsTab(data.redirects, state.exported) },
 				],
 			},
 		],
@@ -743,6 +761,57 @@ export async function handleAdmin(
 				toast: { type: "success", message: "Noted. These pages stay hidden from search." },
 			});
 		}
+		if (action === "add_redirects" || action === "more_redirects") {
+			if (!data.redirects || data.redirects.status === "done") {
+				return render(data, ctx, admin, { tab: TAB.redirects });
+			}
+			const redirects = await addMore(ctx, data.redirects);
+			return render({ ...data, redirects }, ctx, admin, {
+				tab: TAB.redirects,
+				toast:
+					redirects.status === "done"
+						? { type: "success", message: `${plural(redirects.added, "redirect")} added.` }
+						: {
+								type: "info",
+								message: `${redirects.added} added so far. The rest follow in the background.`,
+							},
+			});
+		}
+		if (action === "stop_redirects" && data.redirects?.status === "adding") {
+			const redirects = await stopImport(ctx, data.redirects);
+			return render({ ...data, redirects }, ctx, admin, {
+				tab: TAB.redirects,
+				toast: { type: "info", message: `Stopped. ${plural(redirects.added, "redirect")} added.` },
+			});
+		}
+		if (action === "reset_redirects") {
+			// An import that is still running must finish or be removed first.
+			if (data.redirects?.status !== "adding") await ctx.kv.delete(IMPORT_KEY);
+			return render(
+				{ ...data, redirects: data.redirects?.status === "adding" ? data.redirects : null },
+				ctx,
+				admin,
+				{ tab: TAB.redirects },
+			);
+		}
+		if (action === "remove_redirects" && data.redirects) {
+			const left = await removeBatch(ctx, data.redirects);
+			return render({ ...data, redirects: left === 0 ? null : data.redirects }, ctx, admin, {
+				tab: TAB.redirects,
+				toast:
+					left === 0
+						? { type: "success", message: "Removed. Your other redirects are untouched." }
+						: { type: "info", message: `${left} still to remove. Press Remove again.` },
+			});
+		}
+		if (action === "export_redirects") {
+			const { text, count } = await exportText(ctx);
+			return render(data, ctx, admin, {
+				tab: TAB.redirects,
+				exported: text,
+				toast: { type: "info", message: `${plural(count, "redirect")} listed below.` },
+			});
+		}
 		// Sorting or paging the table changes nothing yet.
 		return render(data, ctx, admin, { tab: action === "types_table" ? TAB.types : TAB.overview });
 	}
@@ -750,6 +819,20 @@ export async function handleAdmin(
 	if (interaction.type !== "form_submit") return render(data, ctx, admin, { tab: TAB.overview });
 
 	const values = isRecord(interaction.values) ? interaction.values : {};
+	if (action === "check_redirects") {
+		const list = str(values, "list");
+		if (list === "") {
+			return render(data, ctx, admin, {
+				tab: TAB.redirects,
+				toast: { type: "error", message: "Paste a list first." },
+			});
+		}
+		const redirects = await checkList(ctx, list);
+		return render({ ...data, redirects }, ctx, admin, {
+			tab: TAB.redirects,
+			toast: { type: "success", message: "Checked. Nothing has been added yet." },
+		});
+	}
 	let outcome: Outcome;
 	if (action === "save_identity") outcome = saveIdentity(data, values, ctx.site.url);
 	else if (action === "save_contact") outcome = saveContact(data, values);

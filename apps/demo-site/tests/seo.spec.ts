@@ -98,3 +98,28 @@ test("an admin describes the business and the page head follows", async ({ page 
 		},
 	});
 });
+
+test("an admin imports redirects from a pasted list and they work", async ({ page }) => {
+	await page.goto("/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin/plugins/seo/seo");
+	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+	await page.addLocatorHandler(welcome, async () => {
+		await welcome.getByRole("button", { name: "Get Started" }).click();
+	});
+	await page.getByRole("tab", { name: "Redirects" }).click({ timeout: 60_000 });
+
+	await page
+		.getByRole("textbox", { name: /Paste your list/ })
+		.fill("source,target,regex,code\n/old-pricing/,/pricing,0,301\n^/legacy/(\\d+)$,/x,1,301");
+	await page.getByRole("button", { name: "Check list" }).click();
+	await expect(page.getByText("1 ready, 1 skipped")).toBeVisible();
+	await expect(page.getByText("Pattern needs a human to rewrite it")).toBeVisible();
+
+	await page.getByRole("button", { name: "Add 1 redirect" }).click();
+	await page.getByRole("button", { name: "Add", exact: true }).click();
+	await expect(page.getByText("1 redirect added", { exact: true })).toBeVisible();
+
+	// The old address now really sends visitors to the new one.
+	const response = await page.request.get("/old-pricing", { maxRedirects: 0 });
+	expect(response.status()).toBe(301);
+	expect(response.headers().location).toBe("/pricing");
+});

@@ -7,6 +7,7 @@ import { handleAdmin } from "./admin.js";
 import { CONFIG_KEY, normalizeConfig } from "./config.js";
 import { buildGraph } from "./graph.js";
 import { buildEntryRecord, entryKey, entryStore, type EntryRecord } from "./record.js";
+import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
 import { mergeRobots } from "./robots.js";
 
 async function loadConfig(ctx: PluginContext) {
@@ -92,6 +93,13 @@ const plugin: SandboxedPlugin = {
 		},
 		"content:afterRestore": async (event, ctx) => {
 			await refreshEntry(ctx, event.collection, event.content);
+		},
+		// Continues a redirects import a few rows at a time until it is done.
+		cron: async (event, ctx) => {
+			if (event.name !== IMPORT_TASK) return;
+			const state = await loadImport(ctx);
+			if (state?.status === "adding") await addMore(ctx, state);
+			else await ctx.cron?.cancel(IMPORT_TASK);
 		},
 		"content:afterDelete": async (event, ctx) => {
 			await entryStore(ctx).delete(entryKey(event.collection, event.id));

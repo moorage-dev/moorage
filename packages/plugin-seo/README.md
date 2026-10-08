@@ -2,7 +2,7 @@
 
 SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured data graph, noindex and snippet rules, a Google preview, on-page SEO checks and redirects import from WordPress. Runs on any EmDash site, self-hosted or on Moorage, with no account and no key.
 
-Status: pre-release. Working today: the schema graph, the robots tag and the SEO settings page (below). Next: redirects import, the Google preview panel and page checks.
+Status: pre-release. Working today: the schema graph, the robots tag, the SEO settings page and redirects import (below). Next: the Google preview panel and page checks.
 
 ## What it does today
 
@@ -41,6 +41,8 @@ One page, **SEO**, in the admin sidebar. It works before you touch it: the site 
 - **Who you are**: company, person or local business; name, logo (paste its public link; in Media use Copy URL), contact details, opening hours (two ranges a day for split shifts), profiles elsewhere and areas served. One location for now. A local business is described as an organisation until it has an address, because Google requires one.
 - **Page types**: what each kind of page is (web page, about, contact, blog post, article, service, person) and whether it is hidden from search results. Under Advanced: breadcrumbs and how much Google may quote.
 
+- **Redirects**: paste a list exported from WordPress (Redirection, Yoast SEO Premium or Rank Math, or any "old address, new address" list), check it, then add it. Existing redirects are never changed, the batch can be removed again in one click, and your redirects can be shown as a copyable list.
+
 Admins can change settings. Editors see a read-only page.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
@@ -51,7 +53,9 @@ Not yet: Product and Event types (they need price and date fields on the collect
 - How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry.
 - Is there a Yoast alternative for EmDash? EmDash core covers titles, descriptions, sitemaps and canonicals; this plugin adds the schema graph, robots rules, previews and checks.
 - Does it add FAQ rich results? No. Google stopped showing FAQ rich results in May 2026.
-- How do I import redirects from WordPress? Coming with the SEO page: export the Redirection plugin's CSV and import it there.
+- How do I import redirects from WordPress? Export them from Redirection, Yoast SEO Premium or Rank Math, open SEO > Redirects, paste the list and press Check list. Nothing is added until you confirm.
+- Why were some redirects skipped? EmDash has no regular-expression redirects. Exact addresses and "everything under a folder" are converted; other patterns are listed for you to rewrite by hand. Redirects to another website and addresses with a `?` are not supported by EmDash.
+- Why does a large import take a while on Cloudflare? Sandboxed plugins may only do a few operations per request, so a long list is added a few rows at a time in the background. You can leave the page.
 
 ## Changelog
 

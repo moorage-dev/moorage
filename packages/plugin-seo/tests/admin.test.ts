@@ -53,7 +53,7 @@ async function config(runtime: PluginRuntimeTestHost): Promise<SeoConfig | null>
 }
 
 describe("SEO page", () => {
-	it("shows an admin the three tabs and the first-run steps", async () => {
+	it("shows an admin the four tabs and the first-run steps", async () => {
 		const runtime = await start();
 		const response = await runtime.admin.loadPage(PAGE);
 
@@ -62,6 +62,7 @@ describe("SEO page", () => {
 			"Overview",
 			"Who you are",
 			"Page types",
+			"Redirects",
 		]);
 		expect(texts(response)).toContain("SEO is already working");
 		expect(texts(response)).toContain("Setup: 0 of 2 done");
