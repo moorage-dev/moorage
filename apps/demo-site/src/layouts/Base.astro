@@ -17,6 +17,11 @@ interface Props {
 }
 
 const { title, pageTitle, description, image, canonical, robots, content } = Astro.props;
+
+// The font's name only exists in the generated types when web fonts are switched on.
+const bodyFont = { cssVariable: "--font-body", preload: true } as unknown as Parameters<
+	typeof Font
+>[0];
 const [settingsResult, menuResult, footerProductResult, footerCompanyResult, footerSupportResult] =
 	await Promise.all([
 		getSiteSettingsWithCacheHint(),
@@ -79,7 +84,17 @@ const isLoggedIn = !!Astro.locals.user;
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>{fullTitle}</title>
 		<EmDashHead page={pageCtx} />
-		<Font cssVariable="--font-body" preload />
+		{
+			process.env.DEMO_SITE_FONTS === "1" ? (
+				<Font {...bodyFont} />
+			) : (
+				<style is:inline>
+					:root {
+						--font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+					}
+				</style>
+			)
+		}
 		<script is:inline>
 			// Apply an explicit theme choice immediately to prevent flash.
 			// With no cookie, color-scheme: light dark follows the OS.
