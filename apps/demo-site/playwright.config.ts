@@ -9,6 +9,9 @@ const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
 	testDir: "./tests",
+	// The first admin page load on a cold dev server bundles the whole admin app,
+	// which alone can take most of Playwright's default 30 seconds on a CI runner.
+	timeout: 120_000,
 	// One worker: every test shares one dev server and one SQLite file, and the first
 	// dev-bypass call on a fresh database creates the admin user.
 	workers: 1,
