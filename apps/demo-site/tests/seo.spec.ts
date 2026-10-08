@@ -47,3 +47,54 @@ test("inner page adds breadcrumbs and an indexable robots tag", async ({ page })
 	await expect(robots).toHaveCount(1);
 	await expect(robots).toHaveAttribute("content", /^index, follow, max-snippet:-1/);
 });
+
+test("an admin describes the business and the page head follows", async ({ page }) => {
+	await page.goto("/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin/plugins/seo/seo");
+	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+	await page.addLocatorHandler(welcome, async () => {
+		await welcome.getByRole("button", { name: "Get Started" }).click();
+	});
+	await expect(page.getByText("SEO is already working")).toBeVisible({ timeout: 60_000 });
+
+	await page.getByRole("tab", { name: "Who you are" }).click();
+	await page.getByText("A local business customers visit").click();
+	await page.getByRole("textbox", { name: "Name", exact: true }).fill("Acme Bakery");
+	await page.getByRole("button", { name: "Save" }).first().click();
+	await expect(
+		page.getByText("Saved. Google will pick this up next time it visits."),
+	).toBeVisible();
+	// The admin stays on the tab they were working in.
+	await expect(page.getByRole("tab", { name: "Who you are" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(page.getByText("Opening hours")).toBeVisible();
+
+	// Without an address Google would reject a local business, so the site is
+	// still described as an organisation and the address section is open.
+	await page.goto("/");
+	expect(graphOf((await jsonLdScripts(page))[0])[0]).toMatchObject({
+		"@type": "Organization",
+		name: "Acme Bakery",
+	});
+
+	await page.goBack();
+	await page.getByRole("tab", { name: "Who you are" }).click();
+	await page.getByRole("textbox", { name: "Street address" }).fill("1 Main St");
+	await page.getByRole("textbox", { name: "Town or city" }).fill("Springfield");
+	await page.getByRole("button", { name: "Save" }).nth(1).click();
+	await expect(
+		page.getByText("Saved. Google will pick this up next time it visits."),
+	).toBeVisible();
+
+	await page.goto("/");
+	expect(graphOf((await jsonLdScripts(page))[0])[0]).toMatchObject({
+		"@type": "LocalBusiness",
+		name: "Acme Bakery",
+		address: {
+			"@type": "PostalAddress",
+			streetAddress: "1 Main St",
+			addressLocality: "Springfield",
+		},
+	});
+});

@@ -20,6 +20,7 @@ catalog:
   "@emdash-cms/plugin-types": 0.6.0
   "@emdash-cms/sandbox-workerd": 0.9.3
   "@emdash-cms/plugin-forms": 0.2.9
+  "@emdash-cms/blocks": 1.2.0
   # plugin-forms peers (clone catalog)
   "@phosphor-icons/react": ^2.1.10
   "@cloudflare/kumo": 2.6.0

@@ -2,7 +2,7 @@
 
 SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured data graph, noindex and snippet rules, a Google preview, on-page SEO checks and redirects import from WordPress. Runs on any EmDash site, self-hosted or on Moorage, with no account and no key.
 
-Status: pre-release. Working today: the schema graph and the robots tag (below). Next: the Search settings page, more schema types, redirects CSV import, the editor panel and checks.
+Status: pre-release. Working today: the schema graph, the robots tag and the SEO settings page (below). Next: redirects import, the Google preview panel and page checks.
 
 ## What it does today
 
@@ -35,7 +35,15 @@ export default defineConfig({
 
 ## Settings
 
-No settings page yet. Until it ships, the site is described as an Organization named after the site, every collection is indexable, and `posts`-style pages the theme marks as articles become BlogPosting.
+One page, **SEO**, in the admin sidebar. It works before you touch it: the site is described as an organisation named after the site, and each page type is guessed from its name (posts and blog become blog posts, services become services, team becomes people).
+
+- **Overview**: setup progress, and a warning whenever a page type is hidden from Google.
+- **Who you are**: company, person or local business; name, logo (paste its public link; in Media use Copy URL), contact details, opening hours (two ranges a day for split shifts), profiles elsewhere and areas served. One location for now. A local business is described as an organisation until it has an address, because Google requires one.
+- **Page types**: what each kind of page is (web page, about, contact, blog post, article, service, person) and whether it is hidden from search results. Under Advanced: breadcrumbs and how much Google may quote.
+
+Admins can change settings. Editors see a read-only page.
+
+Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
 ## FAQ
 
@@ -43,7 +51,7 @@ No settings page yet. Until it ships, the site is described as an Organization n
 - How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry.
 - Is there a Yoast alternative for EmDash? EmDash core covers titles, descriptions, sitemaps and canonicals; this plugin adds the schema graph, robots rules, previews and checks.
 - Does it add FAQ rich results? No. Google stopped showing FAQ rich results in May 2026.
-- How do I import redirects from WordPress? Coming with the Search page: export the Redirection plugin's CSV and import it there.
+- How do I import redirects from WordPress? Coming with the SEO page: export the Redirection plugin's CSV and import it there.
 
 ## Changelog
 

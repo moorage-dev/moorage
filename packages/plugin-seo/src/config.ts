@@ -14,10 +14,26 @@ export const WEB_PAGE_TYPES = [
 	"ProfilePage",
 ] as const;
 export const ARTICLE_TYPES = ["Article", "BlogPosting", "NewsArticle"] as const;
+/** Types that describe the thing a page is about, emitted next to a plain WebPage. */
+export const ENTITY_TYPES = ["Service"] as const;
 
 export type WebPageType = (typeof WEB_PAGE_TYPES)[number];
 export type ArticleType = (typeof ARTICLE_TYPES)[number];
-export type PageSchemaType = WebPageType | ArticleType;
+export type EntityType = (typeof ENTITY_TYPES)[number];
+export type PageSchemaType = WebPageType | ArticleType | EntityType;
+
+/**
+ * What a collection is, guessed from its slug, so that most sites never need
+ * to open the Page types tab.
+ */
+export function defaultTypeForCollection(slug: string): PageSchemaType {
+	const name = slug.toLowerCase();
+	if (["posts", "post", "blog"].includes(name)) return "BlogPosting";
+	if (["news", "articles", "article"].includes(name)) return "Article";
+	if (["services", "service"].includes(name)) return "Service";
+	if (["team", "people", "staff", "authors"].includes(name)) return "ProfilePage";
+	return "WebPage";
+}
 
 export interface PostalAddress {
 	streetAddress?: string;
@@ -54,11 +70,21 @@ export interface SiteIdentity {
 	geo?: { latitude: number; longitude: number };
 	openingHours: OpeningHours[];
 	priceRange?: string;
+	/** Places served, for a business with no public address. */
+	areaServed: string[];
 }
 
 export interface CollectionRule {
 	type?: PageSchemaType;
 	noindex?: boolean;
+	/** An admin confirmed that hiding this collection from search is intended. */
+	hiddenOk?: boolean;
+}
+
+/** Setup steps an admin has completed on the SEO page. */
+export interface SetupSteps {
+	identity: boolean;
+	types: boolean;
 }
 
 export interface RobotsDefaults {
@@ -78,14 +104,16 @@ export interface SeoConfig {
 	jsonLdField: string;
 	/** Derive a breadcrumb trail from the URL when the theme passes none. */
 	breadcrumbs: boolean;
+	steps: SetupSteps;
 }
 
 export const DEFAULT_CONFIG: SeoConfig = {
-	site: { type: "Organization", sameAs: [], openingHours: [] },
+	site: { type: "Organization", sameAs: [], openingHours: [], areaServed: [] },
 	collections: {},
 	robots: { maxSnippet: -1, maxImagePreview: "large", maxVideoPreview: -1, nosnippet: false },
 	jsonLdField: "json_ld",
 	breadcrumbs: true,
+	steps: { identity: false, types: false },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -109,7 +137,7 @@ function integer(value: unknown, fallback: number): number {
 }
 
 function pageSchemaType(value: unknown): PageSchemaType | undefined {
-	const all: readonly string[] = [...WEB_PAGE_TYPES, ...ARTICLE_TYPES];
+	const all: readonly string[] = [...WEB_PAGE_TYPES, ...ARTICLE_TYPES, ...ENTITY_TYPES];
 	return typeof value === "string" && all.includes(value) ? (value as PageSchemaType) : undefined;
 }
 
@@ -166,6 +194,9 @@ function siteIdentity(value: unknown): SiteIdentity {
 				: undefined,
 		openingHours: openingHours(value.openingHours),
 		priceRange: text(value.priceRange),
+		areaServed: Array.isArray(value.areaServed)
+			? value.areaServed.map(text).filter((area): area is string => area !== undefined)
+			: [],
 	};
 }
 
@@ -180,7 +211,11 @@ export function normalizeConfig(raw: unknown): SeoConfig {
 	if (isRecord(raw.collections)) {
 		for (const [slug, rule] of Object.entries(raw.collections)) {
 			if (!isRecord(rule)) continue;
-			collections[slug] = { type: pageSchemaType(rule.type), noindex: rule.noindex === true };
+			collections[slug] = {
+				type: pageSchemaType(rule.type),
+				noindex: rule.noindex === true,
+				...(rule.hiddenOk === true ? { hiddenOk: true } : {}),
+			};
 		}
 	}
 
@@ -201,5 +236,9 @@ export function normalizeConfig(raw: unknown): SeoConfig {
 		},
 		jsonLdField: text(raw.jsonLdField) ?? DEFAULT_CONFIG.jsonLdField,
 		breadcrumbs: raw.breadcrumbs !== false,
+		steps: {
+			identity: isRecord(raw.steps) && raw.steps.identity === true,
+			types: isRecord(raw.steps) && raw.steps.types === true,
+		},
 	};
 }

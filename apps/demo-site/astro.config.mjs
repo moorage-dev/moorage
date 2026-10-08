@@ -46,7 +46,8 @@ export default defineConfig({
 			plugins: [formsPlugin()],
 			sandboxed: [seo],
 			sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
-			database: sqlite({ url: "file:./data.db" }),
+			// Browser tests point this at their own database so they never touch yours.
+			database: sqlite({ url: process.env.DEMO_SITE_DB ?? "file:./data.db" }),
 			storage: local({
 				directory: "./uploads",
 				baseUrl: "/_emdash/api/media/file",

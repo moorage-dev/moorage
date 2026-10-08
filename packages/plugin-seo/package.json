@@ -42,6 +42,7 @@
 		"emdash": ">=1.2.0"
 	},
 	"devDependencies": {
+		"@emdash-cms/blocks": "catalog:",
 		"@emdash-cms/plugin-cli": "catalog:",
 		"@emdash-cms/plugin-test": "catalog:",
 		"@moorage/typescript-config": "workspace:*",

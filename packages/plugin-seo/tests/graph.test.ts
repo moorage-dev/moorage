@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_CONFIG, normalizeConfig, type SeoConfig } from "../src/config.js";
 import { buildGraph, type SchemaNode } from "../src/graph.js";
+import { parseDayHours } from "../src/hours.js";
 import { parseCustomSchema, type EntryRecord } from "../src/record.js";
 import { mergeRobots } from "../src/robots.js";
 
@@ -121,6 +122,15 @@ describe("site representation", () => {
 				},
 			],
 		});
+	});
+});
+
+describe("local business without an address", () => {
+	it("is described as an organisation until an address exists", () => {
+		const config = normalizeConfig({ site: { type: "Dentist", areaServed: ["Springfield"] } });
+		const nodes = graph({}, config);
+		expect(nodes.some((node) => node["@type"] === "Dentist")).toBe(false);
+		expect(byType(nodes, "Organization")).toMatchObject({ areaServed: ["Springfield"] });
 	});
 });
 
@@ -249,6 +259,79 @@ describe("articles", () => {
 		const config = normalizeConfig({ collections: { posts: { type: "NewsArticle" } } });
 		const article = byType(graph({ ...post, pageTitle: "x".repeat(200) }, config), "NewsArticle");
 		expect((article.headline as string).length).toBe(110);
+	});
+});
+
+describe("services and people", () => {
+	const content = { collection: "services", id: "s1", slug: "cleaning" };
+
+	it("describes a services page as a Service provided by the site", () => {
+		const config = normalizeConfig({ site: { areaServed: ["Springfield"] } });
+		const nodes = graph(
+			{
+				url: "https://acme.test/services/cleaning",
+				path: "/services/cleaning",
+				pageTitle: "Cleaning",
+				kind: "content",
+				content,
+			},
+			config,
+		);
+		expect(byType(nodes, "Service")).toEqual({
+			"@type": "Service",
+			"@id": "https://acme.test/services/cleaning#service",
+			name: "Cleaning",
+			description: "Plans and prices.",
+			url: "https://acme.test/services/cleaning",
+			provider: { "@id": "https://acme.test/#organization" },
+			areaServed: ["Springfield"],
+		});
+		expect(byType(nodes, "WebPage").mainEntity).toEqual({
+			"@id": "https://acme.test/services/cleaning#service",
+		});
+	});
+
+	it("describes a team page as a profile of a person who works for the site", () => {
+		const nodes = graph({
+			url: "https://acme.test/team/ada",
+			path: "/team/ada",
+			pageTitle: "Ada Lovelace",
+			kind: "content",
+			content: { collection: "team", id: "t1", slug: "ada" },
+		});
+		expect(byType(nodes, "ProfilePage").mainEntity).toEqual({
+			"@id": "https://acme.test/team/ada#person",
+		});
+		expect(byType(nodes, "Person")).toMatchObject({
+			name: "Ada Lovelace",
+			worksFor: { "@id": "https://acme.test/#organization" },
+		});
+	});
+
+	it("lets the configured type override the guess from the collection name", () => {
+		const config = normalizeConfig({ collections: { services: { type: "WebPage" } } });
+		const nodes = graph({ kind: "content", content }, config);
+		expect(nodes.some((node) => node["@type"] === "Service")).toBe(false);
+	});
+});
+
+describe("opening hours", () => {
+	it("reads one range, split shifts and closed days", () => {
+		expect(parseDayHours("Monday", "9:00-17:00")).toEqual([
+			{ days: ["Monday"], opens: "09:00", closes: "17:00" },
+		]);
+		expect(parseDayHours("Monday", "12.00 – 14.30 and 18-22")).toEqual([
+			{ days: ["Monday"], opens: "12:00", closes: "14:30" },
+			{ days: ["Monday"], opens: "18:00", closes: "22:00" },
+		]);
+		expect(parseDayHours("Monday", "")).toEqual([]);
+		expect(parseDayHours("Monday", "Closed")).toEqual([]);
+	});
+
+	it("refuses text it cannot read instead of guessing", () => {
+		expect(parseDayHours("Monday", "morning")).toBeNull();
+		expect(parseDayHours("Monday", "25:00-26:00")).toBeNull();
+		expect(parseDayHours("Monday", "9-10, 11-12, 13-14")).toBeNull();
 	});
 });
 

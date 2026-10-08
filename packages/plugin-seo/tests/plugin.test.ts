@@ -104,7 +104,12 @@ describe("page:metadata", () => {
 	it("reads site identity and collection rules from the stored configuration", async () => {
 		const runtime = await runtimeHost();
 		await runtime.fixtures.plugin.kv("config", {
-			site: { type: "Dentist", name: "Acme Dental", telephone: "+1 555 0100" },
+			site: {
+				type: "Dentist",
+				name: "Acme Dental",
+				telephone: "+1 555 0100",
+				address: { streetAddress: "1 Main St" },
+			},
 			collections: { pages: { type: "ContactPage", noindex: true } },
 		});
 		await collection(runtime, "pages");

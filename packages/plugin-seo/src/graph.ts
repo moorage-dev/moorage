@@ -2,7 +2,13 @@
 
 import type { PublicPageContext } from "emdash";
 
-import { ARTICLE_TYPES, type PageSchemaType, type SeoConfig, type SiteIdentity } from "./config.js";
+import {
+	ARTICLE_TYPES,
+	defaultTypeForCollection,
+	type PageSchemaType,
+	type SeoConfig,
+	type SiteIdentity,
+} from "./config.js";
 import type { EntryRecord } from "./record.js";
 import { parseUrl } from "./url.js";
 
@@ -67,7 +73,10 @@ function isArticleType(type: string): boolean {
 	return (ARTICLE_TYPES as readonly string[]).includes(type);
 }
 
-/** Collection rule first, then the entry's own type, then what the theme said. */
+/**
+ * The entry's own type first, then the collection's rule, then a guess from
+ * the collection's name, then what the theme said.
+ */
 export function resolvePageType(
 	page: PublicPageContext,
 	config: SeoConfig,
@@ -76,12 +85,18 @@ export function resolvePageType(
 	const rule = page.content ? config.collections[page.content.collection] : undefined;
 	if (record?.type) return record.type;
 	if (rule?.type) return rule.type;
+	const guessed = page.content ? defaultTypeForCollection(page.content.collection) : "WebPage";
+	if (guessed !== "WebPage") return guessed;
 	return page.pageType === "article" ? "BlogPosting" : "WebPage";
 }
 
 function siteNode(identity: SiteIdentity, name: string, siteUrl: string, id: string): SchemaNode {
 	const logoId = `${siteUrl}/#logo`;
 	const isPerson = identity.type === "Person";
+	// Google requires an address on a local business; without one the site is
+	// described as a plain organisation rather than with invalid markup.
+	const isLocal = !isPerson && identity.type !== "Organization";
+	const type = isLocal && identity.address === undefined ? "Organization" : identity.type;
 	const hasLocalDetails =
 		!isPerson &&
 		(identity.address !== undefined ||
@@ -89,7 +104,7 @@ function siteNode(identity: SiteIdentity, name: string, siteUrl: string, id: str
 			identity.openingHours.length > 0);
 
 	return compact({
-		"@type": identity.type,
+		"@type": type,
 		"@id": id,
 		name,
 		alternateName: identity.alternateName,
@@ -122,6 +137,7 @@ function siteNode(identity: SiteIdentity, name: string, siteUrl: string, id: str
 				}))
 			: undefined,
 		priceRange: isPerson ? undefined : identity.priceRange,
+		areaServed: isPerson ? undefined : identity.areaServed,
 	});
 }
 
@@ -199,6 +215,10 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 
 	const pageType = resolvePageType(page, config, record);
 	const article = isArticleType(pageType);
+	const service = pageType === "Service";
+	const profile = pageType === "ProfilePage";
+	const serviceId = `${pageUrl}#service`;
+	const profileId = `${pageUrl}#person`;
 	const published = record?.publishedAt ?? page.articleMeta?.publishedTime ?? undefined;
 	const modified = record?.updatedAt ?? page.articleMeta?.modifiedTime ?? undefined;
 	const image = page.image ? absolute(page.image, `${siteUrl}/`) : undefined;
@@ -217,7 +237,7 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 			inLanguage: language,
 		}),
 		compact({
-			"@type": article ? "WebPage" : pageType,
+			"@type": article || service ? "WebPage" : pageType,
 			"@id": webpageId,
 			url: pageUrl,
 			name: pageName,
@@ -227,6 +247,7 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 			primaryImageOfPage: image ? ref(imageId) : undefined,
 			image: image ? ref(imageId) : undefined,
 			breadcrumb: crumbs.length > 0 ? ref(breadcrumbId) : undefined,
+			mainEntity: service ? ref(serviceId) : profile ? ref(profileId) : undefined,
 			datePublished: published,
 			dateModified: modified,
 			inLanguage: language,
@@ -254,6 +275,36 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 				author: authors.length > 0 ? authors : fallbackAuthor,
 				publisher: ref(siteId),
 				inLanguage: language,
+			}),
+		);
+	}
+
+	if (service) {
+		nodes.push(
+			compact({
+				"@type": "Service",
+				"@id": serviceId,
+				name: pageName,
+				description: page.description,
+				url: pageUrl,
+				image: image ? ref(imageId) : undefined,
+				provider: ref(siteId),
+				areaServed: config.site.areaServed,
+			}),
+		);
+	}
+
+	if (profile) {
+		// A profile page is about one person, named by the page.
+		nodes.push(
+			compact({
+				"@type": "Person",
+				"@id": profileId,
+				name: pageName,
+				description: page.description,
+				url: pageUrl,
+				image: image ? ref(imageId) : undefined,
+				worksFor: isPerson ? undefined : ref(siteId),
 			}),
 		);
 	}

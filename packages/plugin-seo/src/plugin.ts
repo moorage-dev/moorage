@@ -3,6 +3,7 @@
 import type { PageMetadataContribution, PluginContext } from "emdash";
 import type { SandboxedPlugin } from "emdash/plugin";
 
+import { handleAdmin } from "./admin.js";
 import { CONFIG_KEY, normalizeConfig } from "./config.js";
 import { buildGraph } from "./graph.js";
 import { buildEntryRecord, entryKey, entryStore, type EntryRecord } from "./record.js";
@@ -97,6 +98,11 @@ const plugin: SandboxedPlugin = {
 		},
 	},
 	routes: {
+		// The SEO admin page. Editors may open it; the handler lets only admins change anything.
+		admin: {
+			permission: "plugins:read",
+			handler: async (routeCtx, ctx) => handleAdmin(routeCtx.input, routeCtx.user?.role, ctx),
+		},
 		hello: {
 			handler: async (_routeCtx, ctx) => {
 				ctx.log.info("hello route called", { pluginId: ctx.plugin.id });

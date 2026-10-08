@@ -18,6 +18,9 @@ catalogs:
     '@cloudflare/kumo':
       specifier: 2.6.0
       version: 2.6.0
+    '@emdash-cms/blocks':
+      specifier: 1.2.0
+      version: 1.2.0
     '@emdash-cms/plugin-cli':
       specifier: 0.13.3
       version: 0.13.3
@@ -153,6 +156,9 @@ importers:
 
   packages/plugin-seo:
     devDependencies:
+      '@emdash-cms/blocks':
+        specifier: 'catalog:'
+        version: 1.2.0(@date-fns/tz@1.5.0)(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)
       '@emdash-cms/plugin-cli':
         specifier: 'catalog:'
         version: 0.13.3(@atcute/cbor@2.3.8(@atcute/cid@2.5.0))(@atcute/cid@2.5.0)(@atcute/identity@2.0.2(@atcute/lexicons@2.1.1)(typescript@6.0.3))(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)

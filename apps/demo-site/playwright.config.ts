@@ -23,11 +23,12 @@ export default defineConfig({
 	webServer: {
 		// Dev server, not the built one: the dev-bypass sign-in route only exists in dev.
 		// --ignore-lock: Astro allows one dev server per project; this one must start next to yours.
-		command: `pnpm exec astro dev --port ${PORT} --ignore-lock`,
+		// A fresh database every run: tests change settings and must not depend on, or alter, your data.
+		command: `rm -f e2e.db e2e.db-shm e2e.db-wal && pnpm exec astro dev --port ${PORT} --ignore-lock`,
 		url: BASE_URL,
 		// Never reuse: a server already on this port is not guaranteed to be this site.
 		reuseExistingServer: false,
 		timeout: 120_000,
-		env: { EMDASH_SITE_URL: BASE_URL },
+		env: { EMDASH_SITE_URL: BASE_URL, DEMO_SITE_DB: "file:./e2e.db" },
 	},
 });
