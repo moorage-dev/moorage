@@ -1,7 +1,16 @@
 {
 	"name": "@moorage/plugin-seo",
 	"version": "0.0.0",
-	"description": "SEO & Schema Markup for EmDash: structured data, SERP preview, noindex per collection, redirects import, IndexNow, site-wide hygiene score.",
+	"description": "SEO for EmDash: schema markup, structured data, Google preview, noindex rules, redirects import and SEO checks. A Yoast alternative.",
+	"keywords": [
+		"emdash",
+		"emdash-plugin",
+		"seo",
+		"schema markup",
+		"structured data",
+		"json-ld",
+		"yoast alternative"
+	],
 	"license": "FSL-1.1-MIT",
 	"type": "module",
 	"main": "dist/index.mjs",

@@ -13,7 +13,10 @@
 	// KV, and route/hook registration. Changing these between
 	// releases requires a version bump because installed
 	// users have consented to the old contract.
-	"capabilities": [],
+	"capabilities": ["content:read", "bylines:read"],
 	"allowedHosts": [],
-	"storage": {},
+	"storage": {
+		// One record per content entry: dates, authors, schema type, extra JSON-LD.
+		"entries": { "indexes": [] },
+	},
 }
