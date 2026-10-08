@@ -65,7 +65,7 @@ describe("SEO page", () => {
 			"Redirects",
 		]);
 		expect(texts(response)).toContain("SEO is already working");
-		expect(texts(response)).toContain("Setup: 0 of 2 done");
+		expect(texts(response)).toContain("Setup: 0 of 3 done");
 	});
 
 	it("guesses each page type from the collection's name", async () => {
@@ -118,7 +118,7 @@ describe("Who you are", () => {
 			},
 			steps: { identity: true, types: false },
 		});
-		expect(texts(response)).toContain("Setup: 1 of 2 done");
+		expect(texts(response)).toContain("Setup: 1 of 3 done");
 		// A local business gets the opening hours section, and is asked for its address.
 		expect(texts(response)).toContain("Opening hours");
 		expect(texts(response)).toContain(

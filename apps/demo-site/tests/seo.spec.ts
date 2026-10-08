@@ -123,3 +123,34 @@ test("an admin imports redirects from a pasted list and they work", async ({ pag
 	expect(response.status()).toBe(301);
 	expect(response.headers().location).toBe("/pricing");
 });
+
+test("pages to fix are listed, and fixing one in the editor clears it", async ({ page }) => {
+	await page.goto("/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin/plugins/seo/seo");
+	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+	await page.addLocatorHandler(welcome, async () => {
+		await welcome.getByRole("button", { name: "Get Started" }).click();
+	});
+
+	await page.getByRole("button", { name: "Check my pages" }).click({ timeout: 60_000 });
+	// The seed's three pages have no search description.
+	await expect(page.getByText("Pages ready: 0 of 3")).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(3);
+
+	// The link opens the entry editor, where the Google preview panel explains the problem.
+	await page.getByRole("link", { name: "Open page" }).first().click();
+	await page.getByRole("button", { name: "Google preview" }).first().click();
+	await expect(page.getByText("To fix: No search description.")).toBeVisible();
+
+	// The editor saves by itself; wait for that save to reach the server.
+	const saved = page.waitForResponse(
+		(response) =>
+			response.url().includes("/_emdash/api/content/") && response.request().method() !== "GET",
+	);
+	await page.getByRole("textbox", { name: "Meta Description" }).fill("Build products people want.");
+	await page.keyboard.press("Tab");
+	expect((await saved).ok()).toBe(true);
+
+	await page.goto("/_emdash/admin/plugins/seo/seo");
+	await expect(page.getByText("Pages ready: 1 of 3")).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(2);
+});

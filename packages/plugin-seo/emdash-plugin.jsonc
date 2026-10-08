@@ -17,9 +17,11 @@
 	"allowedHosts": [],
 	"admin": {
 		"pages": [{ "path": "/seo", "label": "SEO", "icon": "search", "group": "Marketing" }],
+		"widgets": [{ "id": "seo", "title": "SEO", "size": "third" }],
+		"editorPanels": [{ "id": "preview", "title": "Google preview", "route": "editor/preview" }],
 	},
 	"storage": {
 		// One record per content entry: dates, authors, schema type, extra JSON-LD.
-		"entries": { "indexes": [] },
+		"entries": { "indexes": ["status", "titleKey"] },
 	},
 }

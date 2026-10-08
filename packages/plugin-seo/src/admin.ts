@@ -12,6 +12,7 @@ import {
 	type SiteIdentity,
 } from "./config.js";
 import { DAYS, formatDayHours, parseDayHours } from "./hours.js";
+import { PAGE_TYPES, typeLabel } from "./page-types.js";
 import {
 	addMore,
 	checkList,
@@ -24,6 +25,16 @@ import {
 	stopImport,
 	type ImportState,
 } from "./redirects-admin.js";
+import {
+	FIX_ROWS,
+	readStats,
+	SCAN_KEY,
+	scanStep,
+	startScan,
+	STATS_KEY,
+	type ScanState,
+	type Stats,
+} from "./scan.js";
 import { parseUrl } from "./url.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
@@ -46,16 +57,6 @@ const BUSINESS_GROUPS: Array<{ value: string; label: string }> = [
 	{ value: "AutomotiveBusiness", label: "Automotive" },
 	{ value: "ProfessionalService", label: "Professional service" },
 	{ value: "LocalBusiness", label: "Other" },
-];
-
-const PAGE_TYPES: Array<{ value: PageSchemaType; label: string; short: string }> = [
-	{ value: "WebPage", label: "Web page", short: "Web page" },
-	{ value: "AboutPage", label: "About page", short: "About page" },
-	{ value: "ContactPage", label: "Contact page", short: "Contact page" },
-	{ value: "BlogPosting", label: "Blog post", short: "Blog post" },
-	{ value: "Article", label: "Article", short: "Article" },
-	{ value: "Service", label: "Service (no special Google listing)", short: "Service" },
-	{ value: "ProfilePage", label: "Person or team member", short: "Person" },
 ];
 
 const PRICE_RANGES = ["", "$", "$$", "$$$", "$$$$"];
@@ -88,10 +89,6 @@ function lines(value: string): string[] {
 		.filter((line) => line !== "");
 }
 
-function typeLabel(type: PageSchemaType): string {
-	return PAGE_TYPES.find((option) => option.value === type)?.short ?? type;
-}
-
 interface PageState {
 	tab: number;
 	/** Collection whose "Change" form is open on the Page types tab. */
@@ -105,20 +102,130 @@ interface AdminData {
 	config: SeoConfig;
 	collections: CollectionSchemaInfo[];
 	redirects: ImportState | null;
+	scan: ScanState | null;
+	/** Page counts and the first pages to fix; null before any page was checked. */
+	stats: Stats | null;
 }
 
 async function loadData(ctx: PluginContext): Promise<AdminData> {
-	const [raw, collections, redirects] = await Promise.all([
-		ctx.kv.get(CONFIG_KEY),
+	// One read for everything the plugin keeps in KV: requests are limited to a
+	// handful of operations, and every tab is rendered on every response.
+	const [stored, collections] = await Promise.all([
+		ctx.kv.list(),
 		ctx.schema?.listCollections() ?? [],
-		loadImport(ctx),
 	]);
+	const kv = new Map(stored.map((item) => [item.key, item.value]));
+	const redirects = kv.get(IMPORT_KEY) as ImportState | undefined;
 	return {
-		config: normalizeConfig(raw),
+		config: normalizeConfig(kv.get(CONFIG_KEY)),
 		// Only collections with public pages have anything to describe to search engines.
 		collections: collections.filter((collection) => collection.routable && !collection.hidden),
-		redirects,
+		redirects: redirects && Array.isArray(redirects.rows) ? redirects : null,
+		scan: (kv.get(SCAN_KEY) as ScanState | undefined) ?? null,
+		stats: (kv.get(STATS_KEY) as Stats | undefined) ?? null,
 	};
+}
+
+/** Fresh page counts, stored so that other actions can show them without recounting. */
+async function refreshStats(ctx: PluginContext, data: AdminData): Promise<AdminData> {
+	const stats = await readStats(ctx);
+	if (JSON.stringify(stats) !== JSON.stringify(data.stats)) await ctx.kv.set(STATS_KEY, stats);
+	return { ...data, stats };
+}
+
+function pagesToFix(data: AdminData): Block[] {
+	const { stats, scan } = data;
+	if (!stats || stats.checked === 0) return [];
+	const ready = stats.checked - stats.fix - stats.hidden;
+	const blocks: Block[] = [
+		{
+			type: "stats",
+			items: [
+				{ label: "Pages checked", value: stats.checked },
+				{ label: "Ready", value: ready },
+				{ label: "To fix", value: stats.fix },
+			],
+		},
+		{
+			type: "meter",
+			label: `Pages ready: ${ready} of ${stats.checked}`,
+			value: ready,
+			max: stats.checked,
+		},
+	];
+	if (stats.fix === 0) {
+		blocks.push({ type: "empty", title: "No pages to fix. Nice work.", size: "sm" });
+	} else {
+		blocks.push(
+			{ type: "header", text: "To fix" },
+			{
+				type: "table",
+				page_action_id: "fix_table",
+				columns: [
+					{ key: "page", label: "Page" },
+					{ key: "missing", label: "What's missing" },
+					{ key: "open", label: "", format: "element" },
+				],
+				rows: stats.rows.map((row) => ({
+					page: row.title,
+					missing: row.issues.join(" "),
+					open: {
+						type: "link",
+						label: "Open page",
+						target: { kind: "content", collection: row.collection, id: row.id },
+					},
+				})),
+			},
+		);
+		if (stats.more) {
+			blocks.push({
+				type: "context",
+				text: `Showing the first ${FIX_ROWS}. Fix these and the next ones appear.`,
+			});
+		}
+	}
+	if (stats.hidden > 0) {
+		blocks.push({
+			type: "context",
+			text: `${stats.hidden} ${stats.hidden === 1 ? "page is" : "pages are"} hidden from search and not counted.`,
+		});
+	}
+	if (scan?.status === "done" && scan.finishedAt) {
+		blocks.push({
+			type: "context",
+			text: `All pages last checked ${scan.finishedAt.slice(0, 16).replace("T", " ")} UTC. Each page is also checked when it is saved.`,
+		});
+	}
+	return blocks;
+}
+
+function checkButton(data: AdminData): Block[] {
+	if (data.scan?.status === "running") {
+		return [
+			{
+				type: "context",
+				text: `Checking your pages: ${data.scan.checked} so far. This continues in the background; you can leave this page.`,
+			},
+			{
+				type: "actions",
+				elements: [{ type: "button", action_id: "check_more", label: "Check more now" }],
+			},
+		];
+	}
+	const first = !data.scan;
+	return [
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: "check_pages",
+					label: first ? "Check my pages" : "Check all pages again",
+					...(first ? { style: "primary" as const } : {}),
+				},
+			],
+		},
+	];
 }
 
 function hiddenCollections(data: AdminData): CollectionSchemaInfo[] {
@@ -151,41 +258,72 @@ function hiddenBanner(data: AdminData, admin: boolean): Block[] {
 
 function overviewTab(data: AdminData): Block[] {
 	const { steps } = data.config;
-	const done = Number(steps.identity) + Number(steps.types);
+	const checked = data.scan !== null;
+	const done = Number(steps.identity) + Number(steps.types) + Number(checked);
 	const blocks: Block[] = [...hiddenBanner(data, true)];
 
-	if (done === 2) {
-		blocks.push({
-			type: "context",
-			text: "Setup complete. Your pages are described to search engines automatically.",
-		});
-		return blocks;
+	if (done < 3) {
+		blocks.push(
+			{
+				type: "banner",
+				title: "SEO is already working",
+				description:
+					"Every page already tells Google what it is. Three short steps make the result more accurate.",
+			},
+			{ type: "context", text: `Setup: ${done} of 3 done` },
+			// A button cannot switch tabs (the admin keeps the tab the user chose), so
+			// each step names the tab to open instead of offering a dead-end button.
+			{
+				type: "section",
+				text: steps.identity
+					? "Done: Tell Google who you are."
+					: '1. Tell Google who you are: your name, logo and where to find you. Open the "Who you are" tab above.',
+			},
+			{
+				type: "section",
+				text: steps.types
+					? "Done: Choose what each page type is."
+					: '2. Choose what each page type is. Most are already right. Open the "Page types" tab above.',
+			},
+			{
+				type: "section",
+				text: checked
+					? "Done: Check your pages."
+					: "3. Check your pages for things to fix, such as a missing description.",
+			},
+		);
 	}
 
-	blocks.push(
-		{
-			type: "banner",
-			title: "SEO is already working",
-			description:
-				"Every page already tells Google what it is. Two short steps make the result more accurate.",
-		},
-		{ type: "context", text: `Setup: ${done} of 2 done` },
-		// A button cannot switch tabs (the admin keeps the tab the user chose), so
-		// each step names the tab to open instead of offering a dead-end button.
-		{
-			type: "section",
-			text: steps.identity
-				? "Done: Tell Google who you are."
-				: '1. Tell Google who you are: your name, logo and where to find you. Open the "Who you are" tab above.',
-		},
-		{
-			type: "section",
-			text: steps.types
-				? "Done: Choose what each page type is."
-				: '2. Choose what each page type is. Most are already right. Open the "Page types" tab above.',
-		},
-	);
+	blocks.push(...pagesToFix(data), ...checkButton(data));
 	return blocks;
+}
+
+function widget(data: AdminData): BlockResponse {
+	const { stats } = data;
+	const open: Block = {
+		type: "actions",
+		elements: [{ type: "link", label: "Open SEO", target: { kind: "plugin-page", path: "/seo" } }],
+	};
+	if (!stats || stats.checked === 0) {
+		const { steps } = data.config;
+		const done = Number(steps.identity) + Number(steps.types) + Number(data.scan !== null);
+		return {
+			blocks: [{ type: "section", text: `Finish SEO setup: ${done} of 3 done.` }, open],
+		};
+	}
+	return {
+		blocks: [
+			{
+				type: "stats",
+				items: [
+					stats.fix === 0
+						? { label: "SEO", value: "All pages ready" }
+						: { label: stats.fix === 1 ? "Page to fix" : "Pages to fix", value: stats.fix },
+				],
+			},
+			open,
+		],
+	};
 }
 
 function identityTab(data: AdminData, siteName: string): Block[] {
@@ -537,6 +675,7 @@ function render(
 					type: "section",
 					text: "Your pages are described to search engines automatically. There is nothing you need to set up.",
 				},
+				...pagesToFix(data),
 				{ type: "context", text: "Site-wide SEO settings are managed by your site admin." },
 			],
 		};
@@ -727,14 +866,49 @@ export async function handleAdmin(
 	role: number | undefined,
 	ctx: PluginContext,
 ): Promise<BlockResponse> {
-	const data = await loadData(ctx);
+	const loaded = await loadData(ctx);
 	const admin = (role ?? 0) >= ADMIN_ROLE;
 	const interaction = isRecord(input) ? input : {};
 	const action = typeof interaction.action_id === "string" ? interaction.action_id : "";
 
+	if (interaction.type === "page_load" && interaction.page === "widget:seo") {
+		// The dashboard is how people come back, so it always shows current counts.
+		return widget(await refreshStats(ctx, loaded));
+	}
+
 	// Editors can look; every change below is for admins only.
 	if (!admin || interaction.type === "page_load" || action === "") {
-		return render(data, ctx, admin, { tab: TAB.overview });
+		return render(await refreshStats(ctx, loaded), ctx, admin, { tab: TAB.overview });
+	}
+	const data = loaded;
+
+	if (
+		interaction.type === "block_action" &&
+		(action === "check_pages" || action === "check_more")
+	) {
+		const running = data.scan?.status === "running";
+		const scan =
+			action === "check_more" && running && data.scan
+				? await scanStep(ctx, data.scan, data.config)
+				: await startScan(
+						ctx,
+						data.collections.map((collection) => collection.slug),
+						data.config,
+					);
+		// The check keeps its own totals, so nothing is recounted here: a request
+		// only has a handful of operations to spend.
+		const stats = scan.tally;
+		await ctx.kv.set(STATS_KEY, stats);
+		return render({ ...data, scan, stats }, ctx, admin, {
+			tab: TAB.overview,
+			toast:
+				scan.status === "done"
+					? { type: "success", message: "All pages checked." }
+					: {
+							type: "info",
+							message: `${scan.checked} pages checked so far. The rest follow in the background.`,
+						},
+		});
 	}
 
 	if (interaction.type === "block_action") {

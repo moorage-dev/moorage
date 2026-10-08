@@ -2,7 +2,7 @@
 
 SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured data graph, noindex and snippet rules, a Google preview, on-page SEO checks and redirects import from WordPress. Runs on any EmDash site, self-hosted or on Moorage, with no account and no key.
 
-Status: pre-release. Working today: the schema graph, the robots tag, the SEO settings page and redirects import (below). Next: the Google preview panel and page checks.
+Status: pre-release, feature-complete for 0.1: the schema graph, the robots tag, the SEO page with redirects import, page checks, and the Google preview panel.
 
 ## What it does today
 
@@ -37,13 +37,19 @@ export default defineConfig({
 
 One page, **SEO**, in the admin sidebar. It works before you touch it: the site is described as an organisation named after the site, and each page type is guessed from its name (posts and blog become blog posts, services become services, team becomes people).
 
-- **Overview**: setup progress, and a warning whenever a page type is hidden from Google.
+- **Overview**: setup progress, a warning whenever a page type is hidden from Google, and the pages to fix: how many pages are ready, and a list of the rest with what is missing and a link to each. "Check my pages" checks the whole site; after that every page is checked when it is saved.
 - **Who you are**: company, person or local business; name, logo (paste its public link; in Media use Copy URL), contact details, opening hours (two ranges a day for split shifts), profiles elsewhere and areas served. One location for now. A local business is described as an organisation until it has an address, because Google requires one.
 - **Page types**: what each kind of page is (web page, about, contact, blog post, article, service, person) and whether it is hidden from search results. Under Advanced: breadcrumbs and how much Google may quote.
 
 - **Redirects**: paste a list exported from WordPress (Redirection, Yoast SEO Premium or Rank Math, or any "old address, new address" list), check it, then add it. Existing redirects are never changed, the batch can be removed again in one click, and your redirects can be shown as a copyable list.
 
-Admins can change settings. Editors see a read-only page.
+Admins can change settings. Editors see a read-only page with the pages to fix.
+
+In the entry editor, the **Google preview** panel shows how the saved page may look on Google (address, title, description), what kind of page it is, whether it is in search results, and up to three things to fix. Admins can also change one page's type, open Google's Rich Results Test for the page, and view the markup. A dashboard widget shows setup progress, then the number of pages to fix.
+
+### The checks
+
+To fix: no title; no search description; the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off; no image for shared links; an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
@@ -52,6 +58,8 @@ Not yet: Product and Event types (they need price and date fields on the collect
 - How do I add schema markup to EmDash? Install this plugin; it adds structured data (JSON-LD) to every page.
 - How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry.
 - Is there a Yoast alternative for EmDash? EmDash core covers titles, descriptions, sitemaps and canonicals; this plugin adds the schema graph, robots rules, previews and checks.
+- Does it check my page while I type? No. EmDash does not let a general-purpose plugin read unsaved text. The panel and the checks describe the published page, as Google sees it: changes to the page show up once you publish, and changes in the SEO panel show up as soon as they are saved.
+- Is there an SEO score or a traffic light? No, on purpose. You get a list of things to fix that can reach zero.
 - Does it add FAQ rich results? No. Google stopped showing FAQ rich results in May 2026.
 - How do I import redirects from WordPress? Export them from Redirection, Yoast SEO Premium or Rank Math, open SEO > Redirects, paste the list and press Check list. Nothing is added until you confirm.
 - Why were some redirects skipped? EmDash has no regular-expression redirects. Exact addresses and "everything under a folder" are converted; other patterns are listed for you to rewrite by hand. Redirects to another website and addresses with a `?` are not supported by EmDash.

@@ -6,9 +6,17 @@ import type { SandboxedPlugin } from "emdash/plugin";
 import { handleAdmin } from "./admin.js";
 import { CONFIG_KEY, normalizeConfig } from "./config.js";
 import { buildGraph } from "./graph.js";
-import { buildEntryRecord, entryKey, entryStore, type EntryRecord } from "./record.js";
+import { handlePanel } from "./panel.js";
+import {
+	buildEntryRecord,
+	entryKey,
+	entryStore,
+	removeEntryRecord,
+	type EntryRecord,
+} from "./record.js";
 import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
 import { mergeRobots } from "./robots.js";
+import { loadScan, SCAN_TASK, scanStep } from "./scan.js";
 
 async function loadConfig(ctx: PluginContext) {
 	return normalizeConfig(await ctx.kv.get(CONFIG_KEY));
@@ -20,7 +28,7 @@ async function refreshEntry(ctx: PluginContext, collection: string, content: unk
 	if (typeof id !== "string") return;
 	try {
 		const config = await loadConfig(ctx);
-		await buildEntryRecord(ctx, collection, id, config.jsonLdField);
+		await buildEntryRecord(ctx, collection, id, config);
 	} catch (error) {
 		ctx.log.warn("could not refresh entry record", { collection, id, error: String(error) });
 	}
@@ -46,7 +54,7 @@ const plugin: SandboxedPlugin = {
 					record =
 						(await entryStore(ctx).get(entryKey(collection, id))) ??
 						// First render of an entry saved before the plugin was installed.
-						(await buildEntryRecord(ctx, collection, id, config.jsonLdField));
+						(await buildEntryRecord(ctx, collection, id, config));
 				} catch (error) {
 					ctx.log.warn("could not load entry record", { collection, id, error: String(error) });
 				}
@@ -96,13 +104,19 @@ const plugin: SandboxedPlugin = {
 		},
 		// Continues a redirects import a few rows at a time until it is done.
 		cron: async (event, ctx) => {
+			if (event.name === SCAN_TASK) {
+				const scan = await loadScan(ctx);
+				if (scan?.status === "running") await scanStep(ctx, scan, await loadConfig(ctx));
+				else await ctx.cron?.cancel(SCAN_TASK);
+				return;
+			}
 			if (event.name !== IMPORT_TASK) return;
 			const state = await loadImport(ctx);
 			if (state?.status === "adding") await addMore(ctx, state);
 			else await ctx.cron?.cancel(IMPORT_TASK);
 		},
 		"content:afterDelete": async (event, ctx) => {
-			await entryStore(ctx).delete(entryKey(event.collection, event.id));
+			await removeEntryRecord(ctx, event.collection, event.id);
 		},
 	},
 	routes: {
@@ -110,6 +124,12 @@ const plugin: SandboxedPlugin = {
 		admin: {
 			permission: "plugins:read",
 			handler: async (routeCtx, ctx) => handleAdmin(routeCtx.input, routeCtx.user?.role, ctx),
+		},
+		// The "Google preview" panel in the entry editor.
+		"editor/preview": {
+			permission: "content:read",
+			handler: async (routeCtx, ctx) =>
+				handlePanel(routeCtx.input, routeCtx.ui?.entry, routeCtx.user?.role, ctx),
 		},
 		hello: {
 			handler: async (_routeCtx, ctx) => {
