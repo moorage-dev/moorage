@@ -884,7 +884,7 @@ function typesTab(data: AdminData, pendingHide: string | undefined): Block[] {
 	const inner: Block[] = [
 		{
 			type: "context",
-			text: "Google is told what each kind of content is, so it can show it properly: a blog post with its author and date, a service as a service. These were worked out from the names and are usually right. Picking from a menu saves straight away.",
+			text: "Google is told what each kind of content is, so it can show it properly: a blog post with its author and date, a service as a service. These were worked out from the names and are usually right. Every kind of content that has its own pages is listed here; content that only appears inside other pages, such as testimonials, is not. To change a single page (an About or Contact page, say), open it and use Change page type in its Google preview panel. Picking from a menu saves straight away.",
 		},
 	];
 	// Hiding a whole kind of content from Google is the one choice here that
