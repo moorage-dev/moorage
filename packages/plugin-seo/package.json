@@ -12,6 +12,17 @@
 		"yoast alternative"
 	],
 	"license": "FSL-1.1-MIT",
+	"author": "Moorage (https://moorage.dev)",
+	"homepage": "https://github.com/moorage-dev/moorage/tree/main/packages/plugin-seo#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/moorage-dev/moorage.git",
+		"directory": "packages/plugin-seo"
+	},
+	"bugs": "https://github.com/moorage-dev/moorage/issues",
+	"publishConfig": {
+		"access": "public"
+	},
 	"type": "module",
 	"main": "dist/index.mjs",
 	"exports": {
@@ -26,6 +37,7 @@
 		"!dist/*.tar.gz",
 		"emdash-plugin.jsonc",
 		"listing",
+		"CHANGELOG.md",
 		"LICENSE",
 		"README.md"
 	],
@@ -37,7 +49,7 @@
 		"test": "emdash-plugin validate && vitest run",
 		"bundle": "emdash-plugin bundle",
 		"login": "emdash-plugin login",
-		"publish": "emdash-plugin publish",
+		"registry:publish": "emdash-plugin publish",
 		"release:setup": "emdash-plugin release setup"
 	},
 	"peerDependencies": {

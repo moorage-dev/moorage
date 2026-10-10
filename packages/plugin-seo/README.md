@@ -2,8 +2,6 @@
 
 SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured data graph, noindex and snippet rules, a Google preview, on-page SEO checks and redirects import from WordPress. Runs on any EmDash site, self-hosted or on Moorage, with no account and no key.
 
-Status: pre-release, feature-complete for 0.1: the schema graph, the robots tag, the SEO page with redirects import, page checks, and the Google preview panel.
-
 ## What it does today
 
 - Replaces EmDash's single JSON-LD object with one linked graph per page: Organization (or Person, or a LocalBusiness type), WebSite, WebPage, BreadcrumbList, the primary image, and BlogPosting with byline authors and dates on article pages.
@@ -15,23 +13,25 @@ It does not write the page title, the sitemap or robots.txt; EmDash core and you
 
 ## Install
 
-Registry (after the first release): search "SEO" in your EmDash admin under Plugins.
-
-npm, pinned in code:
+From npm, registered in your site's code:
 
 ```sh
 pnpm add @moorage/plugin-seo
 ```
 
 ```js
-import seo from "@moorage/plugin-seo";
 // astro.config.mjs
+import seo from "@moorage/plugin-seo";
 import emdash from "emdash/astro";
 
 export default defineConfig({
 	integrations: [emdash({ sandboxed: [seo] })],
 });
 ```
+
+`sandboxed` needs a sandbox runner: on Cloudflare it is the Worker Loader binding from `@emdash-cms/cloudflare`; on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer.
+
+Installing from the Plugins screen in the EmDash admin (the registry) is not available yet.
 
 ## The SEO page
 
