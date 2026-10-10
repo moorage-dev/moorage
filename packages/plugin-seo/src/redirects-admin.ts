@@ -218,6 +218,10 @@ function skippedTable(skipped: SkippedRow[]): Block[] {
 	const blocks: Block[] = [
 		{ type: "header", text: `Skipped (${skipped.length})` },
 		{
+			type: "context",
+			text: "Skipped rows are not added. Copy any you still need and add them by hand under Manage > Redirects, which also accepts patterns.",
+		},
+		{
 			type: "table",
 			page_action_id: "skipped_table",
 			columns: [
@@ -251,9 +255,9 @@ export interface RedirectRow {
 const ROWS_SHOWN = 20;
 
 const KINDS: Array<{ value: string; label: string }> = [
-	{ value: "301", label: "Permanent (301)" },
-	{ value: "302", label: "Temporary (302)" },
-	{ value: "410", label: "Page deleted on purpose (410)" },
+	{ value: "301", label: "Permanent" },
+	{ value: "302", label: "Temporary" },
+	{ value: "410", label: "Deleted on purpose" },
 ];
 
 function kindLabel(type: number): string {
@@ -517,7 +521,7 @@ export function redirectsTab(view: RedirectsView): Block[] {
 	const blocks: Block[] = [
 		{
 			type: "context",
-			text: "Send visitors from an old address to a new one (301 redirects), so links and Google results keep working after a page moves.",
+			text: "Send visitors from an old address to a new one, so links and Google results keep working. When you change a page's address in EmDash, the old one is redirected for you. Add one here for anything else, such as addresses from an old site.",
 		},
 	];
 
@@ -583,8 +587,8 @@ export function redirectsTab(view: RedirectsView): Block[] {
 				{
 					type: "link",
 					label: view.more
-						? `Showing the newest ${rows.length}. All redirects and the missing-page log`
-						: "Missing-page log",
+						? `Showing the newest ${rows.length}. See all redirects, and addresses visitors tried that do not exist`
+						: "See addresses visitors tried that do not exist",
 					target: { kind: "external", url: view.managerUrl },
 				},
 			],

@@ -43,7 +43,7 @@ const REASON = {
 	noTarget: "No new address",
 	same: "Old and new address are the same",
 	code: "Unknown redirect type",
-	pattern: "Pattern needs a human to rewrite it",
+	pattern: "Uses a pattern. Add it by hand under Manage > Redirects",
 	inactive: "Switched off in the export",
 	repeated: "Listed twice",
 	exists: "Already exists",

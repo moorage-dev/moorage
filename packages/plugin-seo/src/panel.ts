@@ -99,7 +99,9 @@ export async function handlePanel(
 	const guessed = ["home", "index", ""].includes(item.slug ?? "")
 		? `${root}/`
 		: `${root}/${item.slug}`;
-	const url = publicUrl ?? guessed;
+	// The front page lives at the site's root, whatever its entry is called.
+	const front = ["home", "index"].includes(item.slug ?? "");
+	const url = front ? `${root}/` : (publicUrl ?? guessed);
 	const title = record.title || "(no title)";
 	const description = item.seo?.description?.trim() ?? "";
 	const collectionType: PageSchemaType =
@@ -123,7 +125,7 @@ export async function handlePanel(
 		},
 		{
 			type: "context",
-			text: "Shows the published page, as Google sees it. Changes to the page appear here once published; SEO panel changes appear when saved. Google may rewrite titles and descriptions, and your site may add its name to the title.",
+			text: "What Google sees: the published page, with the SEO title and description as last saved. Google may rewrite them, and your site may add its name to the title.",
 		},
 		{
 			type: "fields",

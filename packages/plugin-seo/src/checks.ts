@@ -75,6 +75,9 @@ interface ContentFacts {
 	hasImage: boolean;
 }
 
+// Titles that say nothing about the page.
+const GENERIC_TITLES = new Set(["home", "homepage", "home page", "index", "untitled", "welcome"]);
+
 // Field names that hold addresses or identifiers, not text a visitor reads.
 const NOT_TEXT = new Set(["_type", "_key", "id", "slug", "url", "href", "src", "style", "icon"]);
 
@@ -125,12 +128,21 @@ export function checkEntry(input: CheckInput): Issue[] {
 			fix: "Give the page a title.",
 		});
 	}
+	// "Home" as the headline of the site's own search result says nothing about it.
+	if (GENERIC_TITLES.has(searchTitle.toLowerCase())) {
+		issues.push({
+			id: "generic-title",
+			level: "fix",
+			message: `The title is just "${searchTitle}", which is what Google shows as the headline.`,
+			fix: "Put your name and what you do in SEO Title, in the page's SEO panel.",
+		});
+	}
 	if (seo && !seo.description?.trim()) {
 		issues.push({
 			id: "no-description",
 			level: "fix",
-			message: "No search description. Google will write its own summary for this page.",
-			fix: "Add a description in the SEO panel.",
+			message: "No search description, so Google writes its own summary of this page.",
+			fix: "Fill in Meta Description in the page's SEO panel.",
 		});
 	}
 	if (input.duplicateTitle && searchTitle !== "") {

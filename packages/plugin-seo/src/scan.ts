@@ -46,6 +46,10 @@ export interface Stats {
 	/** First rows of the "To fix" table. */
 	rows: Array<{ collection: string; id: string; title: string; issues: string[] }>;
 	more: boolean;
+	/** First pages with advice only ("Worth a look"). */
+	look?: Array<{ collection: string; id: string; title: string; issues: string[] }>;
+	/** Titles of the first pages hidden from search. */
+	hiddenTitles?: string[];
 }
 
 export async function loadScan(ctx: PluginContext): Promise<ScanState | null> {
@@ -193,13 +197,13 @@ async function titlesStep(ctx: PluginContext, state: ScanState) {
 	}
 }
 
-function row(data: EntryRecord): Stats["rows"][number] {
+function row(data: EntryRecord, level: "fix" | "look" = "fix"): Stats["rows"][number] {
 	return {
 		collection: data.collection ?? "",
 		id: data.entryId ?? "",
 		title: data.title || "(no title)",
 		issues: (data.issues ?? [])
-			.filter((issue) => issue.level === "fix")
+			.filter((issue) => issue.level === level)
 			.map((issue) => issue.message),
 	};
 }
@@ -208,7 +212,20 @@ function row(data: EntryRecord): Stats["rows"][number] {
 function count(tally: Stats, data: EntryRecord, sign: 1 | -1): void {
 	if (!data.status || data.status === "draft" || data.status === "skip") return;
 	tally.checked += sign;
-	if (data.status === "hidden") tally.hidden += sign;
+	if (data.status === "hidden") {
+		tally.hidden += sign;
+		const titles = tally.hiddenTitles ?? [];
+		const title = data.title || "(no title)";
+		tally.hiddenTitles =
+			sign === 1 ? [...titles, title].slice(0, FIX_ROWS) : titles.filter((t) => t !== title);
+	}
+	if (data.status === "look") {
+		const look = tally.look ?? [];
+		tally.look =
+			sign === 1
+				? [...look, row(data, "look")].slice(0, FIX_ROWS)
+				: look.filter((entry) => entry.id !== data.entryId);
+	}
 	if (data.status !== "fix") return;
 	tally.fix += sign;
 	if (sign === 1) {
@@ -262,17 +279,21 @@ export async function scanStep(
 /** Count pages by status and read the first pages to fix. */
 export async function readStats(ctx: PluginContext): Promise<Stats> {
 	const store = entryStore(ctx);
-	const [checked, fix, hidden, list] = await Promise.all([
+	const [checked, fix, list, look, hidden] = await Promise.all([
 		store.count({ status: { in: ["ready", "look", "fix", "hidden"] } }),
 		store.count({ status: "fix" }),
-		store.count({ status: "hidden" }),
 		store.query({ where: { status: "fix" }, limit: FIX_ROWS }),
+		store.query({ where: { status: "look" }, limit: FIX_ROWS }),
+		store.query({ where: { status: "hidden" }, limit: FIX_ROWS }),
 	]);
 	return {
 		checked,
 		fix,
-		hidden,
+		// Hidden pages are few; the first page of them is the count unless there are more.
+		hidden: hidden.hasMore ? FIX_ROWS + 1 : hidden.items.length,
 		rows: list.items.map(({ data }) => row(data)),
 		more: list.hasMore,
+		look: look.items.map(({ data }) => row(data, "look")),
+		hiddenTitles: hidden.items.map(({ data }) => data.title || "(no title)"),
 	};
 }

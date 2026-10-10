@@ -67,8 +67,10 @@ test("the first visit shows real numbers, and answering the one question changes
 	await expect(page.getByText("Pages checked")).toBeVisible({ timeout: 30_000 });
 	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(3);
 
-	await page.getByRole("button", { name: "Answer now" }).click();
-	await page.getByText("A local business customers visit").click();
+	// The one question is open on a new site, with nothing pre-selected.
+	await page.getByText("A local business customers visit").first().click();
+	await page.getByRole("combobox").first().click();
+	await page.getByRole("option", { name: "Restaurant, cafe or bakery" }).click();
 	await page.getByRole("textbox", { name: "Name", exact: true }).first().fill("Acme Bakery");
 	await page.getByRole("textbox", { name: "Street address" }).first().fill("1 Main St");
 	await page.getByRole("textbox", { name: "Town or city" }).first().fill("Springfield");
@@ -76,15 +78,19 @@ test("the first visit shows real numbers, and answering the one question changes
 	await expect(
 		page.getByText("Saved. Google will pick this up next time it visits."),
 	).toBeVisible();
-	await expect(page.getByText("One thing left")).toHaveCount(0);
+	await expect(page.getByText("Tell Google who this site is for")).toHaveCount(0);
+	// The Overview now follows up on what a local business still owes.
+	await expect(page.getByRole("cell", { name: "Opening hours" })).toBeVisible();
+	await expect(page.getByRole("cell", { name: "Phone number" })).toBeVisible();
 
 	// Settings shows what was just entered without opening anything.
 	await page.getByRole("tab", { name: "Settings" }).click();
-	await expect(page.getByText("Contact and address: 1 Main St, Springfield")).toBeVisible();
+	await expect(page.getByText("Address and phone: 1 Main St, Springfield")).toBeVisible();
+	await expect(page.getByText("Opening hours (needed, not added yet)")).toBeVisible();
 
 	await page.goto("/");
 	expect(graphOf((await jsonLdScripts(page))[0])[0]).toMatchObject({
-		"@type": "LocalBusiness",
+		"@type": "FoodEstablishment",
 		name: "Acme Bakery",
 		address: {
 			"@type": "PostalAddress",
@@ -99,6 +105,9 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page 
 	await page.getByRole("tab", { name: "Redirects" }).click();
 	await expect(page.getByText("No redirects yet")).toBeVisible();
 
+	if (!(await page.getByRole("textbox", { name: /old address/ }).isVisible())) {
+		await page.getByRole("button", { name: "Add a redirect" }).click();
+	}
 	await page.getByRole("textbox", { name: /old address/ }).fill("/old-pricing");
 	await page.getByRole("textbox", { name: "Send them to" }).fill("/pricing");
 	await page.getByRole("button", { name: "Add redirect" }).click();
@@ -111,7 +120,9 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page 
 		.fill("source,target,regex,code\n/old-contact/,/contact,0,301\n^/legacy/(\\d+)$,/x,1,301");
 	await page.getByRole("button", { name: "Check list" }).click();
 	await expect(page.getByText("1 ready, 1 skipped")).toBeVisible();
-	await expect(page.getByText("Pattern needs a human to rewrite it")).toBeVisible();
+	await expect(
+		page.getByText("Uses a pattern. Add it by hand under Manage > Redirects"),
+	).toBeVisible();
 	await page.getByRole("button", { name: "Add 1 redirect" }).click();
 	await page.getByRole("button", { name: "Add", exact: true }).click();
 	await expect(page.getByText("1 redirect added from your list")).toBeVisible();
@@ -132,9 +143,12 @@ test("fixing a listed page in the editor takes it off the list", async ({ page }
 	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(3, { timeout: 30_000 });
 
 	// The link opens the entry editor, where the Google preview panel explains the problem.
-	await page.getByRole("link", { name: "Open page" }).first().click();
+	await page
+		.getByRole("row", { name: /Pricing/ })
+		.getByRole("link", { name: "Open page" })
+		.click();
 	await page.getByRole("button", { name: "Google preview" }).first().click();
-	await expect(page.getByText("To fix: No search description.")).toBeVisible();
+	await expect(page.getByText("To fix: No search description,")).toBeVisible();
 
 	// The editor saves by itself; wait for that save to reach the server.
 	const saved = page.waitForResponse(

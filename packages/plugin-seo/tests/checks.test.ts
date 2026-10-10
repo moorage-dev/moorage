@@ -53,8 +53,8 @@ describe("page checks", () => {
 			{
 				id: "no-description",
 				level: "fix",
-				message: "No search description. Google will write its own summary for this page.",
-				fix: "Add a description in the SEO panel.",
+				message: "No search description, so Google writes its own summary of this page.",
+				fix: "Fill in Meta Description in the page's SEO panel.",
 			},
 		]);
 		expect(statusOf(issues, false)).toBe("fix");
@@ -80,6 +80,19 @@ describe("page checks", () => {
 		expect(
 			ids({ slug: "about", seo: { ...input().seo!, canonical: "https://acme.test/" } }),
 		).toEqual(["canonical-elsewhere"]);
+	});
+
+	it("flags a page whose title says nothing, such as Home", () => {
+		expect(ids({ title: "Home", data: { title: "Home", body: LONG_TEXT } })).toEqual([
+			"generic-title",
+		]);
+		// A real search title set in the SEO panel clears it.
+		expect(
+			ids({
+				title: "Home",
+				seo: { ...input().seo!, title: "Acme Bakery: fresh bread in Springfield" },
+			}),
+		).toEqual([]);
 	});
 
 	it("gives advice without marking the page as needing a fix", () => {
@@ -219,7 +232,7 @@ describe("checks on a real site", () => {
 		const stats = flat(response.blocks).find((block) => block.type === "stats");
 		expect(stats?.type === "stats" && stats.items.map((item) => [item.label, item.value])).toEqual([
 			["Pages checked", 2],
-			["Ready", 1],
+			["Nothing to fix", 1],
 			["To fix", 1],
 		]);
 		const table = flat(response.blocks).find(
@@ -228,7 +241,7 @@ describe("checks on a real site", () => {
 		expect(table?.type === "table" && table.rows).toEqual([
 			{
 				page: "Contact",
-				missing: "No search description. Google will write its own summary for this page.",
+				missing: "No search description, so Google writes its own summary of this page.",
 				open: {
 					type: "link",
 					label: "Open page",
@@ -317,7 +330,7 @@ describe("checks on a real site", () => {
 		const response = await checkAll(runtime);
 
 		expect((await record(runtime, entry.id))?.status).toBe("hidden");
-		expect(text(response)).toContain("1 page is hidden from search and not counted.");
+		expect(text(response)).toContain("1 page is hidden from Google and not counted: Thank you.");
 	});
 
 	it("leaves out content that has no page of its own", async () => {
@@ -373,6 +386,30 @@ describe("checks on a real site", () => {
 			content: { id: entry.id },
 		});
 		expect((await record(runtime, entry.id))?.title).toBe("New title");
+	});
+
+	it("lists advice separately from fixes, so the count of pages to fix stays honest", async () => {
+		const runtime = await start();
+		const entry = await runtime.fixtures.content("pages", {
+			slug: "short",
+			data: { title: "Short page", body: "Hi." },
+			status: "published",
+		});
+		await runtime.actions.content.update("pages", entry.id, {
+			seo: { description: "A short page.", image: "/a.jpg" },
+		});
+		const response = await checkAll(runtime);
+		await runtime.transport.invokeHook("content:afterSave", {
+			collection: "pages",
+			content: { id: entry.id },
+			isNew: false,
+		});
+		const fresh = await runtime.admin.loadPage(PAGE);
+
+		expect(text(fresh)).toContain("No pages to fix. Nice work.");
+		expect(text(fresh)).toContain("Worth a look (1)");
+		expect(text(fresh)).toContain("This page has almost no text.");
+		expect(response.blocks.length).toBeGreaterThan(0);
 	});
 
 	it("shows an editor the pages to fix, read-only", async () => {
@@ -450,8 +487,8 @@ describe("Google preview panel", () => {
 		expect(panel.blocks[1]).toEqual({ type: "header", text: "Wedding cakes" });
 		expect(text(panel)).toContain("No description yet. Google will pick some text from the page.");
 		expect(text(panel)).toContain('{"label":"Shown to Google as","value":"Service"}');
-		expect(text(panel)).toContain("To fix: No search description.");
-		expect(text(panel)).toContain("Shows the published page, as Google sees it.");
+		expect(text(panel)).toContain("To fix: No search description,");
+		expect(text(panel)).toContain("What Google sees: the published page");
 		// Admin extras.
 		expect(text(panel)).toContain(
 			"https://search.google.com/test/rich-results?url=https%3A%2F%2Facme.test%2Fservices%2Fwedding-cakes",

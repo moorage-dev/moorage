@@ -45,7 +45,11 @@ describe("reading a pasted list", () => {
 			{ source: "/temp", destination: "/sale", type: 302 },
 		]);
 		expect(plan.skipped).toEqual([
-			{ line: 4, source: "^/shop/(\\d+)/(.*)$", reason: "Pattern needs a human to rewrite it" },
+			{
+				line: 4,
+				source: "^/shop/(\\d+)/(.*)$",
+				reason: "Uses a pattern. Add it by hand under Manage > Redirects",
+			},
 		]);
 	});
 
@@ -84,7 +88,7 @@ describe("reading a pasted list", () => {
 			{ source: "/shop/[...rest]", destination: "/store", type: 301 },
 		]);
 		expect(plan.skipped.map((row) => row.reason)).toEqual([
-			"Pattern needs a human to rewrite it",
+			"Uses a pattern. Add it by hand under Manage > Redirects",
 			"Switched off in the export",
 		]);
 	});

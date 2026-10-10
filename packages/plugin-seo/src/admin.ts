@@ -18,7 +18,6 @@ import {
 	checkList,
 	exportText,
 	IMPORT_KEY,
-	loadImport,
 	plural,
 	listRedirects,
 	redirectsTab,
@@ -94,10 +93,66 @@ function splitProfiles(links: string[]): { named: Record<string, string>; other:
 	return { named, other };
 }
 
-/** A section title that says what is already filled in, so nothing has to be opened to check. */
-function summary(title: string, parts: Array<string | undefined>): string {
+/** How much a section matters for the kind of site chosen. */
+type Importance = "needed" | "worth" | "optional";
+
+const IMPORTANCE_LABEL: Record<Importance, string> = {
+	needed: "needed",
+	worth: "worth adding",
+	optional: "optional",
+};
+
+/**
+ * A section title that says how much the section matters and what is already
+ * filled in, so nothing has to be opened to find out.
+ */
+function summary(title: string, importance: Importance, parts: Array<string | undefined>): string {
 	const filled = parts.filter((part): part is string => !!part);
-	return filled.length > 0 ? `${title}: ${filled.join(", ")}` : `${title} (not added yet)`;
+	if (filled.length > 0) return `${title}: ${filled.join(", ")}`;
+	return `${title} (${IMPORTANCE_LABEL[importance]}, not added yet)`;
+}
+
+/** Opening hours in a few words: "Mon 09:00-17:00, Tue 12:00-14:30 and 18:00-22:00". */
+function hoursSummary(site: SiteIdentity): string[] {
+	return DAYS.map((day) => {
+		const hours = formatDayHours(day, site.openingHours).replace(", ", " and ");
+		return hours === "" ? undefined : `${day.slice(0, 3)} ${hours}`;
+	}).filter((part): part is string => part !== undefined);
+}
+
+/**
+ * What Google needs before it can describe this kind of site properly. Only
+ * these are followed up on the Overview; everything else is the owner's choice.
+ */
+function missingEssentials(data: AdminData): Array<{ what: string; why: string }> {
+	const { site } = data.config;
+	const kind = siteKind(site);
+	const missing: Array<{ what: string; why: string }> = [];
+	if (kind === "local") {
+		if (!site.address?.streetAddress || !site.address.addressLocality) {
+			missing.push({
+				what: "Address",
+				why: "Without it Google cannot treat you as a local business.",
+			});
+		}
+		if (site.openingHours.length === 0) {
+			missing.push({ what: "Opening hours", why: "Google cannot show when you are open." });
+		}
+		if (!site.telephone) {
+			missing.push({ what: "Phone number", why: "Customers cannot call you from Google." });
+		}
+	} else {
+		if (kind === "organization" && !site.logo) {
+			missing.push({ what: "Logo", why: "Google shows it beside your name." });
+		}
+		if (site.sameAs.length === 0) {
+			missing.push({
+				what: "Profiles elsewhere",
+				why: "They help Google connect your other pages to this site.",
+			});
+		}
+	}
+	return missing;
 }
 
 function siteKind(identity: SiteIdentity): SiteKind {
@@ -141,6 +196,8 @@ interface PageState {
 	tab: number;
 	/** The redirect whose edit form is open on the Redirects tab. */
 	editing?: RedirectRow;
+	/** Content type an admin asked to hide from search, awaiting confirmation. */
+	pendingHide?: string;
 	/** Keep the add-redirect form open, after a rejected entry. */
 	adding?: boolean;
 	/** The site's redirects as text, when the admin asked to see them. */
@@ -217,7 +274,7 @@ function pageStats(data: AdminData): Block[] {
 			type: "stats",
 			items: [
 				{ label: "Pages checked", value: stats.checked },
-				{ label: "Ready", value: ready },
+				{ label: "Nothing to fix", value: ready },
 				{ label: "To fix", value: stats.fix },
 			],
 		},
@@ -262,16 +319,52 @@ function pagesToFix(data: AdminData): Block[] {
 			});
 		}
 	}
+	const look = stats.look ?? [];
+	if (look.length > 0) {
+		blocks.push({
+			type: "accordion",
+			label: `Worth a look (${look.length}${look.length === FIX_ROWS ? "+" : ""})`,
+			blocks: [
+				{
+					type: "context",
+					text: "Nothing is wrong with these pages. These are improvements for when you have time.",
+				},
+				{
+					type: "table",
+					page_action_id: "look_table",
+					columns: [
+						{ key: "page", label: "Page" },
+						{ key: "advice", label: "Could be better" },
+						{ key: "open", label: "", format: "element" },
+					],
+					rows: look.map((row) => ({
+						page: row.title,
+						advice: row.issues.join(" "),
+						open: {
+							type: "link",
+							label: "Open page",
+							target: { kind: "content", collection: row.collection, id: row.id },
+						},
+					})),
+				},
+			],
+		});
+	}
 	if (stats.hidden > 0) {
+		const names = (stats.hiddenTitles ?? []).join(", ");
 		blocks.push({
 			type: "context",
-			text: `${stats.hidden} ${stats.hidden === 1 ? "page is" : "pages are"} hidden from search and not counted.`,
+			text: `${stats.hidden > FIX_ROWS ? "More than 10" : stats.hidden} ${stats.hidden === 1 ? "page is" : "pages are"} hidden from Google and not counted${names ? `: ${names}` : ""}. To show one again, open it and switch off "Hide from search engines" in its SEO panel.`,
 		});
 	}
 	if (scan.finishedAt) {
+		const when = new Date(scan.finishedAt).toLocaleDateString("en-GB", {
+			day: "numeric",
+			month: "short",
+		});
 		blocks.push({
 			type: "context",
-			text: `Every page is checked again when it is saved. Whole site last checked ${scan.finishedAt.slice(0, 16).replace("T", " ")} UTC.`,
+			text: `Each page is checked again when it is saved. Last full check: ${when}.`,
 		});
 	}
 	return blocks;
@@ -310,7 +403,7 @@ function hiddenBanner(data: AdminData, admin: boolean): Block[] {
 			type: "banner",
 			variant: "alert",
 			title: "Some pages are hidden from Google",
-			description: `Every page in ${names} is hidden from search engines. If that is a leftover from building the site, switch it back on under Settings, Content types.`,
+			description: `Every page in ${names} is hidden from search engines. If that is a leftover from building the site, switch it back on in the Settings tab, under Content types.`,
 		},
 	];
 	if (admin) {
@@ -323,24 +416,24 @@ function hiddenBanner(data: AdminData, admin: boolean): Block[] {
 }
 
 /**
- * The one thing worth asking: who the site is for. Everything else has a
- * sensible default. The prompt is two lines so the pages to fix stay in view,
- * and the form opens in place because a button cannot switch tabs.
+ * The one question nothing can be guessed for: who the site is for. The form
+ * opens in place because a button cannot switch tabs, and no answer is
+ * pre-selected because the easy default would be wrong for a shop.
  */
 function setupPrompt(data: AdminData, siteName: string): Block[] {
 	const { steps, site } = data.config;
 	if (steps.identity) return [];
-	const kind = siteKind(site);
 	return [
 		{
 			type: "banner",
-			title: "One thing left: tell Google who this site is for",
+			title: "Tell Google who this site is for",
 			description:
-				"It takes a minute. Google can then show your name and details beside your pages.",
+				"Google can then show your name and details beside your pages. It takes a minute.",
 		},
 		{
 			type: "accordion",
-			label: "Answer now",
+			label: "Set this up (1 minute)",
+			default_open: true,
 			blocks: [
 				{
 					type: "form",
@@ -351,18 +444,17 @@ function setupPrompt(data: AdminData, siteName: string): Block[] {
 							action_id: "kind",
 							label: "This site is for",
 							options: [
+								{ label: "A local business customers visit (shop, cafe, clinic)", value: "local" },
 								{ label: "A company or organisation", value: "organization" },
 								{ label: "A person", value: "person" },
-								{ label: "A local business customers visit", value: "local" },
 							],
-							initial_value: kind,
 						},
 						{
 							type: "select",
 							action_id: "business",
 							label: "Kind of business",
-							options: BUSINESS_GROUPS,
-							initial_value: kind === "local" ? site.type : "LocalBusiness",
+							options: [{ label: "Choose the closest", value: "" }, ...BUSINESS_GROUPS],
+							initial_value: "",
 							condition: { field: "kind", eq: "local" },
 						},
 						{
@@ -390,18 +482,69 @@ function setupPrompt(data: AdminData, siteName: string): Block[] {
 					],
 					submit: { label: "Save", action_id: "setup_identity" },
 				},
-				{ type: "context", text: "Logo, phone, opening hours and more are under Settings." },
 			],
 		},
 	];
 }
 
+/** What Google is being told about the site, in one sentence. */
+function identityLine(data: AdminData, siteName: string): string {
+	const { site } = data.config;
+	const kind = siteKind(site);
+	const group = BUSINESS_GROUPS.find((candidate) => candidate.value === site.type)?.label;
+	const what =
+		kind === "person"
+			? "a person"
+			: kind === "local"
+				? (group ?? "a local business").toLowerCase()
+				: "a company";
+	const where = [site.address?.streetAddress, site.address?.addressLocality]
+		.filter(Boolean)
+		.join(", ");
+	const hours = hoursSummary(site);
+	return [
+		`Google is told: ${site.name ?? siteName}, ${what}`,
+		where ? `, ${where}` : "",
+		hours.length > 0 ? `, open ${hours.join(", ")}` : "",
+		". Change this in the Settings tab.",
+	].join("");
+}
+
+/**
+ * Follow-up for the details that matter for this kind of site. Kept apart
+ * from the pages to fix: these need an admin and the Settings tab, and must
+ * not inflate the count of pages.
+ */
+function businessDetails(data: AdminData, siteName: string): Block[] {
+	if (!data.config.steps.identity) return [];
+	const missing = missingEssentials(data);
+	if (missing.length === 0) return [{ type: "context", text: identityLine(data, siteName) }];
+	return [
+		{ type: "header", text: "Your details" },
+		{
+			type: "context",
+			text: `${missing.length} ${missing.length === 1 ? "thing" : "things"} Google needs from you. Add ${missing.length === 1 ? "it" : "them"} in the Settings tab.`,
+		},
+		{
+			type: "table",
+			page_action_id: "details_table",
+			columns: [
+				{ key: "what", label: "Missing" },
+				{ key: "why", label: "Why it matters" },
+			],
+			rows: missing,
+		},
+	];
+}
+
 function overviewTab(data: AdminData, siteName: string): Block[] {
-	// Results first, then anything alarming, then the one open question, then the work list.
+	// Results first, then anything alarming, then the open question or the
+	// details still owed, then the pages to work through.
 	return [
 		...pageStats(data),
 		...hiddenBanner(data, true),
 		...setupPrompt(data, siteName),
+		...businessDetails(data, siteName),
 		...pagesToFix(data),
 		...checkButton(data),
 	];
@@ -448,13 +591,13 @@ function identityTab(data: AdminData, siteName: string): Block[] {
 	const { site } = data.config;
 	const kind = siteKind(site);
 	const local = kind === "local";
-	// Google requires an address on a local business.
-	const needsAddress = local && site.address === undefined;
+	const chosen = data.config.steps.identity;
+	const profiles = splitProfiles(site.sameAs);
 
 	const blocks: Block[] = [
 		{
 			type: "context",
-			text: "This is what Google can show about you beside your pages. It becomes the site's schema markup (structured data).",
+			text: "Google reads these details from your site and can show them beside your pages. Sections marked needed are followed up on the Overview; the rest are up to you.",
 		},
 		{
 			type: "form",
@@ -465,178 +608,199 @@ function identityTab(data: AdminData, siteName: string): Block[] {
 					action_id: "kind",
 					label: "This site is for",
 					options: [
+						{ label: "A local business customers visit (shop, cafe, clinic)", value: "local" },
 						{ label: "A company or organisation", value: "organization" },
 						{ label: "A person", value: "person" },
-						{ label: "A local business customers visit", value: "local" },
 					],
-					initial_value: kind,
+					// No answer is pre-selected until someone has chosen one.
+					...(chosen ? { initial_value: kind } : {}),
 				},
 				{
 					type: "select",
 					action_id: "business",
 					label: "Kind of business",
-					options: BUSINESS_GROUPS,
-					initial_value: local ? site.type : "LocalBusiness",
+					options: [{ label: "Choose the closest", value: "" }, ...BUSINESS_GROUPS],
+					initial_value: local ? site.type : "",
 					condition: { field: "kind", eq: "local" },
 				},
 				{
 					type: "text_input",
 					action_id: "name",
 					label: "Name",
+					placeholder: "Your name or your business's name",
 					initial_value: site.name ?? siteName,
 				},
 				{
 					type: "text_input",
-					action_id: "alternate_name",
-					label: "Also known as (a short name or abbreviation, optional)",
-					initial_value: site.alternateName ?? "",
-				},
-				{
-					type: "text_input",
 					action_id: "description",
-					label: "Short description (one or two sentences)",
+					label: "What you do, in one or two sentences",
 					multiline: true,
 					initial_value: site.description ?? "",
-				},
-				{
-					type: "text_input",
-					action_id: "logo_url",
-					label:
-						"Logo web address (in Media, open your logo and use Copy URL; square, at least 112 pixels wide)",
-					placeholder: "https://example.com/logo.png",
-					initial_value: site.logo ?? "",
 				},
 			],
 			submit: { label: "Save", action_id: "save_identity" },
 		},
-		{
-			type: "accordion",
-			label: summary("Contact and address", [
-				site.address?.streetAddress,
-				site.address?.addressLocality,
-				site.telephone,
-				site.email,
-			]),
-			default_open: needsAddress,
-			blocks: [
-				{
-					type: "context",
-					text: needsAddress
-						? "Add your address so Google can list you as a local business. Until then you are described as an organisation. Use the same details as your Google Business Profile."
-						: "Use the same details as your Google Business Profile. A business with no public address can leave the address empty.",
-				},
-				{
-					type: "form",
-					block_id: "contact",
-					fields: [
-						{
-							type: "text_input",
-							action_id: "email",
-							label: "Email",
-							initial_value: site.email ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "telephone",
-							label: "Phone",
-							initial_value: site.telephone ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "street",
-							label: "Street address",
-							initial_value: site.address?.streetAddress ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "town",
-							label: "Town or city",
-							initial_value: site.address?.addressLocality ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "region",
-							label: "State or region",
-							initial_value: site.address?.addressRegion ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "postcode",
-							label: "Postcode",
-							initial_value: site.address?.postalCode ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "country",
-							label: "Country (two letters, for example GB)",
-							initial_value: site.address?.addressCountry ?? "",
-						},
-						{
-							type: "select",
-							action_id: "price_range",
-							label: "Price range",
-							options: PRICE_RANGES.map((range) => ({
-								label: range === "" ? "Not shown" : range,
-								value: range,
-							})),
-							initial_value: site.priceRange ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "areas",
-							label: "Areas you serve, one per line (for a business that travels to customers)",
-							multiline: true,
-							placeholder: "Springfield",
-							initial_value: site.areaServed.join("\n"),
-						},
-					],
-					submit: { label: "Save", action_id: "save_contact" },
-				},
-			],
-		},
+		{ type: "context", text: "Each section below is saved with its own Save button." },
 	];
 
-	if (local) {
-		blocks.push({
-			type: "accordion",
-			label: summary(
-				"Opening hours",
-				DAYS.filter((day) => formatDayHours(day, site.openingHours) !== "").map((day) =>
-					day.slice(0, 3),
-				),
-			),
-			blocks: [
-				{
-					type: "context",
-					text: "Type the hours for each day, for example 9:00-17:00. For a break in the day use two ranges: 12:00-14:30, 18:00-22:00. Leave a day empty when closed. One location for now.",
-				},
-				{
-					type: "form",
-					block_id: "hours",
-					fields: DAYS.map((day) => ({
-						type: "text_input" as const,
-						action_id: `hours_${day.toLowerCase()}`,
-						label: day,
-						placeholder: "9:00-17:00",
-						initial_value: formatDayHours(day, site.openingHours),
-					})),
-					submit: { label: "Save", action_id: "save_hours" },
-				},
-			],
-		});
-	}
+	const contact: Block = {
+		type: "accordion",
+		label: summary("Address and phone", local ? "needed" : "optional", [
+			site.address?.streetAddress,
+			site.address?.addressLocality,
+			site.telephone,
+			site.email,
+		]),
+		default_open: local && missingEssentials(data).some((item) => item.what !== "Opening hours"),
+		blocks: [
+			{
+				type: "context",
+				text: local
+					? "Google needs an address before it treats you as a local business. Use the same details as your Google Business Profile, which is what puts you on the map."
+					: "Leave the address empty if you have no public one.",
+			},
+			{
+				type: "form",
+				block_id: "contact",
+				fields: [
+					{
+						type: "text_input",
+						action_id: "street",
+						label: "Street address",
+						initial_value: site.address?.streetAddress ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "town",
+						label: "Town or city",
+						initial_value: site.address?.addressLocality ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "region",
+						label: "State or region",
+						initial_value: site.address?.addressRegion ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "postcode",
+						label: "Postcode",
+						initial_value: site.address?.postalCode ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "country",
+						label: "Country code (GB, US, IN, AU)",
+						initial_value: site.address?.addressCountry ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "telephone",
+						label: "Phone",
+						initial_value: site.telephone ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "email",
+						label: "Email",
+						initial_value: site.email ?? "",
+					},
+					{
+						type: "select",
+						action_id: "price_range",
+						label: "Price range",
+						options: PRICE_RANGES.map((range) => ({
+							label: range === "" ? "Not shown" : range,
+							value: range,
+						})),
+						initial_value: site.priceRange ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "areas",
+						label: "Areas you serve, one per line (if you travel to customers)",
+						multiline: true,
+						initial_value: site.areaServed.join("\n"),
+					},
+				],
+				submit: { label: "Save address and phone", action_id: "save_contact" },
+			},
+		],
+	};
 
-	const profiles = splitProfiles(site.sameAs);
-	blocks.push({
+	// Always present, so it can be found: for other kinds of site it says why it does not apply.
+	const hours: Block = local
+		? {
+				type: "accordion",
+				label: summary("Opening hours", "needed", hoursSummary(site)),
+				blocks: [
+					{
+						type: "context",
+						text: "Type the hours for each day, like 9:00-17:00. For a break in the day use two ranges: 12:00-14:30, 18:00-22:00. A day left empty is shown as closed.",
+					},
+					{
+						type: "form",
+						block_id: "hours",
+						fields: DAYS.map((day) => ({
+							type: "text_input" as const,
+							action_id: `hours_${day.toLowerCase()}`,
+							label: day,
+							placeholder: "Closed",
+							initial_value: formatDayHours(day, site.openingHours),
+						})),
+						submit: { label: "Save opening hours", action_id: "save_hours" },
+					},
+				],
+			}
+		: {
+				type: "accordion",
+				label: "Opening hours (only for a local business)",
+				blocks: [
+					{
+						type: "context",
+						text: 'Opening hours are for a place customers visit. Choose "A local business customers visit" above and save, and this section opens up.',
+					},
+				],
+			};
+
+	const logo: Block = {
+		type: "accordion",
+		label: summary("Logo", kind === "organization" ? "needed" : "worth", [
+			site.logo ? "added" : undefined,
+		]),
+		blocks: [
+			{
+				type: "context",
+				text: "Google can show your logo beside your name. In Media, open your logo and use Copy URL, then paste it here. Use a square image at least 112 pixels wide.",
+			},
+			{
+				type: "form",
+				block_id: "logo",
+				fields: [
+					{
+						type: "text_input",
+						action_id: "logo_url",
+						label: "Logo link",
+						placeholder: "https://example.com/logo.png",
+						initial_value: site.logo ?? "",
+					},
+				],
+				submit: { label: "Save logo", action_id: "save_logo" },
+			},
+		],
+	};
+
+	const profilesSection: Block = {
 		type: "accordion",
 		label: summary(
 			"Your profiles elsewhere",
+			local ? "worth" : "needed",
 			site.sameAs.map((link) => parseUrl(link)?.host.replace(/^www\./, "")),
 		),
 		blocks: [
 			{
 				type: "context",
-				text: "Links to your pages on other sites help Google connect them to you (sameAs). Paste the full address of each profile you have.",
+				text: "Links to your pages on other sites help Google connect them to you. Paste the full address of each profile you have.",
 			},
 			{
 				type: "form",
@@ -657,66 +821,56 @@ function identityTab(data: AdminData, siteName: string): Block[] {
 						initial_value: profiles.other.join("\n"),
 					},
 				],
-				submit: { label: "Save", action_id: "save_profiles" },
+				submit: { label: "Save profiles", action_id: "save_profiles" },
 			},
 		],
-	});
+	};
 
-	if (kind !== "person") {
-		blocks.push({
-			type: "accordion",
-			label: summary("Company details, optional", [
-				site.legalName,
-				site.foundingDate ? `founded ${site.foundingDate}` : undefined,
-				site.vatID ? "VAT" : undefined,
-			]),
-			blocks: [
-				{
-					type: "context",
-					text: "Extra facts Google can use for a company. Skip anything that does not apply.",
-				},
-				{
-					type: "form",
-					block_id: "company",
-					fields: [
-						{
-							type: "text_input",
-							action_id: "legal_name",
-							label: "Registered legal name",
-							initial_value: site.legalName ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "founded",
-							label: "Founded (year, or YYYY-MM-DD)",
-							placeholder: "2012",
-							initial_value: site.foundingDate ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "vat_id",
-							label: "VAT number",
-							initial_value: site.vatID ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "tax_id",
-							label: "Tax ID",
-							initial_value: site.taxID ?? "",
-						},
-						{
-							type: "text_input",
-							action_id: "employees",
-							label: "Number of employees",
-							initial_value: site.numberOfEmployees ? String(site.numberOfEmployees) : "",
-						},
-					],
-					submit: { label: "Save", action_id: "save_company" },
-				},
-			],
-		});
-	}
+	const more: Block = {
+		type: "accordion",
+		label: summary("More about you", "optional", [
+			site.alternateName,
+			site.legalName,
+			site.foundingDate ? `founded ${site.foundingDate}` : undefined,
+		]),
+		blocks: [
+			{ type: "context", text: "Nothing here is needed. Skip anything that does not apply." },
+			{
+				type: "form",
+				block_id: "company",
+				fields: [
+					{
+						type: "text_input",
+						action_id: "alternate_name",
+						label: "Also known as (a short name or abbreviation)",
+						initial_value: site.alternateName ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "legal_name",
+						label: "Registered legal name",
+						initial_value: site.legalName ?? "",
+					},
+					{
+						type: "text_input",
+						action_id: "founded",
+						label: "Founded (year, or YYYY-MM-DD)",
+						placeholder: "2012",
+						initial_value: site.foundingDate ?? "",
+					},
+				],
+				submit: { label: "Save", action_id: "save_company" },
+			},
+		],
+	};
 
+	// Needed sections first, then worth adding, then optional.
+	const sections = local
+		? [contact, hours, logo, profilesSection, more]
+		: kind === "organization"
+			? [logo, profilesSection, contact, more, hours]
+			: [profilesSection, logo, contact, more, hours];
+	blocks.push(...sections);
 	return blocks;
 }
 
@@ -724,121 +878,108 @@ function collectionType(data: AdminData, slug: string): PageSchemaType {
 	return data.config.collections[slug]?.type ?? defaultTypeForCollection(slug);
 }
 
-function typesTab(data: AdminData): Block[] {
+function typesTab(data: AdminData, pendingHide: string | undefined): Block[] {
 	const { config } = data;
-	const blocks: Block[] = [
+	const hiding = data.collections.find((collection) => collection.slug === pendingHide);
+	const inner: Block[] = [
 		{
-			type: "accordion",
-			label: summary(
-				"Content types",
-				data.collections.map((collection) => {
-					const hidden = config.collections[collection.slug]?.noindex === true;
-					return `${collection.label} = ${typeLabel(collectionType(data, collection.slug))}${hidden ? " (hidden)" : ""}`;
-				}),
-			),
-			blocks: [
-				{
-					type: "context",
-					text: "Google is told what each kind of content is, so it can show it properly: a blog post with its author and date, a service as a service (schema markup). These were guessed from the names and are usually right. You can also keep a whole kind of content out of search results (noindex). Picking from a menu saves straight away.",
-				},
-				{
-					type: "table",
-					page_action_id: "types_table",
-					empty_text: "This site has no content types with pages yet.",
-					columns: [
-						{ key: "name", label: "Content type" },
-						{ key: "shown", label: "", format: "element" },
-						{ key: "visible", label: "", format: "element" },
-					],
-					rows: data.collections.map((collection) => {
-						const hidden = config.collections[collection.slug]?.noindex === true;
-						return {
-							name: collection.label,
-							shown: {
-								type: "menu",
-								action_id: "set_type",
-								label: `Shown to Google as: ${typeLabel(collectionType(data, collection.slug))}`,
-								items: PAGE_TYPES.map(({ value, label }) => ({
-									label,
-									value: `${collection.slug}|${value}`,
-								})),
-							},
-							visible: {
-								type: "menu",
-								action_id: "set_visible",
-								label: hidden ? "Hidden from search" : "In search results",
-								items: [
-									{ label: "Show in search results", value: `${collection.slug}|show` },
-									{
-										label: "Hide from Google and other search engines",
-										value: `${collection.slug}|hide`,
-									},
-								],
-							},
-						};
-					}),
-				},
-			],
+			type: "context",
+			text: "Google is told what each kind of content is, so it can show it properly: a blog post with its author and date, a service as a service. These were worked out from the names and are usually right. Picking from a menu saves straight away.",
 		},
 	];
-
-	const snippet = config.robots.nosnippet
-		? "none"
-		: config.robots.maxSnippet === -1
-			? "full"
-			: "short";
-	blocks.push({
-		type: "accordion",
-		label: "Advanced",
-		blocks: [
+	// Hiding a whole kind of content from Google is the one choice here that
+	// can do real damage, so it is confirmed before it is saved.
+	if (hiding) {
+		inner.push(
 			{
-				type: "context",
-				text: "How much of a page Google may quote (max-snippet, max-image-preview) and the path shown above the title (breadcrumbs).",
+				type: "banner",
+				variant: "alert",
+				title: `Hide every page in ${hiding.label} from Google?`,
+				description:
+					"People will no longer find these pages through search engines. You can switch this back at any time.",
 			},
 			{
-				type: "form",
-				block_id: "advanced",
-				fields: [
+				type: "actions",
+				elements: [
 					{
-						type: "toggle",
-						action_id: "breadcrumbs",
-						label: "Show the page's path in search results",
-						description:
-							"Adds breadcrumbs built from the page address when your theme provides none.",
-						initial_value: config.breadcrumbs,
+						type: "button",
+						action_id: "confirm_hide",
+						label: "Yes, hide them",
+						style: "danger",
+						value: hiding.slug,
 					},
-					{
-						type: "select",
-						action_id: "snippet",
-						label: "Text Google may quote from a page",
-						options: [
-							{ label: "As much as it likes (recommended)", value: "full" },
-							{ label: "A short line", value: "short" },
+					{ type: "button", action_id: "cancel_hide", label: "Cancel" },
+				],
+			},
+		);
+	}
+	inner.push(
+		{
+			type: "table",
+			page_action_id: "types_table",
+			empty_text: "This site has no content types with pages yet.",
+			columns: [
+				{ key: "name", label: "Content type" },
+				{ key: "shown", label: "", format: "element" },
+				{ key: "visible", label: "", format: "element" },
+			],
+			rows: data.collections.map((collection) => {
+				const hidden = config.collections[collection.slug]?.noindex === true;
+				return {
+					name: collection.label,
+					shown: {
+						type: "menu",
+						action_id: "set_type",
+						label: `Google treats these as: ${typeLabel(collectionType(data, collection.slug))}`,
+						items: PAGE_TYPES.map(({ value, label }) => ({
+							label,
+							value: `${collection.slug}|${value}`,
+						})),
+					},
+					visible: {
+						type: "menu",
+						action_id: "set_visible",
+						label: hidden ? "Hidden from Google" : "Can appear on Google",
+						items: [
+							{ label: "Can appear on Google", value: `${collection.slug}|show` },
 							{
-								label: "Nothing. Also removes the description from results and AI answers",
-								value: "none",
+								label: "Hide from Google and other search engines",
+								value: `${collection.slug}|hide`,
 							},
 						],
-						initial_value: snippet,
 					},
-					{
-						type: "select",
-						action_id: "image_preview",
-						label: "Image size in search results",
-						options: [
-							{ label: "Large (recommended)", value: "large" },
-							{ label: "Small", value: "standard" },
-							{ label: "No image", value: "none" },
-						],
-						initial_value: config.robots.maxImagePreview,
-					},
-				],
-				submit: { label: "Save", action_id: "save_advanced" },
-			},
-		],
-	});
+				};
+			}),
+		},
+		{
+			type: "form",
+			block_id: "breadcrumbs",
+			fields: [
+				{
+					type: "toggle",
+					action_id: "breadcrumbs",
+					label: "Show the path to each page on Google (Home > Services > Cakes)",
+					description: "Leave on unless your theme already does this.",
+					initial_value: config.breadcrumbs,
+				},
+			],
+			submit: { label: "Save", action_id: "save_advanced" },
+		},
+	);
 
-	return blocks;
+	return [
+		{
+			type: "accordion",
+			label: `Content types (usually right as they are): ${data.collections
+				.map((collection) => {
+					const hidden = config.collections[collection.slug]?.noindex === true;
+					return `${collection.label} as ${typeLabel(collectionType(data, collection.slug))}${hidden ? ", hidden" : ""}`;
+				})
+				.join("; ")}`,
+			default_open: hiding !== undefined,
+			blocks: inner,
+		},
+	];
 }
 
 function render(
@@ -859,7 +1000,10 @@ function render(
 				...pageStats(data),
 				...hiddenBanner(data, false),
 				...pagesToFix(data),
-				{ type: "context", text: "Site-wide SEO settings are managed by your site admin." },
+				{
+					type: "context",
+					text: "Business details, opening hours and redirects are set by your site admin. Ask them if something there is wrong.",
+				},
 			],
 		};
 	}
@@ -886,7 +1030,7 @@ function render(
 					},
 					{
 						label: "Settings",
-						blocks: [...identityTab(data, ctx.site.name), ...typesTab(data)],
+						blocks: [...identityTab(data, ctx.site.name), ...typesTab(data, state.pendingHide)],
 					},
 				],
 			},
@@ -897,41 +1041,38 @@ function render(
 
 type Outcome = { config: SeoConfig; state: PageState } | { error: string; state: PageState };
 
-function saveIdentity(data: AdminData, values: Record<string, unknown>, siteUrl: string): Outcome {
-	const state: PageState = { tab: TAB.identity };
-	const { site } = data.config;
-	const kind = str(values, "kind", siteKind(site));
-	const business = str(values, "business", "LocalBusiness");
-	const type =
-		kind === "person"
-			? "Person"
-			: kind === "local"
-				? (BUSINESS_GROUPS.find((group) => group.value === business)?.value ?? "LocalBusiness")
-				: "Organization";
-
+/** Check a pasted logo link. Returns the absolute link, undefined for none, or an error. */
+function readLogo(pasted: string, siteUrl: string): { logo?: string } | { error: string } {
+	if (pasted === "") return {};
 	// The media library only gives plugins sign-in-protected image links, which
 	// Google could not fetch, so the logo is a public address the admin pastes.
-	let logo: string | undefined;
-	const pasted = str(values, "logo_url", site.logo ?? "");
-	if (pasted !== "") {
-		const url = parseUrl(pasted, `${siteUrl.replace(/\/+$/, "")}/`);
-		if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
-			return {
-				error: "Couldn't save. The logo address must be a web address starting with https://",
-				state,
-			};
-		}
-		if (url.pathname.includes("/_emdash/api/media/asset/")) {
-			return {
-				error:
-					"That link only works when signed in. In Media, copy the image's public link instead.",
-				state,
-			};
-		}
-		logo = url.href;
+	const url = parseUrl(pasted, `${siteUrl.replace(/\/+$/, "")}/`);
+	if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
+		return { error: "Couldn't save. The logo link must be a web address starting with https://" };
 	}
+	if (url.pathname.includes("/_emdash/api/media/asset/")) {
+		return {
+			error: "That link only works when signed in. In Media, use Copy URL on the image instead.",
+		};
+	}
+	return { logo: url.href };
+}
 
-	const name = str(values, "name");
+function saveIdentity(data: AdminData, values: Record<string, unknown>): Outcome {
+	const state: PageState = { tab: TAB.identity };
+	const { site } = data.config;
+	// Nothing is pre-selected on a new site, so an answer has to be given once.
+	const kind = str(values, "kind", data.config.steps.identity ? siteKind(site) : "");
+	if (kind !== "local" && kind !== "organization" && kind !== "person") {
+		return { error: "Choose who this site is for.", state };
+	}
+	const business = str(values, "business", siteKind(site) === "local" ? site.type : "");
+	const group = BUSINESS_GROUPS.find((candidate) => candidate.value === business)?.value;
+	if (kind === "local" && !group) return { error: "Choose the kind of business.", state };
+	const type =
+		kind === "person" ? "Person" : kind === "local" ? (group ?? "LocalBusiness") : "Organization";
+
+	const name = str(values, "name", site.name ?? "");
 	return {
 		config: {
 			...data.config,
@@ -939,9 +1080,7 @@ function saveIdentity(data: AdminData, values: Record<string, unknown>, siteUrl:
 				...site,
 				type,
 				name: name === "" ? undefined : name,
-				alternateName: str(values, "alternate_name") || undefined,
-				description: str(values, "description") || undefined,
-				logo,
+				description: str(values, "description", site.description ?? "") || undefined,
 				// Hours only make sense for a place people visit.
 				openingHours: kind === "local" ? site.openingHours : [],
 			},
@@ -949,6 +1088,13 @@ function saveIdentity(data: AdminData, values: Record<string, unknown>, siteUrl:
 		},
 		state,
 	};
+}
+
+function saveLogo(data: AdminData, values: Record<string, unknown>, siteUrl: string): Outcome {
+	const state: PageState = { tab: TAB.identity };
+	const read = readLogo(str(values, "logo_url", data.config.site.logo ?? ""), siteUrl);
+	if ("error" in read) return { error: read.error, state };
+	return { config: { ...data.config, site: { ...data.config.site, logo: read.logo } }, state };
 }
 
 function saveContact(data: AdminData, values: Record<string, unknown>): Outcome {
@@ -1026,24 +1172,14 @@ function saveCompany(data: AdminData, values: Record<string, unknown>): Outcome 
 	if (founded !== "" && !/^\d{4}(-\d{2}-\d{2})?$/.test(founded)) {
 		return { error: "Write the founding date as a year, like 2012, or as 2012-05-01.", state };
 	}
-	const employees = str(
-		values,
-		"employees",
-		site.numberOfEmployees ? String(site.numberOfEmployees) : "",
-	);
-	if (employees !== "" && !/^\d+$/.test(employees)) {
-		return { error: "Number of employees must be a whole number.", state };
-	}
 	return {
 		config: {
 			...data.config,
 			site: {
 				...site,
+				alternateName: str(values, "alternate_name", site.alternateName ?? "") || undefined,
 				legalName: str(values, "legal_name", site.legalName ?? "") || undefined,
 				foundingDate: founded || undefined,
-				vatID: str(values, "vat_id", site.vatID ?? "") || undefined,
-				taxID: str(values, "tax_id", site.taxID ?? "") || undefined,
-				numberOfEmployees: employees === "" ? undefined : Number(employees),
 			},
 		},
 		state,
@@ -1193,14 +1329,22 @@ export async function handleAdmin(
 		}
 		if (action === "set_type") return save(setCollection(data, interaction.value, "type"));
 		if (action === "set_visible") {
-			const hiding = typeof interaction.value === "string" && interaction.value.endsWith("|hide");
+			const [slug, choice] =
+				typeof interaction.value === "string" ? interaction.value.split("|") : [];
+			// Hiding is confirmed first; showing again is harmless and saves at once.
+			if (choice === "hide") return render(data, ctx, admin, { tab: TAB.types, pendingHide: slug });
 			return save(
 				setCollection(data, interaction.value, "visible"),
-				hiding
-					? "These pages are now hidden from Google and other search engines."
-					: "These pages can appear in search results again.",
+				"These pages can appear on Google again.",
 			);
 		}
+		if (action === "confirm_hide" && typeof interaction.value === "string") {
+			return save(
+				setCollection(data, `${interaction.value}|hide`, "visible"),
+				"These pages are now hidden from Google and other search engines.",
+			);
+		}
+		if (action === "cancel_hide") return render(data, ctx, admin, { tab: TAB.types });
 		if (action === "hidden_ok") {
 			const collections = { ...data.config.collections };
 			for (const collection of hiddenCollections(data)) {
@@ -1319,7 +1463,7 @@ export async function handleAdmin(
 	}
 
 	if (action === "setup_identity") {
-		const outcome = saveIdentity(data, values, ctx.site.url);
+		const outcome = saveIdentity(data, values);
 		if ("error" in outcome) return save(outcome);
 		const street = str(values, "street");
 		const town = str(values, "town");
@@ -1337,7 +1481,8 @@ export async function handleAdmin(
 			state: { tab: TAB.overview },
 		});
 	}
-	if (action === "save_identity") return save(saveIdentity(data, values, ctx.site.url));
+	if (action === "save_identity") return save(saveIdentity(data, values));
+	if (action === "save_logo") return save(saveLogo(data, values, ctx.site.url));
 	if (action === "save_contact") return save(saveContact(data, values));
 	if (action === "save_hours") return save(saveHours(data, values));
 	if (action === "save_profiles") return save(saveProfiles(data, values));

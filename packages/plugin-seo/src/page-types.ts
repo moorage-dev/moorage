@@ -9,7 +9,7 @@ export const PAGE_TYPES: Array<{ value: PageSchemaType; label: string; short: st
 	{ value: "ContactPage", label: "Contact page", short: "Contact page" },
 	{ value: "BlogPosting", label: "Blog post", short: "Blog post" },
 	{ value: "Article", label: "Article", short: "Article" },
-	{ value: "Service", label: "Service (no special Google listing)", short: "Service" },
+	{ value: "Service", label: "Service", short: "Service" },
 	{ value: "ProfilePage", label: "Person or team member", short: "Person" },
 ];
 

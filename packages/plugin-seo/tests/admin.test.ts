@@ -67,9 +67,7 @@ describe("SEO page", () => {
 		const overview = tabs?.type === "tab" ? (tabs.panels[0]?.blocks ?? []) : [];
 		// Numbers first, then the one thing left to answer.
 		expect(overview[0]?.type).toBe("stats");
-		expect(JSON.stringify(overview[1])).toContain(
-			"One thing left: tell Google who this site is for",
-		);
+		expect(JSON.stringify(overview[1])).toContain("Tell Google who this site is for");
 	});
 
 	it("guesses each content type from the collection's name", async () => {
@@ -82,10 +80,12 @@ describe("SEO page", () => {
 			table?.type === "table" &&
 				table.rows.map((row) => [row.name, (row.shown as { label: string }).label]),
 		).toEqual([
-			["Pages", "Shown to Google as: Web page"],
-			["Services", "Shown to Google as: Service"],
+			["Pages", "Google treats these as: Web page"],
+			["Services", "Google treats these as: Service"],
 		]);
-		expect(texts(response)).toContain("Content types: Pages = Web page, Services = Service");
+		expect(texts(response)).toContain(
+			"Content types (usually right as they are): Pages as Web page; Services as Service",
+		);
 	});
 
 	it("shows an editor a read-only page and ignores their changes", async () => {
@@ -95,7 +95,7 @@ describe("SEO page", () => {
 		const response = await runtime.admin.loadPage(PAGE, { user: editor });
 		expect(response.blocks.some((block) => block.type === "tab")).toBe(false);
 		expect(flatten(response.blocks).some((block) => block.type === "form")).toBe(false);
-		expect(texts(response)).toContain("managed by your site admin");
+		expect(texts(response)).toContain("set by your site admin");
 
 		await runtime.admin.submit(PAGE, "save_identity", { name: "Hacked" }, { user: editor });
 		expect(await config(runtime)).toBeNull();
@@ -135,21 +135,18 @@ describe("what EmDash will accept", () => {
 				errors: [],
 			});
 		}
-		expect(texts(screens[0] as BlockResponse)).not.toContain("Missing-page log");
+		expect(texts(screens[0] as BlockResponse)).not.toContain("addresses visitors tried");
 	});
 });
 
 describe("Who you are", () => {
-	it("saves a local business and marks the step done", async () => {
+	it("saves a local business, then follows up on what Google still needs", async () => {
 		const runtime = await start();
 		const response = await runtime.admin.submit(PAGE, "save_identity", {
 			kind: "local",
 			business: "FoodEstablishment",
 			name: "Acme Bakery",
-			alternate_name: "",
 			description: "Bread baked every morning.",
-			logo_media: "",
-			logo_url: "https://acme.test/logo.png",
 		});
 
 		expect(response.toast).toEqual({
@@ -161,17 +158,77 @@ describe("Who you are", () => {
 				type: "FoodEstablishment",
 				name: "Acme Bakery",
 				description: "Bread baked every morning.",
-				logo: "https://acme.test/logo.png",
 			},
-			steps: { identity: true, types: false },
+			steps: { identity: true },
 		});
-		// The open question is gone from the Overview once answered.
-		expect(texts(response)).not.toContain("One thing left");
-		// A local business gets the opening hours section, and is asked for its address.
-		expect(texts(response)).toContain("Opening hours");
-		expect(texts(response)).toContain(
-			"Add your address so Google can list you as a local business",
+		// The open question is gone; the Overview now lists what a local business still owes.
+		expect(texts(response)).not.toContain("Tell Google who this site is for");
+		const owed = flatten(response.blocks).find(
+			(block) => block.type === "table" && block.page_action_id === "details_table",
 		);
+		expect(owed?.type === "table" && owed.rows.map((row) => row.what)).toEqual([
+			"Address",
+			"Opening hours",
+			"Phone number",
+		]);
+		// Sections say how much they matter and whether they are filled.
+		expect(texts(response)).toContain("Address and phone (needed, not added yet)");
+		expect(texts(response)).toContain("Opening hours (needed, not added yet)");
+		expect(texts(response)).toContain("Your profiles elsewhere (worth adding, not added yet)");
+		expect(texts(response)).toContain("More about you (optional, not added yet)");
+	});
+
+	it("stops following up once the needed details are in, and says what Google is told", async () => {
+		const runtime = await start();
+		await runtime.admin.submit(PAGE, "save_identity", {
+			kind: "local",
+			business: "FoodEstablishment",
+			name: "Acme Bakery",
+		});
+		await runtime.admin.submit(PAGE, "save_contact", {
+			street: "1 Main St",
+			town: "Springfield",
+			telephone: "+1 555 0100",
+		});
+		const response = await runtime.admin.submit(PAGE, "save_hours", { hours_monday: "9-17" });
+
+		expect(
+			flatten(response.blocks).some(
+				(b) => b.type === "table" && b.page_action_id === "details_table",
+			),
+		).toBe(false);
+		expect(texts(response)).toContain(
+			"Google is told: Acme Bakery, restaurant, cafe or bakery, 1 Main St, Springfield, open Mon 09:00-17:00. Change this in the Settings tab.",
+		);
+		expect(texts(response)).toContain("Opening hours: Mon 09:00-17:00");
+	});
+
+	it("asks a company for a logo and profiles, not for opening hours", async () => {
+		const runtime = await start();
+		const response = await runtime.admin.submit(PAGE, "save_identity", {
+			kind: "organization",
+			name: "Acme Inc",
+		});
+		const owed = flatten(response.blocks).find(
+			(block) => block.type === "table" && block.page_action_id === "details_table",
+		);
+		expect(owed?.type === "table" && owed.rows.map((row) => row.what)).toEqual([
+			"Logo",
+			"Profiles elsewhere",
+		]);
+		expect(texts(response)).toContain("Opening hours (only for a local business)");
+	});
+
+	it("will not guess who the site is for", async () => {
+		const runtime = await start();
+		const none = await runtime.admin.submit(PAGE, "save_identity", { name: "Acme" });
+		expect(none.toast).toEqual({ type: "error", message: "Choose who this site is for." });
+		const noKind = await runtime.admin.submit(PAGE, "save_identity", {
+			kind: "local",
+			name: "Acme",
+		});
+		expect(noKind.toast).toEqual({ type: "error", message: "Choose the kind of business." });
+		expect(await config(runtime)).toBeNull();
 	});
 
 	it("keeps what other forms saved when one form is submitted", async () => {
@@ -184,7 +241,8 @@ describe("Who you are", () => {
 			country: "us",
 			price_range: "$$",
 		});
-		// The admin only touched the name; the form sends nothing else.
+		await runtime.admin.submit(PAGE, "save_identity", { kind: "organization", name: "Acme" });
+		// Later the admin only touches the name; the form sends nothing else.
 		await runtime.admin.submit(PAGE, "save_identity", { name: "Acme Inc" });
 
 		expect(await config(runtime)).toMatchObject({
@@ -203,10 +261,9 @@ describe("Who you are", () => {
 		});
 	});
 
-	it("rejects a logo address that is not a web address", async () => {
+	it("rejects a logo link that is not a web address", async () => {
 		const runtime = await start();
-		const response = await runtime.admin.submit(PAGE, "save_identity", {
-			name: "Acme",
+		const response = await runtime.admin.submit(PAGE, "save_logo", {
 			logo_url: "ftp://acme.test/logo.png",
 		});
 		expect(response.toast?.type).toBe("error");
@@ -217,16 +274,15 @@ describe("Who you are", () => {
 	it("accepts a public logo link from Media and refuses a sign-in-only one", async () => {
 		const runtime = await start();
 		// "Copy URL" in Media gives a site-relative public link.
-		await runtime.admin.submit(PAGE, "save_identity", {
-			name: "Acme",
+		const saved = await runtime.admin.submit(PAGE, "save_logo", {
 			logo_url: "/_emdash/api/media/file/logo.png",
 		});
 		expect((await config(runtime))?.site.logo).toBe(
 			"https://acme.test/_emdash/api/media/file/logo.png",
 		);
+		expect(texts(saved)).toContain("Logo: added");
 
-		const refused = await runtime.admin.submit(PAGE, "save_identity", {
-			name: "Acme",
+		const refused = await runtime.admin.submit(PAGE, "save_logo", {
 			logo_url: "/_emdash/api/media/asset/01ABC/logo.png",
 		});
 		expect(refused.toast?.type).toBe("error");
@@ -235,7 +291,11 @@ describe("Who you are", () => {
 
 	it("reads split opening hours and names the day it cannot read", async () => {
 		const runtime = await start();
-		await runtime.admin.submit(PAGE, "save_identity", { kind: "local", name: "Acme Bakery" });
+		await runtime.admin.submit(PAGE, "save_identity", {
+			kind: "local",
+			business: "FoodEstablishment",
+			name: "Acme Bakery",
+		});
 		await runtime.admin.submit(PAGE, "save_hours", {
 			hours_monday: "9-17",
 			hours_tuesday: "12:00-14:30, 18:00-22:00",
@@ -277,21 +337,19 @@ describe("Who you are", () => {
 		expect(response.toast?.type).toBe("error");
 	});
 
-	it("saves areas served with the contact details, and optional company facts", async () => {
+	it("saves areas served with the address, and the optional extras", async () => {
 		const runtime = await start();
 		await runtime.admin.submit(PAGE, "save_contact", { areas: "Springfield\nShelbyville" });
 		await runtime.admin.submit(PAGE, "save_company", {
+			alternate_name: "Acme",
 			legal_name: "Acme Trading Ltd",
 			founded: "2012",
-			vat_id: "GB123456789",
-			employees: "12",
 		});
 		expect((await config(runtime))?.site).toMatchObject({
 			areaServed: ["Springfield", "Shelbyville"],
+			alternateName: "Acme",
 			legalName: "Acme Trading Ltd",
 			foundingDate: "2012",
-			vatID: "GB123456789",
-			numberOfEmployees: 12,
 		});
 
 		const bad = await runtime.admin.submit(PAGE, "save_company", { founded: "last year" });
@@ -327,7 +385,7 @@ describe("Content types", () => {
 			type: "ContactPage",
 			noindex: false,
 		});
-		expect(texts(response)).toContain("Shown to Google as: Contact page");
+		expect(texts(response)).toContain("Google treats these as: Contact page");
 
 		const refused = await runtime.admin.act(PAGE, "set_type", { value: "nope|ContactPage" });
 		expect(refused.toast?.type).toBe("error");
@@ -341,7 +399,12 @@ describe("Content types", () => {
 			status: "published",
 		});
 
-		const saved = await runtime.admin.act(PAGE, "set_visible", { value: "services|hide" });
+		// Hiding is asked about first, and nothing changes until it is confirmed.
+		const asked = await runtime.admin.act(PAGE, "set_visible", { value: "services|hide" });
+		expect(texts(asked)).toContain("Hide every page in Services from Google?");
+		expect(await config(runtime)).toBeNull();
+
+		const saved = await runtime.admin.act(PAGE, "confirm_hide", { value: "services" });
 		expect(saved.toast?.message).toBe(
 			"These pages are now hidden from Google and other search engines.",
 		);
