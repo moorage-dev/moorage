@@ -2,6 +2,17 @@
 	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
 
 	"slug": "seo",
+	// Listing text. Registry search matches exact phrases in name, description,
+	// keywords and sections, so the phrases people type appear verbatim.
+	"name": "SEO & Schema Markup",
+	"description": "SEO for EmDash: schema markup, structured data, Google preview, noindex rules, redirects import and SEO checks. A Yoast alternative.",
+	"keywords": ["seo", "schema markup", "structured data", "yoast alternative", "redirects"],
+	"repo": "https://github.com/moorage-dev/moorage",
+	"sections": {
+		"description": { "file": "listing/description.md" },
+		"installation": { "file": "listing/installation.md" },
+		"faq": { "file": "listing/faq.md" },
+	},
 	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
 
 	"license": "FSL-1.1-MIT",
@@ -16,7 +27,7 @@
 	"capabilities": ["content:read", "bylines:read", "schema:read", "redirects:write"],
 	"allowedHosts": [],
 	"admin": {
-		"pages": [{ "path": "/seo", "label": "SEO", "icon": "search", "group": "Marketing" }],
+		"pages": [{ "path": "/overview", "label": "SEO", "icon": "search", "group": "Marketing" }],
 		"widgets": [{ "id": "seo", "title": "SEO", "size": "third" }],
 		"editorPanels": [{ "id": "preview", "title": "Google preview", "route": "editor/preview" }],
 	},

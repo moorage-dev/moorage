@@ -23,7 +23,9 @@
 	},
 	"files": [
 		"dist",
+		"!dist/*.tar.gz",
 		"emdash-plugin.jsonc",
+		"listing",
 		"LICENSE",
 		"README.md"
 	],
