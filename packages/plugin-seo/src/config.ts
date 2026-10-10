@@ -72,6 +72,11 @@ export interface SiteIdentity {
 	priceRange?: string;
 	/** Places served, for a business with no public address. */
 	areaServed: string[];
+	// Optional company facts Google lists for organisations.
+	foundingDate?: string;
+	vatID?: string;
+	taxID?: string;
+	numberOfEmployees?: number;
 }
 
 export interface CollectionRule {
@@ -197,6 +202,13 @@ function siteIdentity(value: unknown): SiteIdentity {
 		areaServed: Array.isArray(value.areaServed)
 			? value.areaServed.map(text).filter((area): area is string => area !== undefined)
 			: [],
+		foundingDate: text(value.foundingDate),
+		vatID: text(value.vatID),
+		taxID: text(value.taxID),
+		numberOfEmployees:
+			typeof value.numberOfEmployees === "number" && value.numberOfEmployees > 0
+				? Math.round(value.numberOfEmployees)
+				: undefined,
 	};
 }
 

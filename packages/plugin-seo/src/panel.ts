@@ -194,14 +194,19 @@ export async function handlePanel(
 							...PAGE_TYPES.map(({ value, label }) => ({ value, label })),
 						],
 					},
-					{
-						type: "link",
-						label: "Test on Google",
-						target: {
-							kind: "external",
-							url: `https://search.google.com/test/rich-results?url=${encodeURIComponent(url)}`,
-						},
-					},
+					// Google can only test a page it can reach.
+					...(/^https?:\/\//.test(url)
+						? [
+								{
+									type: "link" as const,
+									label: "Test on Google",
+									target: {
+										kind: "external" as const,
+										url: `https://search.google.com/test/rich-results?url=${encodeURIComponent(url)}`,
+									},
+								},
+							]
+						: []),
 				],
 			},
 			{

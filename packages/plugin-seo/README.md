@@ -33,19 +33,19 @@ export default defineConfig({
 });
 ```
 
-## Settings
+## The SEO page
 
-One page, **SEO**, in the admin sidebar. It works before you touch it: the site is described as an organisation named after the site, and each page type is guessed from its name (posts and blog become blog posts, services become services, team becomes people).
+One page, **SEO**, in the admin sidebar, with three tabs. It works before you touch it: the site is described as an organisation named after the site, each content type is guessed from its name (posts and blog become blog posts, services become services, team becomes people), and your pages are checked by themselves.
 
-- **Overview**: setup progress, a warning whenever a page type is hidden from Google, and the pages to fix: how many pages are ready, and a list of the rest with what is missing and a link to each. "Check my pages" checks the whole site; after that every page is checked when it is saved.
-- **Who you are**: company, person or local business; name, logo (paste its public link; in Media use Copy URL), contact details, opening hours (two ranges a day for split shifts), profiles elsewhere and areas served. One location for now. A local business is described as an organisation until it has an address, because Google requires one.
-- **Page types**: what each kind of page is (web page, about, contact, blog post, article, service, person) and whether it is hidden from search results. Under Advanced: breadcrumbs and how much Google may quote.
-
-- **Redirects**: paste a list exported from WordPress (Redirection, Yoast SEO Premium or Rank Math, or any "old address, new address" list), check it, then add it. Existing redirects are never changed, the batch can be removed again in one click, and your redirects can be shown as a copyable list.
+- **Overview**: how many pages were checked, how many are ready and how many need a fix; a warning whenever a content type is hidden from Google; one question if you have not said who the site is for; then the pages to fix, each with what is missing and a link to the page.
+- **Redirects**: your redirects, with Change and Remove on each; add one by typing the old address and where to send visitors; import a list exported from WordPress (Redirection, Yoast SEO Premium or Rank Math), which is checked before anything is added and can be removed again as a batch; export as a copyable list.
+- **Settings**: who the site is for (company, person or local business), name, logo link, then folded sections whose titles show what is filled in: contact and address, opening hours (two ranges a day for split shifts), profiles elsewhere, optional company details, content types (what each kind of content is, and whether it is hidden from search), and advanced snippet settings. One location for now. A local business is described as an organisation until it has an address, because Google requires one.
 
 Admins can change settings. Editors see a read-only page with the pages to fix.
 
-In the entry editor, the **Google preview** panel shows how the saved page may look on Google (address, title, description), what kind of page it is, whether it is in search results, and up to three things to fix. Admins can also change one page's type, open Google's Rich Results Test for the page, and view the markup. A dashboard widget shows setup progress, then the number of pages to fix.
+In the entry editor, the **Google preview** panel shows how the published page may look on Google (address, title, description), what kind of page it is, whether it is in search results, and up to three things to fix. Admins can also change one page's type, open Google's Rich Results Test for the page, and view the markup. A dashboard widget shows the number of pages to fix.
+
+Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
 ### The checks
 
@@ -61,7 +61,7 @@ Not yet: Product and Event types (they need price and date fields on the collect
 - Does it check my page while I type? No. EmDash does not let a general-purpose plugin read unsaved text. The panel and the checks describe the published page, as Google sees it: changes to the page show up once you publish, and changes in the SEO panel show up as soon as they are saved.
 - Is there an SEO score or a traffic light? No, on purpose. You get a list of things to fix that can reach zero.
 - Does it add FAQ rich results? No. Google stopped showing FAQ rich results in May 2026.
-- How do I import redirects from WordPress? Export them from Redirection, Yoast SEO Premium or Rank Math, open SEO > Redirects, paste the list and press Check list. Nothing is added until you confirm.
+- How do I import redirects from WordPress? Export them from Redirection, Yoast SEO Premium or Rank Math, open SEO > Redirects > Import a list from WordPress, paste the list and press Check list. Nothing is added until you confirm.
 - Why were some redirects skipped? EmDash has no regular-expression redirects. Exact addresses and "everything under a folder" are converted; other patterns are listed for you to rewrite by hand. Redirects to another website and addresses with a `?` are not supported by EmDash.
 - Why does a large import take a while on Cloudflare? Sandboxed plugins may only do a few operations per request, so a long list is added a few rows at a time in the background. You can leave the page.
 

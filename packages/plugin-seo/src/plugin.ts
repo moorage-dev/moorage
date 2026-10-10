@@ -16,7 +16,7 @@ import {
 } from "./record.js";
 import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
 import { mergeRobots } from "./robots.js";
-import { loadScan, SCAN_TASK, scanStep } from "./scan.js";
+import { loadScan, SCAN_TASK, scanStep, startScan } from "./scan.js";
 
 async function loadConfig(ctx: PluginContext) {
 	return normalizeConfig(await ctx.kv.get(CONFIG_KEY));
@@ -101,6 +101,21 @@ const plugin: SandboxedPlugin = {
 		},
 		"content:afterRestore": async (event, ctx) => {
 			await refreshEntry(ctx, event.collection, event.content);
+		},
+		// Start checking the site's pages as soon as the plugin is switched on, so the
+		// numbers are usually there before anyone opens the SEO page.
+		"plugin:activate": async (_event, ctx) => {
+			try {
+				if (await loadScan(ctx)) return;
+				const collections = (await ctx.schema?.listCollections()) ?? [];
+				await startScan(
+					ctx,
+					collections.filter((c) => c.routable && !c.hidden).map((c) => c.slug),
+					await loadConfig(ctx),
+				);
+			} catch (error) {
+				ctx.log.warn("could not start the first page check", { error: String(error) });
+			}
 		},
 		// Continues a redirects import a few rows at a time until it is done.
 		cron: async (event, ctx) => {

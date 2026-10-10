@@ -14,7 +14,7 @@ import {
 import type { EntryRecord } from "../src/record.js";
 import type { ScanState, Stats } from "../src/scan.js";
 
-const PAGE = "/seo";
+const PAGE = "/overview";
 const LONG_TEXT =
 	"We bake bread every morning from flour milled a few streets away, and deliver it by bicycle.";
 
@@ -181,12 +181,13 @@ describe("checks on a real site", () => {
 		);
 	const text = (response: BlockResponse) => JSON.stringify(response.blocks);
 
+	/** Open the SEO page until the automatic check has finished. */
 	async function checkAll(runtime: PluginRuntimeTestHost): Promise<BlockResponse> {
-		let response = await runtime.admin.act(PAGE, "check_pages");
+		let response = await runtime.admin.loadPage(PAGE);
 		for (let step = 0; step < 10; step += 1) {
 			const scan = await runtime.inspect.kv.get<ScanState>("scan");
 			if (scan?.status === "done") break;
-			response = await runtime.admin.act(PAGE, "check_more");
+			response = await runtime.admin.loadPage(PAGE);
 		}
 		return response;
 	}
@@ -209,13 +210,18 @@ describe("checks on a real site", () => {
 		});
 		expect(await record(runtime, good.id)).toMatchObject({ status: "ready", issues: [] });
 		expect(await record(runtime, bad.id)).toMatchObject({ status: "fix", title: "Contact" });
-		expect(await runtime.inspect.kv.get<Stats>("stats")).toMatchObject({
+		expect((await runtime.inspect.kv.get<ScanState>("scan"))?.tally).toMatchObject({
 			checked: 2,
 			fix: 1,
 			hidden: 0,
 		});
 
-		expect(text(response)).toContain("Pages ready: 1 of 2");
+		const stats = flat(response.blocks).find((block) => block.type === "stats");
+		expect(stats?.type === "stats" && stats.items.map((item) => [item.label, item.value])).toEqual([
+			["Pages checked", 2],
+			["Ready", 1],
+			["To fix", 1],
+		]);
 		const table = flat(response.blocks).find(
 			(block) => block.type === "table" && block.page_action_id === "fix_table",
 		);
@@ -249,7 +255,34 @@ describe("checks on a real site", () => {
 
 		const response = await runtime.admin.loadPage(PAGE);
 		expect(text(response)).toContain("No pages to fix. Nice work.");
-		expect(text(response)).toContain("Pages ready: 1 of 1");
+		expect(await runtime.inspect.kv.get<Stats>("stats")).toMatchObject({ checked: 1, fix: 0 });
+	});
+
+	it("never shows a partial count: the first visit checks the pages by itself", async () => {
+		const runtime = await start();
+		await addPage(runtime, "about", "About us", "Who we are.");
+		await addPage(runtime, "contact", "Contact");
+		// Only one page has been seen by the plugin so far, as after a single save.
+		const [first] = await runtime.inspect.content.list("pages");
+		await runtime.transport.invokeHook("content:afterSave", {
+			collection: "pages",
+			content: { id: first?.id },
+			isNew: false,
+		});
+
+		const response = await runtime.admin.loadPage(PAGE);
+		expect(text(response)).toContain('"label":"Pages checked","value":2');
+	});
+
+	it("starts checking as soon as the plugin is switched on", async () => {
+		const runtime = await start();
+		await addPage(runtime, "contact", "Contact");
+		await runtime.transport.invokeHook("plugin:activate", {});
+		expect(await runtime.inspect.kv.get<ScanState>("scan")).toMatchObject({
+			status: "done",
+			checked: 1,
+			tally: { checked: 1, fix: 1 },
+		});
 	});
 
 	it("flags pages that share a title, and clears the flag when one is renamed", async () => {
@@ -314,7 +347,7 @@ describe("checks on a real site", () => {
 		).toMatchObject({ status: "skip", issues: [] });
 
 		const response = await runtime.admin.loadPage(PAGE);
-		expect(text(response)).toContain("Pages ready: 1 of 1");
+		expect(text(response)).toContain('"label":"Pages checked","value":1');
 		expect(text(response)).toContain("No pages to fix. Nice work.");
 
 		const panel = await runtime.admin.loadEditorPanel("preview", "testimonials", quote.id);
@@ -353,15 +386,12 @@ describe("checks on a real site", () => {
 		expect(text(response)).not.toContain("check_pages");
 	});
 
-	it("shows setup progress, then pages to fix, in the dashboard widget", async () => {
+	it("shows the pages to fix in the dashboard widget, checking them itself", async () => {
 		const runtime = await start();
-		expect(text(await runtime.admin.loadWidget("seo"))).toContain("Finish SEO setup: 0 of 3 done.");
-
 		await addPage(runtime, "contact", "Contact");
-		await checkAll(runtime);
 		const widget = await runtime.admin.loadWidget("seo");
 		expect(text(widget)).toContain('"label":"Page to fix","value":1');
-		expect(text(widget)).toContain('"kind":"plugin-page","path":"/seo"');
+		expect(text(widget)).toContain('"kind":"plugin-page","path":"/overview"');
 
 		// The widget recounts on every load, so a fix shows without opening the SEO page.
 		const [entry] = await runtime.inspect.content.list("pages");

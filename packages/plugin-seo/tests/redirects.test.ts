@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ImportState } from "../src/redirects-admin.js";
 import { exportList, planImport } from "../src/redirects.js";
 
-const PAGE = "/seo";
+const PAGE = "/overview";
 
 describe("reading a pasted list", () => {
 	it("reads a plain two-column list with or without a header", () => {
@@ -266,6 +266,58 @@ describe("Redirects tab", () => {
 		});
 		expect(await state(runtime)).toMatchObject({ status: "done", added: 2 });
 		expect(await sources(runtime)).toEqual(["/a", "/b"]);
+	});
+
+	it("adds, changes and removes a single redirect, keeping its kind", async () => {
+		const runtime = await start();
+		const added = await runtime.admin.submit(PAGE, "add_redirect", {
+			source: "old-page/",
+			destination: "/new-page",
+		});
+		expect(added.toast).toEqual({ type: "success", message: "Redirect added." });
+		expect(JSON.stringify(added.blocks)).toContain(
+			'"source":"/old-page","destination":"/new-page","kind":"Permanent"',
+		);
+
+		// A redirect imported as 308 must stay 308 when only its address is changed.
+		const special = await runtime.fixtures.redirect({
+			source: "/moved",
+			destination: "/here",
+			type: 308,
+		});
+		const form = await runtime.admin.act(PAGE, "edit_redirect", { value: special.id });
+		expect(JSON.stringify(form.blocks)).toContain('"initial_value":"308"');
+		await runtime.admin.submit(PAGE, `save_redirect:${special.id}`, { destination: "/there" });
+		expect(
+			(await runtime.inspect.redirects()).find((rule) => rule.id === special.id),
+		).toMatchObject({
+			source: "/moved",
+			destination: "/there",
+			type: 308,
+		});
+
+		const removed = await runtime.admin.act(PAGE, "remove_redirect", { value: special.id });
+		expect(removed.toast?.message).toBe("Redirect removed.");
+		expect(await sources(runtime)).toEqual(["/old-page"]);
+	});
+
+	it("explains a redirect it cannot add and keeps the form open", async () => {
+		const runtime = await start();
+		await runtime.fixtures.redirect({ source: "/a", destination: "/b" });
+		const twice = await runtime.admin.submit(PAGE, "add_redirect", {
+			source: "/a",
+			destination: "/c",
+		});
+		expect(twice.toast).toEqual({
+			type: "error",
+			message: "A redirect from that old address already exists.",
+		});
+		const elsewhere = await runtime.admin.submit(PAGE, "add_redirect", {
+			source: "/x",
+			destination: "https://other.example/y",
+		});
+		expect(elsewhere.toast?.message).toBe("Points to another website.");
+		expect(await sources(runtime)).toEqual(["/a"]);
 	});
 
 	it("shows the site's redirects as a copyable list", async () => {

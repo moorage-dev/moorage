@@ -20,8 +20,13 @@ import {
 	IMPORT_KEY,
 	loadImport,
 	plural,
+	listRedirects,
 	redirectsTab,
+	addOne,
+	updateOne,
+	removeOne,
 	removeBatch,
+	type RedirectRow,
 	stopImport,
 	type ImportState,
 } from "./redirects-admin.js";
@@ -40,7 +45,8 @@ import { parseUrl } from "./url.js";
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
 const ADMIN_ROLE = 50;
 
-const TAB = { overview: 0, identity: 1, types: 2, redirects: 3 } as const;
+// Three tabs: what needs attention, the redirects task, and everything set once.
+const TAB = { overview: 0, redirects: 1, identity: 2, types: 2 } as const;
 
 /** Plain business groups mapped to the schema.org type each one emits. */
 const BUSINESS_GROUPS: Array<{ value: string; label: string }> = [
@@ -63,9 +69,51 @@ const PRICE_RANGES = ["", "$", "$$", "$$$", "$$$$"];
 
 type SiteKind = "organization" | "person" | "local";
 
+/** The networks asked for by name; anything else goes in "Other profiles". */
+const NETWORKS = [
+	{ id: "facebook", label: "Facebook", hosts: ["www.facebook.com", "facebook.com", "fb.com"] },
+	{ id: "instagram", label: "Instagram", hosts: ["www.instagram.com", "instagram.com"] },
+	{ id: "linkedin", label: "LinkedIn", hosts: ["www.linkedin.com", "linkedin.com"] },
+	{
+		id: "x",
+		label: "X (Twitter)",
+		hosts: ["x.com", "www.x.com", "twitter.com", "www.twitter.com"],
+	},
+	{ id: "youtube", label: "YouTube", hosts: ["www.youtube.com", "youtube.com"] },
+];
+
+function splitProfiles(links: string[]): { named: Record<string, string>; other: string[] } {
+	const named: Record<string, string> = {};
+	const other: string[] = [];
+	for (const link of links) {
+		const host = parseUrl(link)?.host ?? "";
+		const network = NETWORKS.find((candidate) => candidate.hosts.includes(host));
+		if (network && !(network.id in named)) named[network.id] = link;
+		else other.push(link);
+	}
+	return { named, other };
+}
+
+/** A section title that says what is already filled in, so nothing has to be opened to check. */
+function summary(title: string, parts: Array<string | undefined>): string {
+	const filled = parts.filter((part): part is string => !!part);
+	return filled.length > 0 ? `${title}: ${filled.join(", ")}` : `${title} (not added yet)`;
+}
+
 function siteKind(identity: SiteIdentity): SiteKind {
 	if (identity.type === "Person") return "person";
 	return identity.type === "Organization" ? "organization" : "local";
+}
+
+/**
+ * An absolute link into EmDash's own admin, or undefined when the site's
+ * address is not known. A freshly created site can report an empty address,
+ * and EmDash rejects the whole page if any link on it is not absolute.
+ */
+function adminUrl(siteUrl: string, path: string): string | undefined {
+	const base = parseUrl(siteUrl);
+	if (!base || (base.protocol !== "https:" && base.protocol !== "http:")) return undefined;
+	return `${base.origin}${path}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -91,8 +139,10 @@ function lines(value: string): string[] {
 
 interface PageState {
 	tab: number;
-	/** Collection whose "Change" form is open on the Page types tab. */
-	editing?: string;
+	/** The redirect whose edit form is open on the Redirects tab. */
+	editing?: RedirectRow;
+	/** Keep the add-redirect form open, after a rejected entry. */
+	adding?: boolean;
 	/** The site's redirects as text, when the admin asked to see them. */
 	exported?: string;
 	toast?: BlockResponse["toast"];
@@ -102,6 +152,9 @@ interface AdminData {
 	config: SeoConfig;
 	collections: CollectionSchemaInfo[];
 	redirects: ImportState | null;
+	/** The newest redirects, for the Redirects tab. */
+	redirectRows: RedirectRow[];
+	moreRedirects: boolean;
 	scan: ScanState | null;
 	/** Page counts and the first pages to fix; null before any page was checked. */
 	stats: Stats | null;
@@ -110,9 +163,10 @@ interface AdminData {
 async function loadData(ctx: PluginContext): Promise<AdminData> {
 	// One read for everything the plugin keeps in KV: requests are limited to a
 	// handful of operations, and every tab is rendered on every response.
-	const [stored, collections] = await Promise.all([
+	const [stored, collections, existing] = await Promise.all([
 		ctx.kv.list(),
 		ctx.schema?.listCollections() ?? [],
+		listRedirects(ctx),
 	]);
 	const kv = new Map(stored.map((item) => [item.key, item.value]));
 	const redirects = kv.get(IMPORT_KEY) as ImportState | undefined;
@@ -121,6 +175,8 @@ async function loadData(ctx: PluginContext): Promise<AdminData> {
 		// Only collections with public pages have anything to describe to search engines.
 		collections: collections.filter((collection) => collection.routable && !collection.hidden),
 		redirects: redirects && Array.isArray(redirects.rows) ? redirects : null,
+		redirectRows: existing.rows,
+		moreRedirects: existing.more,
 		scan: (kv.get(SCAN_KEY) as ScanState | undefined) ?? null,
 		stats: (kv.get(STATS_KEY) as Stats | undefined) ?? null,
 	};
@@ -133,11 +189,30 @@ async function refreshStats(ctx: PluginContext, data: AdminData): Promise<AdminD
 	return { ...data, stats };
 }
 
-function pagesToFix(data: AdminData): Block[] {
-	const { stats, scan } = data;
-	if (!stats || stats.checked === 0) return [];
+/** Current page counts: the stored recount, or the totals of the check that just finished. */
+function currentStats(data: AdminData): Stats | null {
+	return data.stats ?? (data.scan?.status === "done" ? data.scan.tally : null);
+}
+
+function pageStats(data: AdminData): Block[] {
+	const { scan } = data;
+	const stats = currentStats(data);
+	// A partial count would look like the whole site, so nothing is shown
+	// until every page has been checked once.
+	if (!scan || scan.status === "running") {
+		return [
+			{
+				type: "banner",
+				title: "Checking your pages",
+				description: scan
+					? `${scan.checked} checked so far. The rest are checked in the background.`
+					: "This starts by itself and takes about a minute.",
+			},
+		];
+	}
+	if (!stats) return [];
 	const ready = stats.checked - stats.fix - stats.hidden;
-	const blocks: Block[] = [
+	return [
 		{
 			type: "stats",
 			items: [
@@ -146,14 +221,17 @@ function pagesToFix(data: AdminData): Block[] {
 				{ label: "To fix", value: stats.fix },
 			],
 		},
-		{
-			type: "meter",
-			label: `Pages ready: ${ready} of ${stats.checked}`,
-			value: ready,
-			max: stats.checked,
-		},
 	];
-	if (stats.fix === 0) {
+}
+
+function pagesToFix(data: AdminData): Block[] {
+	const { scan } = data;
+	const stats = currentStats(data);
+	if (!stats || !scan || scan.status === "running") return [];
+	const blocks: Block[] = [];
+	if (stats.checked === 0) {
+		blocks.push({ type: "empty", title: "No published pages yet", size: "sm" });
+	} else if (stats.fix === 0) {
 		blocks.push({ type: "empty", title: "No pages to fix. Nice work.", size: "sm" });
 	} else {
 		blocks.push(
@@ -190,38 +268,26 @@ function pagesToFix(data: AdminData): Block[] {
 			text: `${stats.hidden} ${stats.hidden === 1 ? "page is" : "pages are"} hidden from search and not counted.`,
 		});
 	}
-	if (scan?.status === "done" && scan.finishedAt) {
+	if (scan.finishedAt) {
 		blocks.push({
 			type: "context",
-			text: `All pages last checked ${scan.finishedAt.slice(0, 16).replace("T", " ")} UTC. Each page is also checked when it is saved.`,
+			text: `Every page is checked again when it is saved. Whole site last checked ${scan.finishedAt.slice(0, 16).replace("T", " ")} UTC.`,
 		});
 	}
 	return blocks;
 }
 
 function checkButton(data: AdminData): Block[] {
-	if (data.scan?.status === "running") {
-		return [
-			{
-				type: "context",
-				text: `Checking your pages: ${data.scan.checked} so far. This continues in the background; you can leave this page.`,
-			},
-			{
-				type: "actions",
-				elements: [{ type: "button", action_id: "check_more", label: "Check more now" }],
-			},
-		];
-	}
-	const first = !data.scan;
+	if (!data.scan) return [];
+	const running = data.scan.status === "running";
 	return [
 		{
 			type: "actions",
 			elements: [
 				{
 					type: "button",
-					action_id: "check_pages",
-					label: first ? "Check my pages" : "Check all pages again",
-					...(first ? { style: "primary" as const } : {}),
+					action_id: running ? "check_more" : "check_pages",
+					label: running ? "Update" : "Check all pages again",
 				},
 			],
 		},
@@ -244,7 +310,7 @@ function hiddenBanner(data: AdminData, admin: boolean): Block[] {
 			type: "banner",
 			variant: "alert",
 			title: "Some pages are hidden from Google",
-			description: `Every page in ${names} is hidden from search engines. If that is a leftover from building the site, switch it back on in the Page types tab.`,
+			description: `Every page in ${names} is hidden from search engines. If that is a leftover from building the site, switch it back on under Settings, Content types.`,
 		},
 	];
 	if (admin) {
@@ -256,59 +322,111 @@ function hiddenBanner(data: AdminData, admin: boolean): Block[] {
 	return blocks;
 }
 
-function overviewTab(data: AdminData): Block[] {
-	const { steps } = data.config;
-	const checked = data.scan !== null;
-	const done = Number(steps.identity) + Number(steps.types) + Number(checked);
-	const blocks: Block[] = [...hiddenBanner(data, true)];
+/**
+ * The one thing worth asking: who the site is for. Everything else has a
+ * sensible default. The prompt is two lines so the pages to fix stay in view,
+ * and the form opens in place because a button cannot switch tabs.
+ */
+function setupPrompt(data: AdminData, siteName: string): Block[] {
+	const { steps, site } = data.config;
+	if (steps.identity) return [];
+	const kind = siteKind(site);
+	return [
+		{
+			type: "banner",
+			title: "One thing left: tell Google who this site is for",
+			description:
+				"It takes a minute. Google can then show your name and details beside your pages.",
+		},
+		{
+			type: "accordion",
+			label: "Answer now",
+			blocks: [
+				{
+					type: "form",
+					block_id: "setup_identity",
+					fields: [
+						{
+							type: "radio",
+							action_id: "kind",
+							label: "This site is for",
+							options: [
+								{ label: "A company or organisation", value: "organization" },
+								{ label: "A person", value: "person" },
+								{ label: "A local business customers visit", value: "local" },
+							],
+							initial_value: kind,
+						},
+						{
+							type: "select",
+							action_id: "business",
+							label: "Kind of business",
+							options: BUSINESS_GROUPS,
+							initial_value: kind === "local" ? site.type : "LocalBusiness",
+							condition: { field: "kind", eq: "local" },
+						},
+						{
+							type: "text_input",
+							action_id: "name",
+							label: "Name",
+							placeholder: "Your name or your business's name",
+							initial_value: site.name ?? siteName,
+						},
+						// Google only lists a local business that has an address.
+						{
+							type: "text_input",
+							action_id: "street",
+							label: "Street address",
+							initial_value: site.address?.streetAddress ?? "",
+							condition: { field: "kind", eq: "local" },
+						},
+						{
+							type: "text_input",
+							action_id: "town",
+							label: "Town or city",
+							initial_value: site.address?.addressLocality ?? "",
+							condition: { field: "kind", eq: "local" },
+						},
+					],
+					submit: { label: "Save", action_id: "setup_identity" },
+				},
+				{ type: "context", text: "Logo, phone, opening hours and more are under Settings." },
+			],
+		},
+	];
+}
 
-	if (done < 3) {
-		blocks.push(
-			{
-				type: "banner",
-				title: "SEO is already working",
-				description:
-					"Every page already tells Google what it is. Three short steps make the result more accurate.",
-			},
-			{ type: "context", text: `Setup: ${done} of 3 done` },
-			// A button cannot switch tabs (the admin keeps the tab the user chose), so
-			// each step names the tab to open instead of offering a dead-end button.
-			{
-				type: "section",
-				text: steps.identity
-					? "Done: Tell Google who you are."
-					: '1. Tell Google who you are: your name, logo and where to find you. Open the "Who you are" tab above.',
-			},
-			{
-				type: "section",
-				text: steps.types
-					? "Done: Choose what each page type is."
-					: '2. Choose what each page type is. Most are already right. Open the "Page types" tab above.',
-			},
-			{
-				type: "section",
-				text: checked
-					? "Done: Check your pages."
-					: "3. Check your pages for things to fix, such as a missing description.",
-			},
-		);
-	}
-
-	blocks.push(...pagesToFix(data), ...checkButton(data));
-	return blocks;
+function overviewTab(data: AdminData, siteName: string): Block[] {
+	// Results first, then anything alarming, then the one open question, then the work list.
+	return [
+		...pageStats(data),
+		...hiddenBanner(data, true),
+		...setupPrompt(data, siteName),
+		...pagesToFix(data),
+		...checkButton(data),
+	];
 }
 
 function widget(data: AdminData): BlockResponse {
-	const { stats } = data;
+	const stats = currentStats(data);
 	const open: Block = {
 		type: "actions",
-		elements: [{ type: "link", label: "Open SEO", target: { kind: "plugin-page", path: "/seo" } }],
+		elements: [
+			{ type: "link", label: "Open SEO", target: { kind: "plugin-page", path: "/overview" } },
+		],
 	};
 	if (!stats || stats.checked === 0) {
 		const { steps } = data.config;
-		const done = Number(steps.identity) + Number(steps.types) + Number(data.scan !== null);
 		return {
-			blocks: [{ type: "section", text: `Finish SEO setup: ${done} of 3 done.` }, open],
+			blocks: [
+				{
+					type: "section",
+					text: steps.identity
+						? "Your pages are being checked."
+						: "One thing left: tell Google who this site is for.",
+				},
+				open,
+			],
 		};
 	}
 	return {
@@ -393,7 +511,12 @@ function identityTab(data: AdminData, siteName: string): Block[] {
 		},
 		{
 			type: "accordion",
-			label: "Contact and address",
+			label: summary("Contact and address", [
+				site.address?.streetAddress,
+				site.address?.addressLocality,
+				site.telephone,
+				site.email,
+			]),
 			default_open: needsAddress,
 			blocks: [
 				{
@@ -458,6 +581,14 @@ function identityTab(data: AdminData, siteName: string): Block[] {
 							})),
 							initial_value: site.priceRange ?? "",
 						},
+						{
+							type: "text_input",
+							action_id: "areas",
+							label: "Areas you serve, one per line (for a business that travels to customers)",
+							multiline: true,
+							placeholder: "Springfield",
+							initial_value: site.areaServed.join("\n"),
+						},
 					],
 					submit: { label: "Save", action_id: "save_contact" },
 				},
@@ -468,7 +599,12 @@ function identityTab(data: AdminData, siteName: string): Block[] {
 	if (local) {
 		blocks.push({
 			type: "accordion",
-			label: "Opening hours",
+			label: summary(
+				"Opening hours",
+				DAYS.filter((day) => formatDayHours(day, site.openingHours) !== "").map((day) =>
+					day.slice(0, 3),
+				),
+			),
 			blocks: [
 				{
 					type: "context",
@@ -490,39 +626,96 @@ function identityTab(data: AdminData, siteName: string): Block[] {
 		});
 	}
 
+	const profiles = splitProfiles(site.sameAs);
 	blocks.push({
 		type: "accordion",
-		label: "Your profiles elsewhere",
+		label: summary(
+			"Your profiles elsewhere",
+			site.sameAs.map((link) => parseUrl(link)?.host.replace(/^www\./, "")),
+		),
 		blocks: [
 			{
 				type: "context",
-				text: "Links to your pages on other sites help Google connect them to you (sameAs).",
+				text: "Links to your pages on other sites help Google connect them to you (sameAs). Paste the full address of each profile you have.",
 			},
 			{
 				type: "form",
 				block_id: "profiles",
 				fields: [
+					...NETWORKS.map((network) => ({
+						type: "text_input" as const,
+						action_id: `profile_${network.id}`,
+						label: network.label,
+						placeholder: `https://${network.hosts[0]}/yourname`,
+						initial_value: profiles.named[network.id] ?? "",
+					})),
 					{
 						type: "text_input",
 						action_id: "profiles",
-						label: "Profile links, one per line",
+						label: "Other profiles, one per line",
 						multiline: true,
-						placeholder: "https://www.instagram.com/yourname",
-						initial_value: site.sameAs.join("\n"),
-					},
-					{
-						type: "text_input",
-						action_id: "areas",
-						label: "Areas you serve, one per line (optional)",
-						multiline: true,
-						placeholder: "Springfield",
-						initial_value: site.areaServed.join("\n"),
+						initial_value: profiles.other.join("\n"),
 					},
 				],
 				submit: { label: "Save", action_id: "save_profiles" },
 			},
 		],
 	});
+
+	if (kind !== "person") {
+		blocks.push({
+			type: "accordion",
+			label: summary("Company details, optional", [
+				site.legalName,
+				site.foundingDate ? `founded ${site.foundingDate}` : undefined,
+				site.vatID ? "VAT" : undefined,
+			]),
+			blocks: [
+				{
+					type: "context",
+					text: "Extra facts Google can use for a company. Skip anything that does not apply.",
+				},
+				{
+					type: "form",
+					block_id: "company",
+					fields: [
+						{
+							type: "text_input",
+							action_id: "legal_name",
+							label: "Registered legal name",
+							initial_value: site.legalName ?? "",
+						},
+						{
+							type: "text_input",
+							action_id: "founded",
+							label: "Founded (year, or YYYY-MM-DD)",
+							placeholder: "2012",
+							initial_value: site.foundingDate ?? "",
+						},
+						{
+							type: "text_input",
+							action_id: "vat_id",
+							label: "VAT number",
+							initial_value: site.vatID ?? "",
+						},
+						{
+							type: "text_input",
+							action_id: "tax_id",
+							label: "Tax ID",
+							initial_value: site.taxID ?? "",
+						},
+						{
+							type: "text_input",
+							action_id: "employees",
+							label: "Number of employees",
+							initial_value: site.numberOfEmployees ? String(site.numberOfEmployees) : "",
+						},
+					],
+					submit: { label: "Save", action_id: "save_company" },
+				},
+			],
+		});
+	}
 
 	return blocks;
 }
@@ -531,70 +724,63 @@ function collectionType(data: AdminData, slug: string): PageSchemaType {
 	return data.config.collections[slug]?.type ?? defaultTypeForCollection(slug);
 }
 
-function typesTab(data: AdminData, editing: string | undefined): Block[] {
+function typesTab(data: AdminData): Block[] {
 	const { config } = data;
 	const blocks: Block[] = [
 		{
-			type: "context",
-			text: "Tell search engines what each kind of page is. Most are already right. One page can be changed from its own editor.",
+			type: "accordion",
+			label: summary(
+				"Content types",
+				data.collections.map((collection) => {
+					const hidden = config.collections[collection.slug]?.noindex === true;
+					return `${collection.label} = ${typeLabel(collectionType(data, collection.slug))}${hidden ? " (hidden)" : ""}`;
+				}),
+			),
+			blocks: [
+				{
+					type: "context",
+					text: "Google is told what each kind of content is, so it can show it properly: a blog post with its author and date, a service as a service (schema markup). These were guessed from the names and are usually right. You can also keep a whole kind of content out of search results (noindex). Picking from a menu saves straight away.",
+				},
+				{
+					type: "table",
+					page_action_id: "types_table",
+					empty_text: "This site has no content types with pages yet.",
+					columns: [
+						{ key: "name", label: "Content type" },
+						{ key: "shown", label: "", format: "element" },
+						{ key: "visible", label: "", format: "element" },
+					],
+					rows: data.collections.map((collection) => {
+						const hidden = config.collections[collection.slug]?.noindex === true;
+						return {
+							name: collection.label,
+							shown: {
+								type: "menu",
+								action_id: "set_type",
+								label: `Shown to Google as: ${typeLabel(collectionType(data, collection.slug))}`,
+								items: PAGE_TYPES.map(({ value, label }) => ({
+									label,
+									value: `${collection.slug}|${value}`,
+								})),
+							},
+							visible: {
+								type: "menu",
+								action_id: "set_visible",
+								label: hidden ? "Hidden from search" : "In search results",
+								items: [
+									{ label: "Show in search results", value: `${collection.slug}|show` },
+									{
+										label: "Hide from Google and other search engines",
+										value: `${collection.slug}|hide`,
+									},
+								],
+							},
+						};
+					}),
+				},
+			],
 		},
 	];
-
-	const target = data.collections.find((collection) => collection.slug === editing);
-	if (target) {
-		blocks.push(
-			{ type: "header", text: `Change ${target.label}` },
-			{
-				type: "form",
-				block_id: "page_type",
-				fields: [
-					{
-						type: "select",
-						action_id: "type",
-						label: "Shown to Google as",
-						options: PAGE_TYPES.map(({ value, label }) => ({ value, label })),
-						initial_value: collectionType(data, target.slug),
-					},
-					{
-						type: "toggle",
-						action_id: "noindex",
-						label: "Hide from search results",
-						description: `Adds noindex to every page in ${target.label}.`,
-						initial_value: config.collections[target.slug]?.noindex === true,
-					},
-				],
-				submit: { label: "Save", action_id: `save_type:${target.slug}` },
-			},
-			{ type: "divider" },
-		);
-	}
-
-	blocks.push({
-		type: "table",
-		page_action_id: "types_table",
-		empty_text: "This site has no page types yet.",
-		columns: [
-			{ key: "name", label: "Type" },
-			{ key: "shown", label: "Shown to Google as" },
-			{ key: "visible", label: "In search results" },
-			{ key: "change", label: "", format: "element" },
-		],
-		rows: data.collections.map((collection) => ({
-			name: collection.label,
-			shown: typeLabel(collectionType(data, collection.slug)),
-			visible: config.collections[collection.slug]?.noindex === true ? "Hidden from search" : "Yes",
-			change: { type: "button", action_id: "edit_type", label: "Change", value: collection.slug },
-		})),
-	});
-
-	if (!config.steps.types) {
-		blocks.push({
-			type: "actions",
-			elements: [
-				{ type: "button", action_id: "types_ok", label: "These look right", style: "primary" },
-			],
-		});
-	}
 
 	const snippet = config.robots.nosnippet
 		? "none"
@@ -670,11 +856,8 @@ function render(
 		return {
 			blocks: [
 				...intro,
+				...pageStats(data),
 				...hiddenBanner(data, false),
-				{
-					type: "section",
-					text: "Your pages are described to search engines automatically. There is nothing you need to set up.",
-				},
 				...pagesToFix(data),
 				{ type: "context", text: "Site-wide SEO settings are managed by your site admin." },
 			],
@@ -688,10 +871,23 @@ function render(
 				type: "tab",
 				default_tab: state.tab,
 				panels: [
-					{ label: "Overview", blocks: overviewTab(data) },
-					{ label: "Who you are", blocks: identityTab(data, ctx.site.name) },
-					{ label: "Page types", blocks: typesTab(data, state.editing) },
-					{ label: "Redirects", blocks: redirectsTab(data.redirects, state.exported) },
+					{ label: "Overview", blocks: overviewTab(data, ctx.site.name) },
+					{
+						label: "Redirects",
+						blocks: redirectsTab({
+							state: data.redirects,
+							rows: data.redirectRows,
+							more: data.moreRedirects,
+							editing: state.editing,
+							adding: state.adding,
+							exported: state.exported,
+							managerUrl: adminUrl(ctx.site.url, "/_emdash/admin/redirects"),
+						}),
+					},
+					{
+						label: "Settings",
+						blocks: [...identityTab(data, ctx.site.name), ...typesTab(data)],
+					},
 				],
 			},
 		],
@@ -774,6 +970,7 @@ function saveContact(data: AdminData, values: Record<string, unknown>): Outcome 
 				telephone: str(values, "telephone") || undefined,
 				address: Object.values(address).some((part) => part !== undefined) ? address : undefined,
 				priceRange: PRICE_RANGES.includes(range) && range !== "" ? range : undefined,
+				areaServed: lines(str(values, "areas", site.areaServed.join("\n"))),
 			},
 		},
 		state: { tab: TAB.identity },
@@ -800,37 +997,54 @@ function saveHours(data: AdminData, values: Record<string, unknown>): Outcome {
 
 function saveProfiles(data: AdminData, values: Record<string, unknown>): Outcome {
 	const state: PageState = { tab: TAB.identity };
+	const current = splitProfiles(data.config.site.sameAs);
+	const typed = [
+		...NETWORKS.map((network) =>
+			str(values, `profile_${network.id}`, current.named[network.id] ?? ""),
+		),
+		...lines(str(values, "profiles", current.other.join("\n"))),
+	].filter((link) => link !== "");
 	const sameAs = [];
-	for (const line of lines(str(values, "profiles", data.config.site.sameAs.join("\n")))) {
-		const url = parseUrl(line);
-		if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
+	for (const link of typed) {
+		// People paste "instagram.com/name"; accept it.
+		const url = parseUrl(/^https?:\/\//i.test(link) ? link : `https://${link}`);
+		if (!url || !url.host.includes(".")) {
 			return {
-				error: `"${line}" is not a web address. Each profile link starts with https://`,
+				error: `"${link}" is not a web address. Paste the full link to the profile.`,
 				state,
 			};
 		}
 		sameAs.push(url.href);
 	}
-	const areaServed = lines(str(values, "areas", data.config.site.areaServed.join("\n")));
-	return { config: { ...data.config, site: { ...data.config.site, sameAs, areaServed } }, state };
+	return { config: { ...data.config, site: { ...data.config.site, sameAs } }, state };
 }
 
-function saveType(data: AdminData, slug: string, values: Record<string, unknown>): Outcome {
-	const state: PageState = { tab: TAB.types };
-	if (!data.collections.some((collection) => collection.slug === slug)) {
-		return { error: "That page type no longer exists.", state };
+function saveCompany(data: AdminData, values: Record<string, unknown>): Outcome {
+	const state: PageState = { tab: TAB.identity };
+	const { site } = data.config;
+	const founded = str(values, "founded", site.foundingDate ?? "");
+	if (founded !== "" && !/^\d{4}(-\d{2}-\d{2})?$/.test(founded)) {
+		return { error: "Write the founding date as a year, like 2012, or as 2012-05-01.", state };
 	}
-	const current = data.config.collections[slug];
-	const requested = str(values, "type", collectionType(data, slug));
-	const type = PAGE_TYPES.find((option) => option.value === requested)?.value;
-	if (!type) return { error: "Choose one of the listed page types.", state };
-	const noindex = bool(values, "noindex", current?.noindex === true);
+	const employees = str(
+		values,
+		"employees",
+		site.numberOfEmployees ? String(site.numberOfEmployees) : "",
+	);
+	if (employees !== "" && !/^\d+$/.test(employees)) {
+		return { error: "Number of employees must be a whole number.", state };
+	}
 	return {
 		config: {
 			...data.config,
-			// Hiding again after confirming needs a fresh confirmation.
-			collections: { ...data.config.collections, [slug]: { type, noindex } },
-			steps: { ...data.config.steps, types: true },
+			site: {
+				...site,
+				legalName: str(values, "legal_name", site.legalName ?? "") || undefined,
+				foundingDate: founded || undefined,
+				vatID: str(values, "vat_id", site.vatID ?? "") || undefined,
+				taxID: str(values, "tax_id", site.taxID ?? "") || undefined,
+				numberOfEmployees: employees === "" ? undefined : Number(employees),
+			},
 		},
 		state,
 	};
@@ -858,6 +1072,51 @@ function saveAdvanced(data: AdminData, values: Record<string, unknown>): Outcome
 	};
 }
 
+/** Handle one interaction from the SEO admin page and return the page to show. */
+/** Change one content type's schema type or search visibility from its table menu. */
+function setCollection(data: AdminData, value: unknown, change: "type" | "visible"): Outcome {
+	const state: PageState = { tab: TAB.types };
+	const [slug, choice] = typeof value === "string" ? value.split("|") : [];
+	if (!slug || !data.collections.some((collection) => collection.slug === slug)) {
+		return { error: "That content type no longer exists.", state };
+	}
+	const current = data.config.collections[slug] ?? {};
+	const type =
+		change === "type"
+			? PAGE_TYPES.find((option) => option.value === choice)?.value
+			: (current.type ?? collectionType(data, slug));
+	if (!type) return { error: "Choose one of the listed types.", state };
+	// Hiding again after confirming needs a fresh confirmation, so hiddenOk is dropped.
+	const noindex = change === "visible" ? choice === "hide" : current.noindex === true;
+	return {
+		config: {
+			...data.config,
+			collections: { ...data.config.collections, [slug]: { type, noindex } },
+			steps: { ...data.config.steps, types: true },
+		},
+		state,
+	};
+}
+
+/**
+ * Bring the page counts up to date for a visit. The first visit starts the
+ * site-wide check by itself, later visits continue it, and once it has
+ * finished the stored results are simply recounted.
+ */
+async function freshCounts(ctx: PluginContext, data: AdminData): Promise<AdminData> {
+	if (data.scan?.status === "done") return refreshStats(ctx, data);
+	const scan = data.scan
+		? await scanStep(ctx, data.scan, data.config)
+		: await startScan(
+				ctx,
+				data.collections.map((collection) => collection.slug),
+				data.config,
+			);
+	// The check keeps its own totals, so nothing is recounted here: a request
+	// only has a handful of operations to spend.
+	return { ...data, scan, stats: scan.status === "done" ? scan.tally : null };
+}
+
 const SAVED = "Saved. Google will pick this up next time it visits.";
 
 /** Handle one interaction from the SEO admin page and return the page to show. */
@@ -866,74 +1125,99 @@ export async function handleAdmin(
 	role: number | undefined,
 	ctx: PluginContext,
 ): Promise<BlockResponse> {
-	const loaded = await loadData(ctx);
+	const data = await loadData(ctx);
 	const admin = (role ?? 0) >= ADMIN_ROLE;
 	const interaction = isRecord(input) ? input : {};
 	const action = typeof interaction.action_id === "string" ? interaction.action_id : "";
 
 	if (interaction.type === "page_load" && interaction.page === "widget:seo") {
 		// The dashboard is how people come back, so it always shows current counts.
-		return widget(await refreshStats(ctx, loaded));
+		return widget(await freshCounts(ctx, data));
 	}
 
 	// Editors can look; every change below is for admins only.
 	if (!admin || interaction.type === "page_load" || action === "") {
-		return render(await refreshStats(ctx, loaded), ctx, admin, { tab: TAB.overview });
+		return render(await freshCounts(ctx, data), ctx, admin, { tab: TAB.overview });
 	}
-	const data = loaded;
 
-	if (
-		interaction.type === "block_action" &&
-		(action === "check_pages" || action === "check_more")
-	) {
-		const running = data.scan?.status === "running";
-		const scan =
-			action === "check_more" && running && data.scan
-				? await scanStep(ctx, data.scan, data.config)
-				: await startScan(
-						ctx,
-						data.collections.map((collection) => collection.slug),
-						data.config,
-					);
-		// The check keeps its own totals, so nothing is recounted here: a request
-		// only has a handful of operations to spend.
-		const stats = scan.tally;
-		await ctx.kv.set(STATS_KEY, stats);
-		return render({ ...data, scan, stats }, ctx, admin, {
-			tab: TAB.overview,
-			toast:
-				scan.status === "done"
-					? { type: "success", message: "All pages checked." }
-					: {
-							type: "info",
-							message: `${scan.checked} pages checked so far. The rest follow in the background.`,
-						},
+	const save = async (outcome: Outcome, message = SAVED): Promise<BlockResponse> => {
+		if ("error" in outcome) {
+			return render(data, ctx, admin, {
+				...outcome.state,
+				toast: { type: "error", message: outcome.error },
+			});
+		}
+		// Normalising before the write keeps stored data in the shape the page hook reads.
+		const config = normalizeConfig(outcome.config);
+		await ctx.kv.set(CONFIG_KEY, config);
+		return render({ ...data, config }, ctx, admin, {
+			...outcome.state,
+			toast: { type: "success", message },
 		});
-	}
+	};
+	/** Show the Redirects tab again after a change, with the list re-read. */
+	const redirectsChanged = async (
+		error: string | null,
+		done: string,
+		editing?: RedirectRow,
+	): Promise<BlockResponse> => {
+		if (error) {
+			return render(data, ctx, admin, {
+				tab: TAB.redirects,
+				editing,
+				adding: !editing,
+				toast: { type: "error", message: error },
+			});
+		}
+		const { rows, more } = await listRedirects(ctx);
+		return render({ ...data, redirectRows: rows, moreRedirects: more }, ctx, admin, {
+			tab: TAB.redirects,
+			toast: { type: "success", message: done },
+		});
+	};
 
 	if (interaction.type === "block_action") {
-		if (action === "edit_type" && typeof interaction.value === "string") {
-			return render(data, ctx, admin, { tab: TAB.types, editing: interaction.value });
-		}
-		if (action === "types_ok") {
-			const config = { ...data.config, steps: { ...data.config.steps, types: true } };
-			await ctx.kv.set(CONFIG_KEY, config);
-			return render({ ...data, config }, ctx, admin, {
-				tab: TAB.types,
-				toast: { type: "success", message: "Great. Nothing to change here." },
+		if (action === "check_pages" || action === "check_more") {
+			const again = action === "check_pages" ? { ...data, scan: null } : data;
+			const checked = await freshCounts(ctx, again);
+			return render(checked, ctx, admin, {
+				tab: TAB.overview,
+				toast:
+					checked.scan?.status === "done"
+						? { type: "success", message: "All pages checked." }
+						: {
+								type: "info",
+								message: `${checked.scan?.checked ?? 0} pages checked so far. The rest follow in the background.`,
+							},
 			});
+		}
+		if (action === "set_type") return save(setCollection(data, interaction.value, "type"));
+		if (action === "set_visible") {
+			const hiding = typeof interaction.value === "string" && interaction.value.endsWith("|hide");
+			return save(
+				setCollection(data, interaction.value, "visible"),
+				hiding
+					? "These pages are now hidden from Google and other search engines."
+					: "These pages can appear in search results again.",
+			);
 		}
 		if (action === "hidden_ok") {
 			const collections = { ...data.config.collections };
 			for (const collection of hiddenCollections(data)) {
 				collections[collection.slug] = { ...collections[collection.slug], hiddenOk: true };
 			}
-			const config = { ...data.config, collections };
-			await ctx.kv.set(CONFIG_KEY, config);
-			return render({ ...data, config }, ctx, admin, {
-				tab: TAB.overview,
-				toast: { type: "success", message: "Noted. These pages stay hidden from search." },
-			});
+			return save(
+				{ config: { ...data.config, collections }, state: { tab: TAB.overview } },
+				"Noted. These pages stay hidden from search.",
+			);
+		}
+		if (action === "edit_redirect") {
+			const editing = data.redirectRows.find((row) => row.id === interaction.value);
+			return render(data, ctx, admin, { tab: TAB.redirects, editing });
+		}
+		if (action === "cancel_edit") return render(data, ctx, admin, { tab: TAB.redirects });
+		if (action === "remove_redirect" && typeof interaction.value === "string") {
+			return redirectsChanged(await removeOne(ctx, interaction.value), "Redirect removed.");
 		}
 		if (action === "add_redirects" || action === "more_redirects") {
 			if (!data.redirects || data.redirects.status === "done") {
@@ -959,7 +1243,7 @@ export async function handleAdmin(
 			});
 		}
 		if (action === "reset_redirects") {
-			// An import that is still running must finish or be removed first.
+			// An import that is still running must finish or be stopped first.
 			if (data.redirects?.status !== "adding") await ctx.kv.delete(IMPORT_KEY);
 			return render(
 				{ ...data, redirects: data.redirects?.status === "adding" ? data.redirects : null },
@@ -986,8 +1270,8 @@ export async function handleAdmin(
 				toast: { type: "info", message: `${plural(count, "redirect")} listed below.` },
 			});
 		}
-		// Sorting or paging the table changes nothing yet.
-		return render(data, ctx, admin, { tab: action === "types_table" ? TAB.types : TAB.overview });
+		// Sorting or paging a table changes nothing yet.
+		return render(data, ctx, admin, { tab: TAB.overview });
 	}
 
 	if (interaction.type !== "form_submit") return render(data, ctx, admin, { tab: TAB.overview });
@@ -1007,28 +1291,57 @@ export async function handleAdmin(
 			toast: { type: "success", message: "Checked. Nothing has been added yet." },
 		});
 	}
-	let outcome: Outcome;
-	if (action === "save_identity") outcome = saveIdentity(data, values, ctx.site.url);
-	else if (action === "save_contact") outcome = saveContact(data, values);
-	else if (action === "save_hours") outcome = saveHours(data, values);
-	else if (action === "save_profiles") outcome = saveProfiles(data, values);
-	else if (action === "save_advanced") outcome = saveAdvanced(data, values);
-	else if (action.startsWith("save_type:")) {
-		outcome = saveType(data, action.slice("save_type:".length), values);
-	} else return render(data, ctx, admin, { tab: TAB.overview });
-
-	if ("error" in outcome) {
-		return render(data, ctx, admin, {
-			...outcome.state,
-			toast: { type: "error", message: outcome.error },
-		});
+	if (action === "add_redirect") {
+		return redirectsChanged(
+			await addOne(
+				ctx,
+				str(values, "source"),
+				str(values, "destination"),
+				str(values, "code", "301"),
+			),
+			"Redirect added.",
+		);
+	}
+	if (action.startsWith("save_redirect:")) {
+		const id = action.slice("save_redirect:".length);
+		const editing = data.redirectRows.find((row) => row.id === id);
+		return redirectsChanged(
+			await updateOne(
+				ctx,
+				id,
+				str(values, "source", editing?.source ?? ""),
+				str(values, "destination", editing?.destination ?? ""),
+				str(values, "code", String(editing?.type ?? 301)),
+			),
+			"Redirect changed.",
+			editing,
+		);
 	}
 
-	// Normalising before the write keeps stored data in the shape the page hook reads.
-	const config = normalizeConfig(outcome.config);
-	await ctx.kv.set(CONFIG_KEY, config);
-	return render({ ...data, config }, ctx, admin, {
-		...outcome.state,
-		toast: { type: "success", message: SAVED },
-	});
+	if (action === "setup_identity") {
+		const outcome = saveIdentity(data, values, ctx.site.url);
+		if ("error" in outcome) return save(outcome);
+		const street = str(values, "street");
+		const town = str(values, "town");
+		const { site } = outcome.config;
+		const address =
+			street !== "" || town !== ""
+				? {
+						...site.address,
+						...(street ? { streetAddress: street } : {}),
+						...(town ? { addressLocality: town } : {}),
+					}
+				: site.address;
+		return save({
+			config: { ...outcome.config, site: { ...site, address } },
+			state: { tab: TAB.overview },
+		});
+	}
+	if (action === "save_identity") return save(saveIdentity(data, values, ctx.site.url));
+	if (action === "save_contact") return save(saveContact(data, values));
+	if (action === "save_hours") return save(saveHours(data, values));
+	if (action === "save_profiles") return save(saveProfiles(data, values));
+	if (action === "save_company") return save(saveCompany(data, values));
+	if (action === "save_advanced") return save(saveAdvanced(data, values));
+	return render(data, ctx, admin, { tab: TAB.overview });
 }

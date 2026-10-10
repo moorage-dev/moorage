@@ -1,13 +1,14 @@
 // Copyright 2026 Moorage. Licensed under FSL-1.1-MIT; see LICENSE.
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
+import { validateBlockResponse } from "@emdash-cms/blocks/server";
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
 import type { PageMetadataContribution } from "emdash";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { SeoConfig } from "../src/config.js";
 
-const PAGE = "/seo";
+const PAGE = "/overview";
 
 let host: PluginRuntimeTestHost | undefined;
 
@@ -53,29 +54,38 @@ async function config(runtime: PluginRuntimeTestHost): Promise<SeoConfig | null>
 }
 
 describe("SEO page", () => {
-	it("shows an admin the four tabs and the first-run steps", async () => {
+	it("shows an admin three tabs, real numbers and one open question on the first visit", async () => {
 		const runtime = await start();
 		const response = await runtime.admin.loadPage(PAGE);
 
 		const tabs = response.blocks.find((block) => block.type === "tab");
 		expect(tabs?.type === "tab" && tabs.panels.map((panel) => panel.label)).toEqual([
 			"Overview",
-			"Who you are",
-			"Page types",
 			"Redirects",
+			"Settings",
 		]);
-		expect(texts(response)).toContain("SEO is already working");
-		expect(texts(response)).toContain("Setup: 0 of 3 done");
+		const overview = tabs?.type === "tab" ? (tabs.panels[0]?.blocks ?? []) : [];
+		// Numbers first, then the one thing left to answer.
+		expect(overview[0]?.type).toBe("stats");
+		expect(JSON.stringify(overview[1])).toContain(
+			"One thing left: tell Google who this site is for",
+		);
 	});
 
-	it("guesses each page type from the collection's name", async () => {
+	it("guesses each content type from the collection's name", async () => {
 		const runtime = await start();
 		const response = await runtime.admin.loadPage(PAGE);
-		const table = flatten(response.blocks).find((block) => block.type === "table");
-		expect(table?.type === "table" && table.rows.map((row) => [row.name, row.shown])).toEqual([
-			["Pages", "Web page"],
-			["Services", "Service"],
+		const table = flatten(response.blocks).find(
+			(block) => block.type === "table" && block.page_action_id === "types_table",
+		);
+		expect(
+			table?.type === "table" &&
+				table.rows.map((row) => [row.name, (row.shown as { label: string }).label]),
+		).toEqual([
+			["Pages", "Shown to Google as: Web page"],
+			["Services", "Shown to Google as: Service"],
 		]);
+		expect(texts(response)).toContain("Content types: Pages = Web page, Services = Service");
 	});
 
 	it("shows an editor a read-only page and ignores their changes", async () => {
@@ -89,6 +99,43 @@ describe("SEO page", () => {
 
 		await runtime.admin.submit(PAGE, "save_identity", { name: "Hacked" }, { user: editor });
 		expect(await config(runtime)).toBeNull();
+	});
+});
+
+describe("what EmDash will accept", () => {
+	it("returns screens that pass EmDash's validator even when the site address is unknown", async () => {
+		// A freshly created site can report an empty address; one invalid link
+		// anywhere makes EmDash reject the whole page.
+		host = await createPluginRuntimeTestHost({ site: { name: "", url: "", locale: "en" } });
+		await host.fixtures.collection({
+			slug: "pages",
+			label: "Pages",
+			urlPattern: "/{slug}",
+			supports: ["seo"],
+			fields: [{ slug: "title", label: "Title", type: "string" }],
+		});
+		const entry = await host.fixtures.content("pages", {
+			slug: "about",
+			data: { title: "About" },
+			status: "published",
+		});
+		await host.fixtures.redirect({ source: "/x", destination: "/y" });
+
+		const screens = [
+			await host.admin.loadPage(PAGE),
+			await host.admin.loadWidget("seo"),
+			await host.admin.loadEditorPanel("preview", "pages", entry.id),
+			await host.admin.submit(PAGE, "check_redirects", {
+				list: "/a,/b\n/c,https://other.example/d",
+			}),
+		];
+		for (const screen of screens) {
+			expect(validateBlockResponse(screen, { pluginPagePaths: [PAGE] })).toEqual({
+				valid: true,
+				errors: [],
+			});
+		}
+		expect(texts(screens[0] as BlockResponse)).not.toContain("Missing-page log");
 	});
 });
 
@@ -118,7 +165,8 @@ describe("Who you are", () => {
 			},
 			steps: { identity: true, types: false },
 		});
-		expect(texts(response)).toContain("Setup: 1 of 3 done");
+		// The open question is gone from the Overview once answered.
+		expect(texts(response)).not.toContain("One thing left");
 		// A local business gets the opening hours section, and is asked for its address.
 		expect(texts(response)).toContain("Opening hours");
 		expect(texts(response)).toContain(
@@ -208,32 +256,81 @@ describe("Who you are", () => {
 		expect((await config(runtime))?.site.openingHours).toHaveLength(3);
 	});
 
-	it("saves profile links and areas, one per line", async () => {
+	it("saves named and other profile links, accepting links without https", async () => {
 		const runtime = await start();
-		await runtime.admin.submit(PAGE, "save_profiles", {
-			profiles: "https://www.instagram.com/acme\n\nhttps://www.facebook.com/acme",
-			areas: "Springfield\nShelbyville",
+		const saved = await runtime.admin.submit(PAGE, "save_profiles", {
+			profile_instagram: "instagram.com/acme",
+			profile_facebook: "https://www.facebook.com/acme",
+			profiles: "https://www.tiktok.com/@acme\n\nhttps://www.yelp.com/biz/acme",
+		});
+		expect((await config(runtime))?.site.sameAs).toEqual([
+			"https://www.facebook.com/acme",
+			"https://instagram.com/acme",
+			"https://www.tiktok.com/@acme",
+			"https://www.yelp.com/biz/acme",
+		]);
+		// Each link comes back in its own field, and the section title says what is filled.
+		expect(texts(saved)).toContain('"action_id":"profile_instagram","label":"Instagram"');
+		expect(texts(saved)).toContain("Your profiles elsewhere: facebook.com, instagram.com");
+
+		const response = await runtime.admin.submit(PAGE, "save_profiles", { profiles: "not a link" });
+		expect(response.toast?.type).toBe("error");
+	});
+
+	it("saves areas served with the contact details, and optional company facts", async () => {
+		const runtime = await start();
+		await runtime.admin.submit(PAGE, "save_contact", { areas: "Springfield\nShelbyville" });
+		await runtime.admin.submit(PAGE, "save_company", {
+			legal_name: "Acme Trading Ltd",
+			founded: "2012",
+			vat_id: "GB123456789",
+			employees: "12",
+		});
+		expect((await config(runtime))?.site).toMatchObject({
+			areaServed: ["Springfield", "Shelbyville"],
+			legalName: "Acme Trading Ltd",
+			foundingDate: "2012",
+			vatID: "GB123456789",
+			numberOfEmployees: 12,
+		});
+
+		const bad = await runtime.admin.submit(PAGE, "save_company", { founded: "last year" });
+		expect(bad.toast?.type).toBe("error");
+	});
+
+	it("answers the setup question from the Overview, with an address for a local business", async () => {
+		const runtime = await start();
+		await runtime.admin.submit(PAGE, "setup_identity", {
+			kind: "local",
+			business: "FoodEstablishment",
+			name: "Acme Bakery",
+			street: "1 Main St",
+			town: "Springfield",
 		});
 		expect(await config(runtime)).toMatchObject({
 			site: {
-				sameAs: ["https://www.instagram.com/acme", "https://www.facebook.com/acme"],
-				areaServed: ["Springfield", "Shelbyville"],
+				type: "FoodEstablishment",
+				name: "Acme Bakery",
+				address: { streetAddress: "1 Main St", addressLocality: "Springfield" },
 			},
+			steps: { identity: true },
 		});
-
-		const response = await runtime.admin.submit(PAGE, "save_profiles", { profiles: "instagram" });
-		expect(response.toast?.type).toBe("error");
 	});
 });
 
-describe("Page types", () => {
-	it("opens the change form for one page type", async () => {
+describe("Content types", () => {
+	it("changes a content type straight from its menu", async () => {
 		const runtime = await start();
-		const response = await runtime.admin.act(PAGE, "edit_type", { value: "services" });
-		const form = flatten(response.blocks).find(
-			(block) => block.type === "form" && block.block_id === "page_type",
-		);
-		expect(form?.type === "form" && form.submit.action_id).toBe("save_type:services");
+		const response = await runtime.admin.act(PAGE, "set_type", { value: "services|ContactPage" });
+		expect(response.toast?.type).toBe("success");
+		expect((await config(runtime))?.collections.services).toEqual({
+			type: "ContactPage",
+			noindex: false,
+		});
+		expect(texts(response)).toContain("Shown to Google as: Contact page");
+
+		const refused = await runtime.admin.act(PAGE, "set_type", { value: "nope|ContactPage" });
+		expect(refused.toast?.type).toBe("error");
 	});
 
 	it("hides a page type from search, warns about it, and accepts 'This is intended'", async () => {
@@ -244,14 +341,13 @@ describe("Page types", () => {
 			status: "published",
 		});
 
-		const saved = await runtime.admin.submit(PAGE, "save_type:services", {
-			type: "Service",
-			noindex: true,
-		});
+		const saved = await runtime.admin.act(PAGE, "set_visible", { value: "services|hide" });
+		expect(saved.toast?.message).toBe(
+			"These pages are now hidden from Google and other search engines.",
+		);
 		expect(texts(saved)).toContain("Some pages are hidden from Google");
 		expect(await config(runtime)).toMatchObject({
 			collections: { services: { type: "Service", noindex: true } },
-			steps: { types: true },
 		});
 
 		// The public page now carries noindex.
@@ -280,13 +376,6 @@ describe("Page types", () => {
 		expect(await config(runtime)).toMatchObject({
 			collections: { services: { noindex: true, hiddenOk: true } },
 		});
-	});
-
-	it("marks the step done when the guessed types already look right", async () => {
-		const runtime = await start();
-		const response = await runtime.admin.act(PAGE, "types_ok");
-		expect((await config(runtime))?.steps).toEqual({ identity: false, types: true });
-		expect(texts(response)).not.toContain("These look right");
 	});
 
 	it("saves the advanced snippet settings", async () => {

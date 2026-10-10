@@ -138,6 +138,13 @@ function siteNode(identity: SiteIdentity, name: string, siteUrl: string, id: str
 			: undefined,
 		priceRange: isPerson ? undefined : identity.priceRange,
 		areaServed: isPerson ? undefined : identity.areaServed,
+		foundingDate: isPerson ? undefined : identity.foundingDate,
+		vatID: isPerson ? undefined : identity.vatID,
+		taxID: isPerson ? undefined : identity.taxID,
+		numberOfEmployees:
+			!isPerson && identity.numberOfEmployees
+				? { "@type": "QuantitativeValue", value: identity.numberOfEmployees }
+				: undefined,
 	});
 }
 

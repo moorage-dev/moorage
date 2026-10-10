@@ -17,6 +17,8 @@ export const SCAN_TASK = "seo-scan";
 // in small batches, continued by a background task.
 const BATCH = 20;
 const TITLE_PAGE = 100;
+// Collections without published pages that one request may pass over.
+const MAX_EMPTY_READS = 5;
 /** Rows in the "To fix" table. */
 export const FIX_ROWS = 10;
 
@@ -113,6 +115,20 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 				}),
 			};
 		});
+		// A small site read in one go needs no second pass: shared titles are
+		// visible right here, so the check can finish in this request.
+		const whole = state.cursor === undefined && state.checked === 0 && !page?.hasMore;
+		if (whole && state.collections.length === 1) {
+			const seen = new Map<string, number>();
+			for (const { data } of records) {
+				if (data.titleKey) seen.set(data.titleKey, (seen.get(data.titleKey) ?? 0) + 1);
+			}
+			for (const item of records) {
+				item.data = setDuplicate(item.data, (seen.get(item.data.titleKey ?? "") ?? 0) > 1);
+			}
+			state.status = "done";
+			state.finishedAt = new Date().toISOString();
+		}
 		await store.putMany(records);
 		for (const { data } of records) count(state.tally, data, 1);
 		state.checked += entries.length;
@@ -121,7 +137,9 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 	else {
 		state.cursor = undefined;
 		state.collections = state.collections.slice(1);
-		if (state.collections.length === 0) state.phase = "titles";
+		if (state.collections.length === 0 && (state as ScanState).status !== "done") {
+			state.phase = "titles";
+		}
 	}
 }
 
@@ -214,8 +232,20 @@ export async function scanStep(
 	};
 	if (state.status === "done") return state;
 
-	if (state.phase === "entries") await entriesStep(ctx, state, config);
-	else await titlesStep(ctx, state);
+	if (state.phase === "entries") {
+		// An empty collection costs one read, so several can be passed in one
+		// request; the first one with pages uses up the rest of the budget.
+		for (let reads = 0; reads < MAX_EMPTY_READS && state.phase === "entries"; reads += 1) {
+			const before = state.checked;
+			await entriesStep(ctx, state, config);
+			if (state.checked !== before || (state as ScanState).status === "done") break;
+		}
+		// Nothing published anywhere: there is nothing to compare, so the check is complete.
+		if ((state as ScanState).phase === "titles" && state.checked === 0) {
+			state.status = "done";
+			state.finishedAt = new Date().toISOString();
+		}
+	} else await titlesStep(ctx, state);
 
 	// The step above may have finished the check; TypeScript cannot see that.
 	if ((state as ScanState).status === "done") {

@@ -48,44 +48,39 @@ test("inner page adds breadcrumbs and an indexable robots tag", async ({ page })
 	await expect(robots).toHaveAttribute("content", /^index, follow, max-snippet:-1/);
 });
 
-test("an admin describes the business and the page head follows", async ({ page }) => {
-	await page.goto("/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin/plugins/seo/seo");
+const SEO_PAGE = "/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin/plugins/seo/overview";
+
+async function openSeoPage(page: Page): Promise<void> {
+	await page.goto(SEO_PAGE);
 	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
 	await page.addLocatorHandler(welcome, async () => {
 		await welcome.getByRole("button", { name: "Get Started" }).click();
 	});
-	await expect(page.getByText("SEO is already working")).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible({ timeout: 60_000 });
+}
 
-	await page.getByRole("tab", { name: "Who you are" }).click();
+test("the first visit shows real numbers, and answering the one question changes the page head", async ({
+	page,
+}) => {
+	await openSeoPage(page);
+	// The pages are checked without anyone pressing a button: the seed has three, none with a description.
+	await expect(page.getByText("Pages checked")).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(3);
+
+	await page.getByRole("button", { name: "Answer now" }).click();
 	await page.getByText("A local business customers visit").click();
-	await page.getByRole("textbox", { name: "Name", exact: true }).fill("Acme Bakery");
-	await page.getByRole("button", { name: "Save" }).first().click();
+	await page.getByRole("textbox", { name: "Name", exact: true }).first().fill("Acme Bakery");
+	await page.getByRole("textbox", { name: "Street address" }).first().fill("1 Main St");
+	await page.getByRole("textbox", { name: "Town or city" }).first().fill("Springfield");
+	await page.getByRole("button", { name: "Save", exact: true }).first().click();
 	await expect(
 		page.getByText("Saved. Google will pick this up next time it visits."),
 	).toBeVisible();
-	// The admin stays on the tab they were working in.
-	await expect(page.getByRole("tab", { name: "Who you are" })).toHaveAttribute(
-		"aria-selected",
-		"true",
-	);
-	await expect(page.getByText("Opening hours")).toBeVisible();
+	await expect(page.getByText("One thing left")).toHaveCount(0);
 
-	// Without an address Google would reject a local business, so the site is
-	// still described as an organisation and the address section is open.
-	await page.goto("/");
-	expect(graphOf((await jsonLdScripts(page))[0])[0]).toMatchObject({
-		"@type": "Organization",
-		name: "Acme Bakery",
-	});
-
-	await page.goBack();
-	await page.getByRole("tab", { name: "Who you are" }).click();
-	await page.getByRole("textbox", { name: "Street address" }).fill("1 Main St");
-	await page.getByRole("textbox", { name: "Town or city" }).fill("Springfield");
-	await page.getByRole("button", { name: "Save" }).nth(1).click();
-	await expect(
-		page.getByText("Saved. Google will pick this up next time it visits."),
-	).toBeVisible();
+	// Settings shows what was just entered without opening anything.
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await expect(page.getByText("Contact and address: 1 Main St, Springfield")).toBeVisible();
 
 	await page.goto("/");
 	expect(graphOf((await jsonLdScripts(page))[0])[0]).toMatchObject({
@@ -99,42 +94,42 @@ test("an admin describes the business and the page head follows", async ({ page 
 	});
 });
 
-test("an admin imports redirects from a pasted list and they work", async ({ page }) => {
-	await page.goto("/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin/plugins/seo/seo");
-	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
-	await page.addLocatorHandler(welcome, async () => {
-		await welcome.getByRole("button", { name: "Get Started" }).click();
-	});
-	await page.getByRole("tab", { name: "Redirects" }).click({ timeout: 60_000 });
+test("an admin adds one redirect, imports a list, and both work", async ({ page }) => {
+	await openSeoPage(page);
+	await page.getByRole("tab", { name: "Redirects" }).click();
+	await expect(page.getByText("No redirects yet")).toBeVisible();
 
+	await page.getByRole("textbox", { name: /old address/ }).fill("/old-pricing");
+	await page.getByRole("textbox", { name: "Send them to" }).fill("/pricing");
+	await page.getByRole("button", { name: "Add redirect" }).click();
+	await expect(page.getByText("Redirect added.")).toBeVisible();
+	await expect(page.getByRole("cell", { name: "/old-pricing" })).toBeVisible();
+
+	await page.getByRole("button", { name: "Import a list from WordPress" }).click();
 	await page
-		.getByRole("textbox", { name: /Paste your list/ })
-		.fill("source,target,regex,code\n/old-pricing/,/pricing,0,301\n^/legacy/(\\d+)$,/x,1,301");
+		.getByRole("textbox", { name: /Your list/ })
+		.fill("source,target,regex,code\n/old-contact/,/contact,0,301\n^/legacy/(\\d+)$,/x,1,301");
 	await page.getByRole("button", { name: "Check list" }).click();
 	await expect(page.getByText("1 ready, 1 skipped")).toBeVisible();
 	await expect(page.getByText("Pattern needs a human to rewrite it")).toBeVisible();
-
 	await page.getByRole("button", { name: "Add 1 redirect" }).click();
 	await page.getByRole("button", { name: "Add", exact: true }).click();
-	await expect(page.getByText("1 redirect added", { exact: true })).toBeVisible();
+	await expect(page.getByText("1 redirect added from your list")).toBeVisible();
 
-	// The old address now really sends visitors to the new one.
-	const response = await page.request.get("/old-pricing", { maxRedirects: 0 });
-	expect(response.status()).toBe(301);
-	expect(response.headers().location).toBe("/pricing");
+	// The old addresses now really send visitors to the new ones.
+	for (const [from, to] of [
+		["/old-pricing", "/pricing"],
+		["/old-contact", "/contact"],
+	]) {
+		const response = await page.request.get(from ?? "", { maxRedirects: 0 });
+		expect(response.status()).toBe(301);
+		expect(response.headers().location).toBe(to);
+	}
 });
 
-test("pages to fix are listed, and fixing one in the editor clears it", async ({ page }) => {
-	await page.goto("/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin/plugins/seo/seo");
-	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
-	await page.addLocatorHandler(welcome, async () => {
-		await welcome.getByRole("button", { name: "Get Started" }).click();
-	});
-
-	await page.getByRole("button", { name: "Check my pages" }).click({ timeout: 60_000 });
-	// The seed's three pages have no search description.
-	await expect(page.getByText("Pages ready: 0 of 3")).toBeVisible({ timeout: 30_000 });
-	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(3);
+test("fixing a listed page in the editor takes it off the list", async ({ page }) => {
+	await openSeoPage(page);
+	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(3, { timeout: 30_000 });
 
 	// The link opens the entry editor, where the Google preview panel explains the problem.
 	await page.getByRole("link", { name: "Open page" }).first().click();
@@ -150,7 +145,6 @@ test("pages to fix are listed, and fixing one in the editor clears it", async ({
 	await page.keyboard.press("Tab");
 	expect((await saved).ok()).toBe(true);
 
-	await page.goto("/_emdash/admin/plugins/seo/seo");
-	await expect(page.getByText("Pages ready: 1 of 3")).toBeVisible({ timeout: 30_000 });
-	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(2);
+	await page.goto("/_emdash/admin/plugins/seo/overview");
+	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(2, { timeout: 30_000 });
 });

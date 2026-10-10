@@ -11,7 +11,7 @@
 			"dependsOn": ["^build"]
 		},
 		"test": {
-			"dependsOn": ["build"],
+			"dependsOn": ["build", "validate"],
 			"inputs": ["$TURBO_DEFAULT$", ".env*"]
 		},
 		"validate": {
