@@ -1,4 +1,4 @@
-// Copyright 2026 GoSiTech. Licensed under FSL-1.1-MIT; see LICENSE.
+// Copyright 2026 GoSi Tech. Licensed under FSL-1.1-MIT; see LICENSE.
 
 import { emdashPluginTest } from "@emdash-cms/plugin-test/config";
 import { defineConfig } from "vitest/config";

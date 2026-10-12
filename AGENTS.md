@@ -23,7 +23,7 @@ Build order: seo, theme-marketing, analytics, lead-delivery, site-health, popups
 
 ## Rules
 
-- Licence is FSL-1.1-MIT. Every source file starts with `// Copyright <year> GoSiTech. Licensed under FSL-1.1-MIT; see LICENSE.` (GoSiTech is the legal owner; Moorage is its product name) followed by a blank line (the import sorter leaves it on line 1 only when a blank line follows). Every package has `"license": "FSL-1.1-MIT"` and a copy of `LICENSE`.
+- Licence is FSL-1.1-MIT. Every source file starts with `// Copyright <year> GoSi Tech. Licensed under FSL-1.1-MIT; see LICENSE.` (GoSi Tech is the legal owner; Moorage is its product name) followed by a blank line (the import sorter leaves it on line 1 only when a blank line follows). Every package has `"license": "FSL-1.1-MIT"` and a copy of `LICENSE`.
 - Depend only on EmDash core, official `@emdash-cms/*` packages and our own packages. No third-party EmDash plugins. Extend official plugins by configuration, wrapping, or an upstream PR, never a fork.
 - Every plugin must solve its whole problem on a self-hosted EmDash site with no Moorage account and no key. No Moorage-specific fields in registry builds. The word "Moorage" never appears inside the EmDash admin UI.
 - One admin page per plugin, few settings, nothing a non-technical editor can break.
