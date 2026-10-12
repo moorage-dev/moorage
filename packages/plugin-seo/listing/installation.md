@@ -11,4 +11,4 @@ import seo from "@moorage/plugin-seo";
 emdash({ sandboxed: [seo] });
 ```
 
-Then open **SEO** in the admin sidebar. It works before you change anything; three short steps make the result more accurate.
+Then open **SEO** in the admin sidebar. It works before you change anything; answering one question about who the site is for makes the result more accurate.

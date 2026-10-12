@@ -1,5 +1,11 @@
 # @moorage/plugin-seo
 
+## 0.1.1
+
+### Patch Changes
+
+- Documentation only; the plugin itself is unchanged. The README and listing now say the plugin can be installed from the EmDash registry, use the current names of the Redirects buttons, explain the permissions it asks for, and answer "Is it free?" in the licence's own terms.
+
 ## 0.1.0
 
 ### Minor Changes

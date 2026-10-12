@@ -1,6 +1,6 @@
 # @moorage/plugin-seo
 
-SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured data graph, noindex and snippet rules, a Google preview, on-page SEO checks and redirects import from WordPress. Runs on any EmDash site, self-hosted or on Moorage, with no account and no key.
+SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured data graph, noindex and snippet rules, a Google preview, on-page SEO checks and redirects import from WordPress. Runs on any EmDash site, self-hosted or on Cloudflare, with no account and no key.
 
 ## What it does today
 
@@ -13,7 +13,7 @@ It does not write the page title, the sitemap or robots.txt; EmDash core and you
 
 ## Install
 
-From npm, registered in your site's code:
+From **Plugins** in your EmDash admin (it is listed in the [EmDash registry](https://plugins.emdashcms.com/plugins/@moorage.dev/seo)), or from npm, registered in your site's code:
 
 ```sh
 pnpm add @moorage/plugin-seo
@@ -31,21 +31,19 @@ export default defineConfig({
 
 `sandboxed` needs a sandbox runner: on Cloudflare it is the Worker Loader binding from `@emdash-cms/cloudflare`; on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer.
 
-Installing from the Plugins screen in the EmDash admin (the registry) is not available yet.
+It asks for four permissions: read content, read bylines, read the content schema, and manage redirects. The registry lists a fifth, read redirects, which managing them includes. It makes no requests to any outside service.
 
 ## The SEO page
 
 One page, **SEO**, in the admin sidebar, with three tabs. It works before you touch it: the site is described as an organisation named after the site, each content type is guessed from its name (posts and blog become blog posts, services become services, team becomes people), and your pages are checked by themselves.
 
 - **Overview**: how many pages were checked, how many have nothing to fix and how many do; a warning whenever a content type is hidden from Google; one question if you have not said who the site is for; then **Your details**, the few things Google still needs for your kind of site (an address, opening hours and a phone number for a local business; a logo and profiles for a company); then the pages to fix, each with what is missing and a link to the page; and, folded, pages that are fine but could be better.
-- **Redirects**: your redirects, with Change and Remove on each; add one by typing the old address and where to send visitors; import a list exported from WordPress (Redirection, Yoast SEO Premium or Rank Math), which is checked before anything is added and can be removed again as a batch; export as a copyable list. EmDash already redirects a page's old address when you change it.
+- **Redirects**: your redirects, with Change and Remove on each, and three buttons above the list. **Add a redirect**: the old address, where to send visitors, and the kind (permanent unless you choose otherwise). **Import from WordPress**: paste a list exported from Redirection, Yoast SEO Premium or Rank Math; it is checked before anything is added and can be removed again as a batch. **Export**: a copyable list. EmDash already redirects a page's old address when you change it.
 - **Settings**: who the site is for (a local business, a company or a person) and what you do, then folded sections ordered by how much they matter for that kind of site. Each title says whether the section is needed, worth adding or optional, and what is already filled in: address and phone, opening hours (two ranges a day for split shifts), logo, profiles elsewhere, more about you, and content types (what each kind of content is, and whether it is hidden from Google, which asks before it saves). One location for now. A local business is described as an organisation until it has an address, because Google requires one.
 
 Admins can change settings. Editors see a read-only page with the pages to fix.
 
 In the entry editor, the **Google preview** panel shows how the published page may look on Google (address, title, description), what kind of page it is, whether it is in search results, and up to three things to fix. Admins can also change one page's type, open Google's Rich Results Test for the page, and view the markup. A dashboard widget shows the number of pages to fix.
-
-Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
 ### The checks
 
@@ -55,19 +53,20 @@ Not yet: Product and Event types (they need price and date fields on the collect
 
 ## FAQ
 
+- Is it free? Free to use on any number of sites, your own or your clients', with no account and no key. You may read, change and self-host the code. The licence (FSL-1.1-MIT) does not allow making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality. Each release becomes MIT two years after it is published.
 - How do I add schema markup to EmDash? Install this plugin; it adds structured data (JSON-LD) to every page.
 - How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry.
 - Is there a Yoast alternative for EmDash? EmDash core covers titles, descriptions, sitemaps and canonicals; this plugin adds the schema graph, robots rules, previews and checks.
 - Does it check my page while I type? No. EmDash does not let a general-purpose plugin read unsaved text. The panel and the checks describe the published page, as Google sees it: changes to the page show up once you publish, and changes in the SEO panel show up as soon as they are saved.
 - Is there an SEO score or a traffic light? No, on purpose. You get a list of things to fix that can reach zero.
 - Does it add FAQ rich results? No. Google stopped showing FAQ rich results in May 2026.
-- How do I import redirects from WordPress? Export them from Redirection, Yoast SEO Premium or Rank Math, open SEO > Redirects > Import a list from WordPress, paste the list and press Check list. Nothing is added until you confirm.
+- How do I import redirects from WordPress? Export them from Redirection, Yoast SEO Premium or Rank Math, open SEO > Redirects > Import from WordPress, paste the list and press Check list. Nothing is added until you confirm.
 - Why were some redirects skipped? EmDash has no regular-expression redirects. Exact addresses and "everything under a folder" are converted; other patterns are listed for you to rewrite by hand. Redirects to another website and addresses with a `?` are not supported by EmDash.
 - Why does a large import take a while on Cloudflare? Sandboxed plugins may only do a few operations per request, so a long list is added a few rows at a time in the background. You can leave the page.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) once the first version is released; unreleased changes are in the repository's `.changeset` folder.
+See [CHANGELOG.md](CHANGELOG.md); unreleased changes are in the repository's `.changeset` folder.
 
 ## Develop
 
@@ -79,4 +78,4 @@ pnpm --filter @moorage/plugin-seo validate
 
 ## Licence
 
-FSL-1.1-MIT; see LICENSE.
+[FSL-1.1-MIT](LICENSE), the Functional Source License. Free to use, change and self-host, including on client sites. Not allowed: making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality (the licence's "Competing Use"). Each release becomes MIT two years after it is published. This is a summary; the LICENSE file is what applies.
