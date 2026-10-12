@@ -1,4 +1,4 @@
-// Copyright 2026 Moorage. Licensed under FSL-1.1-MIT; see LICENSE.
+// Copyright 2026 GoSiTech. Licensed under FSL-1.1-MIT; see LICENSE.
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";

@@ -1,4 +1,4 @@
-// Copyright 2026 Moorage. Licensed under FSL-1.1-MIT; see LICENSE.
+// Copyright 2026 GoSiTech. Licensed under FSL-1.1-MIT; see LICENSE.
 
 import type { PageMetadataContribution, PluginContext } from "emdash";
 import type { SandboxedPlugin } from "emdash/plugin";

@@ -1,4 +1,4 @@
-// Copyright 2026 Moorage. Licensed under FSL-1.1-MIT; see LICENSE.
+// Copyright 2026 GoSiTech. Licensed under FSL-1.1-MIT; see LICENSE.
 
 // Runs `astro dev` and restarts it whenever a plugin is rebuilt.
 //

@@ -78,4 +78,4 @@ pnpm --filter @moorage/plugin-seo validate
 
 ## Licence
 
-[FSL-1.1-MIT](LICENSE), the Functional Source License. Free to use, change and self-host, including on client sites. Not allowed: making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality (the licence's "Competing Use"). Each release becomes MIT two years after it is published. This is a summary; the LICENSE file is what applies.
+[FSL-1.1-MIT](LICENSE), the Functional Source License. Free to use, change and self-host, including on client sites. Not allowed: making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality (the licence's "Competing Use"). Each release becomes MIT two years after it is published. This is a summary; the LICENSE file is what applies. Moorage is a product of GoSiTech, which holds the copyright.
