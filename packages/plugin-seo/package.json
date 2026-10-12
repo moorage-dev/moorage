@@ -1,6 +1,6 @@
 {
 	"name": "@moorage/plugin-seo",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "SEO for EmDash: schema markup, structured data, Google preview, noindex rules, redirects import and SEO checks. A Yoast alternative.",
 	"keywords": [
 		"emdash",
