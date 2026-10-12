@@ -21,6 +21,12 @@ describe("reading a pasted list", () => {
 		expect(headed.ready).toEqual([{ source: "/old", destination: "/new", type: 301 }]);
 	});
 
+	it("reads two addresses separated by a space", () => {
+		expect(planImport("/old-page /new-page", []).ready).toEqual([
+			{ source: "/old-page", destination: "/new-page", type: 301 },
+		]);
+	});
+
 	it("reads tab-separated rows pasted from a spreadsheet", () => {
 		expect(planImport("/old\t/new\t302", []).ready).toEqual([
 			{ source: "/old", destination: "/new", type: 302 },
@@ -272,17 +278,46 @@ describe("Redirects tab", () => {
 		expect(await sources(runtime)).toEqual(["/a", "/b"]);
 	});
 
-	it("adds, changes and removes a single redirect, keeping its kind", async () => {
+	it("adds one redirect from the form opened by its button", async () => {
 		const runtime = await start();
+		const opened = await runtime.admin.act(PAGE, "open_add");
+		// Redirect from, Redirect to, and a Kind that starts as Permanent.
+		expect(JSON.stringify(opened.blocks)).toContain(
+			'"action_id":"code","label":"Kind","options":[{"value":"301","label":"Permanent"}',
+		);
+		expect(JSON.stringify(opened.blocks)).toContain('"initial_value":"301"');
+
 		const added = await runtime.admin.submit(PAGE, "add_redirect", {
 			source: "old-page/",
 			destination: "/new-page",
+			code: "301",
 		});
-		expect(added.toast).toEqual({ type: "success", message: "Redirect added." });
+		expect(added.toast).toEqual({
+			type: "success",
+			message: "Redirect added. old-page/ now goes to /new-page.",
+		});
 		expect(JSON.stringify(added.blocks)).toContain(
 			'"source":"/old-page","destination":"/new-page","kind":"Permanent"',
 		);
+	});
 
+	it("adds a page that was removed on purpose, with no new address", async () => {
+		const runtime = await start();
+		const added = await runtime.admin.submit(PAGE, "add_redirect", {
+			source: "/retired",
+			destination: "/ignored",
+			code: "410",
+		});
+		expect(added.toast?.message).toBe("Done. /retired now tells visitors the page was removed.");
+		expect((await runtime.inspect.redirects())[0]).toMatchObject({
+			source: "/retired",
+			destination: "",
+			type: 410,
+		});
+	});
+
+	it("changes and removes a redirect, keeping a kind the form does not offer", async () => {
+		const runtime = await start();
 		// A redirect imported as 308 must stay 308 when only its address is changed.
 		const special = await runtime.fixtures.redirect({
 			source: "/moved",
@@ -302,25 +337,24 @@ describe("Redirects tab", () => {
 
 		const removed = await runtime.admin.act(PAGE, "remove_redirect", { value: special.id });
 		expect(removed.toast?.message).toBe("Redirect removed.");
-		expect(await sources(runtime)).toEqual(["/old-page"]);
+		expect(await sources(runtime)).toEqual([]);
 	});
 
-	it("explains a redirect it cannot add and keeps the form open", async () => {
+	it("explains a redirect it cannot add, beside the form", async () => {
 		const runtime = await start();
 		await runtime.fixtures.redirect({ source: "/a", destination: "/b" });
 		const twice = await runtime.admin.submit(PAGE, "add_redirect", {
 			source: "/a",
 			destination: "/c",
 		});
-		expect(twice.toast).toEqual({
-			type: "error",
-			message: "A redirect from that old address already exists.",
-		});
+		expect(JSON.stringify(twice.blocks)).toContain(
+			"There is already a redirect from that old address. Use Change in the list below.",
+		);
 		const elsewhere = await runtime.admin.submit(PAGE, "add_redirect", {
 			source: "/x",
 			destination: "https://other.example/y",
 		});
-		expect(elsewhere.toast?.message).toBe("Points to another website.");
+		expect(JSON.stringify(elsewhere.blocks)).toContain("Points to another website.");
 		expect(await sources(runtime)).toEqual(["/a"]);
 	});
 

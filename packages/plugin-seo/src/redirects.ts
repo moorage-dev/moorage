@@ -72,6 +72,9 @@ function splitLine(line: string, delimiter: string): string[] {
 		} else cell += char;
 	}
 	cells.push(cell.trim());
+	// "/old-page /new-page": people also separate the two addresses with a space.
+	const only = cells[0] ?? "";
+	if (cells.length === 1 && /\S\s+\S/.test(only)) return only.split(/\s+/);
 	return cells;
 }
 

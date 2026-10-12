@@ -198,8 +198,10 @@ interface PageState {
 	editing?: RedirectRow;
 	/** Content type an admin asked to hide from search, awaiting confirmation. */
 	pendingHide?: string;
-	/** Keep the add-redirect form open, after a rejected entry. */
-	adding?: boolean;
+	/** The task open above the redirects list. */
+	panel?: "add" | "import" | "export";
+	/** Why a single typed redirect was refused. */
+	problem?: string;
 	/** The site's redirects as text, when the admin asked to see them. */
 	exported?: string;
 	toast?: BlockResponse["toast"];
@@ -1023,7 +1025,8 @@ function render(
 							rows: data.redirectRows,
 							more: data.moreRedirects,
 							editing: state.editing,
-							adding: state.adding,
+							panel: state.panel,
+							problem: state.problem,
 							exported: state.exported,
 							managerUrl: adminUrl(ctx.site.url, "/_emdash/admin/redirects"),
 						}),
@@ -1298,11 +1301,12 @@ export async function handleAdmin(
 		editing?: RedirectRow,
 	): Promise<BlockResponse> => {
 		if (error) {
+			// The refusal is shown beside the form, which keeps what was typed.
 			return render(data, ctx, admin, {
 				tab: TAB.redirects,
 				editing,
-				adding: !editing,
-				toast: { type: "error", message: error },
+				...(editing ? {} : { panel: "add" as const }),
+				problem: error,
 			});
 		}
 		const { rows, more } = await listRedirects(ctx);
@@ -1359,7 +1363,12 @@ export async function handleAdmin(
 			const editing = data.redirectRows.find((row) => row.id === interaction.value);
 			return render(data, ctx, admin, { tab: TAB.redirects, editing });
 		}
-		if (action === "cancel_edit") return render(data, ctx, admin, { tab: TAB.redirects });
+		if (action === "open_add")
+			return render(data, ctx, admin, { tab: TAB.redirects, panel: "add" });
+		if (action === "open_import") {
+			return render(data, ctx, admin, { tab: TAB.redirects, panel: "import" });
+		}
+		if (action === "close_panel") return render(data, ctx, admin, { tab: TAB.redirects });
 		if (action === "remove_redirect" && typeof interaction.value === "string") {
 			return redirectsChanged(await removeOne(ctx, interaction.value), "Redirect removed.");
 		}
@@ -1410,6 +1419,7 @@ export async function handleAdmin(
 			const { text, count } = await exportText(ctx);
 			return render(data, ctx, admin, {
 				tab: TAB.redirects,
+				panel: "export",
 				exported: text,
 				toast: { type: "info", message: `${plural(count, "redirect")} listed below.` },
 			});
@@ -1436,14 +1446,13 @@ export async function handleAdmin(
 		});
 	}
 	if (action === "add_redirect") {
+		const source = str(values, "source");
+		const destination = str(values, "code", "301") === "410" ? "" : str(values, "destination");
 		return redirectsChanged(
-			await addOne(
-				ctx,
-				str(values, "source"),
-				str(values, "destination"),
-				str(values, "code", "301"),
-			),
-			"Redirect added.",
+			await addOne(ctx, source, destination, str(values, "code", "301")),
+			destination === ""
+				? `Done. ${source} now tells visitors the page was removed.`
+				: `Redirect added. ${source} now goes to ${destination}.`,
 		);
 	}
 	if (action.startsWith("save_redirect:")) {

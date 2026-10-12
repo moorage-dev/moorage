@@ -105,16 +105,15 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page 
 	await page.getByRole("tab", { name: "Redirects" }).click();
 	await expect(page.getByText("No redirects yet")).toBeVisible();
 
-	if (!(await page.getByRole("textbox", { name: /old address/ }).isVisible())) {
-		await page.getByRole("button", { name: "Add a redirect" }).click();
-	}
-	await page.getByRole("textbox", { name: /old address/ }).fill("/old-pricing");
-	await page.getByRole("textbox", { name: "Send them to" }).fill("/pricing");
+	// Tasks are buttons above the list; pressing one opens it in place.
+	await page.getByRole("button", { name: "Add a redirect" }).click();
+	await page.getByRole("textbox", { name: "Redirect from" }).fill("/old-pricing");
+	await page.getByRole("textbox", { name: "Redirect to" }).fill("/pricing");
 	await page.getByRole("button", { name: "Add redirect" }).click();
-	await expect(page.getByText("Redirect added.")).toBeVisible();
+	await expect(page.getByText("Redirect added. /old-pricing now goes to /pricing.")).toBeVisible();
 	await expect(page.getByRole("cell", { name: "/old-pricing" })).toBeVisible();
 
-	await page.getByRole("button", { name: "Import a list from WordPress" }).click();
+	await page.getByRole("button", { name: "Import from WordPress" }).click();
 	await page
 		.getByRole("textbox", { name: /Your list/ })
 		.fill("source,target,regex,code\n/old-contact/,/contact,0,301\n^/legacy/(\\d+)$,/x,1,301");

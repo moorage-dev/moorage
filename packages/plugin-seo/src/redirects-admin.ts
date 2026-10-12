@@ -256,8 +256,8 @@ const ROWS_SHOWN = 20;
 
 const KINDS: Array<{ value: string; label: string }> = [
 	{ value: "301", label: "Permanent" },
-	{ value: "302", label: "Temporary" },
-	{ value: "410", label: "Deleted on purpose" },
+	{ value: "302", label: "Temporary, the old address will come back" },
+	{ value: "410", label: "Page removed on purpose, no new address" },
 ];
 
 function kindLabel(type: number): string {
@@ -285,7 +285,9 @@ export async function listRedirects(
 
 function hostMessage(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
-	if (/already exists/i.test(message)) return "A redirect from that old address already exists.";
+	if (/already exists/i.test(message)) {
+		return "There is already a redirect from that old address. Use Change in the list below.";
+	}
 	if (/must be different/i.test(message)) return "The old and new address are the same.";
 	if (/loop/i.test(message)) return "That would send visitors in a circle.";
 	if (/changed since/i.test(message)) return "That redirect was just changed elsewhere. Try again.";
@@ -466,83 +468,141 @@ export interface RedirectsView {
 	more: boolean;
 	/** The redirect whose edit form is open. */
 	editing?: RedirectRow;
-	/** Keep the add form open (after a rejected entry). */
-	adding?: boolean;
+	/** Which task is open above the list, if any. */
+	panel?: "add" | "import" | "export";
+	/** Why a single typed redirect was refused. */
+	problem?: string;
 	exported?: string;
 	/** Where EmDash's own Redirects screen lives, for the 404 log; absent when the site address is unknown. */
 	managerUrl?: string;
 }
 
-function redirectForm(editing: RedirectRow | undefined): Block {
-	const fields: Extract<Block, { type: "form" }>["fields"] = [
-		{
-			type: "text_input",
-			action_id: "source",
-			label: "When someone visits this old address",
-			placeholder: "/old-page",
-			initial_value: editing?.source ?? "",
-		},
-		{
-			type: "text_input",
-			action_id: "destination",
-			label: "Send them to",
-			placeholder: "/new-page",
-			initial_value: editing?.destination ?? "",
-		},
-	];
-	// A new redirect is permanent, which is what a moved page needs. The kind is
-	// only offered when changing one, and always includes the kind it already has.
-	if (editing) {
-		const current = String(editing.type);
-		fields.push({
-			type: "select",
-			action_id: "code",
-			label: "Kind",
-			options: KINDS.some((kind) => kind.value === current)
-				? KINDS
-				: [...KINDS, { value: current, label: `${kindLabel(editing.type)} (${current})` }],
-			initial_value: current,
-		});
-	}
+function oneForm(editing: RedirectRow | undefined, formKey: string): Block {
+	const current = editing ? String(editing.type) : "301";
 	return {
 		type: "form",
-		// A new id each time makes the admin start the form empty again.
-		block_id: editing ? `edit_redirect_${editing.id}` : `add_redirect_${Date.now()}`,
-		fields,
+		// The id changes only after a successful add, so the form empties then
+		// and keeps what was typed when an entry is refused.
+		block_id: editing ? `edit_redirect_${editing.id}` : `add_one_${formKey}`,
+		fields: [
+			{
+				type: "text_input",
+				action_id: "source",
+				label: "Redirect from",
+				placeholder: "/old-page",
+				initial_value: editing?.source ?? "",
+			},
+			{
+				type: "text_input",
+				action_id: "destination",
+				label: "Redirect to",
+				placeholder: "/new-page",
+				initial_value: editing?.destination ?? "",
+				condition: { field: "code", neq: "410" },
+			},
+			{
+				type: "select",
+				action_id: "code",
+				label: "Kind",
+				// A redirect keeps a kind this list does not offer, such as one imported as 308.
+				options: KINDS.some((kind) => kind.value === current)
+					? KINDS
+					: [...KINDS, { value: current, label: `${kindLabel(Number(current))} (${current})` }],
+				initial_value: current,
+			},
+		],
 		submit: editing
 			? { label: "Save changes", action_id: `save_redirect:${editing.id}` }
 			: { label: "Add redirect", action_id: "add_redirect" },
 	};
 }
 
-/** The Redirects tab: add one, see and change what exists, import a list. */
+/**
+ * The Redirects tab. The tasks are buttons in one row above the list, where
+ * people look for them; pressing one opens that task in place, since a plugin
+ * cannot open a dialog of its own. An import that is under way stays open
+ * until it is finished.
+ */
 export function redirectsTab(view: RedirectsView): Block[] {
 	const { state, rows, editing } = view;
+	const panel = editing ? undefined : (view.panel ?? (state ? "import" : undefined));
+	// The newest redirect changes after every successful add, which empties the form.
+	const formKey = rows[0]?.id ?? "first";
 	const blocks: Block[] = [
 		{
 			type: "context",
-			text: "Send visitors from an old address to a new one, so links and Google results keep working. When you change a page's address in EmDash, the old one is redirected for you. Add one here for anything else, such as addresses from an old site.",
+			text: "Send visitors from an old address to a new one. Pages you rename in EmDash are redirected for you.",
+		},
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: "open_add",
+					label: "Add a redirect",
+					...(panel === undefined && !editing ? { style: "primary" as const } : {}),
+				},
+				{ type: "button", action_id: "open_import", label: "Import from WordPress" },
+				{ type: "button", action_id: "export_redirects", label: "Export" },
+				...(view.managerUrl
+					? [
+							{
+								type: "link" as const,
+								label: "Full Redirects screen",
+								target: { kind: "external" as const, url: view.managerUrl },
+							},
+						]
+					: []),
+			],
 		},
 	];
 
+	const close: Block = {
+		type: "actions",
+		elements: [{ type: "button", action_id: "close_panel", label: "Close" }],
+	};
+	const problem: Block[] = view.problem
+		? [{ type: "banner", variant: "error", title: view.problem }]
+		: [];
 	if (editing) {
 		blocks.push(
 			{ type: "header", text: "Change a redirect" },
-			redirectForm(editing),
+			...problem,
+			oneForm(editing, formKey),
+			close,
+			{ type: "divider" },
+		);
+	} else if (panel === "add") {
+		blocks.push(
+			{ type: "header", text: "Add a redirect" },
+			...problem,
+			oneForm(undefined, formKey),
+			close,
+			{ type: "divider" },
+		);
+	} else if (panel === "import") {
+		blocks.push({ type: "header", text: "Import from WordPress" }, ...importBlocks(state));
+		// A finished or untouched import can be put away; one in progress stays visible.
+		if (!state) blocks.push(close);
+		blocks.push({ type: "divider" });
+	} else if (panel === "export") {
+		blocks.push(
+			{ type: "header", text: "Export" },
 			{
-				type: "actions",
-				elements: [{ type: "button", action_id: "cancel_edit", label: "Cancel" }],
+				type: "context",
+				text: "Copy this list to keep a backup or to paste into a spreadsheet. It can be imported again here.",
 			},
+			{ type: "code", code: view.exported ?? "", language: "bash" },
+			close,
 			{ type: "divider" },
 		);
 	}
 
-	// What exists comes first; adding is one click away.
 	if (rows.length === 0) {
 		blocks.push({
 			type: "empty",
 			title: "No redirects yet",
-			description: "Add one below, or import a list from WordPress.",
+			description: "Add one, or import a list from your old site.",
 			size: "sm",
 		});
 	} else {
@@ -550,8 +610,8 @@ export function redirectsTab(view: RedirectsView): Block[] {
 			type: "table",
 			page_action_id: "redirects_table",
 			columns: [
-				{ key: "source", label: "Old address" },
-				{ key: "destination", label: "Sends visitors to" },
+				{ key: "source", label: "Redirect from" },
+				{ key: "destination", label: "Redirect to" },
 				{ key: "kind", label: "Kind" },
 				{ key: "hits", label: "Visits", format: "number" },
 				{ key: "edit", label: "", format: "element" },
@@ -570,71 +630,22 @@ export function redirectsTab(view: RedirectsView): Block[] {
 					value: row.id,
 					confirm: {
 						title: "Remove this redirect?",
-						text: `${row.source} will stop sending visitors anywhere.`,
+						text: `Visitors to ${row.source} will see a not-found page.`,
 						confirm: "Remove",
-						deny: "Cancel",
+						deny: "Keep",
 						// Red, like EmDash's own delete confirmations.
 						style: "danger",
 					},
 				},
 			})),
 		});
+		if (view.more) {
+			blocks.push({
+				type: "context",
+				text: `Showing the newest ${rows.length}. The rest are in the full Redirects screen.`,
+			});
+		}
 	}
-	if (view.managerUrl) {
-		blocks.push({
-			type: "actions",
-			elements: [
-				{
-					type: "link",
-					label: view.more
-						? `Showing the newest ${rows.length}. See all redirects, and addresses visitors tried that do not exist`
-						: "See addresses visitors tried that do not exist",
-					target: { kind: "external", url: view.managerUrl },
-				},
-			],
-		});
-	}
-
-	if (!editing) {
-		blocks.push({
-			type: "accordion",
-			label: "Add a redirect",
-			default_open: rows.length === 0 || view.adding === true,
-			blocks: [redirectForm(undefined)],
-		});
-	}
-	blocks.push({
-		type: "accordion",
-		label: "Import a list from WordPress",
-		default_open: state !== null,
-		blocks: importBlocks(state),
-	});
-	blocks.push({
-		type: "accordion",
-		label: "Export",
-		default_open: view.exported !== undefined,
-		blocks:
-			view.exported !== undefined
-				? [
-						{
-							type: "context",
-							text: "Copy this list to keep a backup or to paste into a spreadsheet.",
-						},
-						{ type: "code", code: view.exported, language: "bash" },
-					]
-				: [
-						{
-							type: "actions",
-							elements: [
-								{
-									type: "button",
-									action_id: "export_redirects",
-									label: "Show my redirects as a list",
-								},
-							],
-						},
-					],
-	});
 	return blocks;
 }
 
