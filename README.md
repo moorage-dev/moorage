@@ -24,7 +24,8 @@ Status: scaffolding. Packages land in the order listed in `AGENTS.md`.
 ```sh
 pnpm install
 pnpm check        # build, typecheck, test, validate, lint, format
-pnpm dev          # watch mode for every package, plus the demo site on http://localhost:4321
+pnpm dev          # watch mode for every package, plus the demo site on http://localhost:4321;
+                  # the site restarts by itself a few seconds after a plugin change
 ```
 
 The demo site (`apps/demo-site`) needs a local `.env` once:
