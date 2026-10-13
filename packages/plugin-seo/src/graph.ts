@@ -9,6 +9,7 @@ import {
 	type SeoConfig,
 	type SiteIdentity,
 } from "./config.js";
+import { findImageSize } from "./images.js";
 import type { EntryRecord } from "./record.js";
 import { parseUrl } from "./url.js";
 
@@ -353,7 +354,14 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 	}
 
 	if (image) {
-		nodes.push({ "@type": "ImageObject", "@id": imageId, url: image, contentUrl: image });
+		nodes.push({
+			"@type": "ImageObject",
+			"@id": imageId,
+			url: image,
+			contentUrl: image,
+			// Only when the picture is certainly one of the entry's own images.
+			...findImageSize(record?.images, image, siteUrl),
+		});
 	}
 
 	if (crumbs.length > 0) {

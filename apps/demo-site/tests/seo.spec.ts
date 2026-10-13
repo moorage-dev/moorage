@@ -162,7 +162,7 @@ test("fixing a listed page in the editor takes it off the list", async ({ page }
 	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(2, { timeout: 30_000 });
 });
 
-// Last in this file: it changes the Contact page and, for a moment, the Pages collection.
+// The last two tests change the Contact page and, for a moment, the Pages collection.
 test("an entry's own markup joins the one graph, and a hidden page has no page nodes", async ({
 	page,
 	baseURL,
@@ -238,4 +238,110 @@ test("an entry's own markup joins the one graph, and a hidden page has no page n
 	expect(siteOnly).toHaveLength(2);
 	expect(siteOnly[0]?.["@id"]).toBe(`${baseURL}/#organization`);
 	expect(siteOnly[1]?.["@type"]).toBe("WebSite");
+});
+
+test("a page's own picture is described with its size, and a picture the theme shares is not asked for", async ({
+	page,
+	baseURL,
+}) => {
+	await openSeoPage(page);
+	const headers = { "X-EmDash-Request": "1" };
+	const api = "/_emdash/api";
+	const NO_PICTURE = "This page has no picture for shared links";
+	// The Overview's folded list of pages that are fine but could be better.
+	const worthALook = async (): Promise<string> => {
+		await page.goto("/_emdash/admin/plugins/seo/overview");
+		await expect(page.getByText("Pages checked")).toBeVisible({ timeout: 30_000 });
+		const fold = page.getByText(/^Worth a look \(/);
+		if ((await fold.count()) === 0) return "";
+		await fold.click();
+		const table = page.getByRole("table").filter({ hasText: "Could be better" });
+		await expect(table).toBeVisible();
+		return (await table.getByRole("row").allInnerTexts()).join("\n");
+	};
+
+	// A real picture of a known size, uploaded the way the media library does it.
+	const picture = await page.screenshot({ clip: { x: 0, y: 0, width: 320, height: 200 } });
+	const upload = await page.request.post(`${api}/media`, {
+		headers,
+		multipart: {
+			file: { name: "cover.png", mimeType: "image/png", buffer: picture },
+		},
+	});
+	expect(upload.ok(), await upload.text()).toBe(true);
+	const media = ((await upload.json()) as { data: { item: Record<string, unknown> } }).data.item;
+	const storageKey = String(media.storageKey);
+
+	// The seed has no image field; add one for this test (contact.astro passes `cover` on as
+	// the page's picture) and take it away again below, as the dev server rewrites emdash-env.d.ts.
+	const added = await page.request.post(`${api}/schema/collections/pages/fields`, {
+		headers,
+		data: { slug: "cover", label: "Cover", type: "image" },
+	});
+	expect(added.ok(), await added.text()).toBe(true);
+	try {
+		const list = await page.request.get(`${api}/content/pages`, { headers });
+		const pages = (await list.json()) as { data: { items: Array<{ id: string; slug: string }> } };
+		const contact = pages.data.items.find((item) => item.slug === "contact");
+		expect(contact).toBeDefined();
+		const save = async (data: Record<string, unknown>) => {
+			const saved = await page.request.put(`${api}/content/pages/${contact?.id}`, {
+				headers,
+				data: { data, seo: { description: "How to reach the team, and where to find us." } },
+			});
+			expect(saved.ok(), await saved.text()).toBe(true);
+			const published = await page.request.post(`${api}/content/pages/${contact?.id}/publish`, {
+				headers,
+			});
+			expect(published.ok()).toBe(true);
+		};
+
+		// With a description and no picture, Contact is fine but "worth a look".
+		await save({ cover: null });
+		const asked = new RegExp(`Contact.*${NO_PICTURE}`);
+		await expect.poll(worthALook, { timeout: 30_000 }).toMatch(asked);
+
+		// Give the entry a picture. The saved entry is checked without knowing what the theme
+		// will do with that field; only a render shows that it is shared.
+		// Only the media id is sent: EmDash fills in the size and the storage key when it saves
+		// an image field, which is what the plugin reads.
+		await save({ cover: { id: String(media.id) } });
+		const imageUrl = `${baseURL}/_emdash/api/media/file/${storageKey}`;
+		await expect
+			.poll(async () => {
+				await page.goto("/contact");
+				const graph = graphOf((await jsonLdScripts(page))[0]);
+				return graph.find((node) => node["@type"] === "ImageObject") ?? null;
+			})
+			.toEqual({
+				"@type": "ImageObject",
+				"@id": imageUrl,
+				url: imageUrl,
+				contentUrl: imageUrl,
+				width: 320,
+				height: 200,
+			});
+		// It is the picture shared links show, and still the only script.
+		await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", imageUrl);
+		expect(await jsonLdScripts(page)).toHaveLength(1);
+		const webpage = graphOf((await jsonLdScripts(page))[0]).find(
+			(node) => node["@id"] === `${baseURL}/contact`,
+		);
+		expect(webpage?.primaryImageOfPage).toEqual({ "@id": imageUrl });
+
+		// Having been rendered with a picture, Contact is no longer asked for one...
+		// (It may still be listed for other advice, such as having little text.)
+		await expect.poll(worthALook, { timeout: 30_000 }).not.toMatch(asked);
+		// ...and a full check, which reads saved entries only, does not bring the advice back.
+		await page.getByRole("button", { name: "Check all pages again" }).click();
+		await expect(page.getByText("All pages checked.")).toBeVisible({ timeout: 60_000 });
+		expect(await worthALook()).not.toMatch(asked);
+	} finally {
+		const removed = await page.request.delete(`${api}/schema/collections/pages/fields/cover`, {
+			headers,
+		});
+		const deleted = await page.request.delete(`${api}/media/${String(media.id)}`, { headers });
+		expect(removed.ok()).toBe(true);
+		expect(deleted.ok()).toBe(true);
+	}
 });

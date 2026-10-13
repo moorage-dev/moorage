@@ -16,6 +16,14 @@ const seo = page
 		})
 	: null;
 
+// A theme usually shares an entry's own picture. The seed has no image field; when a
+// collection is given one called `cover` (the browser tests add it), it is passed on.
+type Cover = { id: string; meta?: { storageKey?: string } };
+const cover = (page?.data as { cover?: Cover | null } | undefined)?.cover;
+const coverUrl = cover
+	? `${Astro.url.origin}/_emdash/api/media/file/${cover.meta?.storageKey ?? cover.id}`
+	: undefined;
+
 const contactMethods = [
 	{
 		icon: "ph:envelope",
@@ -45,7 +53,7 @@ const contactMethods = [
 	title={seo?.title || "Contact"}
 	pageTitle={page?.data.title || "Contact"}
 	description={seo?.description}
-	image={seo?.ogImage}
+	image={seo?.ogImage ?? coverUrl}
 	canonical={seo?.canonical}
 	robots={seo?.robots}
 	content={page ? { collection: "pages", id: page.data.id, slug: page.id } : undefined}

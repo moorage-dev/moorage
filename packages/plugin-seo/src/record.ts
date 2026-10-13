@@ -2,13 +2,21 @@
 
 import type { PluginContext, StorageCollection } from "emdash";
 
-import { checkEntry, statusOf, titleKey, type EntryStatus, type Issue } from "./checks.js";
+import {
+	checkEntry,
+	NO_SOCIAL_IMAGE,
+	statusOf,
+	titleKey,
+	type EntryStatus,
+	type Issue,
+} from "./checks.js";
 import {
 	ARTICLE_TYPES,
 	defaultTypeForCollection,
 	type PageSchemaType,
 	type SeoConfig,
 } from "./config.js";
+import { collectImages, type EntryImage } from "./images.js";
 
 /** Storage collection holding one record per content entry. */
 export const ENTRIES = "entries";
@@ -30,6 +38,20 @@ export interface EntryRecord {
 	type?: PageSchemaType;
 	/** Nodes from the entry's JSON-LD field, added to the page's graph. */
 	custom: Array<Record<string, unknown>>;
+	/**
+	 * Images in the entry's own fields with their recorded size, so the page's
+	 * primary image can be described with width and height. Absent on records
+	 * written before 0.1.2, and when the entry has none.
+	 */
+	images?: EntryImage[];
+	/** The entry's own data has no picture for shared links (the saved-entry check). */
+	needsImage?: boolean;
+	/**
+	 * The page was last rendered with a picture (one the theme passes), which the
+	 * saved-entry check cannot see. Set and cleared only by the public page hook;
+	 * while set, "no picture for shared links" is not reported.
+	 */
+	imageSeen?: boolean;
 	// Page checks. Absent on records written before checks existed.
 	collection?: string;
 	entryId?: string;
@@ -106,7 +128,7 @@ export function makeRecord(input: {
 	const title = entry.seo?.title?.trim() || entryTitle(entry);
 	const published = entry.status === "published";
 	const counted = published && input.hasPages;
-	const issues = !input.hasPages
+	const checked = !input.hasPages
 		? []
 		: checkEntry({
 				slug: entry.slug,
@@ -118,6 +140,11 @@ export function makeRecord(input: {
 				authorCount: authors.length,
 				duplicateTitle: input.duplicateTitle,
 			});
+	const needsImage = checked.some((issue) => issue.id === NO_SOCIAL_IMAGE.id);
+	// What a render showed outlives a save: the save cannot see the theme's picture.
+	const imageSeen = needsImage && previous?.imageSeen === true;
+	const issues = imageSeen ? checked.filter((issue) => issue.id !== NO_SOCIAL_IMAGE.id) : checked;
+	const images = input.hasPages ? collectImages(entry.data) : [];
 	return {
 		v: 1,
 		publishedAt: entry.publishedAt,
@@ -126,6 +153,9 @@ export function makeRecord(input: {
 		// The type is an editor's choice, not derived data: keep it across rebuilds.
 		...(previous?.type ? { type: previous.type } : {}),
 		custom: parseCustomSchema(entry.data[config.jsonLdField]),
+		...(images.length > 0 ? { images } : {}),
+		needsImage,
+		...(imageSeen ? { imageSeen } : {}),
 		collection,
 		entryId: entry.id,
 		title,
@@ -138,6 +168,41 @@ export function makeRecord(input: {
 		titleKey: counted ? titleKey(title) : "",
 		issues,
 		checkedAt: new Date().toISOString(),
+	};
+}
+
+/** A record's status after its issues changed; hidden, draft and skipped pages stay as they are. */
+function restatus(record: EntryRecord, issues: Issue[]): EntryRecord["status"] {
+	return record.status === "hidden" || record.status === "draft" || record.status === "skip"
+		? record.status
+		: statusOf(issues, false);
+}
+
+/**
+ * What a public render of the page showed: it had a picture, or it did not.
+ * Returns the changed record when that is news, otherwise null, so the caller
+ * writes once per change and never on an ordinary render.
+ *
+ * Only pages whose own data has no picture are affected. Seeing a picture
+ * drops "no picture for shared links"; a later render without one brings it back.
+ */
+export function observeImage(record: EntryRecord, hasImage: boolean): EntryRecord | null {
+	const issues = record.issues ?? [];
+	const listed = issues.some((issue) => issue.id === NO_SOCIAL_IMAGE.id);
+	// Records written before 0.1.2 have no `needsImage`; the listed issue says the same.
+	const needsImage = record.needsImage ?? listed;
+	if (!needsImage) return null;
+	if ((record.imageSeen === true) === hasImage && listed !== hasImage) return null;
+
+	const others = issues.filter((issue) => issue.id !== NO_SOCIAL_IMAGE.id);
+	const next = hasImage ? others : [...others, NO_SOCIAL_IMAGE];
+	const { imageSeen: _seen, ...rest } = record;
+	return {
+		...rest,
+		needsImage: true,
+		...(hasImage ? { imageSeen: true } : {}),
+		issues: next,
+		status: restatus(record, next),
 	};
 }
 
@@ -169,10 +234,7 @@ export function setDuplicate(record: EntryRecord, duplicate: boolean): EntryReco
 	return {
 		...record,
 		issues,
-		status:
-			record.status === "hidden" || record.status === "draft" || record.status === "skip"
-				? record.status
-				: statusOf(issues, false),
+		status: restatus(record, issues),
 	};
 }
 

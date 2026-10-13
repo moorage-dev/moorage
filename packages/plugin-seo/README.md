@@ -4,7 +4,7 @@ SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured d
 
 ## What it does today
 
-- Replaces EmDash's single JSON-LD object with one linked graph per page: Organization (or Person, or a LocalBusiness type), WebSite, WebPage, BreadcrumbList, the primary image, and BlogPosting with byline authors and dates on article pages.
+- Replaces EmDash's single JSON-LD object with one linked graph per page: Organization (or Person, or a LocalBusiness type), WebSite, WebPage, BreadcrumbList, the primary image (with its width and height when it is one of the entry's own images), and BlogPosting with byline authors and dates on article pages.
 - Writes the robots tag: `noindex` per collection, and `max-snippet`, `max-image-preview` and `max-video-preview` limits on indexable pages. A noindex set in an entry's SEO panel is always kept.
 - Uses the theme's breadcrumb trail when it passes one, otherwise derives Home and one crumb per URL segment.
 - Adds your own schema from an entry to the same graph: add a JSON field named `json_ld` to a collection and paste any schema.org object (for example an Event or a Product). Give it an `@id` and the page names it as its main entity. An object whose `@id` is already used in the graph is left out.
@@ -48,7 +48,7 @@ In the entry editor, the **Google preview** panel shows how the published page m
 
 ### The checks
 
-To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off; no image for shared links; an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
+To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off; no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 

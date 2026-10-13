@@ -6,13 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
 	checkEntry,
+	NO_SOCIAL_IMAGE,
 	excerptOf,
 	estimateTitlePixels,
 	statusOf,
 	truncateTitle,
 	type CheckInput,
 } from "../src/checks.js";
-import type { EntryRecord } from "../src/record.js";
+import { observeImage, type EntryRecord } from "../src/record.js";
 import type { ScanState, Stats } from "../src/scan.js";
 
 const PAGE = "/overview";
@@ -455,6 +456,271 @@ describe("checks on a real site", () => {
 			isNew: false,
 		});
 		expect(text(await runtime.admin.loadWidget("seo"))).toContain("All pages ready");
+	});
+});
+
+describe("the picture for shared links", () => {
+	let host: PluginRuntimeTestHost | undefined;
+
+	afterEach(async () => {
+		await host?.dispose();
+		host = undefined;
+	});
+
+	const PICTURE = "https://acme.test/theme/share.png";
+	const record = (runtime: PluginRuntimeTestHost, id: string) =>
+		runtime.inspect.storage.get<EntryRecord>("entries", `pages:${id}`);
+	const listed = (data: EntryRecord | null) =>
+		(data?.issues ?? []).some((issue) => issue.id === "no-social-image");
+
+	/** A published page with a description and no picture of its own, saved once. */
+	async function start(slug = "about") {
+		host ??= await createPluginRuntimeTestHost({
+			site: { name: "Acme", url: "https://acme.test", locale: "en" },
+		});
+		if (slug === "about") {
+			await host.fixtures.collection({
+				slug: "pages",
+				label: "Pages",
+				urlPattern: "/{slug}",
+				supports: ["drafts", "revisions", "seo"],
+				fields: [
+					{ slug: "title", label: "Title", type: "string" },
+					{ slug: "body", label: "Body", type: "text" },
+				],
+			});
+		}
+		const entry = await host.fixtures.content("pages", {
+			slug,
+			data: { title: `Page ${slug}`, body: LONG_TEXT },
+			status: "published",
+		});
+		await change(host, entry.id, { description: "Who we are." }, (data) => data !== null);
+		return { runtime: host, entry };
+	}
+
+	/**
+	 * Change the SEO panel with a real save. EmDash runs the after-save hook in
+	 * the background, so wait until the record shows the change, then save once
+	 * more so nothing is still running when the test goes on.
+	 */
+	async function change(
+		runtime: PluginRuntimeTestHost,
+		id: string,
+		seo: { description?: string; image?: string | null },
+		settled: (data: EntryRecord | null) => boolean,
+	) {
+		const result = await runtime.actions.content.update("pages", id, { seo });
+		expect(result.success).toBe(true);
+		await expect.poll(async () => settled(await record(runtime, id))).toBe(true);
+		await save(runtime, id);
+	}
+
+	async function save(runtime: PluginRuntimeTestHost, id: string) {
+		await runtime.transport.invokeHook("content:afterSave", {
+			collection: "pages",
+			content: { id },
+			isNew: false,
+		});
+	}
+
+	/** One public render of the page, as the theme would pass it. */
+	async function render(
+		runtime: PluginRuntimeTestHost,
+		entry: { id: string; slug?: string | null },
+		image: string | null,
+		viaPanel = false,
+	) {
+		await runtime.transport.invokeHook("page:metadata", {
+			page: {
+				url: `https://acme.test/${entry.slug}`,
+				path: `/${entry.slug}`,
+				locale: null,
+				kind: "content",
+				pageType: "website",
+				title: "A page",
+				description: null,
+				canonical: null,
+				image: viaPanel ? null : image,
+				...(viaPanel ? { seo: { ogImage: image } } : {}),
+				content: { collection: "pages", id: entry.id, slug: entry.slug ?? null },
+			},
+		});
+	}
+
+	it("is asked for when the entry has none and no render has shown one", async () => {
+		const { runtime, entry } = await start();
+		expect(await record(runtime, entry.id)).toMatchObject({
+			status: "look",
+			needsImage: true,
+			issues: [NO_SOCIAL_IMAGE],
+		});
+		expect((await record(runtime, entry.id))?.imageSeen).toBeUndefined();
+		expect(NO_SOCIAL_IMAGE.message).toBe(
+			"This page has no picture for shared links, unless your site has a default sharing image.",
+		);
+	});
+
+	it("is no longer asked for once the page is rendered with one, and is written once", async () => {
+		const { runtime, entry } = await start();
+		await render(runtime, entry, PICTURE);
+
+		const first = await record(runtime, entry.id);
+		expect(first).toMatchObject({ status: "ready", issues: [], needsImage: true, imageSeen: true });
+
+		// EmDash may call the hook several times for one page view: nothing more changes.
+		await render(runtime, entry, PICTURE);
+		await render(runtime, entry, PICTURE);
+		expect(await record(runtime, entry.id)).toEqual(first);
+		expect(observeImage(first!, true)).toBeNull();
+
+		// The same when the calls overlap: each may write, and each writes the same record.
+		const other = await start("contact");
+		await Promise.all([1, 2, 3].map(() => render(runtime, other.entry, PICTURE)));
+		expect(await record(runtime, other.entry.id)).toMatchObject({
+			status: "ready",
+			issues: [],
+			imageSeen: true,
+		});
+	});
+
+	it("counts the picture EmDash resolves for og:image, not only the theme's own field", async () => {
+		const { runtime, entry } = await start();
+		await render(runtime, entry, PICTURE, true);
+		expect(listed(await record(runtime, entry.id))).toBe(false);
+	});
+
+	it("stays quiet through a save and a full check, which cannot see the theme's picture", async () => {
+		const { runtime, entry } = await start();
+		await render(runtime, entry, PICTURE);
+
+		await save(runtime, entry.id);
+		expect(await record(runtime, entry.id)).toMatchObject({ status: "ready", imageSeen: true });
+
+		// "Check all pages again" rebuilds every record from the saved entries.
+		await runtime.admin.loadPage(PAGE);
+		const before = (await record(runtime, entry.id))?.checkedAt;
+		await runtime.admin.act(PAGE, "check_pages");
+		for (let step = 0; step < 10; step += 1) {
+			if ((await runtime.inspect.kv.get<ScanState>("scan"))?.status === "done") break;
+			await runtime.admin.loadPage(PAGE);
+		}
+		const overview = JSON.stringify((await runtime.admin.loadPage(PAGE)).blocks);
+		const after = await record(runtime, entry.id);
+		expect(after).toMatchObject({ status: "ready", imageSeen: true, issues: [] });
+		expect(after?.checkedAt).not.toBe(before);
+		expect(overview).not.toContain(NO_SOCIAL_IMAGE.message);
+		expect(overview).not.toContain("Worth a look");
+	});
+
+	it("is asked for again when a later render has no picture, written once", async () => {
+		const { runtime, entry } = await start();
+		await render(runtime, entry, PICTURE);
+		await render(runtime, entry, null);
+
+		const back = await record(runtime, entry.id);
+		expect(back).toMatchObject({ status: "look", needsImage: true, issues: [NO_SOCIAL_IMAGE] });
+		expect(back?.imageSeen).toBeUndefined();
+
+		await render(runtime, entry, null);
+		await render(runtime, entry, "");
+		expect(await record(runtime, entry.id)).toEqual(back);
+
+		const overview = JSON.stringify((await runtime.admin.loadPage(PAGE)).blocks);
+		expect(overview).toContain("Worth a look (1)");
+		expect(overview).toContain(NO_SOCIAL_IMAGE.message);
+	});
+
+	it("forgets a seen picture once the entry has its own, so removing that one is noticed", async () => {
+		const { runtime, entry } = await start();
+		await render(runtime, entry, PICTURE);
+
+		await change(runtime, entry.id, { image: "/own.jpg" }, (data) => data?.needsImage === false);
+		const own = await record(runtime, entry.id);
+		expect(own).toMatchObject({ status: "ready", needsImage: false });
+		expect(own?.imageSeen).toBeUndefined();
+		// Renders with the entry's own picture have nothing to add.
+		expect(observeImage(own!, true)).toBeNull();
+		await render(runtime, entry, "https://acme.test/own.jpg");
+		expect((await record(runtime, entry.id))?.imageSeen).toBeUndefined();
+
+		await change(runtime, entry.id, { image: null }, (data) => data?.needsImage === true);
+		expect(listed(await record(runtime, entry.id))).toBe(true);
+	});
+
+	it("clears the old warning on a record written before this was known", async () => {
+		const { runtime, entry } = await start();
+		const old = await record(runtime, entry.id);
+		const { needsImage: _needs, ...rest } = old!;
+		const before: EntryRecord = {
+			...rest,
+			issues: [
+				{
+					...NO_SOCIAL_IMAGE,
+					message:
+						"Shared links will show no picture, unless your site has a default sharing image.",
+				},
+			],
+		};
+		await runtime.fixtures.plugin.storage("entries", `pages:${entry.id}`, before);
+
+		// Without a picture nothing is rewritten; with one the warning goes.
+		await render(runtime, entry, null);
+		expect(await record(runtime, entry.id)).toEqual(before);
+		await render(runtime, entry, PICTURE);
+		expect(await record(runtime, entry.id)).toMatchObject({
+			status: "ready",
+			issues: [],
+			needsImage: true,
+			imageSeen: true,
+		});
+	});
+
+	it("leaves other issues, hidden pages and drafts as they are", () => {
+		const base: EntryRecord = {
+			v: 1,
+			publishedAt: null,
+			updatedAt: null,
+			authors: [],
+			custom: [],
+			needsImage: true,
+			status: "fix",
+			issues: [{ id: "no-description", level: "fix", message: "m", fix: "f" }, NO_SOCIAL_IMAGE],
+		};
+		expect(observeImage(base, true)).toMatchObject({
+			status: "fix",
+			imageSeen: true,
+			issues: [{ id: "no-description" }],
+		});
+		expect(observeImage({ ...base, issues: [NO_SOCIAL_IMAGE], status: "look" }, true)?.status).toBe(
+			"ready",
+		);
+		for (const status of ["hidden", "draft", "skip"] as const) {
+			expect(observeImage({ ...base, status }, true)?.status).toBe(status);
+		}
+		// Nothing to learn: the entry has its own picture, or the render says what is known.
+		expect(observeImage({ ...base, needsImage: false, issues: [] }, true)).toBeNull();
+		expect(observeImage({ ...base, needsImage: false, issues: [] }, false)).toBeNull();
+		expect(observeImage(base, false)).toBeNull();
+		expect(observeImage({ ...base, needsImage: undefined, issues: [] }, true)).toBeNull();
+	});
+
+	it("does not write in the request that first builds a page's record", async () => {
+		const { runtime } = await start();
+		// Never saved through a hook, so the first render builds its record.
+		const entry = await runtime.fixtures.content("pages", {
+			slug: "new",
+			data: { title: "New page", body: LONG_TEXT },
+			status: "published",
+		});
+		expect(await record(runtime, entry.id)).toBeNull();
+
+		await render(runtime, entry, PICTURE);
+		expect(await record(runtime, entry.id)).toMatchObject({ needsImage: true });
+		expect(listed(await record(runtime, entry.id))).toBe(true);
+		// The next render settles it.
+		await render(runtime, entry, PICTURE);
+		expect(listed(await record(runtime, entry.id))).toBe(false);
 	});
 });
 

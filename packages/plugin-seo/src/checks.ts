@@ -111,6 +111,18 @@ function contentFacts(data: Record<string, unknown>): ContentFacts {
 }
 
 /**
+ * Raised from the entry's own data, which cannot show a picture the theme adds
+ * when it renders the page. The record drops it once such a render is seen.
+ */
+export const NO_SOCIAL_IMAGE: Issue = {
+	id: "no-social-image",
+	level: "look",
+	message:
+		"This page has no picture for shared links, unless your site has a default sharing image.",
+	fix: "Add an image in the SEO panel. If your theme adds a picture itself, this clears once the page has been viewed.",
+};
+
+/**
  * The description a page shows when its SEO panel has none: EmDash's own
  * `getSeoMeta` falls back to the entry's `excerpt` field, so the checks do too.
  */
@@ -183,14 +195,7 @@ export function checkEntry(input: CheckInput): Issue[] {
 			fix: "Shorten the title, or put the important words first.",
 		});
 	}
-	if (seo && !seo.image && !facts.hasImage) {
-		issues.push({
-			id: "no-social-image",
-			level: "look",
-			message: "Shared links will show no picture, unless your site has a default sharing image.",
-			fix: "Add an image in the SEO panel.",
-		});
-	}
+	if (seo && !seo.image && !facts.hasImage) issues.push(NO_SOCIAL_IMAGE);
 	if (input.isArticle && input.authorCount === 0) {
 		issues.push({
 			id: "no-author",

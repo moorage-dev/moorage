@@ -11,6 +11,7 @@ import {
 	buildEntryRecord,
 	entryKey,
 	entryStore,
+	observeImage,
 	removeEntryRecord,
 	type EntryRecord,
 } from "./record.js";
@@ -51,10 +52,22 @@ const plugin: SandboxedPlugin = {
 			if (page.content) {
 				const { collection, id } = page.content;
 				try {
-					record =
-						(await entryStore(ctx).get(entryKey(collection, id))) ??
-						// First render of an entry saved before the plugin was installed.
-						(await buildEntryRecord(ctx, collection, id, config));
+					const store = entryStore(ctx);
+					const stored = await store.get(entryKey(collection, id));
+					// First render of an entry saved before the plugin was installed.
+					record = stored ?? (await buildEntryRecord(ctx, collection, id, config));
+					// The picture this render shares (what becomes og:image) is something
+					// the saved-entry check cannot see. Written only when it is news, and
+					// not in the request that just built the record.
+					const hasImage = Boolean(page.seo?.ogImage || page.image);
+					if (stored && observeImage(stored, hasImage)) {
+						// Read again just before writing: a save may have rebuilt the
+						// record meanwhile, and the whole record is written back.
+						const latest = await store.get(entryKey(collection, id));
+						const changed = latest ? observeImage(latest, hasImage) : null;
+						if (changed) await store.put(entryKey(collection, id), changed);
+						record = changed ?? latest ?? stored;
+					}
 				} catch (error) {
 					ctx.log.warn("could not load entry record", { collection, id, error: String(error) });
 				}
