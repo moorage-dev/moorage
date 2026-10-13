@@ -28,7 +28,7 @@ export interface EntryRecord {
 	authors: Array<{ name: string; url?: string }>;
 	/** Entry-level schema type, set from the editor panel. */
 	type?: PageSchemaType;
-	/** Nodes from the entry's JSON-LD field, emitted next to the main graph. */
+	/** Nodes from the entry's JSON-LD field, added to the page's graph. */
 	custom: Array<Record<string, unknown>>;
 	// Page checks. Absent on records written before checks existed.
 	collection?: string;

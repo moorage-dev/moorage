@@ -111,6 +111,14 @@ function contentFacts(data: Record<string, unknown>): ContentFacts {
 }
 
 /**
+ * The description a page shows when its SEO panel has none: EmDash's own
+ * `getSeoMeta` falls back to the entry's `excerpt` field, so the checks do too.
+ */
+export function excerptOf(data: Record<string, unknown>): string {
+	return typeof data.excerpt === "string" ? data.excerpt.trim() : "";
+}
+
+/**
  * Check one saved entry. Every rule reads data the plugin already holds and
  * is something Google documents; there are no keyword or word-count rules.
  */
@@ -137,7 +145,7 @@ export function checkEntry(input: CheckInput): Issue[] {
 			fix: "Put your name and what you do in SEO Title, in the page's SEO panel.",
 		});
 	}
-	if (seo && !seo.description?.trim()) {
+	if (seo && !seo.description?.trim() && excerptOf(input.data) === "") {
 		issues.push({
 			id: "no-description",
 			level: "fix",

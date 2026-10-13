@@ -15,7 +15,7 @@ import {
 	type EntryRecord,
 } from "./record.js";
 import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
-import { mergeRobots } from "./robots.js";
+import { isNoindex, mergeRobots } from "./robots.js";
 import { loadScan, SCAN_TASK, scanStep, startScan } from "./scan.js";
 
 async function loadConfig(ctx: PluginContext) {
@@ -61,31 +61,27 @@ const plugin: SandboxedPlugin = {
 			}
 
 			const rule = page.content ? config.collections[page.content.collection] : undefined;
+			const robots = mergeRobots(page.seo?.robots, rule?.noindex === true, config.robots);
 			const contributions: PageMetadataContribution[] = [
-				{
-					kind: "meta",
-					name: "robots",
-					content: mergeRobots(page.seo?.robots, rule?.noindex === true, config.robots),
-				},
+				{ kind: "meta", name: "robots", content: robots },
 				{
 					// "primary" is the id of EmDash's own JSON-LD; using it replaces that
-					// script instead of adding a second, unlinked one.
+					// script instead of adding a second, unlinked one. The entry's own
+					// JSON-LD field is part of this graph, so a page has one script.
 					kind: "jsonld",
 					id: "primary",
 					graph: {
 						"@context": "https://schema.org",
-						"@graph": buildGraph({ page, config, record, site: ctx.site }),
+						"@graph": buildGraph({
+							page,
+							config,
+							record,
+							noindex: isNoindex(robots),
+							site: ctx.site,
+						}),
 					},
 				},
 			];
-
-			if (record && record.custom.length > 0) {
-				contributions.push({
-					kind: "jsonld",
-					id: "seo:custom",
-					graph: record.custom.map((node) => ({ "@context": "https://schema.org", ...node })),
-				});
-			}
 
 			return contributions;
 		},

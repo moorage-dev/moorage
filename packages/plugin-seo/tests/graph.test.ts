@@ -7,7 +7,7 @@ import { DEFAULT_CONFIG, normalizeConfig, type SeoConfig } from "../src/config.j
 import { buildGraph, type SchemaNode } from "../src/graph.js";
 import { parseDayHours } from "../src/hours.js";
 import { parseCustomSchema, type EntryRecord } from "../src/record.js";
-import { mergeRobots } from "../src/robots.js";
+import { isNoindex, mergeRobots } from "../src/robots.js";
 
 const SITE = { name: "Acme", url: "https://acme.test", locale: "en" };
 
@@ -196,13 +196,165 @@ describe("WebSite and WebPage", () => {
 		const nodes = graph({ image: "/media/hero.jpg" });
 		expect(byType(nodes, "ImageObject")).toEqual({
 			"@type": "ImageObject",
-			"@id": "https://acme.test/pricing#primaryimage",
+			"@id": "https://acme.test/media/hero.jpg",
 			url: "https://acme.test/media/hero.jpg",
 			contentUrl: "https://acme.test/media/hero.jpg",
 		});
 		expect(byType(nodes, "WebPage").primaryImageOfPage).toEqual({
-			"@id": "https://acme.test/pricing#primaryimage",
+			"@id": "https://acme.test/media/hero.jpg",
 		});
+	});
+
+	it("gives one picture the same id on every page that uses it", () => {
+		const onPricing = graph({ image: "/media/hero.jpg" });
+		const onContact = graph({
+			url: "https://acme.test/contact",
+			path: "/contact",
+			image: "https://acme.test/media/hero.jpg",
+		});
+		const id = byType(onPricing, "ImageObject")["@id"];
+		expect(byType(onContact, "ImageObject")["@id"]).toBe(id);
+		expect(byType(onContact, "WebPage").image).toEqual({ "@id": id });
+		// A different picture is a different node.
+		expect(byType(graph({ image: "/media/other.jpg" }), "ImageObject")["@id"]).not.toBe(id);
+	});
+});
+
+describe("pages kept out of search", () => {
+	it("emits only the site's own nodes on a noindex page", () => {
+		const nodes = buildGraph({
+			page: page({
+				image: "/media/hero.jpg",
+				kind: "content",
+				content: { collection: "posts", id: "p1", slug: "hello" },
+			}),
+			config: DEFAULT_CONFIG,
+			record: record({ custom: [{ "@type": "Event", "@id": "#event", name: "Open day" }] }),
+			noindex: true,
+			site: SITE,
+		});
+		expect(nodes.map((node) => node["@type"])).toEqual(["Organization", "WebSite"]);
+		// Nothing left behind points at a node that is no longer there.
+		expect(JSON.stringify(nodes)).not.toContain("https://acme.test/pricing");
+	});
+
+	it("keeps the page's nodes when it only lacks a canonical", () => {
+		const nodes = buildGraph({
+			page: page({ canonical: null, image: "/media/hero.jpg" }),
+			config: DEFAULT_CONFIG,
+			record: null,
+			noindex: false,
+			site: SITE,
+		});
+		expect(nodes.map((node) => node["@type"])).toEqual([
+			"Organization",
+			"WebSite",
+			"WebPage",
+			"ImageObject",
+			"BreadcrumbList",
+		]);
+	});
+
+	it("reads noindex from the robots tag the page gets", () => {
+		expect(isNoindex(mergeRobots("noindex, nofollow", false, DEFAULT_CONFIG.robots))).toBe(true);
+		expect(isNoindex(mergeRobots("none", false, DEFAULT_CONFIG.robots))).toBe(true);
+		expect(isNoindex(mergeRobots(null, true, DEFAULT_CONFIG.robots))).toBe(true);
+		expect(isNoindex(mergeRobots(null, false, DEFAULT_CONFIG.robots))).toBe(false);
+		expect(isNoindex(mergeRobots("nofollow", false, DEFAULT_CONFIG.robots))).toBe(false);
+	});
+});
+
+describe("custom markup in the same graph", () => {
+	const service = {
+		kind: "content" as const,
+		url: "https://acme.test/services/cleaning",
+		path: "/services/cleaning",
+		pageTitle: "Cleaning",
+		content: { collection: "services", id: "s1", slug: "cleaning" },
+	};
+
+	it("appends custom nodes without their own @context and links the first id", () => {
+		const nodes = graph(
+			{},
+			DEFAULT_CONFIG,
+			record({
+				custom: [
+					{ "@context": "https://schema.org", "@type": "FAQPage", name: "Questions" },
+					{
+						"@context": "https://schema.org",
+						"@type": "SoftwareApplication",
+						"@id": "https://acme.test/pricing#app",
+						name: "Acme",
+					},
+					{ "@type": "Event", "@id": "https://acme.test/pricing#event", name: "Launch" },
+				],
+			}),
+		);
+		expect(nodes.map((node) => node["@type"])).toEqual([
+			"Organization",
+			"WebSite",
+			"WebPage",
+			"BreadcrumbList",
+			"FAQPage",
+			"SoftwareApplication",
+			"Event",
+		]);
+		expect(nodes.every((node) => !("@context" in node))).toBe(true);
+		expect(byType(nodes, "WebPage").mainEntity).toEqual({ "@id": "https://acme.test/pricing#app" });
+	});
+
+	it("sets no mainEntity when no custom node has an id", () => {
+		const nodes = graph(
+			{},
+			DEFAULT_CONFIG,
+			record({ custom: [{ "@type": "Event", name: "Launch" }] }),
+		);
+		expect(byType(nodes, "Event")).toEqual({ "@type": "Event", name: "Launch" });
+		expect(byType(nodes, "WebPage").mainEntity).toBeUndefined();
+	});
+
+	it("skips a custom node whose id is already in the graph", () => {
+		const nodes = graph(
+			{},
+			DEFAULT_CONFIG,
+			record({
+				custom: [
+					{ "@type": "ItemPage", "@id": "https://acme.test/pricing", name: "Mine" },
+					{ "@type": "Corporation", "@id": "https://acme.test/#organization" },
+					{ "@type": "Product", "@id": "https://acme.test/pricing#product", name: "First" },
+					{ "@type": "Product", "@id": "https://acme.test/pricing#product", name: "Second" },
+				],
+			}),
+		);
+		const ids = nodes.map((node) => node["@id"]);
+		expect(new Set(ids).size).toBe(ids.length);
+		expect(byType(nodes, "WebPage").name).toBe("Pricing");
+		expect(nodes.some((node) => node["@type"] === "Corporation")).toBe(false);
+		expect(byType(nodes, "Product").name).toBe("First");
+		// The page never names itself as its main entity.
+		expect(byType(nodes, "WebPage").mainEntity).toEqual({
+			"@id": "https://acme.test/pricing#product",
+		});
+	});
+
+	it("keeps the main entity a page type already has", () => {
+		const custom = [{ "@type": "Event", "@id": "https://acme.test/x#event", name: "Open day" }];
+		const config = normalizeConfig({ collections: { services: { type: "Service" } } });
+		const onService = graph(service, config, record({ custom }));
+		expect(byType(onService, "WebPage").mainEntity).toEqual({
+			"@id": "https://acme.test/services/cleaning#service",
+		});
+		expect(byType(onService, "Event").name).toBe("Open day");
+
+		const onProfile = graph(service, DEFAULT_CONFIG, record({ type: "ProfilePage", custom }));
+		expect(byType(onProfile, "ProfilePage").mainEntity).toEqual({
+			"@id": "https://acme.test/services/cleaning#person",
+		});
+
+		// An article already names the page as its main entity.
+		const onArticle = graph(service, DEFAULT_CONFIG, record({ type: "BlogPosting", custom }));
+		expect(byType(onArticle, "WebPage").mainEntity).toBeUndefined();
+		expect(byType(onArticle, "Event").name).toBe("Open day");
 	});
 });
 

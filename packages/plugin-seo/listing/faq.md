@@ -4,7 +4,7 @@ Install this plugin. Every page gets structured data (JSON-LD) straight away; sa
 
 ## How do I add structured data to one page?
 
-Add a JSON field named `json_ld` to the collection and paste any schema.org object into the entry.
+Add a JSON field named `json_ld` to the collection and paste any schema.org object into the entry. It is added to the page's one graph, and with an `@id` the page names it as its main entity.
 
 ## Is there a Yoast alternative for EmDash?
 

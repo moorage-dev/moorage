@@ -13,7 +13,7 @@
 	],
 	"license": "FSL-1.1-MIT",
 	"author": "Moorage (https://moorage.dev)",
-	"homepage": "https://github.com/moorage-dev/moorage/tree/main/packages/plugin-seo#readme",
+	"homepage": "https://moorage.dev/plugins/seo",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/moorage-dev/moorage.git",

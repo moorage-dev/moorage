@@ -70,6 +70,15 @@ async function collection(runtime: PluginRuntimeTestHost, slug: string): Promise
 	});
 }
 
+/** The nodes an entry's JSON-LD field added to the page's graph. */
+async function customNodes(
+	runtime: PluginRuntimeTestHost,
+	context: PublicPageContext,
+): Promise<Array<Record<string, unknown>>> {
+	const nodes = graphNodes(jsonLd(await metadata(runtime, context), "primary"));
+	return nodes.filter((node) => node["@type"] === "Event");
+}
+
 async function metadata(
 	runtime: PluginRuntimeTestHost,
 	context: PublicPageContext,
@@ -127,17 +136,32 @@ describe("page:metadata", () => {
 			}),
 		);
 
-		expect(nodeTypes(jsonLd(contributions, "primary"))).toEqual([
-			"Dentist",
-			"WebSite",
-			"ContactPage",
-			"BreadcrumbList",
-		]);
+		// The collection is kept out of search, so only the site itself is described.
+		expect(nodeTypes(jsonLd(contributions, "primary"))).toEqual(["Dentist", "WebSite"]);
 		expect(robots(contributions)).toBe("noindex, follow");
 		// The entry predates the plugin: its record is built on this first render.
 		expect(
 			await runtime.inspect.storage.get<EntryRecord>("entries", `pages:${entry.id}`),
 		).toMatchObject({ v: 1, authors: [], custom: [] });
+
+		// Back in search, the page is described with the collection's type.
+		await runtime.fixtures.plugin.kv("config", {
+			site: { type: "Dentist", name: "Acme Dental", address: { streetAddress: "1 Main St" } },
+			collections: { pages: { type: "ContactPage" } },
+		});
+		const shown = await metadata(
+			runtime,
+			page({
+				kind: "content",
+				content: { collection: "pages", id: entry.id, slug: "contact" },
+			}),
+		);
+		expect(nodeTypes(jsonLd(shown, "primary"))).toEqual([
+			"Dentist",
+			"WebSite",
+			"ContactPage",
+			"BreadcrumbList",
+		]);
 	});
 
 	it("keeps an editor's noindex from the SEO panel", async () => {
@@ -192,7 +216,52 @@ describe("page:metadata", () => {
 		);
 	});
 
-	it("emits an entry's JSON-LD field as separate nodes", async () => {
+	it("adds an entry's JSON-LD field to the one graph and links it from the page", async () => {
+		const runtime = await runtimeHost();
+		await runtime.fixtures.collection({
+			slug: "events",
+			label: "Events",
+			fields: [
+				{ slug: "title", label: "Title", type: "string" },
+				{ slug: "json_ld", label: "JSON-LD", type: "json" },
+			],
+		});
+		const entry = await runtime.fixtures.content("events", {
+			slug: "open-day",
+			data: {
+				title: "Open day",
+				json_ld: {
+					"@context": "https://schema.org",
+					"@type": "Event",
+					"@id": "https://acme.test/about#open-day",
+					name: "Open day",
+				},
+			},
+			status: "published",
+		});
+
+		const contributions = await metadata(
+			runtime,
+			page({
+				kind: "content",
+				content: { collection: "events", id: entry.id, slug: "open-day" },
+			}),
+		);
+
+		// One script, whatever the entry adds.
+		expect(contributions.filter((c) => c.kind === "jsonld")).toHaveLength(1);
+		const nodes = graphNodes(jsonLd(contributions, "primary"));
+		expect(nodes.at(-1)).toEqual({
+			"@type": "Event",
+			"@id": "https://acme.test/about#open-day",
+			name: "Open day",
+		});
+		expect(nodes.find((node) => node["@type"] === "WebPage")?.mainEntity).toEqual({
+			"@id": "https://acme.test/about#open-day",
+		});
+	});
+
+	it("emits no page nodes, and one script, on a page hidden from search", async () => {
 		const runtime = await runtimeHost();
 		await runtime.fixtures.collection({
 			slug: "services",
@@ -204,7 +273,7 @@ describe("page:metadata", () => {
 		});
 		const entry = await runtime.fixtures.content("services", {
 			slug: "cleaning",
-			data: { title: "Cleaning", json_ld: { "@type": "Service", name: "Cleaning" } },
+			data: { title: "Cleaning", json_ld: { "@type": "Event", "@id": "#s", name: "Cleaning" } },
 			status: "published",
 		});
 
@@ -212,15 +281,24 @@ describe("page:metadata", () => {
 			runtime,
 			page({
 				kind: "content",
+				image: "/hero.jpg",
 				content: { collection: "services", id: entry.id, slug: "cleaning" },
+				seo: { robots: "noindex, nofollow" },
 			}),
 		);
 
-		expect(jsonLd(contributions, "seo:custom")?.graph).toEqual([
-			{ "@context": "https://schema.org", "@type": "Service", name: "Cleaning" },
+		expect(robots(contributions)).toBe("noindex, nofollow");
+		expect(contributions.filter((c) => c.kind === "jsonld")).toHaveLength(1);
+		expect(nodeTypes(jsonLd(contributions, "primary"))).toEqual(["Organization", "WebSite"]);
+
+		// A page with no canonical is not a hidden page: it keeps its nodes.
+		const plain = await metadata(runtime, page({ canonical: null }));
+		expect(nodeTypes(jsonLd(plain, "primary"))).toEqual([
+			"Organization",
+			"WebSite",
+			"WebPage",
+			"BreadcrumbList",
 		]);
-		// The main graph is still there, and still the only "primary" script.
-		expect(nodeTypes(jsonLd(contributions, "primary"))).toContain("WebPage");
 	});
 });
 
@@ -238,20 +316,18 @@ describe("drafts", () => {
 		});
 		const entry = await runtime.fixtures.content("services", {
 			slug: "cleaning",
-			data: { title: "Cleaning", json_ld: { "@type": "Service", name: "Published" } },
+			data: { title: "Cleaning", json_ld: { "@type": "Event", name: "Published" } },
 			status: "published",
 		});
 		const context = page({
 			kind: "content",
 			content: { collection: "services", id: entry.id, slug: "cleaning" },
 		});
-		expect(jsonLd(await metadata(runtime, context), "seo:custom")?.graph).toMatchObject([
-			{ name: "Published" },
-		]);
+		expect(await customNodes(runtime, context)).toMatchObject([{ name: "Published" }]);
 
 		// Edit without publishing: a real save, so content:afterSave runs.
 		const saved = await runtime.actions.content.update("services", entry.id, {
-			data: { title: "Cleaning", json_ld: { "@type": "Service", name: "Draft" } },
+			data: { title: "Cleaning", json_ld: { "@type": "Event", name: "Draft" } },
 		});
 		expect(saved.success).toBe(true);
 		// EmDash runs after-save hooks in the background; run it again here so the
@@ -264,9 +340,7 @@ describe("drafts", () => {
 		const live = await runtime.inspect.content.get("services", entry.id);
 		expect(live?.status).toBe("published");
 
-		expect(jsonLd(await metadata(runtime, context), "seo:custom")?.graph).toMatchObject([
-			{ name: "Published" },
-		]);
+		expect(await customNodes(runtime, context)).toMatchObject([{ name: "Published" }]);
 	});
 });
 

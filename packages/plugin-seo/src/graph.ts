@@ -19,6 +19,8 @@ export interface GraphInput {
 	config: SeoConfig;
 	/** Precomputed entry data; absent on custom pages and before the first build. */
 	record: EntryRecord | null;
+	/** The page's robots tag says noindex: only the site-level nodes are emitted. */
+	noindex?: boolean;
 	site: {
 		name: string;
 		url: string;
@@ -200,10 +202,39 @@ function truncate(value: string, max: number): string {
 }
 
 /**
+ * Add the nodes from an entry's JSON-LD field to the page's graph, and return
+ * the `@id` of the first one that has an id, for the page's `mainEntity`.
+ *
+ * A node whose `@id` is already in the graph is skipped: the nodes built here
+ * are linked to each other, and replacing one (say the WebPage) would cut
+ * those links. To describe the page differently, give the node its own id.
+ */
+function appendCustom(
+	nodes: SchemaNode[],
+	custom: SchemaNode[],
+	taken: Set<string>,
+): string | undefined {
+	let first: string | undefined;
+	for (const { "@context": _context, ...node } of custom) {
+		const id = typeof node["@id"] === "string" ? node["@id"] : undefined;
+		if (id !== undefined) {
+			if (taken.has(id)) continue;
+			taken.add(id);
+			first ??= id;
+		}
+		nodes.push(node);
+	}
+	return first;
+}
+
+/**
  * Build the linked schema graph for one page. Every node carries an `@id`
  * and points at its neighbours, so a consumer reads one connected graph:
- * site representation ← WebSite ← WebPage ← Article, plus breadcrumbs and
- * the primary image.
+ * site representation ← WebSite ← WebPage ← Article, plus breadcrumbs, the
+ * primary image and any nodes from the entry's JSON-LD field.
+ *
+ * A page kept out of search (noindex) gets the site-level nodes only: nothing
+ * describes a page that search engines are told to leave out.
  */
 export function buildGraph(input: GraphInput): SchemaNode[] {
 	const { page, config, record, site } = input;
@@ -218,7 +249,6 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 	const websiteId = `${siteUrl}/#website`;
 	const webpageId = pageUrl;
 	const breadcrumbId = `${pageUrl}#breadcrumb`;
-	const imageId = `${pageUrl}#primaryimage`;
 
 	const pageType = resolvePageType(page, config, record);
 	const article = isArticleType(pageType);
@@ -229,6 +259,9 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 	const published = record?.publishedAt ?? page.articleMeta?.publishedTime ?? undefined;
 	const modified = record?.updatedAt ?? page.articleMeta?.modifiedTime ?? undefined;
 	const image = page.image ? absolute(page.image, `${siteUrl}/`) : undefined;
+	// The image's own address is its id, so every page that uses the same
+	// picture points at the same node.
+	const imageId = image ?? "";
 	const crumbs = resolveBreadcrumbs(input, siteUrl, pageName);
 
 	const nodes: SchemaNode[] = [
@@ -243,23 +276,26 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 			publisher: ref(siteId),
 			inLanguage: language,
 		}),
-		compact({
-			"@type": article || service ? "WebPage" : pageType,
-			"@id": webpageId,
-			url: pageUrl,
-			name: pageName,
-			description: page.description,
-			isPartOf: ref(websiteId),
-			about: isHome(page) ? ref(siteId) : undefined,
-			primaryImageOfPage: image ? ref(imageId) : undefined,
-			image: image ? ref(imageId) : undefined,
-			breadcrumb: crumbs.length > 0 ? ref(breadcrumbId) : undefined,
-			mainEntity: service ? ref(serviceId) : profile ? ref(profileId) : undefined,
-			datePublished: published,
-			dateModified: modified,
-			inLanguage: language,
-		}),
 	];
+	if (input.noindex) return nodes;
+
+	const webpage = compact({
+		"@type": article || service ? "WebPage" : pageType,
+		"@id": webpageId,
+		url: pageUrl,
+		name: pageName,
+		description: page.description,
+		isPartOf: ref(websiteId),
+		about: isHome(page) ? ref(siteId) : undefined,
+		primaryImageOfPage: image ? ref(imageId) : undefined,
+		image: image ? ref(imageId) : undefined,
+		breadcrumb: crumbs.length > 0 ? ref(breadcrumbId) : undefined,
+		mainEntity: service ? ref(serviceId) : profile ? ref(profileId) : undefined,
+		datePublished: published,
+		dateModified: modified,
+		inLanguage: language,
+	});
+	nodes.push(webpage);
 
 	if (article) {
 		const authors = (record?.authors ?? []).map((author) =>
@@ -334,6 +370,19 @@ export function buildGraph(input: GraphInput): SchemaNode[] {
 				}),
 			),
 		});
+	}
+
+	const taken = new Set<string>([`${siteUrl}/#logo`]);
+	for (const node of nodes) {
+		if (typeof node["@id"] === "string") taken.add(node["@id"]);
+	}
+	const customId = appendCustom(nodes, record?.custom ?? [], taken);
+	// The page type's own main entity (the Service, the Person of a profile page,
+	// or the Article, which names this page as its main entity) stays: the type
+	// is a deliberate choice and Google reads those links. On any other page the
+	// first custom node with an id is what the page is about.
+	if (customId !== undefined && !article && webpage.mainEntity === undefined) {
+		webpage.mainEntity = ref(customId);
 	}
 
 	return nodes;

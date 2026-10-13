@@ -3,7 +3,7 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { truncateTitle } from "./checks.js";
+import { excerptOf, truncateTitle } from "./checks.js";
 import {
 	CONFIG_KEY,
 	defaultTypeForCollection,
@@ -103,7 +103,10 @@ export async function handlePanel(
 	const front = ["home", "index"].includes(item.slug ?? "");
 	const url = front ? `${root}/` : (publicUrl ?? guessed);
 	const title = record.title || "(no title)";
-	const description = item.seo?.description?.trim() ?? "";
+	const written = item.seo?.description?.trim() ?? "";
+	// As EmDash does on the page itself: no SEO description means the excerpt is used.
+	const fromExcerpt = written === "" && excerptOf(item.data) !== "";
+	const description = written || excerptOf(item.data);
 	const collectionType: PageSchemaType =
 		config.collections[entry.collection]?.type ?? defaultTypeForCollection(entry.collection);
 	const type = record.type ?? collectionType;
@@ -123,6 +126,14 @@ export async function handlePanel(
 					? "No description yet. Google will pick some text from the page."
 					: clip(description, DESCRIPTION_CHARS),
 		},
+		...(fromExcerpt
+			? [
+					{
+						type: "context" as const,
+						text: "This description is the page's excerpt. To write a different one for search, fill in Meta Description in the SEO panel.",
+					},
+				]
+			: []),
 		{
 			type: "context",
 			text: "What Google sees: the published page, with the SEO title and description as last saved. Google may rewrite them, and your site may add its name to the title.",
@@ -177,6 +188,7 @@ export async function handlePanel(
 			},
 			config,
 			record,
+			noindex: hidden,
 			site: ctx.site,
 		});
 		blocks.push(

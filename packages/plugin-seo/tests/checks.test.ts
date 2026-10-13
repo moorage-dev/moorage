@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
 	checkEntry,
+	excerptOf,
 	estimateTitlePixels,
 	statusOf,
 	truncateTitle,
@@ -58,6 +59,19 @@ describe("page checks", () => {
 			},
 		]);
 		expect(statusOf(issues, false)).toBe("fix");
+	});
+
+	it("counts the excerpt as the description, as EmDash does on the page", () => {
+		const seo = { ...input().seo!, description: null };
+		const data = { title: "About us", body: LONG_TEXT };
+		expect(checkEntry(input({ seo, data: { ...data, excerpt: "Bread, baked daily." } }))).toEqual(
+			[],
+		);
+		// An empty or non-text excerpt is not a description.
+		for (const excerpt of ["  ", null, 12, ["Bread"]]) {
+			expect(ids({ seo, data: { ...data, excerpt } })).toEqual(["no-description"]);
+		}
+		expect(excerptOf({ excerpt: " Bread. " })).toBe("Bread.");
 	});
 
 	it("does not ask for SEO fields on a collection without the SEO panel", () => {
@@ -494,6 +508,44 @@ describe("Google preview panel", () => {
 			"https://search.google.com/test/rich-results?url=https%3A%2F%2Facme.test%2Fservices%2Fwedding-cakes",
 		);
 		expect(text(panel)).toContain("View the markup");
+	});
+
+	it("shows the excerpt as the description and says where it came from", async () => {
+		host = await createPluginRuntimeTestHost({
+			site: { name: "Acme", url: "https://acme.test", locale: "en" },
+		});
+		await host.fixtures.collection({
+			slug: "posts",
+			label: "Posts",
+			urlPattern: "/blog/{slug}",
+			supports: ["seo"],
+			fields: [
+				{ slug: "title", label: "Title", type: "string" },
+				{ slug: "excerpt", label: "Excerpt", type: "text" },
+				{ slug: "body", label: "Body", type: "text" },
+			],
+		});
+		const entry = await host.fixtures.content("posts", {
+			slug: "sourdough",
+			data: { title: "Sourdough", excerpt: "How we bake our sourdough.", body: LONG_TEXT },
+			status: "published",
+		});
+		const panel = await host.admin.loadEditorPanel("preview", "posts", entry.id);
+
+		expect(panel.blocks[2]).toEqual({ type: "section", text: "How we bake our sourdough." });
+		expect(text(panel)).toContain("This description is the page's excerpt.");
+		expect(text(panel)).not.toContain("No search description");
+		expect(text(panel)).not.toContain("No description yet");
+		// The markup the admin can open describes the page the same way.
+		expect(text(panel)).toContain("How we bake our sourdough.");
+
+		// With a description in the SEO panel, the note about the excerpt goes.
+		await host.actions.content.update("posts", entry.id, {
+			seo: { description: "Sourdough, written for search." },
+		});
+		const written = await host.admin.loadEditorPanel("preview", "posts", entry.id);
+		expect(written.blocks[2]).toEqual({ type: "section", text: "Sourdough, written for search." });
+		expect(text(written)).not.toContain("page's excerpt");
 	});
 
 	it("lets an admin change one page's type and keeps it across saves", async () => {

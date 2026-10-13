@@ -161,3 +161,81 @@ test("fixing a listed page in the editor takes it off the list", async ({ page }
 	await page.goto("/_emdash/admin/plugins/seo/overview");
 	await expect(page.getByRole("link", { name: "Open page" })).toHaveCount(2, { timeout: 30_000 });
 });
+
+// Last in this file: it changes the Contact page and, for a moment, the Pages collection.
+test("an entry's own markup joins the one graph, and a hidden page has no page nodes", async ({
+	page,
+	baseURL,
+}) => {
+	await openSeoPage(page);
+	const headers = { "X-EmDash-Request": "1" };
+	const api = "/_emdash/api";
+	const eventId = `${baseURL}/contact#open-day`;
+
+	// The seed has no JSON-LD field; add one for this test. The dev server rewrites
+	// emdash-env.d.ts when a collection changes, so the field is removed again below.
+	const added = await page.request.post(`${api}/schema/collections/pages/fields`, {
+		headers,
+		data: { slug: "json_ld", label: "JSON-LD", type: "json" },
+	});
+	expect(added.ok()).toBe(true);
+	try {
+		const list = await page.request.get(`${api}/content/pages`, { headers });
+		const pages = (await list.json()) as { data: { items: Array<{ id: string; slug: string }> } };
+		const contact = pages.data.items.find((item) => item.slug === "contact");
+		expect(contact).toBeDefined();
+
+		const saved = await page.request.put(`${api}/content/pages/${contact?.id}`, {
+			headers,
+			data: {
+				data: {
+					json_ld: {
+						"@context": "https://schema.org",
+						"@type": "Event",
+						"@id": eventId,
+						name: "Open day",
+					},
+				},
+			},
+		});
+		expect(saved.ok()).toBe(true);
+		const published = await page.request.post(`${api}/content/pages/${contact?.id}/publish`, {
+			headers,
+		});
+		expect(published.ok()).toBe(true);
+
+		// The plugin picks the change up just after the save, so ask until it is there.
+		// The first node is the site itself, whose type an earlier test changed.
+		await expect
+			.poll(async () => {
+				await page.goto("/contact");
+				const scripts = await jsonLdScripts(page);
+				return scripts.length === 1
+					? graphOf(scripts[0])
+							.slice(1)
+							.map((node) => node["@type"])
+					: scripts;
+			})
+			.toEqual(["WebSite", "WebPage", "BreadcrumbList", "Event"]);
+
+		const graph = graphOf((await jsonLdScripts(page))[0]);
+		// The node sits in the graph without its own @context, and the page points at it.
+		expect(graph[4]).toEqual({ "@type": "Event", "@id": eventId, name: "Open day" });
+		expect(graph[2]?.mainEntity).toEqual({ "@id": eventId });
+	} finally {
+		const removed = await page.request.delete(`${api}/schema/collections/pages/fields/json_ld`, {
+			headers,
+		});
+		expect(removed.ok()).toBe(true);
+	}
+
+	// A page kept out of search still has one script, describing the site only.
+	await page.goto("/lead-test");
+	await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /^noindex/);
+	const hidden = await jsonLdScripts(page);
+	expect(hidden).toHaveLength(1);
+	const siteOnly = graphOf(hidden[0]);
+	expect(siteOnly).toHaveLength(2);
+	expect(siteOnly[0]?.["@id"]).toBe(`${baseURL}/#organization`);
+	expect(siteOnly[1]?.["@type"]).toBe("WebSite");
+});

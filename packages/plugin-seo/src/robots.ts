@@ -44,3 +44,8 @@ export function mergeRobots(
 
 	return [...directives, ...new Set(extras)].join(", ");
 }
+
+/** Whether a robots tag built by `mergeRobots` keeps the page out of search. */
+export function isNoindex(robots: string): boolean {
+	return robots.startsWith("noindex");
+}

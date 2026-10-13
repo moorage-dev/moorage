@@ -7,7 +7,8 @@ SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured d
 - Replaces EmDash's single JSON-LD object with one linked graph per page: Organization (or Person, or a LocalBusiness type), WebSite, WebPage, BreadcrumbList, the primary image, and BlogPosting with byline authors and dates on article pages.
 - Writes the robots tag: `noindex` per collection, and `max-snippet`, `max-image-preview` and `max-video-preview` limits on indexable pages. A noindex set in an entry's SEO panel is always kept.
 - Uses the theme's breadcrumb trail when it passes one, otherwise derives Home and one crumb per URL segment.
-- Emits extra schema from an entry: add a JSON field named `json_ld` to a collection and paste any schema.org object (for example a Service or an Event).
+- Adds your own schema from an entry to the same graph: add a JSON field named `json_ld` to a collection and paste any schema.org object (for example an Event or a Product). Give it an `@id` and the page names it as its main entity. An object whose `@id` is already used in the graph is left out.
+- On a page kept out of search (noindex), describes the site only: no WebPage, image or breadcrumb markup.
 
 It does not write the page title, the sitemap or robots.txt; EmDash core and your theme do.
 
@@ -47,7 +48,7 @@ In the entry editor, the **Google preview** panel shows how the published page m
 
 ### The checks
 
-To fix: no title; a title that says nothing, such as "Home"; no search description; the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off; no image for shared links; an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
+To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off; no image for shared links; an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
@@ -55,7 +56,7 @@ Not yet: Product and Event types (they need price and date fields on the collect
 
 - Is it free? Free to use on any number of sites, your own or your clients', with no account and no key. You may read, change and self-host the code. The licence (FSL-1.1-MIT) does not allow making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality. Each release becomes MIT two years after it is published.
 - How do I add schema markup to EmDash? Install this plugin; it adds structured data (JSON-LD) to every page.
-- How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry.
+- How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry. It joins the page's one graph; the page still has a single JSON-LD script.
 - Is there a Yoast alternative for EmDash? EmDash core covers titles, descriptions, sitemaps and canonicals; this plugin adds the schema graph, robots rules, previews and checks.
 - Does it check my page while I type? No. EmDash does not let a general-purpose plugin read unsaved text. The panel and the checks describe the published page, as Google sees it: changes to the page show up once you publish, and changes in the SEO panel show up as soon as they are saved.
 - Is there an SEO score or a traffic light? No, on purpose. You get a list of things to fix that can reach zero.
