@@ -22,4 +22,4 @@ One business location. EmDash has no regular-expression redirects: exact address
 
 ## Permissions
 
-Read content, bylines and the content schema, to check pages and build the markup. Manage redirects, only for an import you confirm; existing redirects are never changed.
+Read content, bylines and the content schema, to check pages and build the markup. Manage redirects: the ones you add, change or remove on the Redirects tab, and an import only after you confirm it. An import never changes a redirect that already exists.
