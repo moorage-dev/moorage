@@ -6,7 +6,13 @@
 	// keywords and sections, so the phrases people type appear verbatim.
 	"name": "SEO & Schema Markup",
 	"description": "SEO for EmDash: schema markup, JSON-LD structured data, Google preview, SEO checks, noindex, WordPress redirects import. Yoast alternative.",
-	"keywords": ["seo", "schema markup", "structured data", "yoast alternative", "wordpress redirects"],
+	"keywords": [
+		"seo",
+		"schema markup",
+		"structured data",
+		"yoast alternative",
+		"wordpress redirects",
+	],
 	"repo": "https://github.com/moorage-dev/moorage",
 	"sections": {
 		"description": { "file": "listing/description.md" },
