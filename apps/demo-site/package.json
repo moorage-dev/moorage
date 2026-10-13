@@ -22,6 +22,7 @@
 		"@emdash-cms/plugin-forms": "catalog:",
 		"@emdash-cms/sandbox-workerd": "catalog:",
 		"@iconify-json/ph": "catalog:",
+		"@moorage/plugin-analytics": "workspace:*",
 		"@moorage/plugin-seo": "workspace:*",
 		"@phosphor-icons/react": "catalog:",
 		"astro": "catalog:",

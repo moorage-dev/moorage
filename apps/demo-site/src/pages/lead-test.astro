@@ -1,0 +1,19 @@
+---
+// Copyright 2026 GoSi Tech. Licensed under FSL-1.1-MIT; see LICENSE.
+//
+// Test fixture, not a template page. It renders one form from the official
+// forms plugin (created by tests/analytics.spec.ts) plus a phone link, so the
+// browser tests can prove that the analytics plugin notices a sent form.
+import { Form } from "@emdash-cms/plugin-forms/ui";
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Lead test" robots="noindex, nofollow">
+	<section class="section">
+		<div class="container">
+			<h1>Lead test</h1>
+			<p><a href="tel:+15550100">Call us</a></p>
+			<Form id="lead-test" />
+		</div>
+	</section>
+</Base>

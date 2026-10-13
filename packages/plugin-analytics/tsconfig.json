@@ -1,0 +1,8 @@
+{
+	"extends": "@moorage/typescript-config/library.json",
+	"compilerOptions": {
+		"allowImportingTsExtensions": true
+	},
+	"include": ["src/**/*", "tests/**/*", "*.config.ts", "client-script.ts"],
+	"exclude": ["node_modules", "dist"]
+}

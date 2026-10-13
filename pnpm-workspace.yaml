@@ -40,6 +40,8 @@ catalog:
   tsdown: 0.20.3
   vite: ^8.3.0
   vitest: 4.1.10
+  # DOM for unit-testing plugin-analytics' browser script
+  happy-dom: ^20.0.0
   "@playwright/test": ^1.58.0
   typescript: ~6.0.3
 
