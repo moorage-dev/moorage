@@ -1,15 +1,22 @@
 {
 	"name": "@moorage/plugin-seo",
 	"version": "0.1.1",
-	"description": "SEO for EmDash: schema markup, structured data, Google preview, noindex rules, redirects import and SEO checks. A Yoast alternative.",
+	"description": "SEO for EmDash: schema markup, JSON-LD structured data, Google preview, SEO checks, noindex, WordPress redirects import. Yoast alternative.",
 	"keywords": [
 		"emdash",
 		"emdash-plugin",
+		"emdash-cms",
+		"cms",
+		"astro",
 		"seo",
-		"schema markup",
-		"structured data",
+		"schema",
+		"schema-markup",
+		"structured-data",
 		"json-ld",
-		"yoast alternative"
+		"local-business",
+		"redirects",
+		"wordpress",
+		"yoast-alternative"
 	],
 	"license": "FSL-1.1-MIT",
 	"author": "Moorage (https://moorage.dev)",
