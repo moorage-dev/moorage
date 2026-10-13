@@ -1,8 +1,8 @@
 # Moorage
 
 Plugins and a marketing theme for [EmDash](https://emdashcms.com), the open-source Astro CMS.
-Built by [Moorage](https://moorage.dev). Every package here
-runs on any EmDash site, self-hosted or on Moorage, with no account and no key.
+Built by [Moorage](https://moorage.dev). Every package here runs on any EmDash site, with no account
+and no key.
 
 ## Packages
 
