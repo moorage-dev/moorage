@@ -1,5 +1,17 @@
 # @moorage/plugin-seo
 
+## 0.1.2
+
+### Patch Changes
+
+-One graph for everything, and checks that match what the page shows.
+  
+  - **Your own markup joins the graph.** Schema pasted into an entry's `json_ld` field is now part of the page's one linked graph instead of a second script, so every page has exactly one JSON-LD script. Give your object an `@id` and the page names it as its main entity (`mainEntity`). Service and profile pages keep the main entity they already have, and article pages keep the article. An object that reuses an `@id` already in the graph is left out, so give yours its own.
+  - **An excerpt counts as a description.** EmDash uses an entry's excerpt as the page description when the SEO panel has none. The checks and the Google preview now do the same, so a page that shows a description is no longer listed under "No search description". The preview says when the text comes from the excerpt. Pages already checked are updated when they are next saved, or when you press "Check all pages again" on the SEO page.
+  - **No page markup on pages kept out of search.** A page that is noindex (hidden in its SEO panel, in a hidden content type, or marked noindex by the theme, such as a 404 page) now gets the site's own nodes only: no WebPage, image, breadcrumb or custom nodes.
+  - **One id per picture, with its size.** A picture used on several pages has the same `@id` on all of them (its address) instead of a new one per page. When the page's picture is one of the entry's own images (an image field, an image in a block or in rich text, or the same file chosen in the SEO panel), the markup now includes its `width` and `height`. A resized or transformed address gets no size, because the original's would be wrong. Pages get their sizes when they are next saved, or when you press "Check all pages again".
+  - **No more "no picture" advice for pages that share one.** The advice about shared links is based on the saved entry, which cannot show a picture your theme adds. The plugin now notices when a page is actually shown with a picture and drops the advice for that page; if the page later appears without one, the advice comes back. A default sharing image set for the whole site is not visible to this plugin with the permissions it has, and the advice says so.
+
 ## 0.1.1
 
 ### Patch Changes
