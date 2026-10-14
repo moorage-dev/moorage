@@ -1,23 +1,16 @@
 # Moorage
 
-Plugins and a marketing theme for [EmDash](https://emdashcms.com), the open-source Astro CMS.
-Built by [Moorage](https://moorage.dev). Every package here runs on any EmDash site, with no account
-and no key.
+Free plugins for [EmDash](https://emdashcms.com), the open-source CMS from Cloudflare. Every
+package here runs on any EmDash site, with no account and no key. More at [moorage.dev](https://moorage.dev).
 
 ## Packages
 
-| Package                         | What it does                                                                                                                                           | Format          |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
-| `@moorage/plugin-seo`           | SEO & Schema Markup: structured data for more content types, SERP preview, noindex per collection, redirects import, IndexNow, site-wide hygiene score | sandbox-capable |
-| `@moorage/plugin-lead-delivery` | HubSpot, Mailchimp & Zapier Lead Delivery: signed delivery of form submissions with a log and retries                                                  | sandbox-capable |
-| `@moorage/plugin-site-health`   | Site Health & Broken Links: in-admin checks and a broken-link scan                                                                                     | sandbox-capable |
-| `@moorage/plugin-restore`       | Backup & Restore (Point in Time): restore the database to a minute                                                                                     | sandbox-capable |
-| `@moorage/plugin-approvals`     | Content Approval & Editorial Workflow: request, approve, send back                                                                                     | sandbox-capable |
-| `@moorage/plugin-analytics`     | Analytics & Cookie Consent: GA4, GTM, Clarity, Meta Pixel with consent mode                                                                            | native          |
-| `@moorage/plugin-popups`        | Popups, Slide-ins & Exit Intent, reusing EmDash forms                                                                                                  | native          |
-| `@moorage/theme-marketing`      | Content-complete marketing theme: components and a copyable site template                                                                              | Astro           |
+| Package                     | What it does                                                                                                                      | Status                                                                                                                                        |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@moorage/plugin-seo`       | SEO & Schema Markup: structured data for every page, a Google preview, SEO checks, noindex rules, redirects import from WordPress | Released: [npm](https://www.npmjs.com/package/@moorage/plugin-seo), [EmDash registry](https://plugins.emdashcms.com/plugins/@moorage.dev/seo) |
+| `@moorage/plugin-analytics` | Analytics & Cookie Consent: analytics and ad tags behind a consent banner                                                         | Built, being tested before its first release; not on npm yet                                                                                  |
 
-Status: scaffolding. Packages land in the order listed in `AGENTS.md`.
+Planned, not started: Lead Delivery, Site Health, Popups, Backup & Restore, Content Approval and a Marketing Theme.
 
 ## Develop
 
