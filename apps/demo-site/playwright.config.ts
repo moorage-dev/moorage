@@ -17,7 +17,9 @@ export default defineConfig({
 	workers: 1,
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 1 : 0,
-	reporter: process.env.CI ? "github" : "list",
+	// In CI: one line per test as it finishes (the github reporter alone prints nothing until a failure),
+	// annotations on failures, and an HTML report the workflow uploads when a run fails.
+	reporter: process.env.CI ? [["list"], ["github"], ["html", { open: "never" }]] : "list",
 	use: {
 		baseURL: BASE_URL,
 		trace: "on-first-retry",

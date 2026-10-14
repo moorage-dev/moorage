@@ -32,11 +32,21 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm turbo run build typecheck test validate
+      - name: Install Playwright browser
+        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
+        run: pnpm --filter demo-site exec playwright install --with-deps chromium
       - name: Playwright (demo site)
         if: hashFiles('apps/demo-site/playwright.config.ts') != ''
-        run: |
-          pnpm --filter demo-site exec playwright install --with-deps chromium
-          pnpm --filter demo-site exec playwright test
+        run: pnpm --filter demo-site exec playwright test
+      - name: Upload Playwright report
+        if: failure() && hashFiles('apps/demo-site/playwright-report/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/demo-site/playwright-report/
+            apps/demo-site/test-results/
+          retention-days: 14
       - name: Changeset present on PRs
         if: github.event_name == 'pull_request'
         run: pnpm changeset status --since=origin/${{ github.base_ref }}
