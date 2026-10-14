@@ -34,4 +34,4 @@ Node 22.16 or newer and pnpm 11 are required.
 
 ## Licence
 
-[FSL-1.1-MIT](LICENSE): free to use, modify and self-host; each release becomes MIT two years after it ships. Copyright GoSi Tech; Moorage is its product name.
+[MIT](LICENSE). Copyright GoSi Tech; Moorage is its product name. Releases made before 14 October 2026 were published under FSL-1.1-MIT and are now also available under MIT.

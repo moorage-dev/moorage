@@ -1,7 +1,7 @@
 {
   "name": "moorage",
   "private": true,
-  "license": "FSL-1.1-MIT",
+  "license": "MIT",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",

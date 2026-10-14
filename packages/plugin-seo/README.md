@@ -54,7 +54,7 @@ Not yet: Product and Event types (they need price and date fields on the collect
 
 ## FAQ
 
-- Is it free? Free to use on any number of sites, your own or your clients', with no account and no key. You may read, change and self-host the code. The licence (FSL-1.1-MIT) does not allow making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality. Each release becomes MIT two years after it is published.
+- Is it free? Yes, on any number of sites, your own or your clients', with no account and no key. It is open source under the MIT License: you may use, change, copy and share the code, in paid work too, as long as the copyright notice stays with it.
 - How do I add schema markup to EmDash? Install this plugin; it adds structured data (JSON-LD) to every page.
 - How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry. It joins the page's one graph; the page still has a single JSON-LD script.
 - Is there a Yoast alternative for EmDash? EmDash core covers titles, descriptions, sitemaps and canonicals; this plugin adds the schema graph, robots rules, previews and checks.
@@ -79,4 +79,4 @@ pnpm --filter @moorage/plugin-seo validate
 
 ## Licence
 
-[FSL-1.1-MIT](LICENSE), the Functional Source License. Free to use, change and self-host, including on client sites. Not allowed: making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality (the licence's "Competing Use"). Each release becomes MIT two years after it is published. This is a summary; the LICENSE file is what applies. Moorage is a product of GoSi Tech, which holds the copyright.
+[MIT](LICENSE). Releases 0.1.0 to 0.1.2 were published under FSL-1.1-MIT; GoSi Tech, which holds the copyright, now also licenses them under MIT. Moorage is a product of GoSi Tech.

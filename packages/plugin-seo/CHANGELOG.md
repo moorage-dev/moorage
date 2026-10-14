@@ -1,5 +1,11 @@
 # @moorage/plugin-seo
 
+## 0.1.3
+
+### Patch Changes
+
+- Now open source under the MIT License. Releases 0.1.0 to 0.1.2 were published under FSL-1.1-MIT; GoSi Tech, which holds the copyright, now also licenses them under MIT. The code is unchanged.
+
 ## 0.1.2
 
 ### Patch Changes

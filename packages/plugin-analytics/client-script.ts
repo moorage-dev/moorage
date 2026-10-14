@@ -1,4 +1,4 @@
-// Copyright 2026 GoSi Tech. Licensed under FSL-1.1-MIT; see LICENSE.
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";

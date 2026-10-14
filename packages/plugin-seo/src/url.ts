@@ -1,4 +1,4 @@
-// Copyright 2026 GoSi Tech. Licensed under FSL-1.1-MIT; see LICENSE.
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 /**
  * Parse a URL, or return null. `URL.canParse` is missing from the sandbox

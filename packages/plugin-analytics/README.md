@@ -116,7 +116,7 @@ On your site, one row per answer: the random reference, the time, the answer, th
 
 ## FAQ
 
-- **Is it free?** Free to use on any number of sites, your own or your clients', with no account and no key. You may read, change and self-host the code. The licence (FSL-1.1-MIT) does not allow making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality. Each release becomes MIT two years after it is published.
+- **Is it free?** Yes, on any number of sites, your own or your clients', with no account and no key. It is open source under the MIT License: you may use, change, copy and share the code, in paid work too, as long as the copyright notice stays with it.
 - **I accepted the banner but my visit does not show in Google Analytics.** A browser that has signed in to the EmDash admin is treated as staff and never tracked. Test in a private window.
 - **I changed a setting and the site still shows the old one.** Pages are cached. Wait a few minutes, or publish the page again.
 - **Do I need the banner if I only use Cloudflare Web Analytics?** No. It sets no cookies, so no banner is shown.

@@ -2,6 +2,6 @@
   "name": "@moorage/typescript-config",
   "version": "0.0.0",
   "private": true,
-  "license": "FSL-1.1-MIT",
+  "license": "MIT",
   "files": ["base.json", "library.json"]
 }

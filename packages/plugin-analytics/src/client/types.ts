@@ -1,4 +1,4 @@
-// Copyright 2026 GoSi Tech. Licensed under FSL-1.1-MIT; see LICENSE.
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 /**
  * What the server hands the browser script on every page. Keys are short

@@ -16,7 +16,7 @@ Open SEO > Settings > Content types and choose "Hide from Google and other searc
 
 ## Is it free?
 
-Free to use on any number of sites, your own or your clients', with no account and no key. You may read, change and self-host the code. The licence (FSL-1.1-MIT) does not allow making the plugin available to others in a commercial product or service that substitutes for it or offers substantially the same functionality. Each release becomes MIT two years after it is published.
+Yes, on any number of sites, your own or your clients', with no account and no key. It is open source under the MIT License: you may use, change, copy and share the code, in paid work too, as long as the copyright notice stays with it.
 
 ## Is there an SEO score?
 

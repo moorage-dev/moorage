@@ -21,7 +21,7 @@
 		"consent-mode",
 		"gdpr"
 	],
-	"license": "FSL-1.1-MIT",
+	"license": "MIT",
 	"author": "Moorage (https://moorage.dev)",
 	"homepage": "https://moorage.dev/plugins/analytics",
 	"repository": {
