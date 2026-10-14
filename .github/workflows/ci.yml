@@ -38,6 +38,11 @@ jobs:
       - name: Playwright (demo site)
         if: hashFiles('apps/demo-site/playwright.config.ts') != ''
         run: pnpm --filter demo-site exec playwright test
+      - name: Playwright (SEO plugin in-process, as on the Workers free plan)
+        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
+        env:
+          DEMO_SITE_SEO: in-process
+        run: pnpm --filter demo-site exec playwright test tests/seo.spec.ts tests/smoke.spec.ts
       - name: Upload Playwright report
         if: failure() && hashFiles('apps/demo-site/playwright-report/index.html') != ''
         uses: actions/upload-artifact@v4

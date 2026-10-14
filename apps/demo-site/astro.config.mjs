@@ -13,6 +13,11 @@ import { sqlite } from "emdash/db";
 // DEMO_SITE_FONTS=1 pnpm dev   (for screenshots that should look like the stock template)
 const webFonts = process.env.DEMO_SITE_FONTS === "1";
 
+// The SEO plugin runs sandboxed by default. DEMO_SITE_SEO=in-process lists it under plugins: []
+// instead, the way a site without a sandbox runner (the Workers free plan) installs it; CI runs
+// the SEO browser tests both ways.
+const seoInProcess = process.env.DEMO_SITE_SEO === "in-process";
+
 export default defineConfig({
 	output: "server",
 	adapter: node({
@@ -49,8 +54,8 @@ export default defineConfig({
 			},
 		}),
 		emdash({
-			plugins: [formsPlugin(), analyticsPlugin()],
-			sandboxed: [seo],
+			plugins: [formsPlugin(), analyticsPlugin(), ...(seoInProcess ? [seo] : [])],
+			sandboxed: seoInProcess ? [] : [seo],
 			sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
 			...(webFonts ? {} : { fonts: false }),
 			// Browser tests point this at their own database so they never touch yours.

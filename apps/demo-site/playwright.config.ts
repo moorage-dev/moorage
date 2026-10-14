@@ -34,6 +34,10 @@ export default defineConfig({
 		// Never reuse: a server already on this port is not guaranteed to be this site.
 		reuseExistingServer: false,
 		timeout: 120_000,
-		env: { EMDASH_SITE_URL: BASE_URL, DEMO_SITE_DB: "file:./e2e.db" },
+		env: {
+			EMDASH_SITE_URL: BASE_URL,
+			DEMO_SITE_DB: "file:./e2e.db",
+			DEMO_SITE_SEO: process.env.DEMO_SITE_SEO ?? "",
+		},
 	},
 });

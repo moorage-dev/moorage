@@ -313,6 +313,18 @@ describe("checks on a real site", () => {
 		});
 	});
 
+	it("switched on before any page exists, it checks again on the first visit", async () => {
+		// In the site's process (`plugins: []`) the plugin is switched on when the server
+		// starts, which on a new site is before setup has added the pages.
+		const runtime = await start();
+		await runtime.transport.invokeHook("plugin:activate", {});
+		expect(await runtime.inspect.kv.get<ScanState>("scan")).toBeNull();
+
+		await addPage(runtime, "contact", "Contact");
+		const response = await runtime.admin.loadPage(PAGE);
+		expect(text(response)).toContain('"label":"Pages checked","value":1');
+	});
+
 	it("flags pages that share a title, and clears the flag when one is renamed", async () => {
 		const runtime = await start();
 		const first = await addPage(runtime, "services", "Our services", "What we do.");

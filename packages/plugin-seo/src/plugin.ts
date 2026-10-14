@@ -17,7 +17,7 @@ import {
 } from "./record.js";
 import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
 import { isNoindex, mergeRobots } from "./robots.js";
-import { loadScan, SCAN_TASK, scanStep, startScan } from "./scan.js";
+import { loadScan, SCAN_KEY, SCAN_TASK, scanStep, startScan } from "./scan.js";
 
 async function loadConfig(ctx: PluginContext) {
 	return normalizeConfig(await ctx.kv.get(CONFIG_KEY));
@@ -117,11 +117,15 @@ const plugin: SandboxedPlugin = {
 			try {
 				if (await loadScan(ctx)) return;
 				const collections = (await ctx.schema?.listCollections()) ?? [];
-				await startScan(
+				const scan = await startScan(
 					ctx,
 					collections.filter((c) => c.routable && !c.hidden).map((c) => c.slug),
 					await loadConfig(ctx),
 				);
+				// Run in the site's process (`plugins: []`), the plugin is switched on when the
+				// server starts, which on a new site is before setup has added any pages. A check
+				// that found nothing is not kept, so the first visit to the SEO page checks again.
+				if (scan.status === "done" && scan.checked === 0) await ctx.kv.delete(SCAN_KEY);
 			} catch (error) {
 				ctx.log.warn("could not start the first page check", { error: String(error) });
 			}
