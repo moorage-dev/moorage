@@ -9,7 +9,13 @@ import { describe, expect, it } from "vitest";
 
 import type { ClientConfig } from "../src/client/types.js";
 import { CONFIG_KEY, normalizeConfig } from "../src/config.js";
-import { clientConfig, clientScriptFor, pageFragments, scriptJson } from "../src/fragment.js";
+import {
+	clientColors,
+	clientConfig,
+	clientScriptFor,
+	pageFragments,
+	scriptJson,
+} from "../src/fragment.js";
 import { createPlugin, PLUGIN_ID } from "../src/index.js";
 import { fakeContext } from "./helpers.js";
 
@@ -234,5 +240,23 @@ describe("the browser script", () => {
 			"https://www.clarity.ms",
 			"https://www.googletagmanager.com",
 		]);
+	});
+});
+
+describe("the owner's colours", () => {
+	it("picks readable button text and adds an edge to a button that would not stand out", () => {
+		expect(clientColors({ background: "", text: "", accent: "" })).toBeUndefined();
+		expect(clientColors({ background: "#fbf7f0", text: "#3b2a1a", accent: "#1f6f43" })).toEqual({
+			g: "#fbf7f0",
+			f: "#3b2a1a",
+			x: "#1f6f43",
+			y: "#ffffff",
+		});
+		expect(
+			clientColors({ background: "#ffffff", text: "#141414", accent: "#ffe066" }),
+		).toMatchObject({
+			y: "#141414",
+			z: "#141414",
+		});
 	});
 });

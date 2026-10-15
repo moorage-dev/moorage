@@ -119,7 +119,7 @@ async function inCountry(page: Page, country: string | null): Promise<void> {
 	});
 }
 
-const banner = (page: Page) => page.getByRole("region", { name: "Cookies on this site" });
+const banner = (page: Page) => page.getByRole("region", { name: "Can we use cookies?" });
 const panel = (page: Page) => page.getByRole("dialog", { name: "Your cookie choices" });
 const settingsButton = (page: Page) => page.getByRole("button", { name: "Cookie settings" });
 
@@ -167,7 +167,7 @@ test.describe("a visitor who must be asked", () => {
 		expect(hits).toEqual([]);
 		expect(await context.cookies()).toEqual([]);
 
-		// The three answers look the same: no answer is favoured.
+		// Accept all and Reject all look exactly the same: neither is favoured. Choose is a quieter text button.
 		const buttons = banner(page).getByRole("button");
 		await expect(buttons).toHaveText(["Accept all", "Reject all", "Choose"]);
 		const styles = await buttons.evaluateAll((all) =>
@@ -183,10 +183,10 @@ test.describe("a visitor who must be asked", () => {
 			}),
 		);
 		expect(styles[1]).toEqual(styles[0]);
-		expect(styles[2]).toEqual(styles[0]);
-		await expect(
-			banner(page).getByRole("link", { name: "Read our privacy policy" }),
-		).toHaveAttribute("href", "/privacy");
+		await expect(banner(page).getByRole("link", { name: "Privacy policy" })).toHaveAttribute(
+			"href",
+			"/privacy",
+		);
 
 		await banner(page).getByRole("button", { name: "Accept all" }).click();
 		await expect(banner(page)).toBeHidden();
@@ -283,9 +283,10 @@ test.describe("a visitor who must be asked", () => {
 
 		await settingsButton(page).click();
 		await expect(panel(page)).toBeVisible();
-		await expect(panel(page).getByRole("checkbox", { name: "Analytics" })).toBeChecked();
-		await expect(panel(page).getByRole("checkbox", { name: "Marketing" })).toBeChecked();
-		await expect(panel(page).getByRole("checkbox", { name: "Necessary" })).toBeDisabled();
+		await expect(panel(page).getByRole("switch", { name: "Analytics" })).toBeChecked();
+		await expect(panel(page).getByRole("switch", { name: "Marketing" })).toBeChecked();
+		// Essential cookies are always on: said in words, with nothing to switch.
+		await expect(panel(page)).toContainText("EssentialAlways on");
 		// The tools in use are listed under the kind of cookie they belong to.
 		await expect(panel(page)).toContainText("Used by: Google Analytics, Microsoft Clarity.");
 		await expect(panel(page)).toContainText("Used by: Google Ads, Meta Pixel, HubSpot.");
@@ -312,7 +313,22 @@ test.describe("a visitor who must be asked", () => {
 		});
 		await page.getByRole("link", { name: "Change cookie choices" }).click();
 		await expect(panel(page)).toBeVisible();
-		await expect(panel(page).getByRole("checkbox", { name: "Analytics" })).not.toBeChecked();
+		await expect(panel(page).getByRole("switch", { name: "Analytics" })).not.toBeChecked();
+		await page.keyboard.press("Escape");
+
+		// A theme that has such a link in every page gets no floating button: the link does its job.
+		await page.addInitScript(() =>
+			document.addEventListener("DOMContentLoaded", () => {
+				const link = document.createElement("a");
+				link.href = "#";
+				link.textContent = "Cookie choices";
+				link.setAttribute("data-cookie-settings", "");
+				document.body.append(link);
+			}),
+		);
+		await page.reload();
+		await expect(page.getByRole("link", { name: "Cookie choices" })).toBeVisible();
+		await expect(settingsButton(page)).toBeHidden();
 	});
 
 	test("the banner works from the keyboard, with a visible focus ring", async ({
@@ -326,7 +342,7 @@ test.describe("a visitor who must be asked", () => {
 
 		// The banner is the first thing Tab reaches: its policy link, then the three answers.
 		await page.keyboard.press("Tab");
-		await expect(banner(page).getByRole("link", { name: "Read our privacy policy" })).toBeFocused();
+		await expect(banner(page).getByRole("link", { name: "Privacy policy" })).toBeFocused();
 		await page.keyboard.press("Tab");
 		const accept = banner(page).getByRole("button", { name: "Accept all" });
 		await expect(accept).toBeFocused();
@@ -352,8 +368,8 @@ test.describe("a visitor who must be asked", () => {
 		await page.keyboard.press("Enter");
 
 		// Nothing is ticked in advance. Tick Analytics only, with the keyboard.
-		const analytics = panel(page).getByRole("checkbox", { name: "Analytics" });
-		const marketing = panel(page).getByRole("checkbox", { name: "Marketing" });
+		const analytics = panel(page).getByRole("switch", { name: "Analytics" });
+		const marketing = panel(page).getByRole("switch", { name: "Marketing" });
 		await expect(analytics).not.toBeChecked();
 		await expect(marketing).not.toBeChecked();
 		await expect(analytics).toBeFocused();
@@ -447,7 +463,7 @@ test.describe("a visitor who is not asked", () => {
 		expect(hits.filter((url) => /facebook|hs-scripts/.test(url))).toEqual([]);
 
 		await settingsButton(page).click();
-		await expect(panel(page).getByRole("checkbox", { name: "Marketing" })).toBeDisabled();
+		await expect(panel(page).getByRole("switch", { name: "Marketing" })).toBeDisabled();
 		await expect(panel(page)).toContainText("Global Privacy Control");
 	});
 

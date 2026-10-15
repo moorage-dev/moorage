@@ -7,6 +7,8 @@ import {
 	cleanPolicyUrl,
 	DEFAULT_CONFIG,
 	DEFAULT_MESSAGE,
+	DEFAULT_TITLE,
+	defaultMessage,
 	isExcluded,
 	needsConsent,
 	normalizeConfig,
@@ -102,5 +104,45 @@ describe("config", () => {
 		expect(bannerVersion(sameToolNewId)).toBe(bannerVersion(one));
 		expect(bannerVersion(newText)).toBe(bannerVersion(one));
 		expect(bannerVersion(two)).not.toBe(bannerVersion(one));
+	});
+});
+
+describe("banner text", () => {
+	const withTools = (tools: Record<string, string>) =>
+		normalizeConfig({ tools: { ...DEFAULT_CONFIG.tools, ...tools } });
+
+	it("names only the purposes in use", () => {
+		expect(defaultMessage(withTools({ ga4: "G-ABC123DEF4" }))).toBe(
+			"We would like to use analytics cookies to see how this site is used. Essential cookies are always on.",
+		);
+		expect(defaultMessage(withTools({ ga4: "G-ABC123DEF4", meta: "123456789012345" }))).toBe(
+			"We would like to use analytics cookies to see how this site is used, and marketing cookies to measure our ads. Essential cookies are always on.",
+		);
+	});
+
+	it("moves sites that still have the old standard wording to the new one, and keeps an owner's own text", () => {
+		const old = normalizeConfig({
+			banner: {
+				title: "Cookies on this site",
+				message:
+					"We would like to use cookies to see how this site is used and to improve our marketing. You choose which ones we use, and you can change your mind at any time.",
+			},
+		});
+		expect(old.banner.title).toBe(DEFAULT_TITLE);
+		expect(old.banner.message).toBe(DEFAULT_MESSAGE);
+		const own = normalizeConfig({ banner: { title: "Hello", message: "Our own words." } });
+		expect(own.banner).toMatchObject({ title: "Hello", message: "Our own words." });
+	});
+
+	it("drops colours that would be hard to read", () => {
+		expect(
+			normalizeConfig({
+				banner: { colors: { background: "#fff", text: "#eee", accent: "#1f6f43" } },
+			}).banner.colors,
+		).toEqual({
+			background: "",
+			text: "",
+			accent: "#1f6f43",
+		});
 	});
 });

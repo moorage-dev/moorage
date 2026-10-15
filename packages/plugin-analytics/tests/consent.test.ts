@@ -39,6 +39,17 @@ describe("who is asked", () => {
 	});
 });
 
+describe("asking in India too", () => {
+	it("asks visitors in India only when the site chose Europe, the UK and India", () => {
+		expect(mustAsk("IN", null)).toBe(false);
+		expect(mustAsk("IN", null, true)).toBe(true);
+		expect(mustAsk(null, "Asia/Kolkata", true)).toBe(true);
+		expect(mustAsk(null, "Asia/Kolkata")).toBe(false);
+		expect(mustAsk("DE", null, true)).toBe(true);
+		expect(mustAsk("US", "America/New_York", true)).toBe(false);
+	});
+});
+
 describe("the saved answer", () => {
 	it("round-trips through the cookie", () => {
 		const saved = choice({ a: true, m: false });

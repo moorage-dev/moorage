@@ -15,8 +15,9 @@ export const TOOL_IDS: readonly ToolId[] = [
 	"cloudflare",
 ];
 
-export type Audience = "europe" | "everyone" | "none";
+export type Audience = "europe" | "europe-india" | "everyone" | "none";
 export type Position = "bar" | "left" | "right";
+export type Side = "left" | "right";
 export type Scheme = "auto" | "light" | "dark";
 export type GtmLoading = "choice" | "immediate";
 
@@ -37,8 +38,12 @@ export interface AnalyticsConfig {
 		message: string;
 		position: Position;
 		scheme: Scheme;
-		/** Show the small "Cookie settings" button after a choice was made. */
+		/** Show the small "Cookies" button after a choice was made (hidden on pages with a data-cookie-settings link). */
 		settingsButton: boolean;
+		/** Which bottom corner that button sits in. */
+		settingsSide: Side;
+		/** Banner background, text and button colour, each "#rrggbb" or "" for the default (or the theme's CSS variables). */
+		colors: { background: string; text: string; accent: string };
 		/** Ask again after this many months. */
 		months: 6 | 12;
 	};
@@ -47,9 +52,30 @@ export interface AnalyticsConfig {
 	gtmLoading: GtmLoading;
 }
 
-export const DEFAULT_TITLE = "Cookies on this site";
-export const DEFAULT_MESSAGE =
+export const DEFAULT_TITLE = "Can we use cookies?";
+/** An empty message means the default text, written from the kinds of tools in use (see `defaultMessage`). */
+export const DEFAULT_MESSAGE = "";
+/** The defaults before 0.2.0. A site that still has them gets the new ones. */
+const OLD_TITLE = "Cookies on this site";
+const OLD_MESSAGE =
 	"We would like to use cookies to see how this site is used and to improve our marketing. You choose which ones we use, and you can change your mind at any time.";
+
+/**
+ * The default banner text. It names the purposes actually in use, because consent
+ * is only informed when the visitor knows what each kind of cookie is for.
+ */
+export function defaultMessage(config: AnalyticsConfig): string {
+	const analytics = vendorNames(config, "analytics").length > 0;
+	const marketing = vendorNames(config, "marketing").length > 0;
+	const uses = [
+		analytics && "analytics cookies to see how this site is used",
+		marketing && "marketing cookies to measure our ads",
+	].filter(Boolean);
+	const want = uses.length ? `We would like to use ${uses.join(", and ")}. ` : "";
+	return `${want}Essential cookies are always on.`;
+}
+
+export const NO_COLORS = { background: "", text: "", accent: "" } as const;
 
 export const DEFAULT_CONFIG: AnalyticsConfig = {
 	tools: { ga4: "", gtm: "", ads: "", meta: "", clarity: "", hubspot: "", cloudflare: "" },
@@ -64,6 +90,8 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 		position: "bar",
 		scheme: "auto",
 		settingsButton: true,
+		settingsSide: "left",
+		colors: { ...NO_COLORS },
 		months: 6,
 	},
 	exclude: [],
@@ -82,6 +110,73 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
 
 function bool(value: unknown, fallback: boolean): boolean {
 	return typeof value === "boolean" ? value : fallback;
+}
+
+function replaceOld(value: string, old: string, current: string): string {
+	return value === old ? current : value;
+}
+
+/** "#rrggbb" in lower case, or "" for anything else ("#abc" is expanded). */
+export function cleanColor(value: unknown): string {
+	if (typeof value !== "string") return "";
+	const text = value.trim().toLowerCase();
+	const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(text);
+	if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+	return /^#[0-9a-f]{6}$/.test(text) ? text : "";
+}
+
+/** Relative luminance (WCAG 2.2). */
+function luminance(hex: string): number {
+	const channel = (index: number) => {
+		const value = parseInt(hex.slice(index, index + 2), 16) / 255;
+		return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+	};
+	return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+/** Contrast ratio between two "#rrggbb" colours, from 1 to 21. */
+export function contrast(a: string, b: string): number {
+	const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+	return (light! + 0.05) / (dark! + 0.05);
+}
+
+/** The banner's own colours: background and text set together, and readable (4.5:1), or not at all. */
+export function cleanColors(value: unknown): AnalyticsConfig["banner"]["colors"] {
+	const source = isRecord(value) ? value : {};
+	let background = cleanColor(source.background);
+	let text = cleanColor(source.text);
+	if (!background || !text || contrast(background, text) < 4.5) background = text = "";
+	return { background, text, accent: cleanColor(source.accent) };
+}
+
+/**
+ * Problems with colours an owner typed, in plain words, or none. The rules keep the
+ * banner fair and readable: one colour for both answer buttons (there is no setting to
+ * style them apart), text at 4.5:1 or more against the banner.
+ */
+export function colorProblems(colors: Record<"background" | "text" | "accent", string>): string[] {
+	const problems: string[] = [];
+	for (const [key, label] of [
+		["background", "Background"],
+		["text", "Text"],
+		["accent", "Buttons"],
+	] as const) {
+		if (colors[key] !== "" && cleanColor(colors[key]) === "")
+			problems.push(
+				`${label} colour: type it as # and six digits or letters, for example #1f6f43.`,
+			);
+	}
+	if (problems.length) return problems;
+	const background = cleanColor(colors.background);
+	const text = cleanColor(colors.text);
+	if ((background === "") !== (text === ""))
+		problems.push("Background and text colours go together: set both, or neither.");
+	else if (background && contrast(background, text) < 4.5) {
+		problems.push(
+			`The text is hard to read on that background (contrast ${contrast(background, text).toFixed(1)}:1, at least 4.5:1 is needed). Choose a darker text or a lighter background, or the other way round.`,
+		);
+	}
+	return problems;
 }
 
 function isControl(code: number): boolean {
@@ -177,13 +272,23 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 		cloudflareWait: bool(source.cloudflareWait, defaults.cloudflareWait),
 		enquiries: bool(source.enquiries, defaults.enquiries),
 		banner: {
-			audience: oneOf(rawBanner.audience, ["europe", "everyone", "none"], defaults.banner.audience),
+			audience: oneOf(
+				rawBanner.audience,
+				["europe", "europe-india", "everyone", "none"],
+				defaults.banner.audience,
+			),
 			policyUrl: cleanPolicyUrl(rawBanner.policyUrl),
-			title: cleanText(rawBanner.title, 80, DEFAULT_TITLE),
-			message: cleanText(rawBanner.message, 400, DEFAULT_MESSAGE),
+			title: replaceOld(cleanText(rawBanner.title, 80, DEFAULT_TITLE), OLD_TITLE, DEFAULT_TITLE),
+			message: replaceOld(
+				cleanText(rawBanner.message, 400, DEFAULT_MESSAGE),
+				OLD_MESSAGE,
+				DEFAULT_MESSAGE,
+			),
 			position: oneOf(rawBanner.position, ["bar", "left", "right"], defaults.banner.position),
 			scheme: oneOf(rawBanner.scheme, ["auto", "light", "dark"], defaults.banner.scheme),
 			settingsButton: bool(rawBanner.settingsButton, defaults.banner.settingsButton),
+			settingsSide: oneOf(rawBanner.settingsSide, ["left", "right"], defaults.banner.settingsSide),
+			colors: cleanColors(rawBanner.colors),
 			months: rawBanner.months === 12 || rawBanner.months === "12" ? 12 : 6,
 		},
 		exclude: parseExcludes(source.exclude),

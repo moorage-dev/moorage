@@ -215,8 +215,37 @@ describe("saving the banner and advanced settings", () => {
 			position: "left",
 			scheme: "dark",
 			settingsButton: false,
+			settingsSide: "left",
+			colors: { background: "", text: "", accent: "" },
 			months: 12,
 		});
+	});
+
+	it("saves colours for the banner, and the corner of the Cookies button", async () => {
+		const fake = fakeContext();
+		await submit(fake, "save_banner", {
+			settings_side: "right",
+			color_background: "#FBF7F0",
+			color_text: "#3b2a1a",
+			color_accent: "#1f6f43",
+		});
+		expect(saved(fake).banner).toMatchObject({
+			settingsSide: "right",
+			colors: { background: "#fbf7f0", text: "#3b2a1a", accent: "#1f6f43" },
+		});
+	});
+
+	it("refuses colours that are hard to read, half set, or not colours", async () => {
+		for (const [values, words] of [
+			[{ color_background: "#ffffff", color_text: "#cccccc" }, "hard to read"],
+			[{ color_background: "#ffffff", color_text: "" }, "go together"],
+			[{ color_accent: "green" }, "six digits"],
+		] as const) {
+			const fake = fakeContext();
+			const response = await submit(fake, "save_banner", values);
+			expect(response.toast?.type).toBe("error");
+			expect(JSON.stringify(response)).toContain(words);
+		}
 	});
 
 	it("refuses a policy link that is not a page or a web link", async () => {

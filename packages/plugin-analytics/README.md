@@ -5,10 +5,10 @@ Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analy
 ## What it does
 
 - **Tracking tools.** One box per tool. Paste the ID, or the whole code the tool gave you; the ID is picked out of it. A wrong ID is explained ("That is a Google Tag Manager ID. Put it in the Google Tag Manager box instead."). An empty box means off.
-- **Cookie banner.** Accept all, Reject all and Choose look the same, so no answer is pushed. Choose opens a panel with Necessary, Analytics and Marketing (nothing ticked in advance) and the list of tools under each. It works from the keyboard, follows the visitor's light or dark setting, uses system fonts, and never moves the page.
+- **Cookie banner.** A sheet across the bottom of the screen (or a box in a corner) that asks "Can we use cookies?" and says what each kind is for. Accept all and Reject all look exactly the same, so no answer is pushed; a quieter Choose opens a panel where Essential is always on and Analytics and Marketing are switches, off until the visitor turns them on, with the tools listed under each. On a phone it takes about a quarter of the screen. It does not dim or block the page, works from the keyboard, follows light and dark, and never moves the page. It takes your theme's colours and fonts when you set them (see below), or three colours set in the admin.
 - **Nothing before consent.** No script from any tracking company is requested until the visitor allows its category. Google tags get Consent Mode v2 signals (all four denied by default, updated on the answer). Clarity and HubSpot get the visitor's answer through their own consent settings. There are no `<noscript>` pixels.
-- **Changing your mind.** A small "Cookie settings" button reopens the panel, and so does any link or button in your theme with the attribute `data-cookie-settings`. Taking consent back tells the tools, deletes their cookies and reloads the page without them.
-- **Who is asked.** Visitors in Europe and the UK (the default), everyone, or no one if another consent tool is in charge.
+- **Changing your mind.** After an answer, a small "Cookies" button stays in the bottom left corner (or right, if a chat button lives on the left) and reopens the panel. Any link or button in your theme with the attribute `data-cookie-settings` does the same, and when a page has one the small button stays away. Taking consent back tells the tools, deletes their cookies and reloads the page without them.
+- **Who is asked.** Visitors in Europe and the UK (the default), visitors in Europe, the UK and India, everyone, or no one if another consent tool is in charge. Most consent tools ask everyone by default; choose "Everyone" if you use Meta Pixel, Google Ads or Clarity and have many visitors from California or Quebec. India's consent rules apply from about May 2027.
 - **Enquiries.** Clicks on phone and email links, and forms sent through the official forms plugin, are counted as a lead (`generate_lead` in Google Analytics, `Lead` or `Contact` in Meta, an `enquiry` event in the data layer). Only the kind of enquiry is sent, never a number, an address or anything typed into a form.
 - **Never tracked.** The admin, preview links, the visual editor, a browser that has signed in to the admin, and any pages you list.
 
@@ -60,11 +60,30 @@ const page = createPublicPageContext({ Astro, kind: "custom", pageType: "website
 
 Only the `head` placement is used. `EmDashBodyStart` and `EmDashBodyEnd` are not needed by this plugin. The banner is built by the script inside a shadow root, so your theme's styles do not change it and it does not change your theme.
 
-To put a "Cookie settings" link in your footer:
+To put a "Cookie settings" link in your footer (the floating "Cookies" button then stays away):
 
 ```html
-<a href="#" data-cookie-settings>Cookie settings</a>
+<a href="/privacy" data-cookie-settings>Cookie settings</a>
 ```
+
+### Matching your theme
+
+The banner takes these CSS variables from your page when you set them; they reach into its shadow root. Values with `light-dark()` follow your theme's light and dark mode.
+
+```css
+:root {
+	--cookie-consent-background: #fcfcf9;
+	--cookie-consent-text: #16202a;
+	--cookie-consent-accent: #a0185a; /* both Accept all and Reject all */
+	--cookie-consent-accent-text: #ffffff; /* text on those buttons: keep it readable */
+	--cookie-consent-rule: #16202a; /* the line above the banner, and its edges */
+	--cookie-consent-font: "Public Sans", system-ui, sans-serif;
+	--cookie-consent-heading-font: "Newsreader", Georgia, serif;
+	--cookie-consent-width: 1280px; /* the banner's content lines up with your page */
+}
+```
+
+Colours set on the Cookie banner tab win over these. There is no way to style Accept all and Reject all differently, on purpose.
 
 ### Content Security Policy
 
@@ -79,7 +98,7 @@ One page, **Analytics**, under Marketing in the admin sidebar, with four tabs.
 
 - **Status**: one line per tool saying what it does right now ("Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies."), warnings first (no privacy policy link, Google Analytics and Tag Manager both on, Tag Manager loading before the answer), and how visitors answered in the last 30 days.
 - **Tracking tools**: the seven ID boxes, "My HubSpot account is in the EU data centre", "Cloudflare Web Analytics: wait for consent anyway", and "Track enquiries automatically".
-- **Cookie banner**: who sees it, your privacy policy page, the heading and text (with a button to put the original back), where it appears, light or dark, the "Cookie settings" button, and whether to ask again after 6 or 12 months.
+- **Cookie banner**: who sees it, your privacy policy page, the heading and text (leave the text empty for the standard wording, which names what your tools are used for), where it appears, light or dark, the "Cookies" button and its corner, three colours (background, text, buttons; a combination that is hard to read is refused, and button text is chosen for you), and whether to ask again after 6 or 12 months.
 - **Advanced**: pages not to track (one address per line; everything under it is covered), and when Google Tag Manager loads.
 
 Admins can change settings. Editors see the Status tab, read-only.
@@ -91,8 +110,8 @@ Admins can change settings. Editors see the Status tab, read-only.
 Everything is decided in the visitor's browser, because the same cached page is sent to everyone.
 
 1. A saved answer for the current list of tools, not older than 6 months (or 12), is followed.
-2. Otherwise, a visitor who must be asked gets the banner and nothing loads. With "Visitors in Europe and the UK", that means the EU and EEA countries, the UK and Switzerland. The country comes from Cloudflare when the site runs there (a small route on your own site reads it from the request; nothing is looked up and no outside service is called). When the country is unknown, the browser's time zone decides, and when that is unknown too the visitor is asked.
-3. Everyone else is not asked: the tools load when the browser is idle. They can still open "Cookie settings" and say no.
+2. Otherwise, a visitor who must be asked gets the banner and nothing loads. With "Visitors in Europe and the UK", that means the EU and EEA countries, the UK and Switzerland; "Europe, the UK and India" adds India. The country comes from Cloudflare when the site runs there (a small route on your own site reads it from the request; nothing is looked up and no outside service is called). When the country is unknown, the browser's time zone decides, and when that is unknown too the visitor is asked.
+3. Everyone else is not asked: the tools load when the browser is idle. They can still open the "Cookies" button, or your Cookie settings link, and say no.
 4. A browser that sends Global Privacy Control never gets Marketing tools, whatever was clicked. The panel says so.
 
 Adding or removing a tool asks everyone again, because they agreed to a different list. Changing an ID or the banner text does not.

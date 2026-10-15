@@ -7,6 +7,8 @@ import type { ClientConfig } from "./client/types.js";
 import {
 	bannerVersion,
 	enabledTools,
+	contrast,
+	defaultMessage,
 	isExcluded,
 	needsConsent,
 	vendorNames,
@@ -22,15 +24,17 @@ const UNSAFE_IN_SCRIPT = new RegExp(`[<${String.fromCharCode(0x2028, 0x2029)}]`,
 
 /** Fixed wording of the banner. The title and message come from settings. */
 const TEXT = {
-	policy: "Read our privacy policy",
+	policy: "Privacy policy",
 	accept: "Accept all",
 	reject: "Reject all",
 	choose: "Choose",
+	always: "Always on",
+	saved: "Your choice is saved. Change it any time under Cookies.",
 	save: "Save my choices",
-	settings: "Cookie settings",
+	settings: "Cookies",
 	panel: "Your cookie choices",
-	need: "Necessary",
-	needText: "Remembers your choice here. Always on.",
+	need: "Essential",
+	needText: "Remembers your answer, so you are not asked on every page.",
 	an: "Analytics",
 	anText: "Shows us how visitors use this site, so we can improve it.",
 	mk: "Marketing",
@@ -46,14 +50,20 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 	const asks = needsConsent(config) && banner.audience !== "none";
 	const out: ClientConfig = {
 		v: bannerVersion(config),
-		who: !asks ? 0 : banner.audience === "everyone" ? 2 : 1,
+		who: !asks
+			? 0
+			: banner.audience === "everyone"
+				? 2
+				: banner.audience === "europe-india"
+					? 3
+					: 1,
 		days: banner.months === 12 ? 365 : 183,
 		api: `/_emdash/api/plugins/${pluginId}/`,
 		pos: banner.position,
 		scheme: banner.scheme,
 		an: vendorNames(config, "analytics"),
 		mk: vendorNames(config, "marketing"),
-		t: { ...TEXT, title: banner.title, text: banner.message },
+		t: { ...TEXT, title: banner.title, text: banner.message || defaultMessage(config) },
 	};
 	if (tools.ga4) out.ga = tools.ga4;
 	if (tools.gtm) out.gtm = tools.gtm;
@@ -68,7 +78,35 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 	if (config.enquiries) out.ev = 1;
 	if (asks) out.rec = 1;
 	if (asks && banner.settingsButton) out.btn = 1;
+	if (asks && banner.settingsButton && banner.settingsSide === "right") out.btnRight = 1;
+	const col = clientColors(banner.colors);
+	if (col) out.col = col;
 	if (banner.policyUrl) out.policy = banner.policyUrl;
+	return out;
+}
+
+/**
+ * The owner's colours as the banner uses them. Button text is white or near-black,
+ * whichever reads better on the button colour; a button that would not stand out from
+ * the banner (under 3:1) gets an edge in the text colour. Both answer buttons always
+ * share these, so neither is favoured.
+ */
+export function clientColors(
+	colors: AnalyticsConfig["banner"]["colors"],
+): ClientConfig["col"] | undefined {
+	const { background, text, accent } = colors;
+	if (!background && !accent) return undefined;
+	const out: NonNullable<ClientConfig["col"]> = {};
+	if (background) {
+		out.g = background;
+		out.f = text;
+	}
+	if (accent) {
+		out.x = accent;
+		out.y = contrast(accent, "#ffffff") >= contrast(accent, "#141414") ? "#ffffff" : "#141414";
+		const against = background || "#ffffff";
+		if (contrast(accent, against) < 3) out.z = text || "#141414";
+	}
 	return out;
 }
 

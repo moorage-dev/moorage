@@ -28,9 +28,11 @@ const ASK_ZONE =
 export function mustAsk(
 	country: string | null | undefined,
 	zone: string | null | undefined,
+	india?: boolean,
 ): boolean {
-	if (country) return ASK.includes(country.toUpperCase());
-	return zone ? ASK_ZONE.test(zone) : true;
+	if (country)
+		return ASK.includes(country.toUpperCase()) || (!!india && country.toUpperCase() === "IN");
+	return zone ? ASK_ZONE.test(zone) || (!!india && /^Asia\/(Kolkata|Calcutta)$/.test(zone)) : true;
 }
 
 export function today(now: number): number {
@@ -70,7 +72,7 @@ export interface Decision {
  * - Global Privacy Control always refuses Marketing, whatever was saved.
  */
 export function decide(
-	rule: { v: string; who: 0 | 1 | 2; days: number },
+	rule: { v: string; who: 0 | 1 | 2 | 3; days: number },
 	saved: Choice | null,
 	inAskRegion: boolean,
 	gpc: boolean,

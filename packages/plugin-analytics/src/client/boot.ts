@@ -46,12 +46,42 @@ export const GEO_KEY = "cookie_consent_geo";
 const GRANTED = "granted";
 const DENIED = "denied";
 
-// Dark colours, used alone or inside a media query depending on the setting.
-const DARK = ":host{--f:#f2f2f2;--g:#1c1c1c}";
+// Dark defaults, used alone or inside a media query depending on the setting. A theme's
+// --cookie-consent-* variables still win over them.
+const DARK =
+	":host{--g:var(--cookie-consent-background,#1c1c1c);--f:var(--cookie-consent-text,#f2f2f2);--e:var(--cookie-consent-rule,#6b6b6b)}";
 
-// System fonts, nothing fetched. Buttons share one style, so no answer is favoured.
+// The look. Colours and fonts come from a theme's --cookie-consent-* variables when it sets
+// them (they cross into the shadow root), else from neutral defaults; the owner's colours
+// from the admin win over both. Accept and Reject share one class, so neither is favoured.
+// System fonts unless the theme names its own; nothing is fetched.
 const CSS =
-	':host{--f:#141414;--g:#fff;--e:#8a8a8a}*{box-sizing:border-box}h2,p{margin:0}h2{font-size:18px}[hidden]{display:none!important}.b,.s,dialog{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--f);background:var(--g);border:1px solid var(--e)}.b{position:fixed;inset:auto 0 0;display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;max-height:90vh;overflow:auto;padding:16px 20px;border-width:1px 0 0}.b>div:first-child{flex:1 1 320px}.left,.right{inset:auto auto 16px 16px;width:min(420px,calc(100vw - 32px));border-width:1px;border-radius:10px}.right{inset:auto 16px 16px auto}a{color:inherit}.r{display:flex;flex-wrap:wrap;gap:8px}button{font:inherit;font-weight:600;min-height:44px;padding:8px 16px;color:var(--g);background:var(--f);border:2px solid var(--f);border-radius:8px;cursor:pointer}.s{position:fixed;inset:auto auto 12px 12px;min-height:0;padding:4px 10px;font-size:13px;font-weight:400;border-radius:8px}:focus-visible{outline:3px solid var(--f);outline-offset:2px}dialog{width:min(520px,calc(100vw - 32px));max-height:90vh;padding:20px;border-radius:10px}dialog::backdrop{background:#0008}label{display:block;margin-top:16px}input{width:20px;height:20px;vertical-align:-4px}dialog .r{margin-top:20px}@media(prefers-reduced-motion:no-preference){.b{animation:i .25s}}@keyframes i{from{opacity:0}}';
+	':host{--g:var(--cookie-consent-background,#fff);--f:var(--cookie-consent-text,#141414);--e:var(--cookie-consent-rule,#8a8a8a);--x:var(--cookie-consent-accent,var(--f));--y:var(--cookie-consent-accent-text,var(--g));--z:var(--x);--k:var(--cookie-consent-font,system-ui,-apple-system,"Segoe UI",sans-serif);--h:var(--cookie-consent-heading-font,var(--k))}' +
+	"*{box-sizing:border-box}h2,p{margin:0}[hidden]{display:none!important}" +
+	".b,.s,dialog{font:16px/1.5 var(--k);color:var(--f);background:var(--g);border:1px solid var(--e)}" +
+	"h2{font:600 19px/1.3 var(--h)}a{color:inherit}" +
+	// The sheet: full width, a thin rule on top, its content kept to the page's width.
+	".b{position:fixed;inset:auto 0 0;max-height:85vh;overflow:auto;padding:18px 24px calc(18px + env(safe-area-inset-bottom));border-width:1px 0 0}" +
+	".i{max-width:var(--cookie-consent-width,1200px);margin:0 auto;display:flex;flex-wrap:wrap;gap:14px 32px;align-items:center}.i>div:first-child{flex:1 1 380px}.i p{margin-top:4px;max-width:66ch}" +
+	// The corner boxes.
+	".left,.right{inset:auto auto 16px 16px;width:min(420px,calc(100vw - 32px));padding:20px;border-width:1px;border-radius:10px}.right{inset:auto 16px 16px auto}.left .i>div:first-child,.right .i>div:first-child{flex-basis:100%}" +
+	".r{display:flex;flex-wrap:wrap;gap:10px;align-items:center}" +
+	"button{font:inherit;cursor:pointer}" +
+	".p{font-weight:600;min-height:44px;padding:8px 18px;color:var(--y);background:var(--x);border:2px solid var(--z);border-radius:6px}" +
+	".q{min-height:44px;padding:8px 6px;color:var(--f);background:none;border:0;text-decoration:underline;text-underline-offset:3px}" +
+	// The small button that reopens the choice.
+	".s{position:fixed;inset:auto auto 12px 12px;min-height:32px;padding:4px 14px;font-size:14px;border-radius:999px}.sr{inset:auto 12px 12px auto}" +
+	":focus-visible{outline:3px solid var(--f);outline-offset:2px}" +
+	"dialog{width:min(520px,calc(100vw - 32px));max-height:90vh;padding:24px;border-radius:10px}dialog::backdrop{background:#0008}" +
+	".o{display:grid;grid-template-columns:1fr auto;gap:2px 16px;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--e)}.o p{grid-column:1/-1;font-size:15px}.o em{font-style:normal;font-size:14px}" +
+	// Switches: a checkbox drawn as a switch, announced as one.
+	// Off: an outline with the knob on the left, in the text colour. On: filled with the button colour.
+	"input{appearance:none;flex:none;width:46px;height:28px;margin:0;border:2px solid var(--f);border-radius:14px;background:transparent;position:relative;cursor:pointer}input::before{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--f);transition:left .15s}input:checked{background:var(--x);border-color:var(--x)}input:checked::before{left:21px;background:var(--y)}input:disabled{opacity:.5;cursor:default}" +
+	"dialog .r{margin-top:22px}" +
+	".v{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}" +
+	// Phones: a smaller sheet, the two answers side by side, Choose under them.
+	"@media(max-width:600px){.b,.left,.right{inset:auto 0 0;width:auto;padding:14px 16px calc(14px + env(safe-area-inset-bottom));border-width:1px 0 0;border-radius:0}h2{font-size:17px}.i p{font-size:15px;line-height:1.45}.b .r{width:100%}.b .p{flex:1 1 0}dialog{padding:20px}dialog .r{flex-direction:column;align-items:stretch}}" +
+	"@media(prefers-reduced-motion:no-preference){.b{animation:i .25s}}@keyframes i{from{opacity:0;transform:translateY(8px)}}";
 
 export function boot(c: ClientConfig): void {
 	const w = window as unknown as Window & Globals;
@@ -195,8 +225,12 @@ export function boot(c: ClientConfig): void {
 	const esc = (text: string) => text.replace(/[&<>"]/g, (ch) => "&#" + ch.charCodeAt(0) + ";");
 
 	const show = () => {
-		part(".b").hidden = !state.ask;
-		part(".s").hidden = state.ask || !c.btn;
+		const sheet = part(".b");
+		sheet.hidden = !state.ask;
+		// A theme link with data-cookie-settings does the same job, so the button stays away.
+		part(".s").hidden = state.ask || !c.btn || !!d.querySelector("[data-cookie-settings]");
+		// Keep whatever has keyboard focus scrolled clear of the sheet, without moving the page.
+		d.documentElement.style.scrollPaddingBottom = state.ask ? sheet.offsetHeight + "px" : "";
 	};
 
 	const open = () => {
@@ -264,24 +298,30 @@ export function boot(c: ClientConfig): void {
 		}
 		part<HTMLDialogElement>("dialog").close();
 		show();
+		part(".v").textContent = c.t.saved;
 	};
 
 	const build = () => {
 		const t = c.t;
+		const k = c.col;
 		const host = d.createElement("div");
-		const button = (key: string, label: string) =>
-			"<button type=button data-k=" + key + ">" + esc(label) + "</button>";
+		const button = (key: string, label: string, kind = "p") =>
+			"<button type=button class=" + kind + " data-k=" + key + ">" + esc(label) + "</button>";
+		// Essential is always on: said in words, not shown as a ticked box that cannot be changed.
 		const row = (key: string, name: string, text: string, tools?: string[]) =>
 			tools && !tools.length
 				? ""
-				: "<label><input type=checkbox name=" +
+				: "<div class=o><b id=l" +
 					key +
-					(tools ? "" : " checked disabled") +
-					"> <b>" +
+					">" +
 					esc(name) +
-					"</b></label><p>" +
+					"</b>" +
+					(tools
+						? "<input type=checkbox role=switch name=" + key + " aria-labelledby=l" + key + ">"
+						: "<em>" + esc(t.always) + "</em>") +
+					"<p>" +
 					esc(text + (tools ? " " + t.uses + " " + tools.join(", ") + "." : "")) +
-					"</p>";
+					"</p></div>";
 		host.id = "cookie-consent";
 		// Out of the page flow, so adding it never moves the page.
 		host.style.cssText = "position:fixed;z-index:2147483646";
@@ -294,11 +334,18 @@ export function boot(c: ClientConfig): void {
 				: c.scheme === "auto"
 					? "@media(prefers-color-scheme:dark){" + DARK + "}"
 					: "") +
+			// The owner's colours from the admin, already checked for contrast on the server.
+			(k
+				? ":host{" +
+					(k.g ? "--g:" + k.g + ";--f:" + k.f + ";" : "") +
+					(k.x ? "--x:" + k.x + ";--y:" + k.y + ";--z:" + (k.z || k.x) : "") +
+					"}"
+				: "") +
 			'</style><div class="b ' +
 			c.pos +
 			'" role=region aria-label="' +
 			esc(t.title) +
-			'" hidden><div><h2>' +
+			'" hidden><div class=i><div><h2>' +
 			esc(t.title) +
 			"</h2><p>" +
 			esc(t.text) +
@@ -306,10 +353,12 @@ export function boot(c: ClientConfig): void {
 			"</p></div><div class=r>" +
 			button("a", t.accept) +
 			button("r", t.reject) +
-			button("c", t.choose) +
-			"</div></div><button type=button class=s data-k=c hidden>" +
+			button("c", t.choose, "q") +
+			'</div></div></div><button type=button class="s' +
+			(c.btnRight ? " sr" : "") +
+			'" data-k=c aria-label="Cookie settings" hidden>' +
 			esc(t.settings) +
-			"</button><dialog aria-labelledby=h><h2 id=h>" +
+			"</button><p class=v role=status></p><dialog aria-labelledby=h><h2 id=h>" +
 			esc(t.panel) +
 			"</h2>" +
 			row("n", t.need, t.needText) +
@@ -319,8 +368,8 @@ export function boot(c: ClientConfig): void {
 			esc(t.gpc) +
 			"</p><div class=r>" +
 			button("s", t.save) +
-			button("a", t.accept) +
 			button("r", t.reject) +
+			button("a", t.accept) +
 			"</div></dialog>";
 		root.addEventListener("click", (event) => {
 			const key = (event.target as Element).getAttribute("data-k");
@@ -340,7 +389,7 @@ export function boot(c: ClientConfig): void {
 		} catch {
 			// Unknown time zone: the visitor is asked.
 		}
-		state = decide(c, saved, mustAsk(country, zone), gpc, day);
+		state = decide(c, saved, mustAsk(country, zone, c.who === 3), gpc, day);
 		if (c.who) {
 			build();
 			show();
@@ -355,7 +404,8 @@ export function boot(c: ClientConfig): void {
 		// A signed-in editor has the EmDash toolbar in the page.
 		if (d.getElementById("emdash-toolbar")) staff = true;
 		const known = /^([A-Z]*)\.(\d+)$/.exec(local(GEO_KEY) || "");
-		if (c.who !== 1) run();
+		// Only the regional rules need the visitor's country.
+		if (c.who !== 1 && c.who !== 3) run();
 		else if (known && day - +known[2]! < 30) {
 			country = known[1];
 			run();

@@ -7,8 +7,8 @@
 export interface ClientConfig {
 	/** Banner version: changes when the set of tools changes, which asks visitors again. */
 	v: string;
-	/** Who is asked: 0 nobody, 1 visitors in Europe and the UK, 2 everyone. */
-	who: 0 | 1 | 2;
+	/** Who is asked: 0 nobody, 1 visitors in Europe and the UK, 2 everyone, 3 Europe, the UK and India. */
+	who: 0 | 1 | 2 | 3;
 	/** Days a choice is remembered. */
 	days: number;
 	/** Base address of the plugin's public routes, ending in "/". */
@@ -32,8 +32,12 @@ export interface ClientConfig {
 	rec?: 1;
 	pos: "bar" | "left" | "right";
 	scheme: "auto" | "light" | "dark";
-	/** Show the small "Cookie settings" button. */
+	/** Show the small "Cookies" button (unless the page has a data-cookie-settings link). */
 	btn?: 1;
+	/** That button in the bottom right corner instead of the left. */
+	btnRight?: 1;
+	/** The owner's colours, ready to use: background, text, buttons, button text, button edge. */
+	col?: { g?: string; f?: string; x?: string; y?: string; z?: string };
 	policy?: string;
 	/** Tool names shown under Analytics and Marketing. */
 	an: string[];
@@ -46,6 +50,8 @@ export interface ClientConfig {
 		accept: string;
 		reject: string;
 		choose: string;
+		always: string;
+		saved: string;
 		save: string;
 		settings: string;
 		panel: string;

@@ -3,9 +3,12 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 
 import {
+	cleanColors,
 	cleanPolicyUrl,
 	cleanText,
+	colorProblems,
 	DEFAULT_MESSAGE,
+	defaultMessage,
 	DEFAULT_TITLE,
 	enabledTools,
 	needsConsent,
@@ -33,6 +36,7 @@ const TAB = { status: 0, tools: 1, banner: 2, advanced: 3 } as const;
 
 const AUDIENCE_LABEL: Record<Audience, string> = {
 	europe: "Visitors in Europe and the UK (recommended)",
+	"europe-india": "Visitors in Europe, the UK and India",
 	everyone: "Everyone",
 	none: "No one, I use another consent tool",
 };
@@ -60,7 +64,10 @@ export interface PageState {
 // ── Status ──────────────────────────────────────────────────
 
 function whoWaits(audience: Audience): string {
-	return audience === "everyone" ? "every visitor" : "visitors in Europe and the UK";
+	if (audience === "everyone") return "every visitor";
+	return audience === "europe-india"
+		? "visitors in Europe, the UK and India"
+		: "visitors in Europe and the UK";
 }
 
 /** One plain line about what a tool does right now: "Google Analytics: on. Waits for ...". */
@@ -73,7 +80,10 @@ function toolRule(config: AnalyticsConfig, tool: ToolId): string {
 	const [category] = toolCategories(config, tool);
 	if (category === "none") return "Counts visitors without cookies, so it does not wait.";
 	if (audience === "none") return "Loads for every visitor without asking.";
-	const rest = audience === "europe" ? " Loads straight away for everyone else." : "";
+	const rest =
+		audience === "europe" || audience === "europe-india"
+			? " Loads straight away for everyone else."
+			: "";
 	if (tool === "gtm") {
 		return config.gtmLoading === "immediate"
 			? "Loads straight away for every visitor, before they answer."
@@ -100,6 +110,13 @@ export function warnings(config: AnalyticsConfig): Array<{ title: string; descri
 			title: "The banner has no link to your privacy policy",
 			description:
 				"Visitors must be able to read what they are agreeing to. Add your privacy policy page under Cookie banner.",
+		});
+	}
+	if (asks && banner.audience !== "none" && !banner.settingsButton) {
+		list.push({
+			title: 'The "Cookies" button is off',
+			description:
+				"Visitors must be able to change their answer as easily as they gave it. Make sure every page has a link or button with the attribute data-cookie-settings, for example in your footer, or turn the button back on under Cookie banner.",
 		});
 	}
 	if (tools.gtm && config.gtmLoading === "immediate" && banner.audience !== "none") {
@@ -262,7 +279,7 @@ function bannerBlocks(state: PageState): Block[] {
 		...errorBlocks(state),
 		{
 			type: "context",
-			text: 'Visitors must always be able to change their mind. If you turn off the "Cookie settings" button, add a link with the attribute data-cookie-settings to your footer instead.',
+			text: 'Visitors must always be able to change their mind. A small "Cookies" button lets them; it stays away on pages that have a link with the attribute data-cookie-settings, for example "Cookie settings" in your footer.',
 		},
 		{
 			type: "form",
@@ -294,8 +311,10 @@ function bannerBlocks(state: PageState): Block[] {
 				{
 					type: "text_input",
 					action_id: "message",
-					label: "Banner text",
+					label:
+						"Banner text (leave empty for the standard text, which names what your tools are used for)",
 					multiline: true,
+					placeholder: defaultMessage(config),
 					initial_value: text(draft, "message", banner.message),
 				},
 				{
@@ -303,7 +322,7 @@ function bannerBlocks(state: PageState): Block[] {
 					action_id: "position",
 					label: "Where it appears",
 					options: [
-						{ value: "bar", label: "Bar across the bottom" },
+						{ value: "bar", label: "Across the bottom of the screen (recommended)" },
 						{ value: "left", label: "Box in the bottom left corner" },
 						{ value: "right", label: "Box in the bottom right corner" },
 					],
@@ -312,7 +331,7 @@ function bannerBlocks(state: PageState): Block[] {
 				{
 					type: "select",
 					action_id: "scheme",
-					label: "Colours",
+					label: "Light or dark",
 					options: [
 						{ value: "auto", label: "Follow the visitor's device (light or dark)" },
 						{ value: "light", label: "Always light" },
@@ -323,8 +342,39 @@ function bannerBlocks(state: PageState): Block[] {
 				{
 					type: "toggle",
 					action_id: "settings_button",
-					label: 'Show a small "Cookie settings" button',
+					label: 'Show a small "Cookies" button after a visitor has answered',
 					initial_value: banner.settingsButton,
+				},
+				{
+					type: "select",
+					action_id: "settings_side",
+					label: 'Corner for the "Cookies" button',
+					options: [
+						{ value: "left", label: "Bottom left (chat buttons usually sit on the right)" },
+						{ value: "right", label: "Bottom right" },
+					],
+					initial_value: banner.settingsSide,
+				},
+				{
+					type: "text_input",
+					action_id: "color_background",
+					label: "Banner background colour, for example #fbf7f0 (empty: the standard colours)",
+					placeholder: "#ffffff",
+					initial_value: text(draft, "color_background", banner.colors.background),
+				},
+				{
+					type: "text_input",
+					action_id: "color_text",
+					label: "Banner text colour, set together with the background",
+					placeholder: "#141414",
+					initial_value: text(draft, "color_text", banner.colors.text),
+				},
+				{
+					type: "text_input",
+					action_id: "color_accent",
+					label: "Button colour, used for both Accept all and Reject all",
+					placeholder: "#141414",
+					initial_value: text(draft, "color_accent", banner.colors.accent),
 				},
 				{
 					type: "select",
@@ -525,11 +575,32 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		}
 		if (has(values, "title")) banner.title = cleanText(values.title, 80, DEFAULT_TITLE);
 		if (has(values, "message")) banner.message = cleanText(values.message, 400, DEFAULT_MESSAGE);
+		if (
+			has(values, "color_background") ||
+			has(values, "color_text") ||
+			has(values, "color_accent")
+		) {
+			const typed = {
+				background:
+					typeof values.color_background === "string"
+						? values.color_background.trim()
+						: banner.colors.background,
+				text: typeof values.color_text === "string" ? values.color_text.trim() : banner.colors.text,
+				accent:
+					typeof values.color_accent === "string"
+						? values.color_accent.trim()
+						: banner.colors.accent,
+			};
+			const problems = colorProblems(typed);
+			if (problems.length) return refuse(problems, TAB.banner);
+			banner.colors = cleanColors(typed);
+		}
 		const raw = {
 			...banner,
 			...pick(values, {
 				audience: "audience",
 				position: "position",
+				settingsSide: "settings_side",
 				scheme: "scheme",
 				months: "months",
 			}),
