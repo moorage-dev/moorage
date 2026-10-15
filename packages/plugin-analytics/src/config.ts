@@ -44,6 +44,9 @@ export interface AnalyticsConfig {
 		settingsSide: Side;
 		/** Banner background, text and button colour, each "#rrggbb" or "" for the default (or the theme's CSS variables). */
 		colors: { background: string; text: string; accent: string };
+		/** Use `darkColors` when the visitor's device is in dark mode. */
+		darkOn: boolean;
+		darkColors: { background: string; text: string; accent: string };
 		/** Ask again after this many months. */
 		months: 6 | 12;
 	};
@@ -92,6 +95,8 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 		settingsButton: true,
 		settingsSide: "left",
 		colors: { ...NO_COLORS },
+		darkOn: false,
+		darkColors: { ...NO_COLORS },
 		months: 6,
 	},
 	exclude: [],
@@ -289,6 +294,8 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 			settingsButton: bool(rawBanner.settingsButton, defaults.banner.settingsButton),
 			settingsSide: oneOf(rawBanner.settingsSide, ["left", "right"], defaults.banner.settingsSide),
 			colors: cleanColors(rawBanner.colors),
+			darkOn: bool(rawBanner.darkOn, defaults.banner.darkOn),
+			darkColors: cleanColors(rawBanner.darkColors),
 			months: rawBanner.months === 12 || rawBanner.months === "12" ? 12 : 6,
 		},
 		exclude: parseExcludes(source.exclude),

@@ -38,6 +38,8 @@ export interface ClientConfig {
 	btnRight?: 1;
 	/** The owner's colours, ready to use: background, text, buttons, button text, button edge. */
 	col?: { g?: string; f?: string; x?: string; y?: string; z?: string };
+	/** The same for dark mode, when the owner set separate dark colours. */
+	colDark?: { g?: string; f?: string; x?: string; y?: string; z?: string };
 	policy?: string;
 	/** Tool names shown under Analytics and Marketing. */
 	an: string[];

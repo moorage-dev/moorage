@@ -55,6 +55,8 @@ export interface PageState {
 	config: AnalyticsConfig;
 	admin: boolean;
 	counts: ConsentCounts | null;
+	/** The site's own address (https://example.com), for the preview links. */
+	origin?: string;
 	/** What was typed, kept on screen when a save was refused. */
 	draft?: Record<string, unknown>;
 	errors?: string[];
@@ -377,6 +379,36 @@ function bannerBlocks(state: PageState): Block[] {
 					initial_value: text(draft, "color_accent", banner.colors.accent),
 				},
 				{
+					type: "toggle",
+					action_id: "dark_colors",
+					label: "Different colours when the visitor's device is in dark mode",
+					initial_value: banner.darkOn,
+				},
+				{
+					type: "text_input",
+					action_id: "dark_background",
+					label: "Dark mode: banner background colour, for example #1c1c1c",
+					placeholder: "#1c1c1c",
+					initial_value: text(draft, "dark_background", banner.darkColors.background),
+					condition: { field: "dark_colors", eq: true },
+				},
+				{
+					type: "text_input",
+					action_id: "dark_text",
+					label: "Dark mode: banner text colour, set together with the background",
+					placeholder: "#f2f2f2",
+					initial_value: text(draft, "dark_text", banner.darkColors.text),
+					condition: { field: "dark_colors", eq: true },
+				},
+				{
+					type: "text_input",
+					action_id: "dark_accent",
+					label: "Dark mode: button colour",
+					placeholder: "#f2f2f2",
+					initial_value: text(draft, "dark_accent", banner.darkColors.accent),
+					condition: { field: "dark_colors", eq: true },
+				},
+				{
 					type: "select",
 					action_id: "months",
 					label: "Ask again after",
@@ -398,6 +430,37 @@ function bannerBlocks(state: PageState): Block[] {
 					label: "Put back the original heading and text",
 					style: "secondary",
 				},
+			],
+		},
+		...previewBlocks(state),
+	];
+}
+
+/** Two links that open the site's home page with the banner shown as saved, in light and in dark. */
+function previewBlocks(state: PageState): Block[] {
+	if (!state.origin) return [];
+	if (enabledTools(state.config).length === 0) {
+		return [
+			{ type: "context", text: "Add a tool on the Tools tab to preview the banner on your site." },
+		];
+	}
+	const link = (label: string, look: "light" | "dark", appearance: "primary" | "secondary") => ({
+		type: "link" as const,
+		label,
+		target: { kind: "external" as const, url: `${state.origin}/?cookie_preview=${look}` },
+		appearance,
+	});
+	return [
+		{ type: "header", text: "Preview" },
+		{
+			type: "context",
+			text: "Opens your home page with the banner as saved, whoever you are and wherever you are. Answers there are not saved and no tool loads. Save your changes first.",
+		},
+		{
+			type: "actions",
+			elements: [
+				link("Preview the banner", "light", "primary"),
+				link("Preview in dark mode", "dark", "secondary"),
 			],
 		},
 	];
@@ -466,7 +529,7 @@ export function renderPage(state: PageState, tab: number = TAB.status): BlockRes
 
 /** The state without a refused save's leftovers, for the tabs it did not happen on. */
 function clean(state: PageState): PageState {
-	return { config: state.config, admin: state.admin, counts: state.counts };
+	return { config: state.config, admin: state.admin, counts: state.counts, origin: state.origin };
 }
 
 // ── Saving ──────────────────────────────────────────────────
@@ -594,6 +657,26 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 			const problems = colorProblems(typed);
 			if (problems.length) return refuse(problems, TAB.banner);
 			banner.colors = cleanColors(typed);
+		}
+		banner.darkOn = flag("dark_colors", banner.darkOn);
+		if (has(values, "dark_background") || has(values, "dark_text") || has(values, "dark_accent")) {
+			const typed = {
+				background:
+					typeof values.dark_background === "string"
+						? values.dark_background.trim()
+						: banner.darkColors.background,
+				text:
+					typeof values.dark_text === "string" ? values.dark_text.trim() : banner.darkColors.text,
+				accent:
+					typeof values.dark_accent === "string"
+						? values.dark_accent.trim()
+						: banner.darkColors.accent,
+			};
+			const problems = banner.darkOn
+				? colorProblems(typed).map((problem) => `Dark mode: ${problem}`)
+				: [];
+			if (problems.length) return refuse(problems, TAB.banner);
+			banner.darkColors = cleanColors(typed);
 		}
 		const raw = {
 			...banner,

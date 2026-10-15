@@ -80,7 +80,7 @@ const CSS =
 	// Off: an outline with the knob on the left, in the text colour. On: filled with the button colour.
 	"input{appearance:none;flex:none;width:46px;height:28px;margin:0;border:2px solid var(--f);border-radius:14px;background:transparent;position:relative;cursor:pointer}input::before{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--f);transition:left .15s}input:checked{background:var(--x);border-color:var(--x)}input:checked::before{left:21px;background:var(--y)}input:disabled{opacity:.5;cursor:default}" +
 	"dialog .r{margin-top:22px}" +
-	".v{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}" +
+	".v{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.w{display:inline-block;margin-bottom:8px;padding:2px 8px;font-size:13px;border:1px dashed var(--f);border-radius:4px}" +
 	// Phones: a smaller sheet, the two answers side by side, Choose under them.
 	"@media(max-width:600px){.b,.left,.right{inset:auto 0 0;width:auto;padding:14px 16px calc(14px + env(safe-area-inset-bottom));border-width:1px 0 0;border-radius:0}h2{font-size:17px}.i p{font-size:15px;line-height:1.45}.b .r{width:100%}.b .p{flex:1 1 0}dialog{padding:20px}dialog .r{flex-direction:column;align-items:stretch}}" +
 	"@media(prefers-reduced-motion:no-preference){.b{animation:i .25s}}@keyframes i{from{opacity:0;transform:translateY(8px)}}";
@@ -92,6 +92,11 @@ export function boot(c: ClientConfig): void {
 
 	// Preview links and the visual editor are never tracked and never show the banner.
 	if (/[?&]_preview=/.test(here.search) || /(^|; )emdash-edit-mode=true/.test(d.cookie)) return;
+	// The admin's "Preview the banner": shown at once, in light or dark, nothing saved, nothing loaded.
+	const preview = /[?&]cookie_preview=(light|dark)/.exec(here.search)?.[1] as
+		| "light"
+		| "dark"
+		| undefined;
 
 	const local = (key: string, value?: string): string | null => {
 		try {
@@ -142,6 +147,7 @@ export function boot(c: ClientConfig): void {
 
 	/** The only place a tracking company's script is ever requested. */
 	const apply = (a: boolean, m: boolean) => {
+		if (preview) return;
 		if (c.who && !state.ask) {
 			signal("update", a, m);
 			layer.push({ event: "cookie_consent_update", analytics: a, marketing: m });
@@ -263,6 +269,13 @@ export function boot(c: ClientConfig): void {
 	};
 
 	const choose = (a: boolean, m: boolean) => {
+		if (preview) {
+			state = { a, m, ask: false };
+			part<HTMLDialogElement>("dialog").close();
+			show();
+			part(".v").textContent = c.t.saved;
+			return;
+		}
 		m = m && !gpc;
 		const before = state;
 		saved = {
@@ -305,7 +318,18 @@ export function boot(c: ClientConfig): void {
 
 	const build = () => {
 		const t = c.t;
-		const k = c.col;
+		// A preview forces the light or dark look it was asked for.
+		const scheme = preview || c.scheme;
+		// The owner's colours from the admin, already checked for contrast on the server. A background
+		// chosen there is used exactly as chosen, not tinted.
+		const colors = (o?: ClientConfig["col"]) =>
+			o
+				? ":host{" +
+					(o.g ? "--g:" + o.g + ";--f:" + o.f + ";" : "") +
+					(o.x ? "--x:" + o.x + ";--y:" + o.y + ";--z:" + (o.z || o.x) : "") +
+					"}" +
+					(o.g ? ".b{background:var(--g)}" : "")
+				: "";
 		const host = d.createElement("div");
 		const button = (key: string, label: string, kind = "p") =>
 			"<button type=button class=" + kind + " data-k=" + key + ">" + esc(label) + "</button>";
@@ -331,25 +355,22 @@ export function boot(c: ClientConfig): void {
 		root.innerHTML =
 			"<style>" +
 			CSS +
-			(c.scheme === "dark"
-				? DARK
-				: c.scheme === "auto"
-					? "@media(prefers-color-scheme:dark){" + DARK + "}"
-					: "") +
-			// The owner's colours from the admin, already checked for contrast on the server.
-			// A background chosen in the admin is used exactly as chosen, not tinted.
-			(k
-				? ":host{" +
-					(k.g ? "--g:" + k.g + ";--f:" + k.f + ";" : "") +
-					(k.x ? "--x:" + k.x + ";--y:" + k.y + ";--z:" + (k.z || k.x) : "") +
-					"}" +
-					(k.g ? ".b{background:var(--g)}" : "")
-				: "") +
+			(scheme === "dark"
+				? DARK + colors(c.colDark || c.col)
+				: scheme === "auto"
+					? "@media(prefers-color-scheme:dark){" +
+						DARK +
+						"}" +
+						colors(c.col) +
+						(c.colDark ? "@media(prefers-color-scheme:dark){" + colors(c.colDark) + "}" : "")
+					: colors(c.col)) +
 			'</style><div class="b ' +
 			c.pos +
 			'" role=region aria-label="' +
 			esc(t.title) +
-			'" hidden><div class=i><div><h2>' +
+			'" hidden><div class=i><div>' +
+			(preview ? "<p class=w>Preview: nothing is saved and no tool loads.</p>" : "") +
+			"<h2>" +
 			esc(t.title) +
 			"</h2><p>" +
 			esc(t.text) +
@@ -393,8 +414,10 @@ export function boot(c: ClientConfig): void {
 		} catch {
 			// Unknown time zone: the visitor is asked.
 		}
-		state = decide(c, saved, mustAsk(country, zone, c.who === 3), gpc, day);
-		if (c.who) {
+		state = preview
+			? { a: false, m: false, ask: true }
+			: decide(c, saved, mustAsk(country, zone, c.who === 3), gpc, day);
+		if (c.who || preview) {
 			build();
 			show();
 		}
@@ -408,8 +431,13 @@ export function boot(c: ClientConfig): void {
 		// A signed-in editor has the EmDash toolbar in the page.
 		if (d.getElementById("emdash-toolbar")) staff = true;
 		const known = /^([A-Z]*)\.(\d+)$/.exec(local(GEO_KEY) || "");
+		if (preview) {
+			// The page follows too, for themes that colour the banner with light-dark().
+			d.documentElement.style.colorScheme = preview;
+			run();
+		}
 		// Only the regional rules need the visitor's country.
-		if (c.who !== 1 && c.who !== 3) run();
+		else if (c.who !== 1 && c.who !== 3) run();
 		else if (known && day - +known[2]! < 30) {
 			country = known[1];
 			run();

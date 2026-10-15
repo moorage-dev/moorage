@@ -451,6 +451,50 @@ test.describe("a visitor who is not asked", () => {
 		expect(hits).toEqual([]);
 	});
 
+	test("the admin's preview shows the banner to anyone, saves nothing and loads nothing", async ({
+		page,
+		context,
+	}) => {
+		const hits = await stubVendors(context);
+		// A visitor who would never be asked, with a previous answer: the preview still shows the banner.
+		await inCountry(page, "US");
+		await page.goto("/?cookie_preview=dark");
+		await expect(banner(page)).toBeVisible();
+		await expect(banner(page)).toContainText("Preview: nothing is saved and no tool loads.");
+		expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe("dark");
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await expect(banner(page)).toBeHidden();
+		await settle(page);
+		expect(hits).toEqual([]);
+		expect((await context.cookies()).map((cookie) => cookie.name)).not.toContain("cookie_consent");
+	});
+
+	test("separate dark mode colours are used in dark mode only", async ({ page }) => {
+		await configure(IDS, {
+			color_background: "#fbf7f0",
+			color_text: "#3b2a1a",
+			color_accent: "#1f6f43",
+			dark_colors: true,
+			dark_background: "#102030",
+			dark_text: "#f0f0f0",
+			dark_accent: "#f5a0c5",
+		});
+		const sheet = () =>
+			page.evaluate(() => {
+				const root = document.getElementById("cookie-consent")!.shadowRoot!;
+				const style = getComputedStyle(root.querySelector(".b")!);
+				const button = getComputedStyle(root.querySelector(".p")!);
+				return [style.backgroundColor, button.backgroundColor];
+			});
+		await page.goto("/?cookie_preview=light");
+		await expect(banner(page)).toBeVisible();
+		expect(await sheet()).toEqual(["rgb(251, 247, 240)", "rgb(31, 111, 67)"]);
+		await page.goto("/?cookie_preview=dark");
+		await expect(banner(page)).toBeVisible();
+		expect(await sheet()).toEqual(["rgb(16, 32, 48)", "rgb(245, 160, 197)"]);
+		await configure(IDS);
+	});
+
 	test("Global Privacy Control keeps Marketing off", async ({ page, context }) => {
 		await context.addInitScript(() => {
 			Object.defineProperty(Navigator.prototype, "globalPrivacyControl", { get: () => true });

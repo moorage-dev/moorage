@@ -85,7 +85,7 @@ The banner takes these CSS variables from your page when you set them; they reac
 }
 ```
 
-Colours set on the Cookie banner tab win over these. There is no way to style Accept all and Reject all differently, on purpose.
+Colours set on the Cookie banner tab win over these (their dark mode set follows the visitor's device; a theme with its own light and dark switch is better served by these variables). There is no way to style Accept all and Reject all differently, on purpose.
 
 ### Content Security Policy
 
@@ -100,7 +100,7 @@ One page, **Analytics**, under Marketing in the admin sidebar, with four tabs.
 
 - **Status**: one line per tool saying what it does right now ("Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies."), warnings first (no privacy policy link, Google Analytics and Tag Manager both on, Tag Manager loading before the answer), and how visitors answered in the last 30 days.
 - **Tracking tools**: the seven ID boxes, "My HubSpot account is in the EU data centre", "Cloudflare Web Analytics: wait for consent anyway", and "Track enquiries automatically".
-- **Cookie banner**: who sees it, your privacy policy page, the heading and text (leave the text empty for the standard wording, which names what your tools are used for), where it appears, light or dark, the "Cookies" button and its corner, three colours (background, text, buttons; a combination that is hard to read is refused, and button text is chosen for you), and whether to ask again after 6 or 12 months.
+- **Cookie banner**: who sees it, your privacy policy page, the heading and text (leave the text empty for the standard wording, which names what your tools are used for), where it appears, light or dark, the "Cookies" button and its corner, three colours (background, text, buttons; a combination that is hard to read is refused, and button text is chosen for you), with a switch that opens three more for dark mode, and whether to ask again after 6 or 12 months. Two buttons, **Preview the banner** and **Preview in dark mode**, open your home page with the banner shown as saved: to you, wherever you are, with nothing saved and no tool loaded.
 - **Advanced**: pages not to track (one address per line; everything under it is covered), and when Google Tag Manager loads.
 
 Admins can change settings. Editors see the Status tab, read-only.

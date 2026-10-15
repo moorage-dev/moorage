@@ -20,6 +20,7 @@ async function call(fake: FakeContext, input: unknown, role = ADMIN): Promise<Bl
 	const handler = createPlugin().routes.admin!.handler;
 	const response = await handler({
 		...fake.ctx,
+		request: new Request("https://acme.test/_emdash/api/plugins/analytics-consent/admin"),
 		input,
 		user: { id: "u1", email: "a@acme.test", name: null, role, createdAt: "" },
 	} as unknown as RouteContext);
@@ -217,6 +218,8 @@ describe("saving the banner and advanced settings", () => {
 			settingsButton: false,
 			settingsSide: "left",
 			colors: { background: "", text: "", accent: "" },
+			darkOn: false,
+			darkColors: { background: "", text: "", accent: "" },
 			months: 12,
 		});
 	});
@@ -343,5 +346,37 @@ describe("status wording", () => {
 			["Rejected all", 2],
 			["Chose some", 0],
 		]);
+	});
+});
+
+describe("dark mode colours and the preview", () => {
+	it("saves dark mode colours only when they are turned on and readable", async () => {
+		const fake = fakeContext();
+		await submit(fake, "save_banner", {
+			dark_colors: true,
+			dark_background: "#1c1c1c",
+			dark_text: "#f2f2f2",
+			dark_accent: "#f5a0c5",
+		});
+		expect(saved(fake).banner).toMatchObject({
+			darkOn: true,
+			darkColors: { background: "#1c1c1c", text: "#f2f2f2", accent: "#f5a0c5" },
+		});
+		const refused = await submit(fakeContext(), "save_banner", {
+			dark_colors: true,
+			dark_background: "#1c1c1c",
+			dark_text: "#333333",
+		});
+		expect(refused.toast?.type).toBe("error");
+		expect(JSON.stringify(refused)).toContain("Dark mode: The text is hard to read");
+	});
+
+	it("links to a preview of the banner on the site's home page, in light and dark", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const response = await load(fake);
+		expectValid(response);
+		const text = JSON.stringify(response);
+		expect(text).toContain("https://acme.test/?cookie_preview=light");
+		expect(text).toContain("https://acme.test/?cookie_preview=dark");
 	});
 });

@@ -81,6 +81,8 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 	if (asks && banner.settingsButton && banner.settingsSide === "right") out.btnRight = 1;
 	const col = clientColors(banner.colors);
 	if (col) out.col = col;
+	const colDark = banner.darkOn ? clientColors(banner.darkColors, true) : undefined;
+	if (colDark) out.colDark = colDark;
 	if (banner.policyUrl) out.policy = banner.policyUrl;
 	return out;
 }
@@ -93,10 +95,12 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
  */
 export function clientColors(
 	colors: AnalyticsConfig["banner"]["colors"],
+	dark = false,
 ): ClientConfig["col"] | undefined {
 	const { background, text, accent } = colors;
 	if (!background && !accent) return undefined;
 	const out: NonNullable<ClientConfig["col"]> = {};
+	// Button edges are judged against the banner, or a white one when only the button colour is set.
 	if (background) {
 		out.g = background;
 		out.f = text;
@@ -104,8 +108,9 @@ export function clientColors(
 	if (accent) {
 		out.x = accent;
 		out.y = contrast(accent, "#ffffff") >= contrast(accent, "#141414") ? "#ffffff" : "#141414";
-		const against = background || "#ffffff";
-		if (contrast(accent, against) < 3) out.z = text || "#141414";
+		// Judged against the banner: the owner's background, or the standard light or dark one.
+		const against = background || (dark ? "#1c1c1c" : "#ffffff");
+		if (contrast(accent, against) < 3) out.z = text || (dark ? "#f2f2f2" : "#141414");
 	}
 	return out;
 }

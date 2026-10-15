@@ -103,6 +103,7 @@ export function createPlugin() {
 						config,
 						admin,
 						counts,
+						origin: ctx.request ? new URL(ctx.request.url).origin : undefined,
 					});
 					if (outcome.save) await ctx.kv.set(CONFIG_KEY, outcome.save);
 					return outcome.response;
