@@ -77,6 +77,8 @@ The banner takes these CSS variables from your page when you set them; they reac
 	--cookie-consent-accent: #a0185a; /* both Accept all and Reject all */
 	--cookie-consent-accent-text: #ffffff; /* text on those buttons: keep it readable */
 	--cookie-consent-rule: #16202a; /* the line above the banner, and its edges */
+	--cookie-consent-surface: #f2e9cf; /* the banner itself; by default the background, a shade darker */
+	--cookie-consent-shadow: 0 -12px 32px -16px rgb(0 0 0 / 0.28); /* "none" for no shadow */
 	--cookie-consent-font: "Public Sans", system-ui, sans-serif;
 	--cookie-consent-heading-font: "Newsreader", Georgia, serif;
 	--cookie-consent-width: 1280px; /* the banner's content lines up with your page */

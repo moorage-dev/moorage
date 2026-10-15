@@ -49,19 +49,21 @@ const DENIED = "denied";
 // Dark defaults, used alone or inside a media query depending on the setting. A theme's
 // --cookie-consent-* variables still win over them.
 const DARK =
-	":host{--g:var(--cookie-consent-background,#1c1c1c);--f:var(--cookie-consent-text,#f2f2f2);--e:var(--cookie-consent-rule,#6b6b6b)}";
+	":host{--g:var(--cookie-consent-background,#1c1c1c);--f:var(--cookie-consent-text,#f2f2f2);--e:var(--cookie-consent-rule,#6b6b6b);--w:0 -12px 32px -16px rgb(0 0 0/.75)}";
 
 // The look. Colours and fonts come from a theme's --cookie-consent-* variables when it sets
 // them (they cross into the shadow root), else from neutral defaults; the owner's colours
 // from the admin win over both. Accept and Reject share one class, so neither is favoured.
 // System fonts unless the theme names its own; nothing is fetched.
 const CSS =
-	':host{--g:var(--cookie-consent-background,#fff);--f:var(--cookie-consent-text,#141414);--e:var(--cookie-consent-rule,#8a8a8a);--x:var(--cookie-consent-accent,var(--f));--y:var(--cookie-consent-accent-text,var(--g));--z:var(--x);--k:var(--cookie-consent-font,system-ui,-apple-system,"Segoe UI",sans-serif);--h:var(--cookie-consent-heading-font,var(--k))}' +
+	':host{--g:var(--cookie-consent-background,#fff);--f:var(--cookie-consent-text,#141414);--e:var(--cookie-consent-rule,#8a8a8a);--x:var(--cookie-consent-accent,var(--f));--y:var(--cookie-consent-accent-text,var(--g));--z:var(--x);--k:var(--cookie-consent-font,system-ui,-apple-system,"Segoe UI",sans-serif);--h:var(--cookie-consent-heading-font,var(--k));--w:0 -12px 32px -16px rgb(0 0 0/.28)}' +
 	"*{box-sizing:border-box}h2,p{margin:0}[hidden]{display:none!important}" +
 	".b,.s,dialog{font:16px/1.5 var(--k);color:var(--f);background:var(--g);border:1px solid var(--e)}" +
 	"h2{font:600 19px/1.3 var(--h)}a{color:inherit}" +
 	// The sheet: full width, a thin rule on top, its content kept to the page's width.
-	".b{position:fixed;inset:auto 0 0;max-height:85vh;overflow:auto;padding:18px 24px calc(18px + env(safe-area-inset-bottom));border-width:1px 0 0}" +
+	// Set apart from the page: a surface a little darker (or lighter) than the background, and a soft
+	// shadow above it. In light themes the shadow does most of the work, in dark ones the surface.
+	".b{position:fixed;inset:auto 0 0;max-height:85vh;overflow:auto;padding:18px 24px calc(18px + env(safe-area-inset-bottom));border-width:1px 0 0;background:var(--cookie-consent-surface,color-mix(in srgb,var(--g) 92%,var(--f)));box-shadow:var(--cookie-consent-shadow,var(--w))}" +
 	".i{max-width:var(--cookie-consent-width,1200px);margin:0 auto;display:flex;flex-wrap:wrap;gap:14px 32px;align-items:center}.i>div:first-child{flex:1 1 380px}.i p{margin-top:4px;max-width:66ch}" +
 	// The corner boxes.
 	".left,.right{inset:auto auto 16px 16px;width:min(420px,calc(100vw - 32px));padding:20px;border-width:1px;border-radius:10px}.right{inset:auto 16px 16px auto}.left .i>div:first-child,.right .i>div:first-child{flex-basis:100%}" +
@@ -335,11 +337,13 @@ export function boot(c: ClientConfig): void {
 					? "@media(prefers-color-scheme:dark){" + DARK + "}"
 					: "") +
 			// The owner's colours from the admin, already checked for contrast on the server.
+			// A background chosen in the admin is used exactly as chosen, not tinted.
 			(k
 				? ":host{" +
 					(k.g ? "--g:" + k.g + ";--f:" + k.f + ";" : "") +
 					(k.x ? "--x:" + k.x + ";--y:" + k.y + ";--z:" + (k.z || k.x) : "") +
-					"}"
+					"}" +
+					(k.g ? ".b{background:var(--g)}" : "")
 				: "") +
 			'</style><div class="b ' +
 			c.pos +
