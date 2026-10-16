@@ -316,7 +316,29 @@ test.describe("a visitor who must be asked", () => {
 		await expect(panel(page).getByRole("switch", { name: "Analytics" })).not.toBeChecked();
 		await page.keyboard.press("Escape");
 
-		// A theme that has such a link in every page gets no floating button: the link does its job.
+		// The button is the approved design: a pill with a cookie icon, fixed 14 px from the screen's
+		// bottom-left corner, 40 px tall.
+		const pill = await settingsButton(page).evaluate((button) => {
+			const box = button.getBoundingClientRect();
+			return {
+				position: getComputedStyle(button).position,
+				left: Math.round(box.left),
+				bottom: Math.round(innerHeight - box.bottom),
+				height: Math.round(box.height),
+				icon: !!button.querySelector("svg"),
+				text: button.textContent,
+			};
+		});
+		expect(pill).toEqual({
+			position: "fixed",
+			left: 14,
+			bottom: 14,
+			height: 40,
+			icon: true,
+			text: "Cookies",
+		});
+
+		// A theme link with data-cookie-settings: while it is on screen the pill steps aside, then returns.
 		await page.addInitScript(() =>
 			document.addEventListener("DOMContentLoaded", () => {
 				const link = document.createElement("a");
@@ -327,8 +349,12 @@ test.describe("a visitor who must be asked", () => {
 			}),
 		);
 		await page.reload();
-		await expect(page.getByRole("link", { name: "Cookie choices" })).toBeVisible();
+		await page.evaluate(() => scrollTo(0, 0));
+		await expect(settingsButton(page)).toBeVisible();
+		await page.getByRole("link", { name: "Cookie choices" }).scrollIntoViewIfNeeded();
 		await expect(settingsButton(page)).toBeHidden();
+		await page.evaluate(() => scrollTo(0, 0));
+		await expect(settingsButton(page)).toBeVisible();
 	});
 
 	test("the banner works from the keyboard, with a visible focus ring", async ({

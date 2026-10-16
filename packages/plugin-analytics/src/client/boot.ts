@@ -51,6 +51,10 @@ const DENIED = "denied";
 const DARK =
 	":host{--g:var(--cookie-consent-background,#1c1c1c);--f:var(--cookie-consent-text,#f2f2f2);--e:var(--cookie-consent-rule,#6b6b6b);--w:0 -12px 32px -16px rgb(0 0 0/.75)}";
 
+// A cookie, drawn in the text colour.
+const ICON =
+	'<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="6" r="1" fill="currentColor"/><circle cx="10" cy="9" r="1" fill="currentColor"/><circle cx="6.5" cy="10.5" r=".8" fill="currentColor"/></svg>';
+
 // The look. Colours and fonts come from a theme's --cookie-consent-* variables when it sets
 // them (they cross into the shadow root), else from neutral defaults; the owner's colours
 // from the admin win over both. Accept and Reject share one class, so neither is favoured.
@@ -72,7 +76,9 @@ const CSS =
 	".p{font-weight:600;min-height:44px;padding:8px 18px;color:var(--y);background:var(--x);border:2px solid var(--z);border-radius:6px}" +
 	".q{min-height:44px;padding:8px 6px;color:var(--f);background:none;border:0;text-decoration:underline;text-underline-offset:3px}" +
 	// The small button that reopens the choice.
-	".s{position:fixed;inset:auto auto 12px 12px;min-height:32px;padding:4px 14px;font-size:14px;border-radius:999px}.sr{inset:auto 12px 12px auto}" +
+	// The small button that reopens the choice: a pill with a cookie icon, fixed in a bottom corner of the
+	// screen, on the banner's surface with an edge and a soft shadow (as in the approved design).
+	".s{position:fixed;inset:auto auto calc(14px + env(safe-area-inset-bottom)) 14px;display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;border-radius:999px;background:var(--cookie-consent-surface,color-mix(in srgb,var(--g) 92%,var(--f)));box-shadow:0 2px 10px rgb(0 0 0/.12);font:500 13px/1 var(--k);cursor:pointer}.s svg{width:16px;height:16px;flex:none}.sr{inset:auto 14px calc(14px + env(safe-area-inset-bottom)) auto}" +
 	":focus-visible{outline:3px solid var(--f);outline-offset:2px}" +
 	"dialog{width:min(520px,calc(100vw - 32px));max-height:90vh;padding:24px;border-radius:10px}dialog::backdrop{background:#0008}" +
 	".o{display:grid;grid-template-columns:1fr auto;gap:2px 16px;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--e)}.o p{grid-column:1/-1;font-size:15px}.o em{font-style:normal;font-size:14px}" +
@@ -232,11 +238,13 @@ export function boot(c: ClientConfig): void {
 	const box = (name: string) => root!.querySelector<HTMLInputElement>("[name=" + name + "]");
 	const esc = (text: string) => text.replace(/[&<>"]/g, (ch) => "&#" + ch.charCodeAt(0) + ";");
 
+	let linkOnScreen = false;
 	const show = () => {
 		const sheet = part(".b");
 		sheet.hidden = !state.ask;
-		// A theme link with data-cookie-settings does the same job, so the button stays away.
-		part(".s").hidden = state.ask || !c.btn || !!d.querySelector("[data-cookie-settings]");
+		// While a theme link with data-cookie-settings is on screen it does the same job, so the button
+		// steps aside; it comes back when the link scrolls away.
+		part(".s").hidden = state.ask || !c.btn || linkOnScreen;
 		// Keep whatever has keyboard focus scrolled clear of the sheet, without moving the page.
 		d.documentElement.style.scrollPaddingBottom = state.ask ? sheet.offsetHeight + "px" : "";
 	};
@@ -382,8 +390,10 @@ export function boot(c: ClientConfig): void {
 			'</div></div></div><button type=button class="s' +
 			(c.btnRight ? " sr" : "") +
 			'" data-k=c aria-label="Cookie settings" hidden>' +
+			ICON +
+			"<span>" +
 			esc(t.settings) +
-			"</button><p class=v role=status></p><dialog aria-labelledby=h><h2 id=h>" +
+			"</span></button><p class=v role=status></p><dialog aria-labelledby=h><h2 id=h>" +
 			esc(t.panel) +
 			"</h2>" +
 			row("n", t.need, t.needText) +
@@ -397,7 +407,8 @@ export function boot(c: ClientConfig): void {
 			button("a", t.accept) +
 			"</div></dialog>";
 		root.addEventListener("click", (event) => {
-			const key = (event.target as Element).getAttribute("data-k");
+			// The icon and label inside a button count as the button.
+			const key = (event.target as Element).closest("[data-k]")?.getAttribute("data-k");
 			if (key === "c") open();
 			else if (key === "s") choose(!!box("a")?.checked, !!box("m")?.checked);
 			else if (key) choose(key === "a", key === "a");
@@ -420,6 +431,19 @@ export function boot(c: ClientConfig): void {
 		if (c.who || preview) {
 			build();
 			show();
+			const links = d.querySelectorAll("[data-cookie-settings]");
+			if (links.length && typeof IntersectionObserver === "function") {
+				const seen = new Set<Element>();
+				const watch = new IntersectionObserver((entries) => {
+					for (const entry of entries) {
+						if (entry.isIntersecting) seen.add(entry.target);
+						else seen.delete(entry.target);
+					}
+					linkOnScreen = seen.size > 0;
+					show();
+				});
+				links.forEach((link) => watch.observe(link));
+			}
 		}
 		const go = () => apply(state.a, state.m);
 		// Visitors who are not asked get their tags when the browser is idle.
