@@ -1,0 +1,52 @@
+{
+	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+	"slug": "lead-delivery",
+	// Listing text. Registry search matches exact phrases in name, description,
+	// keywords and sections, so the phrases people type appear verbatim.
+	"name": "Lead Delivery: HubSpot, Zapier, Webhooks & Email",
+	"description": "Send EmDash form enquiries to HubSpot, Zapier, Make, n8n or email, with a delivery log, retries and an alert when one fails.",
+	"keywords": ["hubspot", "zapier", "webhooks", "form notifications", "leads"],
+	"repo": "https://github.com/moorage-dev/moorage",
+	"sections": {
+		"description": { "file": "listing/description.md" },
+		"installation": { "file": "listing/installation.md" },
+		"faq": { "file": "listing/faq.md" },
+	},
+	// Registry listing only: the EmDash version a site needs, and the gallery.
+	"release": {
+		"requires": { "env:emdash": ">=1.3.0" },
+		"artifacts": {
+			"screenshots": [
+				{ "file": "./images/enquiries.png", "lang": "en" },
+				{ "file": "./images/where-enquiries-go.png", "lang": "en" },
+				{ "file": "./images/connect-forms.png", "lang": "en" },
+			],
+		},
+	},
+	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
+
+	"license": "MIT",
+	"author": { "name": "Moorage" },
+	"security": { "email": "security@moorage.dev" },
+
+	// Trust contract — what runtime APIs the plugin asks for.
+	// network:request:unrestricted: the HubSpot form and app addresses are typed by the site owner.
+	// email:send: the Email place and the alerts.
+	// hooks.email-events:register: takes a form's enquiry from its notification email when the
+	// site cannot call its own address (the email way), and cancels that one email.
+	"capabilities": ["network:request:unrestricted", "email:send", "hooks.email-events:register"],
+	"allowedHosts": [],
+	"admin": {
+		"pages": [
+			{ "path": "/enquiries", "label": "Lead delivery", "icon": "bell", "group": "Marketing" },
+		],
+		"widgets": [{ "id": "enquiries", "title": "Enquiries this week", "size": "third" }],
+	},
+	"storage": {
+		// One row per enquiry and place: the log, the retry queue.
+		"deliveries": { "indexes": ["status", "destination", "formId", "createdAt", "nextAt"] },
+		// What was sent, kept until every place has it.
+		"enquiries": { "indexes": ["formId", "receivedAt"] },
+	},
+}
