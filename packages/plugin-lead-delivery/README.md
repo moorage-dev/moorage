@@ -95,7 +95,7 @@ These are fixed, not settings: the retry schedule, keeping log rows for 30 days,
 
 ## Changelog
 
-0.1.0 (not released yet): the first version. Later changes are listed in CHANGELOG.md.
+0.1.0: the first version. Later changes are listed in CHANGELOG.md.
 
 ## Develop
 

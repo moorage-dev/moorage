@@ -18,7 +18,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 - **Where and when:** every page, pages under an address, or a whole collection; "never on these pages"; phones, computers or both; a start and an end, with a date and a time in your site's time zone.
 - **Respect, built in and not switchable:**
   - At most one popup or slide-in per visit.
-  - Never while the cookie banner of [@moorage/plugin-analytics](../plugin-analytics) is waiting for an answer.
+  - Never while the cookie banner of [Analytics & Cookie Consent](https://www.npmjs.com/package/@moorage/plugin-analytics) (0.2.2 or later) is waiting for an answer.
   - A popup waits for the visitor's second page. On computers you can allow it on the first page.
   - Never while someone is typing.
   - Never again for someone who signed up or clicked. After a close it shows again after a week, after a month, or never.
