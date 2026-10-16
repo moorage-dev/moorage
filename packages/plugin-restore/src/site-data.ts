@@ -271,7 +271,8 @@ export async function activitySince(
 
 	const revised = new Set<string>();
 	// Revisions are oldest-last; the first one after the moment for a new entry is its creation.
-	for (const revision of revisions.toReversed()) {
+	for (const revision of [...revisions].reverse()) {
+		// oxlint-disable-line unicorn/no-array-reverse
 		const kind = byKind.get(str(revision.collection));
 		if (!kind) continue;
 		const key = `${kind.slug}:${str(revision.entry_id)}`;

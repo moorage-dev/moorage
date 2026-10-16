@@ -5,4 +5,6 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	plugins: [emdashPluginTest()],
+	// A sandboxed call that never answers fails the test instead of hanging the run.
+	test: { testTimeout: 30_000 },
 });

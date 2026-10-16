@@ -381,15 +381,15 @@ function pastRestoresBlocks(restores: RestoreRecord[], zone: string, now: number
 		rows: restores.slice(0, 20).map((r) => ({
 			restore: `${capital(relative(r.at, zone, now))}, back to ${moment(r.to, zone)}, by ${r.byName}`,
 			result: r.result === "done" ? (r.undid ? "Undo done" : "Done") : "Not confirmed",
-			undo: undoButton(r, zone, "Undo"),
+			undo: undoButton(r, zone, "Undo", false),
 		})),
 	});
 	return blocks;
 }
 
-function undoButton(record: RestoreRecord, zone: string, label: string): ButtonElement {
+function undoButton(record: RestoreRecord, zone: string, label: string, red = true): ButtonElement {
 	return button("undo", label, {
-		style: "danger",
+		...(red ? { style: "danger" as const } : {}),
 		value: { point: record.undoPoint, to: record.undoTo, of: record.id },
 		confirm: {
 			title: `Undo the restore made at ${clock(record.at, zone)}?`,
