@@ -1,0 +1,71 @@
+{
+	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+	"slug": "site-health",
+	// Listing text. Registry search matches exact phrases in name, description,
+	// keywords and sections, so the phrases people type appear verbatim.
+	"name": "Site Health & Broken Links",
+	"description": "Site Health for EmDash: a broken link checker for your pages, menus and links to other sites, with email alerts and a setup checklist.",
+	"keywords": [
+		"broken links",
+		"broken link checker",
+		"link checker",
+		"site health",
+		"email alerts",
+	],
+	"repo": "https://github.com/moorage-dev/moorage",
+	"sections": {
+		"description": { "file": "listing/description.md" },
+		"installation": { "file": "listing/installation.md" },
+		"faq": { "file": "listing/faq.md" },
+	},
+	"release": {
+		"requires": { "env:emdash": ">=1.3.0" },
+		"artifacts": {
+			"screenshots": [
+				{ "file": "./images/problems.png", "lang": "en" },
+				{ "file": "./images/fix.png", "lang": "en" },
+				{ "file": "./images/checklist.png", "lang": "en" },
+				{ "file": "./images/problems-phone.png", "lang": "en" },
+			],
+		},
+	},
+	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
+
+	"license": "MIT",
+	"author": { "name": "Moorage" },
+	"security": { "email": "security@moorage.dev" },
+
+	// Trust contract. network:request:unrestricted: links to other sites and the
+	// site's own address are not known when the plugin is built. email:send: alerts
+	// and the test email. redirects:write: the "send visitors to another page" fix,
+	// offered to Admins only, as in EmDash itself.
+	"capabilities": [
+		"content:read",
+		"schema:read",
+		"redirects:write",
+		"network:request:unrestricted",
+		"email:send",
+	],
+	"allowedHosts": [],
+	"admin": {
+		"pages": [{ "path": "/health", "label": "Site Health", "icon": "heartbeat", "group": "Tools" }],
+		"widgets": [{ "id": "site-health", "title": "Site health", "size": "half" }],
+	},
+	"storage": {
+		// One row per address found: a link, an embedded item, or a page of this site.
+		"links": {
+			"indexes": [
+				"state",
+				"due",
+				"pass",
+				["kind", "state"],
+				["state", "group"],
+				["state", "editor"],
+				["state", "count"],
+			],
+		},
+		// One row per entry (by its address) and per redirect source.
+		"pages": { "indexes": ["status", "pass"] },
+	},
+}
