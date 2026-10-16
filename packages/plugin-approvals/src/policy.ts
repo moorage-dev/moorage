@@ -42,7 +42,8 @@ async function askedNames(
 	request: ApprovalRequest,
 ): Promise<string> {
 	try {
-		const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id);
+		// One page of people at most: this runs inside the publish, which has a time limit.
+		const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id, 1);
 		const names = people.slice(0, 4).map((p) => personName(p));
 		if (names.length === 0) return "";
 		return people.length > 4
@@ -150,6 +151,55 @@ export function heldMessage(
 }
 
 /**
+ * Someone who needs no approval scheduled this version: mark it approved by them, so the
+ * scheduled run (which has no person behind it) goes through. Never blocks the schedule:
+ * if this fails, the run is refused later and EmDash's dashboard says so.
+ */
+async function clearForSchedule(
+	event: ContentPolicyEvent,
+	ctx: PluginContext,
+	actor: { id: string },
+): Promise<void> {
+	try {
+		const id = typeof event.content.id === "string" ? event.content.id : null;
+		if (!id) return;
+		const data = isRecord(event.content.data) ? event.content.data : {};
+		const slug = typeof event.content.slug === "string" ? event.content.slug : null;
+		const version = await fingerprint(data, slug);
+		const store = requests(ctx);
+		const key = requestKey(event.collection, id);
+		const existing = await store.get(key);
+		if (existing?.status === "approved" && existing.approval?.fingerprint === version) return;
+		const user = await ctx.users?.get(actor.id).catch(() => null);
+		const by = { id: actor.id, name: personName(user) };
+		const now = new Date().toISOString();
+		const titleValue = data.title;
+		const request: ApprovalRequest = {
+			collection: event.collection,
+			entryId: id,
+			title:
+				typeof titleValue === "string" && titleValue.trim() !== ""
+					? titleValue.trim()
+					: (existing?.title ?? "Untitled"),
+			status: "approved",
+			requestedBy: existing?.requestedBy ?? by,
+			requestedAt: existing?.requestedAt ?? now,
+			ai: false,
+			wants: "schedule",
+			fingerprint: version,
+			fields: fieldHashes(data),
+			approval: { by, at: now, fingerprint: version, versionId: "" },
+			history: existing?.history ?? [],
+			updatedAt: now,
+		};
+		addHistory(request, now, `Scheduled by ${by.name}; no approval needed`);
+		await store.put(key, request);
+	} catch (error) {
+		ctx.log.warn("could not record a schedule that needs no approval", { error: String(error) });
+	}
+}
+
+/**
  * The publish and schedule gate. Fails safe: once a publish is known to need approval,
  * any error refuses it with a plain message rather than letting it through.
  */
@@ -173,7 +223,12 @@ export async function gate(
 	// The early allow: types that are off are never touched, unless an AI tool publishes.
 	if (!typeHeld && !ai) return;
 	// Admins are not held under "Others need my OK" (AI work always is).
-	if (!ai && event.actor && !isHeldRole(config.preset, event.actor.role)) return;
+	if (!ai && event.actor && !isHeldRole(config.preset, event.actor.role)) {
+		// The scheduled run has nobody behind it, so record this version as cleared now;
+		// otherwise an admin's own scheduled post would be held when its time comes.
+		if (wants === "schedule") await clearForSchedule(event, ctx, event.actor);
+		return;
+	}
 
 	try {
 		const content = event.content;

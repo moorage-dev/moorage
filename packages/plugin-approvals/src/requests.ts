@@ -185,12 +185,13 @@ export async function approvers(
 	ctx: PluginContext,
 	config: Config,
 	except?: string | null,
+	pages = 5,
 ): Promise<UserInfo[]> {
 	if (!ctx.users) return [];
 	const min = approverRole(config.preset);
 	const found: UserInfo[] = [];
 	let cursor: string | undefined;
-	for (let page = 0; page < 5; page++) {
+	for (let page = 0; page < pages; page++) {
 		const result = await ctx.users.list({ limit: 100, ...(cursor ? { cursor } : {}) });
 		for (const user of result.items) {
 			if (user.role >= min && user.id !== except) found.push(user);

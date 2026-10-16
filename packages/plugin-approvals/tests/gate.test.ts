@@ -204,19 +204,32 @@ describe("the publish gate", () => {
 	it("refuses with a plain message, not a crash, when the stored request is unreadable", async () => {
 		const s = await site(HELD);
 		const id = await page(s);
-		// A broken record: the gate must refuse rather than publish.
+		// A broken record the gate cannot work with: it must refuse, in its own words.
 		await s.host.fixtures.plugin.storage("requests", `pages:${id}`, {
 			status: "approved",
 			approval: null,
-			history: "x",
+			history: 5,
 		});
 		const result = await s.host.actions.content.publish("pages", id, actor(s.editor));
 		expect(result.success).toBe(false);
 		if (result.success) return;
-		expect(result.error.message).toMatch(
-			/^(Not published: approval could not be checked|Sent for approval)/,
+		expect(result.error.message).toBe(
+			"Not published: approval could not be checked just now. Nothing has changed. Try again in a minute; if it keeps happening, tell whoever looks after the site.",
 		);
-		expect(result.error.message).not.toContain("Failed to run");
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+	});
+
+	it("refuses a Contributor's request about someone else's draft", async () => {
+		const s = await site(HELD);
+		const id = await page(s);
+		const asked = await s.host.admin.act("/overview", "ask", {
+			user: s.contributor,
+			value: { collection: "pages", id },
+		});
+		expect(asked.toast).toEqual({
+			type: "error",
+			message: "You can only ask for approval on your own drafts.",
+		});
 	});
 });
 
@@ -394,17 +407,31 @@ describe("asking without pressing Publish", () => {
 });
 
 describe("scheduled publishing", () => {
-	it("refuses an unapproved scheduled run and leaves EmDash's notice", async () => {
+	it("publishes an admin's own scheduled post under 'Others need my OK'", async () => {
 		const s = await site(HELD);
 		const id = await page(s, {}, s.admin);
 		const when = new Date(Date.now() + 60_000).toISOString();
 		const scheduled = await s.host.actions.content.schedule("pages", id, when, actor(s.admin));
 		expect(scheduled.success).toBe(true);
 		s.host.scheduled.setTime(new Date(Date.now() + 120_000));
+		const run = await s.host.scheduled.run();
+		expect(run.published).toEqual([{ collection: "pages", id }]);
+		expect(await s.host.inspect.scheduledPolicyRejections()).toHaveLength(0);
+	});
+
+	it("refuses a post scheduled before approval was switched on, and leaves EmDash's notice", async () => {
+		const s = await site();
+		const id = await page(s);
+		const when = new Date(Date.now() + 60_000).toISOString();
+		const scheduled = await s.host.actions.content.schedule("pages", id, when, actor(s.editor));
+		expect(scheduled.success).toBe(true);
+		await s.host.fixtures.plugin.kv("config", HELD);
+		s.host.scheduled.setTime(new Date(Date.now() + 120_000));
 		await s.host.scheduled.run();
 		const rejections = await s.host.inspect.scheduledPolicyRejections();
 		expect(rejections).toHaveLength(1);
 		expect(rejections[0]?.reason).toMatch(/^Not published: this page needs approval first/);
+		expect((await request(s, id))?.status).toBe("waiting");
 	});
 });
 

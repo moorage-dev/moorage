@@ -249,6 +249,10 @@ export async function ask(
 	const existing = await store.get(key);
 	const draft = await readDraft(ctx, collection, id);
 	if (!draft) return { type: "error", message: "Save this page first." };
+	// Below Author, people may only ask about their own drafts, as EmDash lets them edit only those.
+	if (user.role < ROLE.author && draft.item.authorId !== user.id) {
+		return { type: "error", message: "You can only ask for approval on your own drafts." };
+	}
 	if (
 		existing?.status === "waiting" &&
 		existing.requestedBy?.id !== user.id &&

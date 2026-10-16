@@ -163,6 +163,8 @@ async function leave(person: Person): Promise<void> {
 }
 
 test.describe.serial("Content Approval", () => {
+	// Three people's admin pages on one dev server, each opening the editor: slow when cold.
+	test.describe.configure({ timeout: 240_000 });
 	let ellen: Person;
 	let sam: Person;
 	let jo: Person;
@@ -182,7 +184,7 @@ test.describe.serial("Content Approval", () => {
 
 	test.afterAll(async () => {
 		// Leave the site as the other tests expect it: nothing held, no extra pages.
-		await ellen.page.request.post(`${API}/plugins/approvals/admin`, {
+		const off = await ellen.page.request.post(`${API}/plugins/approvals/admin`, {
 			headers: HEADERS,
 			data: {
 				type: "form_submit",
@@ -190,9 +192,16 @@ test.describe.serial("Content Approval", () => {
 				values: { collections: [], ai: false },
 			},
 		});
+		expect(off.ok(), await off.text()).toBe(true);
 		for (const id of created) {
-			await ellen.page.request.delete(`${API}/content/pages/${id}`, { headers: HEADERS });
-			await ellen.page.request.delete(`${API}/content/pages/${id}/permanent`, { headers: HEADERS });
+			const trashed = await ellen.page.request.delete(`${API}/content/pages/${id}`, {
+				headers: HEADERS,
+			});
+			expect(trashed.ok(), await trashed.text()).toBe(true);
+			const gone = await ellen.page.request.delete(`${API}/content/pages/${id}/permanent`, {
+				headers: HEADERS,
+			});
+			expect(gone.ok(), await gone.text()).toBe(true);
 		}
 		for (const person of [ellen, sam, jo]) await person?.context.close();
 	});

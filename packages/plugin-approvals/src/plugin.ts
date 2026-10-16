@@ -5,7 +5,7 @@ import type { SandboxedPlugin } from "emdash/plugin";
 
 import { ask, MAIL_TASK, REMIND_TASK, runMailTask } from "./actions.js";
 import { handleAdmin } from "./admin.js";
-import { approverRole, loadConfig } from "./config.js";
+import { approverRole, isHeldRole, loadConfig } from "./config.js";
 import { emailReminder } from "./notify.js";
 import { handlePanel } from "./panel.js";
 import { gate } from "./policy.js";
@@ -34,13 +34,32 @@ async function afterSave(
 	ctx: PluginContext,
 	collection: string,
 	content: unknown,
-	actor: { id: string; role: number } | undefined,
+	actor: { id: string; role: number; source?: string } | undefined,
 ): Promise<void> {
 	const id = entryId(content);
 	if (!id) return;
 	const store = requests(ctx);
 	const key = requestKey(collection, id);
 	const request = await store.get(key);
+	if (request?.status === "approved" && request.approval && actor && actor.source !== "mcp") {
+		// Someone who needs no approval (an admin under "Others need my OK") changed an
+		// approved page: their own change needs no new approval, so the approval follows it.
+		const config = await loadConfig(ctx);
+		if (!config || isHeldRole(config.preset, actor.role)) return;
+		const draft = await readDraft(ctx, collection, id);
+		if (!draft || draft.fingerprint === request.approval.fingerprint) return;
+		const user = await ctx.users?.get(actor.id).catch(() => null);
+		const now = new Date().toISOString();
+		const updated: ApprovalRequest = {
+			...request,
+			fingerprint: draft.fingerprint,
+			fields: fieldHashes(draft.data),
+			approval: { ...request.approval, fingerprint: draft.fingerprint },
+		};
+		addHistory(updated, now, `Changed by ${personName(user)}; no approval needed`);
+		await store.put(key, updated);
+		return;
+	}
 	if (request?.status !== "waiting") return;
 	const draft = await readDraft(ctx, collection, id);
 	if (!draft || draft.fingerprint === request.fingerprint) return;
