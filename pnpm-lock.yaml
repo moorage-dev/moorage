@@ -187,6 +187,33 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.6.4)(happy-dom@20.14.6)(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(yaml@2.9.1))
 
+  packages/plugin-popups:
+    devDependencies:
+      '@emdash-cms/blocks':
+        specifier: 'catalog:'
+        version: 1.3.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)
+      '@moorage/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      astro:
+        specifier: 'catalog:'
+        version: 7.3.5(@types/node@26.6.4)(yaml@2.9.1)
+      emdash:
+        specifier: 'catalog:'
+        version: 1.3.0(@astrojs/react@7.0.0(@types/node@26.6.4)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(esbuild@0.28.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(yaml@2.9.1))(@atcute/cbor@2.3.8(@atcute/cid@2.5.0))(@atcute/cid@2.5.0)(@atcute/identity@2.0.2(@atcute/lexicons@2.1.1)(typescript@6.0.3))(@floating-ui/dom@1.8.0)(@tiptap/extensions@3.31.4(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(astro@7.3.5(@types/node@26.6.4)(yaml@2.9.1))(echarts@6.1.0)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-view@1.42.6)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(supports-color@10.2.2)(typescript@6.0.3)
+      happy-dom:
+        specifier: 'catalog:'
+        version: 20.14.6
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(typescript@6.0.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@26.6.4)(happy-dom@20.14.6)(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(yaml@2.9.1))
+
   packages/plugin-seo:
     devDependencies:
       '@emdash-cms/blocks':
