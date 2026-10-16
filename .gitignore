@@ -37,3 +37,6 @@ test-results
 *.log
 .DS_Store
 *.pem
+
+# Turborepo cache shared by parallel git worktrees
+/.turbo-shared/
