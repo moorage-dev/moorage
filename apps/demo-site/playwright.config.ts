@@ -40,6 +40,7 @@ export default defineConfig({
 			EMDASH_SITE_URL: BASE_URL,
 			DEMO_SITE_DB: `file:./${DB}`,
 			DEMO_SITE_SEO: process.env.DEMO_SITE_SEO ?? "",
+			DEMO_SITE_LEAD_DELIVERY: process.env.DEMO_SITE_LEAD_DELIVERY ?? "",
 		},
 	},
 });

@@ -129,7 +129,7 @@ export async function receive(
 	ctx: PluginContext,
 	id: string,
 	enquiry: Enquiry,
-	opts: { inline: boolean; only?: Place },
+	opts: { inline: boolean; only?: Place; schedule?: boolean },
 ): Promise<ReceiveResult> {
 	const now = Date.now();
 	const config = await loadConfig(ctx);
@@ -207,7 +207,7 @@ export async function receive(
 		}
 	}
 	await finishEnquiry(ctx, id);
-	if (!opts.inline || due.length > PER_RUN) await scheduleNext(ctx);
+	if (opts.schedule !== false && (!opts.inline || due.length > PER_RUN)) await scheduleNext(ctx);
 	return { duplicate: false, queued: due.length, delivered };
 }
 
@@ -487,7 +487,7 @@ export async function alertIfStuck(ctx: PluginContext, config: Config) {
 		await alertOnce(ctx, config, "scheduler", schedulerAlert(siteName(ctx)));
 }
 
-/** Every 15 minutes: catch up, and once a day check for quiet forms and clean up. */
+/** Every minute: catch up, and once a day check for quiet forms and clean up. */
 export async function maintenance(ctx: PluginContext) {
 	await ctx.kv.set(TICK_KEY, new Date().toISOString());
 	await runDue(ctx);

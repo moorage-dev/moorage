@@ -43,6 +43,11 @@ jobs:
         env:
           DEMO_SITE_SEO: in-process
         run: pnpm --filter demo-site exec playwright test tests/seo.spec.ts tests/smoke.spec.ts
+      - name: Playwright (Lead Delivery in-process, as on the Workers free plan)
+        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
+        env:
+          DEMO_SITE_LEAD_DELIVERY: in-process
+        run: pnpm --filter demo-site exec playwright test tests/lead-delivery.spec.ts
       - name: Upload Playwright report
         if: failure() && hashFiles('apps/demo-site/playwright-report/index.html') != ''
         uses: actions/upload-artifact@v4

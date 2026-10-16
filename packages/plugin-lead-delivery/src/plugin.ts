@@ -35,7 +35,7 @@ export function sameKey(a: string, b: string): boolean {
 }
 
 async function startSchedule(ctx: PluginContext) {
-	await ctx.cron?.schedule(MAINTENANCE_TASK, { schedule: "*/15 * * * *" });
+	await ctx.cron?.schedule(MAINTENANCE_TASK, { schedule: "* * * * *" });
 }
 
 const plugin: SandboxedPlugin = {
@@ -61,9 +61,13 @@ const plugin: SandboxedPlugin = {
 						event.message.text,
 						await loadForms(ctx),
 					);
-					// Delivered by a scheduled run: forms waits for this email before answering the
-					// visitor, and EmDash refuses a second email from inside this one.
-					if (received) await receive(ctx, received.id, received.enquiry, { inline: false });
+					// Delivered by the every-minute run: forms waits for this email before answering
+					// the visitor, and EmDash refuses a second email from inside this one. Nothing is
+					// scheduled from here either: run in the site's process, a task scheduled inside
+					// the email pipeline would carry it along and hit the same refusal.
+					if (received) {
+						await receive(ctx, received.id, received.enquiry, { inline: false, schedule: false });
+					}
 				}
 			} catch (error) {
 				ctx.log.error("could not record an enquiry from its email", { error: String(error) });

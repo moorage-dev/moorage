@@ -2,6 +2,7 @@ import node from "@astrojs/node";
 import react from "@astrojs/react";
 import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { analyticsPlugin } from "@moorage/plugin-analytics";
+import leadDelivery from "@moorage/plugin-lead-delivery";
 import seo from "@moorage/plugin-seo";
 import icon from "astro-iconset";
 import { defineConfig, fontProviders } from "astro/config";
@@ -17,6 +18,8 @@ const webFonts = process.env.DEMO_SITE_FONTS === "1";
 // instead, the way a site without a sandbox runner (the Workers free plan) installs it; CI runs
 // the SEO browser tests both ways.
 const seoInProcess = process.env.DEMO_SITE_SEO === "in-process";
+// The same for Lead Delivery: DEMO_SITE_LEAD_DELIVERY=in-process.
+const leadInProcess = process.env.DEMO_SITE_LEAD_DELIVERY === "in-process";
 
 export default defineConfig({
 	output: "server",
@@ -54,8 +57,13 @@ export default defineConfig({
 			},
 		}),
 		emdash({
-			plugins: [formsPlugin(), analyticsPlugin(), ...(seoInProcess ? [seo] : [])],
-			sandboxed: seoInProcess ? [] : [seo],
+			plugins: [
+				formsPlugin(),
+				analyticsPlugin(),
+				...(seoInProcess ? [seo] : []),
+				...(leadInProcess ? [leadDelivery] : []),
+			],
+			sandboxed: [...(seoInProcess ? [] : [seo]), ...(leadInProcess ? [] : [leadDelivery])],
 			sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
 			...(webFonts ? {} : { fonts: false }),
 			// Browser tests point this at their own database so they never touch yours.
