@@ -51,8 +51,8 @@ const own = box?.colors
 // Inline, once per box: a block loaded through EmDash's plugin components is not part of the
 // page's own style graph, so a component stylesheet would not always reach the page.
 const css = `
-.popups-box{--pb-text:var(--popups-text,var(--cookie-consent-text,currentColor));position:relative;max-width:640px;margin:28px 0;padding:24px;color:var(--pb-text);background:var(--popups-surface,var(--cookie-consent-surface,color-mix(in srgb,currentColor 6%,transparent)));border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:10px;font-family:var(--popups-font,var(--cookie-consent-font,inherit))}
-.popups-box h2{margin:0;font:600 22px/1.25 var(--popups-heading-font,var(--cookie-consent-heading-font,inherit))}
+.popups-box{--pb-text:var(--popups-text,var(--cookie-consent-text,currentColor));position:relative;max-width:640px;margin:28px 0;padding:24px;color:var(--pb-text);background:var(--popups-surface,var(--cookie-consent-surface,color-mix(in srgb,currentColor 6%,transparent)));border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:10px;font-family:var(--popups-font,var(--cookie-consent-font))}
+.popups-box h2{margin:0;font-weight:600;font-size:22px;line-height:1.25;font-family:var(--popups-heading-font,var(--cookie-consent-heading-font))}
 .popups-box>p{margin:6px 0 0}
 .popups-box .popups-box-pic{display:block;width:calc(100% + 48px);max-width:none;height:180px;margin:-24px -24px 18px;object-fit:cover;border-radius:9px 9px 0 0}
 .popups-box .ec-form{margin-top:16px}

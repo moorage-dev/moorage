@@ -129,6 +129,41 @@ function originOf(ctx: RouteContext): string | undefined {
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * The public address of a picture. A plugin's media list only gives a signed-in
+ * address (`/_emdash/api/media/asset/...`), which visitors cannot load, so the
+ * admin asks the site's own media API, as the signed-in person, for the public
+ * file address. Only same-site addresses are accepted.
+ */
+export async function publicMediaUrl(
+	ctx: Pick<RouteContext, "request">,
+	origin: string | undefined,
+	mediaId: string,
+	fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+	if (!origin || !/^[A-Za-z0-9_-]{1,60}$/.test(mediaId)) return null;
+	try {
+		const response = await fetchImpl(`${origin}/_emdash/api/media/${mediaId}`, {
+			headers: { cookie: ctx.request?.headers.get("cookie") ?? "", accept: "application/json" },
+			signal: AbortSignal.timeout(3000),
+		});
+		if (!response.ok) return null;
+		const body = (await response.json()) as {
+			data?: { item?: { url?: unknown; storageKey?: unknown } };
+		};
+		const item = body.data?.item;
+		const url =
+			typeof item?.url === "string" && item.url.startsWith("/_emdash/api/media/file/")
+				? item.url
+				: typeof item?.storageKey === "string"
+					? `/_emdash/api/media/file/${item.storageKey}`
+					: null;
+		return url && /^\/_emdash\/api\/media\/file\/[A-Za-z0-9._\/-]+$/.test(url) ? url : null;
+	} catch {
+		return null;
+	}
+}
+
 /** The email to whoever looks after the site when a popup cannot open. */
 export function alertEmail(
 	siteName: string,
@@ -281,6 +316,7 @@ export function createPlugin() {
 					};
 					const outcome = await handleInteraction(input, state, {
 						checkForm: (form, overlay) => checkForm(origin, form, overlay),
+						publicUrl: (mediaId) => publicMediaUrl(ctx, origin, mediaId),
 					});
 					if (outcome.save) await ctx.kv.set(STORE_KEY, outcome.save);
 					if (outcome.problems) await ctx.kv.set(PROBLEMS_KEY, outcome.problems);

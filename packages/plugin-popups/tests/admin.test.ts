@@ -16,8 +16,14 @@ const EDITOR = 40;
 function forms(answer: Record<string, { status: number; body?: unknown }>) {
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(async (_url: string, init: { body: string }) => {
-			const { id } = JSON.parse(init.body) as { id: string };
+		vi.fn(async (url: string, init: { body?: string }) => {
+			// The site's own media API, asked for a picture's public address.
+			if (url.includes("/_emdash/api/media/")) {
+				return new Response(
+					JSON.stringify({ success: true, data: { item: { id: "m1", storageKey: "01ABC.jpg" } } }),
+				);
+			}
+			const { id } = JSON.parse(init.body!) as { id: string };
 			const found = answer[id] ?? { status: 404 };
 			return new Response(JSON.stringify(found.body ?? {}), { status: found.status });
 		}),

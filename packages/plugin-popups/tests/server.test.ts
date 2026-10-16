@@ -17,7 +17,7 @@ import {
 } from "../src/config.js";
 import { checkForm, describeCheck, judgeDefinition } from "../src/forms.js";
 import { clientItem, isPopupPreview, pageFragments, scriptJson, tagLink } from "../src/fragment.js";
-import { alertEmail, createPlugin } from "../src/index.js";
+import { alertEmail, createPlugin, publicMediaUrl } from "../src/index.js";
 import { addCount, parseCount, rate, readRows, toCsv, totals } from "../src/stats.js";
 import { describeMoment, fromMoment, toMoment } from "../src/time.js";
 import { fakeContext, popup } from "./helpers.js";
@@ -472,6 +472,46 @@ describe("routes", () => {
 		};
 		expect(out.headers).toContainEqual(["content-type", "text/csv; charset=utf-8"]);
 		expect(out.body.value).toContain("2026-10-03,Monthly letter,1");
+	});
+
+	it("finds a picture's public address as the signed-in person, and only a same-site file address", async () => {
+		const seen: Array<{ url: string; cookie: string | null }> = [];
+		const answer =
+			(item: unknown) => async (url: string, init: { headers: Record<string, string> }) => {
+				seen.push({ url, cookie: init.headers.cookie ?? null });
+				return new Response(JSON.stringify({ success: true, data: { item } }));
+			};
+		const ctx = {
+			request: new Request("https://hartleys.test/x", { headers: { cookie: "session=abc" } }),
+		};
+		expect(
+			await publicMediaUrl(
+				ctx,
+				"https://hartleys.test",
+				"01M51QJACT77N6PC8DYEM64AAZ",
+				answer({ storageKey: "01AB.jpg" }) as never,
+			),
+		).toBe("/_emdash/api/media/file/01AB.jpg");
+		expect(seen[0]).toEqual({
+			url: "https://hartleys.test/_emdash/api/media/01M51QJACT77N6PC8DYEM64AAZ",
+			cookie: "session=abc",
+		});
+		expect(
+			await publicMediaUrl(
+				ctx,
+				"https://hartleys.test",
+				"x1234",
+				answer({ url: "https://evil.example/x.jpg" }) as never,
+			),
+		).toBeNull();
+		expect(
+			await publicMediaUrl(
+				ctx,
+				"https://hartleys.test",
+				"../../x",
+				answer({ storageKey: "a.jpg" }) as never,
+			),
+		).toBeNull();
 	});
 
 	it("gives a signed-in editor the draft to preview", async () => {

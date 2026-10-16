@@ -746,10 +746,8 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 	const blocks: Block[] = [];
 	if (popup.picture) {
 		blocks.push({
-			type: "image",
-			url: popup.picture.url,
-			alt: popup.picture.alt || "The chosen picture",
-			title: "The chosen picture, as it shows at the top of the popup",
+			type: "context",
+			text: `Picture now: ${popup.picture.alt || "a picture from your media library"}.`,
 		});
 	}
 	blocks.push({
@@ -1133,6 +1131,8 @@ export interface Outcome {
 
 export interface Helpers {
 	checkForm(form: string, overlay: boolean): Promise<FormCheck>;
+	/** The public address of a media library picture, or null when it cannot be found. */
+	publicUrl(mediaId: string): Promise<string | null>;
 }
 
 const SAVED = "Saved. It can take a few minutes to reach visitors.";
@@ -1482,6 +1482,16 @@ export async function handleInteraction(
 				);
 		}
 		if (errors.length) return refuse(popup, 2, errors);
+		let picture = popup.kind === "bar" ? null : pictureFrom(state, values.picture, popup.picture);
+		if (picture && picture.id !== popup.picture?.id) {
+			// The media library gives plugins a signed-in address; visitors need the public one.
+			const url = await helpers.publicUrl(picture.id);
+			if (!url)
+				return refuse(popup, 2, [
+					"That picture could not be prepared for visitors just now. Please save again in a moment.",
+				]);
+			picture = { ...picture, url };
+		}
 		const notes: string[] = [];
 		let formNote: Popup["formNote"] = "";
 		let problems: Problems | undefined;
@@ -1509,7 +1519,7 @@ export async function handleInteraction(
 				...popup,
 				heading,
 				text: words,
-				picture: popup.kind === "bar" ? null : pictureFrom(state, values.picture, popup.picture),
+				picture,
 				contains,
 				form,
 				thanks: state.admin
