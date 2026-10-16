@@ -243,7 +243,6 @@ function panelBlocks(state: PageState): Block[] {
 						label: "Send visitors to",
 						placeholder: "Pick a page, or type an address",
 						options,
-						...(options[0] ? { initial_value: options[0].value } : {}),
 					},
 				],
 				submit: { label: "Send visitors there", action_id: `add_redirect|${panel.id}` },
