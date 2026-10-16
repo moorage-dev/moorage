@@ -44,7 +44,9 @@ export function textOf(value: unknown): string {
 		}
 		const parts: string[] = [];
 		for (const [key, inner] of Object.entries(value)) {
-			if (key.startsWith("_") || SKIP_KEYS.has(key)) continue;
+			// Inside rich content, switches and ids are settings, not words.
+			if (key.startsWith("_") || SKIP_KEYS.has(key) || /(^|_)id$/i.test(key)) continue;
+			if (typeof inner === "boolean") continue;
 			const text = textOf(inner);
 			if (text !== "") parts.push(text);
 		}

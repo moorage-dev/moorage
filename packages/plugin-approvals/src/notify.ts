@@ -13,6 +13,20 @@ function escapeHtml(text: string): string {
 	return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
+/**
+ * The site's name for subjects. EmDash reads it when the site starts, so a site named
+ * during setup has no name here until its next restart; its address stands in.
+ */
+export function siteName(ctx: PluginContext): string {
+	const name = ctx.site.name?.trim();
+	if (name) return name;
+	try {
+		return new URL(ctx.site.url).host || "Your site";
+	} catch {
+		return "Your site";
+	}
+}
+
 function siteRoot(ctx: PluginContext): string | null {
 	const url = ctx.site.url?.replace(/\/+$/, "") ?? "";
 	return /^https?:\/\//.test(url) ? url : null;
@@ -41,7 +55,7 @@ interface Mail {
 
 async function send(ctx: PluginContext, mail: Mail): Promise<number> {
 	if (!ctx.email || mail.to.length === 0) return 0;
-	const site = ctx.site.name?.trim() || "Your site";
+	const site = siteName(ctx);
 	const subject = `${site}: ${mail.subject}`;
 	const link = mail.button?.url
 		? `${mail.button.label}: ${mail.button.url}`
@@ -95,7 +109,7 @@ export async function emailAsked(
 			...(request.note ? [`${firstName}'s note: "${request.note}"`] : []),
 		],
 		button: { label: "Review and approve", url: approvalsUrl(ctx) },
-		footer: `You get this email because you approve pages on ${ctx.site.name || "this site"}.`,
+		footer: `You get this email because you approve pages on ${siteName(ctx)}.`,
 	});
 }
 
