@@ -23,6 +23,7 @@ import {
 	type Review,
 	type ReviewGroup,
 	type ReviewState,
+	refreshZone,
 } from "./operations.js";
 import { people, personName } from "./site-data.js";
 import {
@@ -38,7 +39,7 @@ import {
 	type Connection,
 	type RestoreRecord,
 } from "./state.js";
-import { clock, DAY, fromLocal, localDay, moment, relative, since } from "./time.js";
+import { clock, DAY, fromLocal, localDay, moment, relative, since, zoneSentence } from "./time.js";
 
 const ADMIN_ROLE = 50;
 const LOST_TEXT_LIMIT = 20_000;
@@ -319,6 +320,7 @@ function connectedScreen(connection: Connection): BlockResponse {
 					},
 				],
 			},
+			context(zoneSentence(connection.zone, connection.zoneSet !== false)),
 			actions(button("back", "Go to Restore", { style: "primary" })),
 		],
 		toast: { type: "success", message: "Key checked and saved" },
@@ -410,6 +412,8 @@ async function mainScreen(
 	now: number,
 	extra: { toast?: BlockResponse["toast"]; top?: Block[] } = {},
 ): Promise<BlockResponse> {
+	const key = await loadKey(ctx);
+	if (key) connection = await refreshZone(ctx, connection, siteQuery(client(ctx, key), connection));
 	const zone = connection.zone;
 	const blocks: Block[] = [PAGE_TITLE, ...(extra.top ?? [])];
 	if (!connection.lastCheck.ok) {
@@ -426,11 +430,10 @@ async function mainScreen(
 	blocks.push(
 		ONE_PAGE,
 		header("Go back to just before a change"),
-		context(`Newest first. Times are in ${zone}.`),
+		context(`Newest first. ${zoneSentence(zone, connection.zoneSet !== false, now)}`),
 	);
 
 	let changes: ReviewGroup[] | null = null;
-	const key = await loadKey(ctx);
 	if (key) {
 		changes = await recentChanges(
 			ctx,
@@ -643,6 +646,7 @@ function reviewScreen(
 	state: ReviewState,
 	zone: string,
 	now: number,
+	zoneSet = true,
 ): BlockResponse {
 	const { review } = state;
 	const at = clock(review.moment, zone);
@@ -660,6 +664,7 @@ function reviewScreen(
 				? `Just before "${review.picked.what}" (${review.picked.whoName.toLowerCase() === "you" ? "you" : review.picked.whoName}, ${clock(review.picked.at, zone)}). Nothing has changed yet.`
 				: "Nothing has changed yet.",
 		),
+		context(zoneSentence(zone, zoneSet, now)),
 	);
 	blocks.push(
 		{
@@ -750,14 +755,12 @@ function reviewScreen(
 		);
 	}
 
-	if (enquiriesFirst) {
-		blocks.push(header("These will be undone"));
-		blocks.push(undoneTable(review, zone));
-		blocks.push(
-			context(`Settings, menus and plugin settings also go back to how they were at ${at}.`),
-		);
-		return { blocks };
-	}
+	// Everything is read before the warning, the tick and the red button.
+	blocks.push(header("These will be undone"), undoneTable(review, zone));
+	blocks.push(
+		context(`Settings, menus and plugin settings also go back to how they were at ${at}.`),
+	);
+	if (enquiriesFirst) return { blocks };
 
 	blocks.push(banner("alert", "Before you go back", warningText(review, at)));
 	blocks.push(
@@ -797,12 +800,6 @@ function reviewScreen(
 				: "Tick the box to continue. This takes up to a minute. You can undo it afterwards.",
 		),
 	);
-	if (review.groups.length > 0) {
-		blocks.push(header("These will be undone"), undoneTable(review, zone));
-		blocks.push(
-			context(`Settings, menus and plugin settings also go back to how they were at ${at}.`),
-		);
-	}
 	return { blocks };
 }
 
@@ -1049,7 +1046,7 @@ export async function handleAdmin(
 			if (action === "enquiries_ok") state.ack = true;
 			else state.ticked = Array.isArray(interaction.value) && interaction.value.includes("yes");
 			await ctx.kv.set("review", state);
-			return reviewScreen(ctx, state, connection.zone, now);
+			return reviewScreen(ctx, state, connection.zone, now, connection.zoneSet !== false);
 		}
 		case "restore": {
 			const state = await ctx.kv.get<ReviewState>("review");
@@ -1112,7 +1109,7 @@ export async function handleAdmin(
 					undo: { point, of: str(value.of), at: str(value.at) },
 				};
 				await ctx.kv.set("review", state);
-				return reviewScreen(ctx, state, connection.zone, now);
+				return reviewScreen(ctx, state, connection.zone, now, connection.zoneSet !== false);
 			}
 			const outcome = await keepPending(
 				ctx,
@@ -1186,6 +1183,10 @@ async function pickAction(
 	interaction: Interaction,
 	now: number,
 ): Promise<BlockResponse> {
+	const siteKey = await loadKey(ctx);
+	if (siteKey) {
+		connection = await refreshZone(ctx, connection, siteQuery(client(ctx, siteKey), connection));
+	}
 	const zone = connection.zone;
 	let at = "";
 	let picked: Parameters<typeof buildReview>[5];
@@ -1231,7 +1232,7 @@ async function pickAction(
 	}
 	const state: ReviewState = { review, byId: me.id, ack: false, ticked: false };
 	await ctx.kv.set("review", state);
-	return reviewScreen(ctx, state, zone, now);
+	return reviewScreen(ctx, state, zone, now, connection.zoneSet !== false);
 }
 
 async function adminNames(ctx: PluginContext, connection: Connection | null): Promise<string[]> {

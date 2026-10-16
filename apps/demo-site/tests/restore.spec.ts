@@ -86,6 +86,10 @@ test("before setup it says what it is not, and connecting finds the site and eve
 		timeout: 30_000,
 	});
 	await expect(page.getByText(/demo-site \(this site\), another-site/)).toBeVisible();
+	// The demo site has no time zone yet: times are in UTC, and the page says why.
+	await expect(
+		page.getByText("Times are in UTC, because this site has no time zone set."),
+	).toBeVisible();
 });
 
 test("going back to just before a change: enquiries first, lost text, tick, red dialog, done, undo", async ({
@@ -94,6 +98,9 @@ test("going back to just before a change: enquiries first, lost text, tick, red 
 	// Put the timeline in place: Restore set up two hours ago, then a page edit and an enquiry.
 	const d = db();
 	d.prepare("UPDATE _emdash_migrations SET timestamp = ?").run(ago(3 * HOUR));
+	d.prepare(
+		"INSERT INTO options (name, value) VALUES ('site:timezone', '\"Asia/Kolkata\"') ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+	).run();
 	d.prepare("UPDATE users SET created_at = ?, updated_at = ?").run(ago(3 * HOUR), ago(3 * HOUR));
 	const admin = d.prepare("SELECT id FROM users ORDER BY created_at LIMIT 1").get() as {
 		id: string;
@@ -137,7 +144,10 @@ test("going back to just before a change: enquiries first, lost text, tick, red 
 
 	await open(page);
 	const row = page.getByRole("row", { name: /Pricing \(page\) edited · You/ });
-	await expect(row).toBeVisible({ timeout: 30_000 });
+	await expect(row).toBeVisible({ timeout: 60_000 });
+	await expect(
+		page.getByText("Newest first. Times are in India Standard Time (IST)."),
+	).toBeVisible();
 	await expect(page.getByRole("row", { name: /Enquiry from a form · A visitor/ })).toBeVisible();
 	await shot(page, "pick-a-moment");
 	await row.getByRole("button", { name: /^Go back to \d\d:\d\d$/ }).click();

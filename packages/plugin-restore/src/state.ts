@@ -24,6 +24,8 @@ export interface Connection {
 	windowDays: number;
 	reach: Reach[];
 	zone: string;
+	/** False when the site has no time zone set, so times are shown in UTC. */
+	zoneSet?: boolean;
 	expiresOn: string | null;
 	lastCheck: { at: string; ok: boolean; problem?: string };
 }

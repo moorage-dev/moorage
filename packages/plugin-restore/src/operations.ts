@@ -160,7 +160,7 @@ export async function connect(
 		// Stays at 7.
 	}
 	const expiresOn = await api.expiresOn(site.accountId).catch(() => null);
-	const zone = validTimeZone(await timeZone(query).catch(() => null));
+	const { zone, zoneSet } = readZone(await timeZone(query).catch(() => null));
 	const previous = await loadConnection(ctx);
 	const setupAt =
 		previous && previous.databaseId === site.databaseId
@@ -172,6 +172,7 @@ export async function connect(
 		windowDays,
 		reach,
 		zone,
+		zoneSet,
 		expiresOn,
 		lastCheck: { at: new Date(now).toISOString(), ok: true },
 	};
@@ -232,6 +233,26 @@ export async function check(ctx: PluginContext, now: number): Promise<Connection
 			now,
 		);
 	}
+	return next;
+}
+
+function readZone(value: string | null): { zone: string; zoneSet: boolean } {
+	const zone = validTimeZone(value);
+	return { zone, zoneSet: value !== null && zone === value };
+}
+
+/** The site's time zone can change after setup; read it again and keep it current. */
+export async function refreshZone(
+	ctx: PluginContext,
+	connection: Connection,
+	query: Query,
+): Promise<Connection> {
+	const value = await timeZone(query).catch(() => undefined);
+	if (value === undefined) return connection;
+	const { zone, zoneSet } = readZone(value);
+	if (zone === connection.zone && zoneSet === connection.zoneSet) return connection;
+	const next = { ...connection, zone, zoneSet };
+	await ctx.kv.set("connection", next);
 	return next;
 }
 

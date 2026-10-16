@@ -360,6 +360,30 @@ describe("reviewing and restoring", () => {
 		expect(find(undone, "banner")?.title).toMatch(/^Done\./);
 	});
 
+	it("puts everything to read above the warning, the tick and the red button", async () => {
+		const s = await connected();
+		await review(s);
+		await act(s, { type: "block_action", action_id: "enquiries_ok" });
+		const ticked = await act(s, { type: "block_action", action_id: "understand", value: ["yes"] });
+		const at = (pick: (b: (typeof ticked.blocks)[number]) => boolean) =>
+			ticked.blocks.findIndex(pick);
+		const lost = at((b) => b.type === "header" && b.text === "Text of edits that will be lost");
+		const undone = at((b) => b.type === "header" && b.text === "These will be undone");
+		const warning = at((b) => b.type === "banner" && b.title === "Before you go back");
+		const tick = at((b) => b.type === "actions" && b.elements.some((e) => e.type === "checkbox"));
+		const red = at(
+			(b) =>
+				b.type === "actions" &&
+				b.elements.some((e) => e.type === "button" && e.action_id === "restore"),
+		);
+		expect(lost).toBeGreaterThan(0);
+		expect(lost).toBeLessThan(undone);
+		expect(undone).toBeLessThan(warning);
+		expect(warning).toBeLessThan(tick);
+		expect(tick).toBeLessThan(red);
+		expect(red).toBe(ticked.blocks.length - 2);
+	});
+
 	it("reviews an undo like a restore when anything happened since: enquiries first, then the tick", async () => {
 		const s = await connected();
 		const undo = {
@@ -438,6 +462,18 @@ describe("reviewing and restoring", () => {
 });
 
 describe("keeping it working", () => {
+	it("says times are in UTC because the site has no time zone, then follows the site's zone once set", async () => {
+		const s = await connected();
+		const before = await act(s, { type: "page_load" });
+		expect(text(before)).toContain("Times are in UTC, because this site has no time zone set.");
+		await sql(
+			"INSERT INTO options (name, value) VALUES ('site:timezone', '\"Asia/Kolkata\"') ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+		);
+		const after = await act(s, { type: "page_load" });
+		expect(text(after)).toContain("Newest first. Times are in India Standard Time (IST).");
+		expect((await s.ctx.kv.get<Connection>("connection"))?.zone).toBe("Asia/Kolkata");
+	});
+
 	it("saves several email addresses and refuses a wrong one", async () => {
 		const s = await connected();
 		const bad = await act(s, {

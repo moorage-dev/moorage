@@ -116,3 +116,27 @@ export function fromLocal(day: string, hour: number, minute: number, zone: strin
 	}
 	return new Date(guess).toISOString();
 }
+
+/**
+ * The zone in words for the page: "India Standard Time (IST)", "Japan Standard Time (GMT+9)".
+ * The abbreviation is the first one any English locale offers that isn't a bare offset.
+ */
+export function zoneLabel(zone: string, at = Date.now()): string {
+	const name = (locale: string, style: "long" | "short") =>
+		new Intl.DateTimeFormat(locale, { timeZone: zone, timeZoneName: style })
+			.formatToParts(new Date(at))
+			.find((part) => part.type === "timeZoneName")?.value ?? "";
+	const long = name("en-GB", "long");
+	const shorts = ["en-GB", "en-US", "en-IN", "en-AU"].map((locale) => name(locale, "short"));
+	const short = shorts.find((s) => s && !s.startsWith("GMT")) ?? shorts[0] ?? "";
+	if (!long) return zone;
+	return short && short !== long ? `${long} (${short})` : long;
+}
+
+/** "Times are in India Standard Time (IST)." or the UTC fallback, said plainly. */
+export function zoneSentence(zone: string, zoneSet: boolean, at = Date.now()): string {
+	if (!zoneSet) {
+		return "Times are in UTC, because this site has no time zone set. Set one in Settings > General to see your own time.";
+	}
+	return `Times are in ${zoneLabel(zone, at)}.`;
+}
