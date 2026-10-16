@@ -77,6 +77,7 @@ beforeEach(() => {
 	win.happyDOM.setURL("https://acme.test/");
 	document.head.innerHTML = "";
 	document.body.innerHTML = "";
+	document.documentElement.removeAttribute("data-cookie-consent");
 	for (const pair of document.cookie.split("; ")) {
 		document.cookie = `${pair.split("=")[0]}=;path=/;max-age=0`;
 	}
@@ -325,5 +326,40 @@ describe("enquiries", () => {
 		expect(events()).toContainEqual({ event: "enquiry", enquiry_type: "form" });
 		expect(events()).toContainEqual(["event", "generate_lead", { lead_source: "form" }]);
 		expect(JSON.stringify(events())).not.toContain("5550100");
+	});
+});
+
+describe("telling other scripts whether the banner waits", () => {
+	const phase = () => document.documentElement.getAttribute("data-cookie-consent");
+
+	it("is pending at once, asking while the banner waits, settled after the answer", async () => {
+		const settled = vi.fn();
+		document.addEventListener("cookie-consent:settled", settled);
+		boot(settings());
+		expect(phase()).toBe("pending");
+		await ready();
+		expect(phase()).toBe("asking");
+		expect(settled).not.toHaveBeenCalled();
+		press("r");
+		expect(phase()).toBe("settled");
+		expect(settled).toHaveBeenCalledTimes(1);
+		document.removeEventListener("cookie-consent:settled", settled);
+	});
+
+	it("is settled straight after start-up for a visitor who is not asked", async () => {
+		country("US");
+		const settled = vi.fn();
+		document.addEventListener("cookie-consent:settled", settled);
+		boot(settings());
+		await ready();
+		expect(phase()).toBe("settled");
+		expect(settled).toHaveBeenCalledTimes(1);
+		document.removeEventListener("cookie-consent:settled", settled);
+	});
+
+	it("sets nothing on a site where the banner can never appear", async () => {
+		boot(settings({ banner: { audience: "none" } }));
+		await ready();
+		expect(phase()).toBeNull();
 	});
 });
