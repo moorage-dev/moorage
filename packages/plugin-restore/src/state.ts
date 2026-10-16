@@ -89,11 +89,6 @@ export function siteQuery(api: CloudflareClient, connection: Connection): Query 
 	return (sql, params) => api.query(connection.accountId, connection.databaseId, sql, params ?? []);
 }
 
-/** The option name EmDash stores this plugin's key-value entry under. */
-export function optionName(ctx: PluginContext, key: string): string {
-	return `plugin:${ctx.plugin.id}:${key}`;
-}
-
 export async function emails(ctx: PluginContext): Promise<string[]> {
 	return (await ctx.kv.get<string[]>("emails")) ?? [];
 }

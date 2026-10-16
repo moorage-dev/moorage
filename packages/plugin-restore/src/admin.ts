@@ -677,7 +677,10 @@ function reviewScreen(
 		const n = review.enquiries.length;
 		const list = review.enquiries
 			.slice(0, 10)
-			.map((e) => `${capital(e.form)} form: ${e.sender}, ${relative(e.at, zone, now)}`)
+			.map(
+				(e) =>
+					`${e.form === "a form" ? "A form" : `${capital(e.form)} form`}: ${e.sender}, ${relative(e.at, zone, now)}`,
+			)
 			.join("; ");
 		const others = review.pluginRecords
 			.map((r) =>

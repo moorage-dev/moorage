@@ -128,13 +128,19 @@ export function personName(person: Pick<Person, "name" | "email"> | undefined): 
 	return person.name.trim() || person.email.split("@")[0] || "Someone";
 }
 
-/** Look for the plugin's check mark in this database. */
+/**
+ * Look for one of the plugin's own key-value entries in this database. In-process plugins keep
+ * them in `options` ("plugin:<id>:<key>"); sandboxed ones in `_plugin_storage` (collection "__kv").
+ */
 export async function hasCheckMark(
 	query: Query,
-	optionName: string,
+	where: { plugin: string; key: string },
 	mark: string,
 ): Promise<boolean> {
-	const rows = await query("SELECT value FROM options WHERE name = ?", [optionName]);
+	const rows = await query(
+		"SELECT value FROM options WHERE name = ? UNION ALL SELECT data AS value FROM _plugin_storage WHERE plugin_id = ? AND collection = '__kv' AND id = ?",
+		[`plugin:${where.plugin}:${where.key}`, where.plugin, where.key],
+	);
 	return rows.some((row) => str(row.value).includes(mark));
 }
 
@@ -245,7 +251,7 @@ export async function activitySince(
 			FORMS_PLUGIN,
 		]),
 		query(
-			`SELECT plugin_id, count(*) AS n FROM _plugin_storage WHERE plugin_id NOT IN (?, ?) AND (${AFTER("created_at")} OR ${AFTER("updated_at")}) GROUP BY plugin_id ORDER BY plugin_id`,
+			`SELECT plugin_id, count(*) AS n FROM _plugin_storage WHERE plugin_id NOT IN (?, ?) AND collection <> '__kv' AND (${AFTER("created_at")} OR ${AFTER("updated_at")}) GROUP BY plugin_id ORDER BY plugin_id`,
 			[ownPluginId, FORMS_PLUGIN, after, after],
 		),
 	]);
@@ -372,7 +378,12 @@ export async function activitySince(
 		const form = formNames.get(str(data?.formId)) ?? "a form";
 		const at = iso(data?.createdAt) || iso(submission.created_at);
 		enquiries.push({ form, sender, at });
-		changes.push({ kind: "enquiry", what: `Enquiry from the ${form} form`, who: null, at });
+		changes.push({
+			kind: "enquiry",
+			what: form === "a form" ? "Enquiry from a form" : `Enquiry from the ${form} form`,
+			who: null,
+			at,
+		});
 	}
 
 	changes.sort((a, b) => Date.parse(b.at) - Date.parse(a.at)); // oxlint-disable-line unicorn/no-array-sort

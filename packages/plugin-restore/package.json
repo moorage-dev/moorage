@@ -35,8 +35,7 @@
 			"import": "./dist/index.mjs",
 			"types": "./dist/index.d.mts"
 		},
-		"./sandbox": "./dist/plugin.mjs",
-		"./simulated-cloudflare": "./test-support/simulated-cloudflare.mjs"
+		"./sandbox": "./dist/plugin.mjs"
 	},
 	"files": [
 		"dist",

@@ -32,7 +32,6 @@ import {
 	loadKey,
 	LOCK_MS,
 	notify,
-	optionName,
 	peopleAt,
 	siteQuery,
 	snapshotPeople,
@@ -104,7 +103,7 @@ async function findSite(
 	// A fresh check mark in this site's own storage, looked for in every database the key reaches.
 	const mark = crypto.randomUUID();
 	await ctx.kv.set("check", mark);
-	const name = optionName(ctx, "check");
+	const name = { plugin: ctx.plugin.id, key: "check" };
 	let site: (typeof found)[number] | undefined;
 	for (const db of found.slice(0, 50)) {
 		try {
@@ -322,7 +321,7 @@ export async function buildReview(
 	const activity = await activitySince(query, at, ctx.plugin.id, byId);
 	const groups = groupChanges(activity.changes).map((group) => ({
 		...group,
-		whoName: name(group.who),
+		whoName: group.kind === "enquiry" ? "A visitor" : name(group.who),
 	}));
 	for (const group of groups) {
 		if (group.count > 1)
@@ -516,7 +515,7 @@ export async function putBack(
 	const mark = crypto.randomUUID();
 	await ctx.kv.set("check", mark);
 	try {
-		if (!(await hasCheckMark(query, optionName(ctx, "check"), mark))) {
+		if (!(await hasCheckMark(query, { plugin: ctx.plugin.id, key: "check" }, mark))) {
 			return {
 				kind: "problem",
 				message: "The key no longer reaches this site's data. Nothing was changed.",
@@ -623,7 +622,7 @@ async function markerGone(
 	marker: string,
 ): Promise<boolean | null> {
 	try {
-		return !(await hasCheckMark(query, optionName(ctx, "marker"), marker));
+		return !(await hasCheckMark(query, { plugin: ctx.plugin.id, key: "marker" }, marker));
 	} catch {
 		return null;
 	}
