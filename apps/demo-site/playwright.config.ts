@@ -4,7 +4,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 // Fixed port, away from Astro's default 4321. Astro silently moves to the next free port when
 // its port is taken, so tests aimed at a default port could hit another local project.
-const PORT = 4399;
+// Parallel work (several git worktrees at once) gives each run its own port and database.
+const PORT = Number(process.env.DEMO_SITE_PORT ?? 4399);
+const DB = `e2e-${PORT}.db`;
 const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
@@ -29,14 +31,14 @@ export default defineConfig({
 		// Dev server, not the built one: the dev-bypass sign-in route only exists in dev.
 		// --ignore-lock: Astro allows one dev server per project; this one must start next to yours.
 		// A fresh database every run: tests change settings and must not depend on, or alter, your data.
-		command: `rm -f e2e.db e2e.db-shm e2e.db-wal && pnpm exec astro dev --port ${PORT} --ignore-lock`,
+		command: `rm -f ${DB} ${DB}-shm ${DB}-wal && pnpm exec astro dev --port ${PORT} --ignore-lock`,
 		url: BASE_URL,
 		// Never reuse: a server already on this port is not guaranteed to be this site.
 		reuseExistingServer: false,
 		timeout: 120_000,
 		env: {
 			EMDASH_SITE_URL: BASE_URL,
-			DEMO_SITE_DB: "file:./e2e.db",
+			DEMO_SITE_DB: `file:./${DB}`,
 			DEMO_SITE_SEO: process.env.DEMO_SITE_SEO ?? "",
 		},
 	},
