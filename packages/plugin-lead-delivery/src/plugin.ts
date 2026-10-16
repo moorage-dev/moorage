@@ -1,6 +1,5 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import type { PluginContext } from "emdash";
 import { pluginResponse, type SandboxedPlugin } from "emdash/plugin";
 
 import { handleAdmin } from "./admin.js";
@@ -8,6 +7,7 @@ import { loadConfig, loadForms, PING_KEY, PRIVATE_DOMAIN, privateEmail } from ".
 import {
 	alertIfStuck,
 	DELIVER_TASK,
+	ensureSchedule,
 	MAINTENANCE_TASK,
 	maintenance,
 	receive,
@@ -34,15 +34,11 @@ export function sameKey(a: string, b: string): boolean {
 	return diff === 0;
 }
 
-async function startSchedule(ctx: PluginContext) {
-	await ctx.cron?.schedule(MAINTENANCE_TASK, { schedule: "* * * * *" });
-}
-
 const plugin: SandboxedPlugin = {
 	hooks: {
 		"plugin:activate": async (_event, ctx) => {
 			await loadConfig(ctx);
-			await startSchedule(ctx);
+			await ensureSchedule(ctx, true);
 		},
 		cron: async (event, ctx) => {
 			if (event.name === DELIVER_TASK) await runDue(ctx);
@@ -79,8 +75,10 @@ const plugin: SandboxedPlugin = {
 		// The Lead delivery page and its dashboard widget. Editors see the log; only admins change anything.
 		admin: {
 			permission: "plugins:read",
-			handler: async (routeCtx, ctx) =>
-				handleAdmin(routeCtx.input, routeCtx.user, routeCtx.request.url, ctx),
+			handler: async (routeCtx, ctx) => {
+				await ensureSchedule(ctx);
+				return handleAdmin(routeCtx.input, routeCtx.user, routeCtx.request.url, ctx);
+			},
 		},
 		// The way straight from a form: the forms plugin's webhook posts each enquiry here.
 		inbound: {
@@ -103,6 +101,7 @@ const plugin: SandboxedPlugin = {
 				const received = fromWebhook(payload, forms[formId]);
 				if (!received) return text(400, "This is not a form enquiry.");
 				const result = await receive(ctx, received.id, received.enquiry, { inline: true });
+				await ensureSchedule(ctx);
 				await alertIfStuck(ctx, config);
 				return text(200, result.duplicate ? "Already received." : "Received.");
 			},

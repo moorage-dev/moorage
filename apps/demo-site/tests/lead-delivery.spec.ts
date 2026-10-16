@@ -106,7 +106,7 @@ test("connecting forms: the check recommends the email way on a site that cannot
 	const page = await adminContext.newPage();
 	await open(page, "Connect forms");
 	await expect(page.getByText("How a form gets connected")).toBeVisible();
-	await expect(page.getByText("Not checked yet")).toBeVisible();
+	await expect(page.getByText("This site: Not checked yet")).toBeVisible();
 	await page.getByRole("button", { name: "Check this site" }).click();
 	await expect(
 		page.getByText("Cannot send to its own address, so your forms will hand enquiries over"),

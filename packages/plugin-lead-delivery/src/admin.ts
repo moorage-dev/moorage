@@ -762,13 +762,9 @@ function connectBlocks(data: Data): Block[] {
 				"This site cannot send to its own address, and it has no way to send email, so your forms have no way to hand enquiries over. Ask your web person to set up email for the site, then press Check again.",
 		});
 	}
-	blocks.push({
-		type: "fields",
-		fields: [
-			{ label: "This site", value: reach ? REACH_TEXT[reach.result] : "Not checked yet" },
-			...(reach ? [{ label: "Checked", value: ago(reach.at) }] : []),
-		],
-	});
+	// A sentence, not a fields block: Kumo cuts a long field value short.
+	blocks.push(section(`This site: ${reach ? REACH_TEXT[reach.result] : "Not checked yet"}`));
+	if (reach) blocks.push(context(`Checked ${ago(reach.at)}.`));
 	blocks.push(
 		actions([
 			reach
@@ -832,6 +828,7 @@ async function render(data: Data, view: View = {}): Promise<BlockResponse> {
 	const log = await enquiriesBlocks(data, view);
 	const blocks: Block[] = data.admin
 		? [
+				header("Lead delivery"),
 				tabs(
 					[
 						{ label: "Enquiries", blocks: log },
@@ -841,7 +838,7 @@ async function render(data: Data, view: View = {}): Promise<BlockResponse> {
 					view.tab ?? TAB.enquiries,
 				),
 			]
-		: log;
+		: [header("Lead delivery"), ...log];
 	return { blocks, ...(view.toast ? { toast: view.toast } : {}) };
 }
 

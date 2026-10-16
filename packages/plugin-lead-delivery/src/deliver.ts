@@ -487,6 +487,20 @@ export async function alertIfStuck(ctx: PluginContext, config: Config) {
 		await alertOnce(ctx, config, "scheduler", schedulerAlert(siteName(ctx)));
 }
 
+const SCHEDULE_KEY = "schedule";
+const SCHEDULE = "* * * * *";
+
+/**
+ * The every-minute task that catches up. Made on activation, and again from an admin visit or
+ * an arriving enquiry if it is missing. Never from inside the email hook (see plugin.ts).
+ */
+export async function ensureSchedule(ctx: PluginContext, force = false) {
+	if (!ctx.cron) return;
+	if (!force && (await ctx.kv.get<string>(SCHEDULE_KEY)) === SCHEDULE) return;
+	await ctx.cron.schedule(MAINTENANCE_TASK, { schedule: SCHEDULE });
+	await ctx.kv.set(SCHEDULE_KEY, SCHEDULE);
+}
+
 /** Every minute: catch up, and once a day check for quiet forms and clean up. */
 export async function maintenance(ctx: PluginContext) {
 	await ctx.kv.set(TICK_KEY, new Date().toISOString());

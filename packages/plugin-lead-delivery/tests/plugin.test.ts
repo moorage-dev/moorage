@@ -509,6 +509,7 @@ describe("who sees what", () => {
 	it("shows an admin three tabs and the setup steps first", async () => {
 		const { runtime, admin } = await start();
 		const page = await runtime.admin.loadPage(PAGE, { user: admin });
+		expect(page.blocks[0]).toEqual({ type: "header", text: "Lead delivery" });
 		const tabs = page.blocks.find((b) => b.type === "tab");
 		expect(tabs?.type === "tab" && tabs.panels.map((p) => p.label)).toEqual([
 			"Enquiries",
