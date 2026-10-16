@@ -1,0 +1,67 @@
+{
+	"name": "@moorage/plugin-popups",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Top bars, slide-ins, popups and in-page boxes for EmDash, with a form from Forms, built-in respect for visitors and the cookie banner, and daily results. Installed once by a developer (native plugin).",
+	"keywords": [
+		"emdash",
+		"emdash-plugin",
+		"emdash-cms",
+		"cms",
+		"popup",
+		"popups",
+		"slide-in",
+		"announcement-bar",
+		"newsletter",
+		"opt-in",
+		"forms"
+	],
+	"license": "MIT",
+	"author": "Moorage (https://moorage.dev)",
+	"homepage": "https://moorage.dev/plugins/popups",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/moorage-dev/moorage.git",
+		"directory": "packages/plugin-popups"
+	},
+	"bugs": "https://github.com/moorage-dev/moorage/issues",
+	"publishConfig": {
+		"access": "public"
+	},
+	"type": "module",
+	"main": "dist/index.mjs",
+	"exports": {
+		".": {
+			"import": "./dist/index.mjs",
+			"types": "./dist/index.d.mts"
+		},
+		"./astro": "./astro/index.mjs"
+	},
+	"files": [
+		"dist",
+		"astro",
+		"CHANGELOG.md",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsdown",
+		"dev": "tsdown --watch",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"peerDependencies": {
+		"astro": ">=6.0.0",
+		"emdash": ">=1.3.0"
+	},
+	"devDependencies": {
+		"@emdash-cms/blocks": "catalog:",
+		"@moorage/typescript-config": "workspace:*",
+		"astro": "catalog:",
+		"emdash": "catalog:",
+		"happy-dom": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

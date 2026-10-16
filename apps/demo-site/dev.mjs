@@ -17,6 +17,7 @@ const PLUGIN_BUILDS = [
 	"../../packages/plugin-site-health/dist",
 	"../../packages/plugin-restore/dist",
 	"../../packages/plugin-approvals/dist",
+	"../../packages/plugin-popups/dist",
 ];
 
 let server;

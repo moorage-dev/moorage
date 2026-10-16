@@ -1,0 +1,164 @@
+---
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
+//
+// A "Box in a page": the "Popups box" block an editor places in a post or page.
+// Page content, not an overlay: no close button, no trigger. A form inside it is
+// the forms plugin's own block component, so every form feature works here,
+// Turnstile and file uploads included. Read on the server through the site's
+// own public route, so a box that is off or ended renders nothing.
+import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
+import { pluginBlockComponents } from "virtual:emdash/block-components";
+
+interface Box {
+	id: string;
+	heading: string;
+	text: string;
+	picture: { url: string; alt: string; width: number | null; height: number | null } | null;
+	form: string;
+	button: { label: string; url: string } | null;
+	scheme: "auto" | "light" | "dark";
+	colors: { background: string; text: string; accent: string } | null;
+}
+
+const { node } = Astro.props as { node?: { popup?: string } };
+const handle = getPublicPluginApiRouteHandler(Astro.locals);
+let box: Box | null = null;
+if (handle && typeof node?.popup === "string") {
+	try {
+		const answer = (await handle(
+			"popups",
+			"POST",
+			"/box",
+			new Request(new URL("/_emdash/api/plugins/popups/box", Astro.url), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ id: node.popup }),
+			}),
+		)) as { success?: boolean; data?: { box?: Box | null } } | null;
+		box = answer?.success ? (answer.data?.box ?? null) : null;
+	} catch {
+		box = null;
+	}
+}
+const FormEmbed = box?.form
+	? ((pluginBlockComponents as Record<string, unknown>)["emdash-form"] as
+			| ((props: { node: { formId: string } }) => unknown)
+			| undefined)
+	: undefined;
+const own = box?.colors
+	? `--popups-background:${box.colors.background};--popups-surface:${box.colors.background};--popups-text:${box.colors.text};--popups-accent:${box.colors.accent};`
+	: "";
+// Inline, once per box: a block loaded through EmDash's plugin components is not part of the
+// page's own style graph, so a component stylesheet would not always reach the page.
+const css = `
+.popups-box{--pb-text:var(--popups-text,var(--cookie-consent-text,currentColor));position:relative;max-width:640px;margin:28px 0;padding:24px;color:var(--pb-text);background:var(--popups-surface,var(--cookie-consent-surface,color-mix(in srgb,currentColor 6%,transparent)));border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:10px;font-family:var(--popups-font,var(--cookie-consent-font))}
+.popups-box h2{margin:0;font-weight:600;font-size:22px;line-height:1.25;font-family:var(--popups-heading-font,var(--cookie-consent-heading-font))}
+.popups-box>p{margin:6px 0 0}
+.popups-box .popups-box-pic{display:block;width:calc(100% + 48px);max-width:none;height:180px;margin:-24px -24px 18px;object-fit:cover;border-radius:9px 9px 0 0}
+.popups-box .ec-form{margin-top:16px}
+.popups-box .ec-form-page{border:0;margin:0;padding:0;min-width:0;display:grid;gap:12px}
+.popups-box .ec-form-label{display:block;font-weight:600;font-size:15px;margin-bottom:4px}
+.popups-box .ec-form-required{margin-left:2px}
+.popups-box .ec-form-input:not([type=checkbox]):not([type=radio]){display:block;box-sizing:border-box;width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:6px;background:var(--popups-background,var(--cookie-consent-background,Canvas));color:inherit;font-size:16px;font-family:inherit}
+.popups-box .ec-form-nav{margin-top:14px}
+.popups-box .ec-form-submit,.popups-box .popups-box-button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 20px;border-radius:6px;border:2px solid var(--popups-accent,var(--cookie-consent-accent,#141414));background:var(--popups-accent,var(--cookie-consent-accent,#141414));color:var(--popups-accent-text,var(--cookie-consent-accent-text,#fff));font-weight:600;font-size:16px;line-height:1.2;font-family:inherit;text-decoration:none;cursor:pointer}
+.popups-box .ec-form-status:not(:empty){margin-top:10px;font-weight:600}
+.popups-box .ec-form-error:empty{display:none}
+.popups-box .popups-box-go{margin-top:18px}
+.popups-box :focus-visible{outline:3px solid var(--pb-text);outline-offset:2px}
+@media (max-width:600px){.popups-box{padding:20px}.popups-box .popups-box-pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}}
+`;
+const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice(2, 7)}` : "";
+---
+
+{
+	box && (
+		<section
+			class="popups-box"
+			data-popups-box={box.id}
+			data-scheme={box.scheme}
+			role="region"
+			aria-labelledby={headingId}
+			style={own || undefined}
+		>
+			<style is:inline set:html={css} />
+			{box.picture && (
+				<img
+					class="popups-box-pic"
+					src={box.picture.url}
+					alt={box.picture.alt}
+					width={box.picture.width ?? undefined}
+					height={box.picture.height ?? undefined}
+					loading="lazy"
+				/>
+			)}
+			<h2 id={headingId}>{box.heading}</h2>
+			{box.text && <p>{box.text}</p>}
+			{FormEmbed && <FormEmbed node={{ formId: box.form }} />}
+			{box.form && !FormEmbed && (
+				<p class="popups-box-note">This form is not available right now.</p>
+			)}
+			{box.button && (
+				<p class="popups-box-go">
+					<a class="popups-box-button" href={box.button.url} data-popups-go>
+						{box.button.label}
+					</a>
+				</p>
+			)}
+		</section>
+	)
+}
+
+
+
+<script>
+	// Counts for a box in a page: seen (half of it on screen for a second), a sign-up through
+	// its form, a click on its button. Nothing about the visitor; signed-in staff are not counted.
+	const api = "/_emdash/api/plugins/popups/count";
+	let staff = !!document.getElementById("emdash-toolbar");
+	try {
+		staff = staff || !!localStorage.getItem("emdash-editor");
+	} catch {
+		// Storage blocked: a visitor.
+	}
+	const send = (id: string, event: string) => {
+		if (staff || !navigator.sendBeacon) return;
+		navigator.sendBeacon(
+			api,
+			new Blob([JSON.stringify({ p: id, e: event, m: innerWidth < 768 })], {
+				type: "application/json",
+			}),
+		);
+	};
+	for (const box of document.querySelectorAll<HTMLElement>("[data-popups-box]")) {
+		if (box.dataset.popupsWired) continue;
+		box.dataset.popupsWired = "1";
+		const id = box.dataset.popupsBox!;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const watch = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					clearTimeout(timer);
+					if (entry.isIntersecting) {
+						timer = setTimeout(() => {
+							send(id, "seen");
+							watch.disconnect();
+						}, 1000);
+					}
+				}
+			},
+			{ threshold: 0.5 },
+		);
+		watch.observe(box);
+		box.addEventListener("click", (event) => {
+			if ((event.target as Element).closest("[data-popups-go]")) send(id, "clicked");
+		});
+		let sent = false;
+		new MutationObserver(() => {
+			if (!sent && box.querySelector("[data-form-status].ec-form-status--success")) {
+				sent = true;
+				send(id, "sent");
+			}
+		}).observe(box, { subtree: true, attributes: true, attributeFilter: ["class"] });
+	}
+</script>

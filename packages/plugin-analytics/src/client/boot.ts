@@ -131,6 +131,17 @@ export function boot(c: ClientConfig): void {
 	// Consent Mode v2: everything denied until the visitor's answer is known.
 	if (c.who) signal("default", false, false);
 
+	// Other scripts (popups) can tell whether the banner is still waiting: "pending" until this visitor's
+	// rule is known, "asking" while the banner waits, "settled" once answered or not asked. Only on sites
+	// where the banner can appear; with no attribute there is no banner to wait for.
+	const html = d.documentElement;
+	const mark = (phase: "pending" | "asking" | "settled") => {
+		if (html.getAttribute("data-cookie-consent") === phase) return;
+		html.setAttribute("data-cookie-consent", phase);
+		if (phase === "settled") d.dispatchEvent(new Event("cookie-consent:settled"));
+	};
+	if (c.who) mark("pending");
+
 	const gpc =
 		(w.navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
 	const day = today(Date.now());
@@ -242,6 +253,7 @@ export function boot(c: ClientConfig): void {
 	const show = () => {
 		const sheet = part(".b");
 		sheet.hidden = !state.ask;
+		mark(state.ask ? "asking" : "settled");
 		// While a theme link with data-cookie-settings is on screen it does the same job, so the button
 		// steps aside; it comes back when the link scrolls away.
 		part(".s").hidden = state.ask || !c.btn || linkOnScreen;

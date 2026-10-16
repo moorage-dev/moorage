@@ -3,6 +3,7 @@ import react from "@astrojs/react";
 import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { analyticsPlugin } from "@moorage/plugin-analytics";
 import approvals from "@moorage/plugin-approvals";
+import { popupsPlugin } from "@moorage/plugin-popups";
 import restore from "@moorage/plugin-restore";
 import seo from "@moorage/plugin-seo";
 import siteHealth from "@moorage/plugin-site-health";
@@ -74,6 +75,7 @@ export default defineConfig({
 			plugins: [
 				formsPlugin(),
 				analyticsPlugin(),
+				popupsPlugin(),
 				...(seoInProcess ? [seo] : []),
 				...(healthInProcess ? [siteHealth] : []),
 				...(restoreInProcess ? [restore] : []),
