@@ -43,6 +43,7 @@ export default defineConfig({
 			DEMO_SITE_SITE_HEALTH: process.env.DEMO_SITE_SITE_HEALTH ?? "",
 			DEMO_SITE_RESTORE: process.env.DEMO_SITE_RESTORE ?? "",
 			DEMO_SITE_IN_PROCESS: process.env.DEMO_SITE_IN_PROCESS ?? "",
+			DEMO_SITE_APPROVALS: process.env.DEMO_SITE_APPROVALS ?? "",
 		},
 	},
 });

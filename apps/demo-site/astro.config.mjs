@@ -2,6 +2,7 @@ import node from "@astrojs/node";
 import react from "@astrojs/react";
 import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { analyticsPlugin } from "@moorage/plugin-analytics";
+import approvals from "@moorage/plugin-approvals";
 import restore from "@moorage/plugin-restore";
 import seo from "@moorage/plugin-seo";
 import siteHealth from "@moorage/plugin-site-health";
@@ -31,6 +32,8 @@ const healthInProcess = inProcess("DEMO_SITE_SITE_HEALTH");
 const restoreInProcess = inProcess("DEMO_SITE_RESTORE");
 const databaseUrl = process.env.DEMO_SITE_DB ?? "file:./data.db";
 simulateCloudflare(databaseUrl);
+// The same for Content Approval (DEMO_SITE_APPROVALS=in-process).
+const approvalsInProcess = inProcess("DEMO_SITE_APPROVALS");
 
 export default defineConfig({
 	output: "server",
@@ -74,11 +77,13 @@ export default defineConfig({
 				...(seoInProcess ? [seo] : []),
 				...(healthInProcess ? [siteHealth] : []),
 				...(restoreInProcess ? [restore] : []),
+				...(approvalsInProcess ? [approvals] : []),
 			],
 			sandboxed: [
 				...(seoInProcess ? [] : [seo]),
 				...(healthInProcess ? [] : [siteHealth]),
 				...(restoreInProcess ? [] : [restore]),
+				...(approvalsInProcess ? [] : [approvals]),
 			],
 			sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
 			...(webFonts ? {} : { fonts: false }),

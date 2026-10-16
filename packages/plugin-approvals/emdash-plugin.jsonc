@@ -1,0 +1,63 @@
+{
+	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+	"slug": "approvals",
+	// Listing text. Registry search matches exact phrases in name, description,
+	// keywords and sections, so the phrases people type appear verbatim.
+	"name": "Content Approval",
+	"description": "Content approval for EmDash: Publish sends a page for approval; approve and publish in one step, or send it back with a note.",
+	"keywords": ["content approval", "editorial workflow", "publish approval", "review", "sign off"],
+	"repo": "https://github.com/moorage-dev/moorage",
+	"sections": {
+		"description": { "file": "listing/description.md" },
+		"installation": { "file": "listing/installation.md" },
+		"faq": { "file": "listing/faq.md" },
+	},
+	// Registry listing only: the EmDash version a site needs, and the gallery.
+	"release": {
+		"requires": { "env:emdash": ">=1.3.0" },
+		"artifacts": {
+			"screenshots": [
+				{ "file": "./images/review-panel.png", "lang": "en" },
+				{ "file": "./images/waiting.png", "lang": "en" },
+				{ "file": "./images/settings.png", "lang": "en" },
+				{ "file": "./images/held-publish.png", "lang": "en" },
+			],
+		},
+	},
+	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
+
+	"license": "MIT",
+	"author": { "name": "Moorage" },
+	"security": { "email": "security@moorage.dev" },
+
+	// Trust contract. Holding a publish needs the content-policy hook; reading the saved
+	// draft needs revisions; "Approve and publish" needs content:publish; approvers' names
+	// and emails need users:read.
+	"capabilities": [
+		"hooks.content-policy:register",
+		"content:read",
+		"content:revisions:read",
+		"content:publish",
+		"schema:read",
+		"users:read",
+		"email:send",
+	],
+	"allowedHosts": [],
+	"admin": {
+		"pages": [
+			{ "path": "/overview", "label": "Approvals", "icon": "check-circle", "group": "Content" },
+		],
+		"widgets": [{ "id": "approvals", "title": "Approvals", "size": "third" }],
+		"editorPanels": [{ "id": "approval", "title": "Approval", "route": "editor/panel" }],
+		"editorActions": [
+			{ "id": "ask", "label": "Ask for approval", "route": "editor/ask", "placement": "toolbar" },
+		],
+	},
+	"storage": {
+		// One record per content entry: the open request and its history.
+		"requests": { "indexes": ["status", "updatedAt"] },
+		// A text copy of each approved version.
+		"versions": { "indexes": ["requestKey"] },
+	},
+}

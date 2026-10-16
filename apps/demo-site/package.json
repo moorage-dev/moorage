@@ -24,6 +24,7 @@
 		"@iconify-json/ph": "catalog:",
 		"@moorage/plugin-analytics": "workspace:*",
 		"@moorage/plugin-restore": "workspace:*",
+		"@moorage/plugin-approvals": "workspace:*",
 		"@moorage/plugin-seo": "workspace:*",
 		"@moorage/plugin-site-health": "workspace:*",
 		"@phosphor-icons/react": "catalog:",
