@@ -96,6 +96,17 @@ describe("a popup that opens by itself", () => {
 		expect(host()).toBeNull();
 	});
 
+	it("opens as a sheet on every phone width, not only the narrowest", async () => {
+		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
+		Object.defineProperty(window, "innerWidth", { value: 700, configurable: true });
+		boot(config({}));
+		await readOn();
+		expect(shadow().querySelector("dialog")!.classList.contains("sheet")).toBe(true);
+		// The sheet look belongs to the class, not to a narrower media query.
+		const css = shadow().querySelector("style")!.textContent!;
+		expect(css.split("@media(max-width:600px)")[0]).toContain("dialog.modal.sheet{inset:auto 0 0");
+	});
+
 	it("opens at most one per visit, the first in the list", async () => {
 		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
 		boot(config({ kind: "slide", heading: "First" }, { kind: "slide", heading: "Second" }));

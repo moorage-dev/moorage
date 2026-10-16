@@ -3,7 +3,7 @@
 import { gzipSync } from "node:zlib";
 
 import type { RouteContext } from "emdash";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
 	colorProblems,
@@ -353,6 +353,7 @@ describe("results", () => {
 });
 
 describe("routes", () => {
+	afterEach(() => vi.unstubAllGlobals());
 	const routes = createPlugin().routes as Record<
 		string,
 		{ handler: (ctx: RouteContext) => Promise<unknown> }
@@ -370,7 +371,35 @@ describe("routes", () => {
 			user: { id: "u", role: 50 },
 		} as unknown as RouteContext);
 
+	it("believes a report only when the server finds the problem itself", async () => {
+		const fake = fakeContext(
+			{
+				popups: {
+					popups: [popup({ contains: "form", form: "newsletter" })],
+					settings: { emails: ["jo@hartleys.test"] },
+				},
+			},
+			{ email: true },
+		);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({ success: true, data: { name: "N", pages: [], settings: {} } }),
+					),
+			),
+		);
+		expect(await call(fake, "problem", { p: "abcd1234", k: "missing" })).toEqual({ saved: false });
+		expect(fake.sent).toHaveLength(0);
+		expect(fake.kv.get("problems")).toBeUndefined();
+	});
+
 	it("stores one problem per popup and emails once a day, the site's name first", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("{}", { status: 404 })),
+		);
 		const fake = fakeContext(
 			{
 				popups: {
@@ -390,7 +419,7 @@ describe("routes", () => {
 		// A second report the same day sends nothing more.
 		const kept = fake.kv.get("problems") as Record<string, { at: number }>;
 		kept.abcd1234!.at -= 120_000;
-		await call(fake, "problem", { p: "abcd1234", k: "missing" });
+		await call(fake, "problem", { p: "abcd1234", k: "paused" });
 		expect(fake.sent).toHaveLength(1);
 		await expect(call(fake, "problem", { p: "abcd1234", k: "other" })).rejects.toThrow();
 		expect(alertEmail("", popup({ form: "x" }), "paused").subject).toBe(

@@ -89,6 +89,7 @@ describe("the list", () => {
 	});
 
 	it("shows red only when a popup really cannot open", async () => {
+		forms({ cakes: { status: 410 } });
 		const fake = fakeContext({
 			popups: {
 				popups: [

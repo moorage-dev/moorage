@@ -29,7 +29,7 @@ import {
 	type Popup,
 	type Store,
 } from "./config.js";
-import { checkForm } from "./forms.js";
+import { checkForm, type FormCheck } from "./forms.js";
 import { clientItem, pageFragments } from "./fragment.js";
 import {
 	addCount,
@@ -147,6 +147,33 @@ export function alertEmail(
 	};
 }
 
+/** The kind of problem the server itself found, or null when the form works (or could not be checked). */
+export function confirmed(check: FormCheck): ProblemKind | null {
+	if (check.result === "missing" || check.result === "paused") return check.result;
+	if (check.result === "turnstile" || check.result === "files") return "unsupported";
+	return null;
+}
+
+/** Look again at stored problems, so a form that was fixed clears its warning. */
+async function recheck(ctx: RouteContext, store: Store, problems: Problems): Promise<Problems> {
+	const ids = Object.keys(problems);
+	if (!ids.length) return problems;
+	const next: Problems = {};
+	await Promise.all(
+		ids.map(async (id) => {
+			const popup = store.popups.find((p) => p.id === id);
+			if (!popup || popup.contains !== "form") return;
+			const check = await checkForm(originOf(ctx), popup.form, popup.kind !== "inline");
+			const kind = confirmed(check);
+			// Could not check: keep what was known.
+			if (kind || check.result === "unchecked")
+				next[id] = kind ? { ...problems[id]!, k: kind } : problems[id]!;
+		}),
+	);
+	if (Object.keys(next).length !== ids.length) await ctx.kv.set(PROBLEMS_KEY, next);
+	return next;
+}
+
 export function createPlugin() {
 	return definePlugin({
 		id: PLUGIN_ID,
@@ -209,7 +236,7 @@ export function createPlugin() {
 					const admin = (ctx.user?.role ?? 0) >= ADMIN_ROLE;
 					if (admin) await ensurePruneScheduled(ctx).catch(() => {});
 					const now = Date.now();
-					const [store, problems, zone, media, collections, all] = await Promise.all([
+					const [store, stored, zone, media, collections, all] = await Promise.all([
 						readStore(ctx),
 						readProblems(ctx),
 						siteZone(),
@@ -218,6 +245,8 @@ export function createPlugin() {
 						readRows(ctx, null, null).catch(() => []),
 					]);
 					const input = ctx.input as Interaction | undefined;
+					// Only when the page opens: a fixed form clears its red warning.
+					const problems = input?.type === "page_load" ? await recheck(ctx, store, stored) : stored;
 					const values = (input?.values ?? {}) as Record<string, unknown>;
 					const range =
 						input?.type === "form_submit" && input.action_id === "range"
@@ -285,17 +314,28 @@ export function createPlugin() {
 					const store = await readStore(ctx);
 					const popup = store.popups.find((p) => p.id === body.p);
 					if (!popup || !isLive(popup, now) || popup.contains !== "form") return { saved: false };
-					const kind = body.k as ProblemKind;
 					const problems = await readProblems(ctx);
 					const before = problems[popup.id];
+					// At most one look a minute per popup, whatever is reported.
+					if (before && now - before.at < 60_000) return { saved: false };
+					// Anyone can send a report, so the server looks for itself before anything turns red.
+					const kind = confirmed(
+						await checkForm(originOf(ctx), popup.form, popup.kind !== "inline"),
+					);
+					if (!kind) {
+						if (before) {
+							delete problems[popup.id];
+							await ctx.kv.set(PROBLEMS_KEY, problems);
+						}
+						return { saved: false };
+					}
 					const today = utcDay(now);
+					// One email a day per popup, whatever the kind of problem.
 					const entry: Problem = {
 						k: kind,
 						at: now,
-						...(before?.k === kind && before.mailed ? { mailed: before.mailed } : {}),
+						...(before?.mailed ? { mailed: before.mailed } : {}),
 					};
-					// Nothing is written more than once a minute for the same report.
-					if (before && before.k === kind && now - before.at < 60_000) return { saved: false };
 					if (ctx.email && store.settings.emails.length && entry.mailed !== today) {
 						const message = alertEmail(ctx.site?.name ?? "", popup, kind);
 						const [to, ...cc] = store.settings.emails;

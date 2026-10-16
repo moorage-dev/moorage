@@ -52,9 +52,11 @@ export const CSS =
 	"@media(prefers-reduced-motion:no-preference){.slide,dialog.modal[open]{animation:pi .25s ease-out}}@media(prefers-reduced-motion:reduce){.slide,dialog.modal[open]{animation:po .2s}}" +
 	"@keyframes pi{from{opacity:0;transform:translateY(12px)}}@keyframes po{from{opacity:0}}" +
 	// Phones: slide-ins, and popups that opened by themselves, become a sheet at the bottom.
-	"@media(max-width:600px){.pp h2{font-size:20px}.pp p{font-size:15px}" +
-	".slide,dialog.modal.sheet{inset:auto 0 0;margin:0;width:100%;max-width:100%;max-height:45vh;border-width:1px 0 0;border-radius:12px 12px 0 0;padding:18px 16px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -12px 32px -16px rgb(0 0 0/.35)}.slide.l{left:0}" +
+	// A popup that opened by itself on a phone (narrower than 768 px) is a sheet at the bottom, by its class.
+	"dialog.modal.sheet{inset:auto 0 0;margin:0;width:100%;max-width:100%;max-height:45vh;border-width:1px 0 0;border-radius:12px 12px 0 0;padding:18px 16px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -12px 32px -16px rgb(0 0 0/.35)}" +
 	"dialog.modal.sheet.hf{max-height:62vh}dialog.modal.sheet .pic{display:none}dialog.modal.sheet .x.on-pic{color:var(--f);background:none}dialog.modal.sheet .f{gap:8px;margin-top:12px}dialog.modal.sheet .r{margin-top:12px;gap:4px}" +
+	"@media(max-width:600px){.pp h2{font-size:20px}.pp p{font-size:15px}" +
+	".slide{inset:auto 0 0;margin:0;width:100%;max-width:100%;max-height:45vh;border-width:1px 0 0;border-radius:12px 12px 0 0;padding:18px 16px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -12px 32px -16px rgb(0 0 0/.35)}.slide.l{left:0}" +
 	"dialog.modal:not(.sheet){padding:20px}dialog.modal:not(.sheet) .pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}" +
 	".r{flex-direction:column;align-items:stretch}.r .q{justify-content:center}" +
 	".bar{font-size:14px}.bar .i{text-align:left}}";
