@@ -43,6 +43,11 @@ jobs:
         env:
           DEMO_SITE_SEO: in-process
         run: pnpm --filter demo-site exec playwright test tests/seo.spec.ts tests/smoke.spec.ts
+      - name: Playwright (Site Health plugin in-process, as on the Workers free plan)
+        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
+        env:
+          DEMO_SITE_SITE_HEALTH: in-process
+        run: pnpm --filter demo-site exec playwright test tests/site-health.spec.ts tests/smoke.spec.ts
       - name: Upload Playwright report
         if: failure() && hashFiles('apps/demo-site/playwright-report/index.html') != ''
         uses: actions/upload-artifact@v4
