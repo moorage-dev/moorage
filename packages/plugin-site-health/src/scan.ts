@@ -24,7 +24,7 @@ import {
 	type ScanState,
 	type Summary,
 } from "./state.js";
-import { idFor, normalizePath, publicOrigin } from "./url.js";
+import { idFor, normalizePath, publicOrigin, shorten } from "./url.js";
 
 export const TASK = "site-health";
 const WALK_BATCH = 50;
@@ -284,7 +284,7 @@ export function resolveLocal(row: LinkRow, page: PageRow | undefined, now: numbe
 			...clean(row),
 			state: "look",
 			reason: "redirect",
-			detail: page.dest || "another page",
+			detail: page.dest ? shorten(page.dest) : "another page",
 		};
 	}
 	if (page.status === "published") return { ...clean(row), state: "ok" };

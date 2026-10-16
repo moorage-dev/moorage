@@ -154,6 +154,9 @@ describe("a full check of a public site", () => {
 		// No numbers before the check is complete.
 		const first = await runtime.admin.loadPage(PAGE);
 		expect(text(first)).toContain("Checking your site for the first time");
+		// The first screen says how long it takes, and that other sites follow a day later.
+		expect(text(first)).toMatch(/This (usually )?takes /);
+		expect(text(first)).toContain("Links to other sites follow a day later");
 		expect(text(first)).not.toContain('Pages checked","value');
 
 		const most = await finish(runtime);
@@ -383,6 +386,60 @@ describe("a full check of a public site", () => {
 		expect(words).toContain("looked after by your site admin");
 		const widget = await runtime.admin.loadWidget("site-health", { user: editor });
 		expect(text(widget)).toContain("broken links on your pages");
+	});
+});
+
+describe("the weekly email", () => {
+	async function weekLater(runtime: PluginRuntimeTestHost, since: string) {
+		const alerts = (await runtime.inspect.kv.get<Record<string, unknown>>("alerts")) ?? {};
+		await runtime.fixtures.plugin.kv("alerts", {
+			pending: [],
+			sent: [],
+			...alerts,
+			weeklyAt: since,
+		});
+	}
+
+	it("lists only problems new since last week, and sends nothing when nothing is new", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await runtime.admin.submit(PAGE, "save_options", {
+			recipients: "ellen@acme.test",
+			outbound: false,
+		});
+		await finish(runtime);
+		// The urgent email for the menu link goes first.
+		await cron(runtime);
+		const urgent = (await runtime.inspect.email()).length;
+
+		await weekLater(runtime, new Date(Date.now() - 8 * 86_400_000).toISOString());
+		await cron(runtime);
+		const mail = await runtime.inspect.email();
+		expect(mail).toHaveLength(urgent + 1);
+		expect(mail.at(-1)).toMatchObject({
+			to: "ellen@acme.test",
+			subject: "Acme Bakery: 4 new problems this week",
+		});
+		expect(String(mail.at(-1)?.text)).toContain(
+			"/christmas goes to a page that is not published yet.",
+		);
+
+		// A week on with nothing new (every problem older than the last email): no email.
+		const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+		const current = await summary(runtime);
+		const age = (rows: Summary["rows"]["site"]) => rows.map((r) => ({ ...r, since: old }));
+		await runtime.fixtures.plugin.kv("summary", {
+			...current,
+			rows: {
+				site: age(current.rows.site),
+				page: age(current.rows.page),
+				link: age(current.rows.link),
+			},
+		});
+		await weekLater(runtime, new Date(Date.now() - 8 * 86_400_000).toISOString());
+		await cron(runtime);
+		expect(await runtime.inspect.email()).toHaveLength(urgent + 1);
 	});
 });
 

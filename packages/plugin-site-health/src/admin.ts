@@ -70,18 +70,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function when(iso: string | undefined, now = Date.now()): string {
+/**
+ * How long ago, in words. The plugin cannot read the site's time zone, so it
+ * never prints a clock time that would be hours out for the owner.
+ */
+export function when(iso: string | undefined, now = Date.now()): string {
 	if (!iso) return "";
-	const date = new Date(iso);
-	const time = date.toLocaleTimeString("en-GB", {
-		hour: "2-digit",
-		minute: "2-digit",
-		timeZone: "UTC",
-	});
-	const sameDay = date.toISOString().slice(0, 10) === new Date(now).toISOString().slice(0, 10);
-	return sameDay
-		? `today at ${time}`
-		: `${date.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} at ${time}`;
+	const minutes = Math.round((now - Date.parse(iso)) / 60_000);
+	if (Number.isNaN(minutes)) return "";
+	if (minutes < 2) return "just now";
+	if (minutes < 60) return `${minutes} minutes ago`;
+	const hours = Math.round(minutes / 60);
+	if (hours < 24) return hours === 1 ? "an hour ago" : `${hours} hours ago`;
+	const days = Math.round(hours / 24);
+	return days === 1 ? "yesterday" : `${days} days ago`;
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -149,7 +151,7 @@ function firstCheck(data: Loaded): Block[] {
 	const reading = !scan || ["redirects", "walk", "resolve"].includes(scan.phase);
 	const total = scan?.liveTotal ?? scan?.walked ?? 0;
 	const howLong = reading
-		? "Your pages are being read first; then the time left is shown here."
+		? "This usually takes 5 to 30 minutes, and a few hours for a very large site."
 		: `This takes ${estimate(total, scan?.live === "ok")} for a site with ${plural(total, "page")}.`;
 	const blocks: Block[] = [
 		{

@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { rowText, when } from "../src/admin.js";
 import { parseRecipients } from "../src/alerts.js";
 import { afterExternal, afterOwnPage, verdict, type Outcome } from "../src/check.js";
 import { entryPath, linksInData, scanHtml } from "../src/extract.js";
@@ -261,6 +262,66 @@ describe("words", () => {
 		expect(parseRecipients("ellen@bakery.example\nnot-an-address")).toEqual({
 			wrong: "not-an-address",
 		});
+	});
+});
+
+describe("phone-safe rows", () => {
+	const long =
+		"https://www.example-flour-mill-and-bakery-supplies.example/products/rye/organic-stoneground";
+	const reasons = [
+		"missing",
+		"draft",
+		"gone",
+		"no-site",
+		"server",
+		"page-error",
+		"insecure-active",
+		"redirect",
+		"moved",
+		"insecure-image",
+		"refuses",
+		"slow",
+		"timeout",
+		"trouble",
+		"no-live",
+		"error",
+	] as const;
+	it("never holds a word longer than 30 characters, so the Fix menu stays on screen at 390 px", () => {
+		// What is stored is already shortened: a detour's target, and the address itself when shown.
+		const moved = afterExternal(
+			row({ url: long }),
+			{ kind: "moved", to: `${long}/new-place` },
+			NOW,
+		);
+		for (const reason of reasons) {
+			const text = rowText(
+				{
+					id: "x",
+					kind: "external",
+					url: long,
+					reason,
+					...(moved.detail ? { detail: moved.detail } : {}),
+					sources: [{ t: "Our sourdough starter", p: "/starter" }],
+					count: 1,
+					menu: false,
+					editor: true,
+					since: "2026-10-10T00:00:00Z",
+				},
+				null,
+			);
+			for (const word of text.split(/\s+/))
+				expect(word.length, `${reason}: ${word}`).toBeLessThanOrEqual(31);
+		}
+	});
+
+	it("says how long ago in words, never a clock time in the wrong zone", () => {
+		const at = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+		expect(when(at(0), NOW)).toBe("just now");
+		expect(when(at(5), NOW)).toBe("5 minutes ago");
+		expect(when(at(60), NOW)).toBe("an hour ago");
+		expect(when(at(180), NOW)).toBe("3 hours ago");
+		expect(when(at(26 * 60), NOW)).toBe("yesterday");
+		expect(when(at(4 * 24 * 60), NOW)).toBe("4 days ago");
 	});
 });
 

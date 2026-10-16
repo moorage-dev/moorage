@@ -172,7 +172,7 @@ export function afterExternal(row: LinkRow, result: Verdict, now: number): LinkR
 				...clear(base),
 				state: "look",
 				reason: "moved",
-				detail: shorten(result.to, 40),
+				detail: shorten(result.to),
 				due: later(now, 7 * DAY),
 			};
 		case "gone":
@@ -243,7 +243,7 @@ export function afterOwnPath(row: LinkRow, result: Verdict, now: number): LinkRo
 				...clear(base),
 				state: "look",
 				reason: "redirect",
-				detail: to ? to.pathname : shorten(result.to),
+				detail: shorten(to ? to.pathname : result.to),
 			};
 		}
 		case "gone":
