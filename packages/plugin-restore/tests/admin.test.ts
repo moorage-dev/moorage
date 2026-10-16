@@ -360,6 +360,40 @@ describe("reviewing and restoring", () => {
 		expect(find(undone, "banner")?.title).toMatch(/^Done\./);
 	});
 
+	it("reviews an undo like a restore when anything happened since: enquiries first, then the tick", async () => {
+		const s = await connected();
+		const undo = {
+			point: s.sim.bookmarkFor(Date.parse(ago(3))),
+			to: ago(3),
+			of: "r-earlier",
+			at: ago(3),
+		};
+		await enquiry("Sam Field", "sam@example.com", ago(1));
+		const response = await act(s, { type: "block_action", action_id: "undo", value: undo });
+		expect(find(response, "header", (h) => h.text.startsWith("Undo the restore"))).toBeDefined();
+		expect(text(response)).toContain("Sam Field (sam@example.com)");
+		expect(s.sim.state.restores).toHaveLength(0);
+
+		await act(s, { type: "block_action", action_id: "enquiries_ok" });
+		const ticked = await act(s, { type: "block_action", action_id: "understand", value: ["yes"] });
+		const red = buttons(ticked).find((b) => b.action_id === "restore");
+		await act(s, { type: "block_action", action_id: "restore", value: red!.value });
+		// The exact undo point is restored, not a point looked up again from the time.
+		expect(s.sim.state.restores.map((r) => r.bookmark)).toEqual([undo.point]);
+	});
+
+	it("refuses an undo that would go back past a later upgrade", async () => {
+		const s = await connected();
+		await sql("INSERT INTO _emdash_migrations (name, timestamp) VALUES ('999_test', ?)", [ago(2)]);
+		const response = await act(s, {
+			type: "block_action",
+			action_id: "undo",
+			value: { point: s.sim.bookmarkFor(Date.parse(ago(3))), to: ago(3), of: "r", at: ago(3) },
+		});
+		expect(find(response, "banner")?.title).toBe("The site was upgraded after that moment");
+		expect(s.sim.state.restores).toHaveLength(0);
+	});
+
 	it("puts Lead Delivery's records back when asked", async () => {
 		const s = await connected();
 		await s.ctx.kv.set("carry", {

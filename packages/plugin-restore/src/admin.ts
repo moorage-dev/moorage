@@ -646,7 +646,14 @@ function reviewScreen(
 ): BlockResponse {
 	const { review } = state;
 	const at = clock(review.moment, zone);
-	const blocks: Block[] = [PAGE_TITLE, header(`Go back to ${moment(review.moment, zone)}?`)];
+	const blocks: Block[] = [
+		PAGE_TITLE,
+		header(
+			state.undo
+				? `Undo the restore and go back to ${moment(review.moment, zone)}?`
+				: `Go back to ${moment(review.moment, zone)}?`,
+		),
+	];
 	blocks.push(
 		section(
 			review.picked
@@ -1061,7 +1068,10 @@ export async function handleAdmin(
 					toast: { type: "error", message: "Review the moment again first" },
 				});
 			}
-			const outcome = await keepPending(ctx, await putBack(ctx, { moment: at }, me, now));
+			const target = state.undo
+				? { point: state.undo.point, pointTo: state.review.moment, undid: state.undo.of }
+				: { moment: at };
+			const outcome = await keepPending(ctx, await putBack(ctx, target, me, now));
 			return outcomeScreen(
 				ctx,
 				outcome,
@@ -1073,10 +1083,40 @@ export async function handleAdmin(
 		case "undo": {
 			const value = isRecord(interaction.value) ? interaction.value : {};
 			const point = str(value.point);
-			if (!point) return mainScreen(ctx, connection, me, now);
+			const to = str(value.to);
+			if (!point || Number.isNaN(Date.parse(to))) return mainScreen(ctx, connection, me, now);
+			// Anything that happened since the restore is reviewed first, exactly like a restore:
+			// enquiries, lost text, people, the tick. Only a quiet site goes straight back.
+			const key = await loadKey(ctx);
+			if (!key) return setupScreen("refused", undefined, true);
+			const query = siteQuery(client(ctx, key), connection);
+			const refused = await refusal(ctx, connection, query, to, me, now).catch(() => null);
+			if (refused) {
+				const { title, text } = refusalText(refused, connection.zone);
+				return refusedScreen(to, title, text, connection.zone);
+			}
+			let review: Review;
+			try {
+				review = await buildReview(ctx, query, to, me, now);
+			} catch (error) {
+				return mainScreen(ctx, connection, me, now, {
+					toast: { type: "error", message: `${explain(error)} Nothing was changed.` },
+				});
+			}
+			if (review.counts.changes > 0 || review.pluginRecords.length > 0) {
+				const state: ReviewState = {
+					review,
+					byId: me.id,
+					ack: false,
+					ticked: false,
+					undo: { point, of: str(value.of), at: str(value.at) },
+				};
+				await ctx.kv.set("review", state);
+				return reviewScreen(ctx, state, connection.zone, now);
+			}
 			const outcome = await keepPending(
 				ctx,
-				await putBack(ctx, { point, pointTo: str(value.to), undid: str(value.of) }, me, now),
+				await putBack(ctx, { point, pointTo: to, undid: str(value.of) }, me, now),
 			);
 			return outcomeScreen(
 				ctx,

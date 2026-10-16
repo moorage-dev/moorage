@@ -275,6 +275,8 @@ export interface ReviewState {
 	ack: boolean;
 	/** The confirmation tick. */
 	ticked: boolean;
+	/** Set when this review is for undoing a restore: the exact point to go back to. */
+	undo?: { point: string; of: string; at: string };
 }
 
 export async function refusal(
@@ -503,13 +505,13 @@ export async function putBack(
 	const api = client(ctx, key);
 	const query = siteQuery(api, connection);
 
-	if (target.moment) {
-		const refused = await refusal(ctx, connection, query, target.moment, me, now).catch(() => null);
-		if (refused) return { kind: "refused", refusal: refused };
-	} else {
-		const refused = await busy(ctx, now);
-		if (refused) return { kind: "refused", refusal: refused };
-	}
+	// An undo goes back to a moment too (just before the restore), so it gets the same refusals:
+	// window, setup, the admin's own account, and a later upgrade.
+	const to = target.moment ?? target.pointTo;
+	const refused = to
+		? await refusal(ctx, connection, query, to, me, now).catch(() => null)
+		: await busy(ctx, now);
+	if (refused) return { kind: "refused", refusal: refused };
 
 	// Right database, every time: a fresh check mark, read back seconds before the restore.
 	const mark = crypto.randomUUID();
