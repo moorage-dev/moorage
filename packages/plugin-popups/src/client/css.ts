@@ -27,7 +27,7 @@ export const CSS =
 	".x{position:absolute;top:8px;right:8px;z-index:1;width:44px;height:44px;border:0;background:none;color:var(--f);display:grid;place-items:center;border-radius:6px;padding:0}.x svg{width:18px;height:18px}" +
 	".r{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:18px}" +
 	".fine{font-size:13px;opacity:.85;margin-top:10px}" +
-	":focus-visible{outline:3px solid var(--f);outline-offset:2px}" +
+	":focus-visible{outline:3px solid var(--f);outline-offset:2px}h2[tabindex]:focus{outline:none}" +
 	".pv{display:inline-block;margin:0 40px 8px 0;padding:2px 8px;font-size:13px;line-height:1.4;border:1px dashed var(--f);border-radius:4px}" +
 	".sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}" +
 	// The form, drawn from the forms plugin's own definition.

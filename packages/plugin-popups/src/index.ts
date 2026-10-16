@@ -145,7 +145,7 @@ export async function publicMediaUrl(
 	try {
 		const response = await fetchImpl(`${origin}/_emdash/api/media/${mediaId}`, {
 			headers: { cookie: ctx.request?.headers.get("cookie") ?? "", accept: "application/json" },
-			signal: AbortSignal.timeout(3000),
+			signal: AbortSignal.timeout(8000),
 		});
 		if (!response.ok) return null;
 		const body = (await response.json()) as {
