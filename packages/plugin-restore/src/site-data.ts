@@ -523,7 +523,19 @@ export async function putBackRows(query: Query, rows: StoredRow[]): Promise<numb
 	return written;
 }
 
+/** Plugins people will recognise by name. */
+const KNOWN_PLUGINS: Record<string, string> = {
+	seo: "SEO",
+	"analytics-consent": "Analytics & Cookie Consent",
+	"lead-delivery": "Lead Delivery",
+	"emdash-forms": "Forms",
+	"site-health": "Site Health",
+	popups: "Popups",
+	approvals: "Content Approval",
+};
+
 export function pluginLabel(id: string): string {
+	if (KNOWN_PLUGINS[id]) return KNOWN_PLUGINS[id];
 	return id
 		.split(/[-_]/)
 		.filter(Boolean)

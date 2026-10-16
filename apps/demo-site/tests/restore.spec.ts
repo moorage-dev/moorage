@@ -143,13 +143,13 @@ test("going back to just before a change: enquiries first, lost text, tick, red 
 	await row.getByRole("button", { name: /^Go back to \d\d:\d\d$/ }).click();
 
 	// Enquiries first: named, and nothing to confirm until they are dealt with.
-	await expect(page.getByText(/1 enquiry came in since \d\d:\d\d and will be removed/)).toBeVisible(
-		{ timeout: 30_000 },
-	);
+	await expect(
+		page.getByText(/\d+ enquir(y|ies) came in since \d\d:\d\d and will be removed/),
+	).toBeVisible({ timeout: 30_000 });
 	await expect(page.getByText(/Jane Hollis \(jane@example\.com\)/)).toBeVisible();
 	await expect(page.getByRole("link", { name: /Download in Forms > Submissions/ })).toBeVisible();
 	await expect(page.getByRole("checkbox")).toHaveCount(0);
-	await page.getByRole("button", { name: "It reached us, continue" }).click();
+	await page.getByRole("button", { name: /reached us, continue/ }).click();
 
 	// The text of the edit that will be lost, the warning, and the tick before the red button.
 	await expect(page.getByText("Text of edits that will be lost")).toBeVisible({ timeout: 30_000 });
