@@ -11,6 +11,26 @@ const HEADERS = { "X-EmDash-Request": "1" };
 const APPROVALS = "/_emdash/admin/plugins/approvals/overview";
 const ROLE = { contributor: 20, editor: 40 };
 
+// APPROVALS_SCREENSHOTS=1 also saves the listing screenshots into the plugin's images folder.
+const SCREENSHOTS = process.env.APPROVALS_SCREENSHOTS === "1";
+const IMAGES = new URL("../../../packages/plugin-approvals/images/", import.meta.url);
+
+async function shot(
+	page: Page,
+	name: string,
+	width: 1280 | 390 = 1280,
+	top?: ReturnType<Page["getByText"]>,
+): Promise<void> {
+	if (!SCREENSHOTS) return;
+	const size = page.viewportSize();
+	await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+	// Let the layout settle and any toast finish sliding in.
+	await page.waitForTimeout(800);
+	if (top) await top.evaluate((element) => element.scrollIntoView({ block: "start" }));
+	await page.screenshot({ path: new URL(`${name}.png`, IMAGES).pathname });
+	if (size) await page.setViewportSize(size);
+}
+
 interface Person {
 	context: BrowserContext;
 	page: Page;
@@ -199,6 +219,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByText(/MCP|slug|webhook|fingerprint/)).toHaveCount(0);
 
 		await page.getByRole("checkbox", { name: "Pages" }).check();
+		await shot(page, "settings");
+		await shot(page, "settings-phone", 390);
 		await page.getByRole("button", { name: "Save", exact: true }).click();
 		await expect(
 			page.getByText("Saved. Publishing now asks for approval where you chose."),
@@ -223,6 +245,7 @@ test.describe.serial("Content Approval", () => {
 		await expect(
 			page.getByText(/^Sent for approval\. Not live yet\. Ellen Marsh has been asked/),
 		).toBeVisible();
+		await shot(page, "held-publish");
 		expect(await status(sam, menu)).toBe("draft");
 
 		await page.getByRole("button", { name: "Approval", exact: true }).click();
@@ -269,6 +292,8 @@ test.describe.serial("Content Approval", () => {
 		expect(box).not.toBeNull();
 		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 		expect(box?.height ?? 0).toBeGreaterThanOrEqual(32);
+		await shot(page, "waiting-phone", 390);
+		await shot(page, "waiting");
 		await page.setViewportSize({ width: 1280, height: 900 });
 
 		await review.click();
@@ -277,6 +302,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByRole("button", { name: "Approve and publish" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
 		await expect(page.getByText("Approve without review (admins)")).toBeVisible();
+		await shot(page, "review");
+		await shot(page, "review-phone", 390);
 	});
 
 	test("Ellen sends it back from the panel; the form inside the editor does not save the page", async () => {
@@ -324,8 +351,25 @@ test.describe.serial("Content Approval", () => {
 		// The live page differs from this version: the approver sees the change in words.
 		await openPanel(ellen, menu);
 		await expect(
-			ellen.page.getByText(/Content: "tart" becomes "tart and pavlova"|Content: .*pavlova/),
+			ellen.page.getByText('Content: "3.40 and" becomes "3.40,"; adds "and pavlova".', {
+				exact: true,
+			}),
 		).toBeVisible();
+		const panelTop = ellen.page.getByRole("button", { name: "Approval", exact: true });
+		await shot(ellen.page, "review-panel", 1280, panelTop);
+		if (SCREENSHOTS) {
+			// On a phone the editor's settings, plugin panels included, open as a sheet.
+			await ellen.page.setViewportSize({ width: 390, height: 844 });
+			await ellen.page.getByRole("button", { name: "Settings", exact: true }).click();
+			const waiting = ellen.page.getByText("Waiting for your approval");
+			if (!(await waiting.isVisible())) await panelTop.click();
+			await expect(waiting).toBeVisible();
+			await shot(ellen.page, "review-panel-phone", 390, panelTop);
+			await ellen.page.keyboard.press("Escape");
+			await ellen.page.setViewportSize({ width: 1280, height: 900 });
+			await ellen.page.reload();
+			await panelTop.click();
+		}
 		await ellen.page.getByRole("button", { name: "Approve", exact: true }).click();
 		await expect(ellen.page.getByText("Approved. Sam has been told.")).toBeVisible();
 		await leave(ellen);

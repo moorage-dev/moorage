@@ -356,7 +356,7 @@ async function settingsBlocks(
 		},
 		{
 			type: "context",
-			text: "Others need my OK: admins approve everyone else's changes. I need someone else's OK: everyone needs approval, admins too, and an editor or another admin approves. Nobody approves their own request. A change after approval needs approval again. \"Require before approval\" stops the approver until both are filled in, in each page's SEO panel.",
+			text: "Others need my OK: admins approve everyone else's changes. I need someone else's OK: everyone needs approval, admins too, and an editor or another admin approves. Nobody approves their own request. A change after approval needs approval again. AI tools: anything an AI tool publishes is held, on every content type, even those not ticked; the person whose key the tool uses may approve it. \"Require before approval\" stops the approver until both are filled in, in each page's SEO panel.",
 		},
 		{ type: "divider" },
 		{ type: "header", text: "What approval can't hold" },
