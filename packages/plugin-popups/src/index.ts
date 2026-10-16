@@ -158,7 +158,7 @@ export async function publicMediaUrl(
 				: typeof item?.storageKey === "string"
 					? `/_emdash/api/media/file/${item.storageKey}`
 					: null;
-		return url && /^\/_emdash\/api\/media\/file\/[A-Za-z0-9._\/-]+$/.test(url) ? url : null;
+		return url && /^\/_emdash\/api\/media\/file\/[A-Za-z0-9._/-]+$/.test(url) ? url : null;
 	} catch {
 		return null;
 	}

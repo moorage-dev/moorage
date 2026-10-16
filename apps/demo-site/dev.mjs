@@ -11,7 +11,9 @@ import { spawn } from "node:child_process";
 import { existsSync, watch } from "node:fs";
 
 // Add each plugin's build folder here as packages are added.
-const PLUGIN_BUILDS = ["../../packages/plugin-seo/dist", "../../packages/plugin-analytics/dist",
+const PLUGIN_BUILDS = [
+	"../../packages/plugin-seo/dist",
+	"../../packages/plugin-analytics/dist",
 	"../../packages/plugin-popups/dist",
 ];
 
