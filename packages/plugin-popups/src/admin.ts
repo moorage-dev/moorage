@@ -536,7 +536,7 @@ function step1Form(state: PageState, popup: Popup | undefined, wizard: boolean):
 				action_id: "kind",
 				label: "What kind",
 				options: (Object.keys(KIND_CHOICE) as Kind[]).map((value) => ({ value, label: KIND_CHOICE[value] })),
-				initial_value: typed(state, "kind", popup?.kind ?? ""),
+				...(typed(state, "kind", popup?.kind ?? "") ? { initial_value: typed(state, "kind", popup?.kind ?? "") } : {}),
 			},
 		],
 		submit: { label: wizard ? "Next: what it says" : "Save", action_id: "save_s1" },

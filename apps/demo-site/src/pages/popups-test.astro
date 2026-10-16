@@ -1,0 +1,34 @@
+---
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
+//
+// Test fixture, not a template page. A long article (so "after they have read a
+// while" can be reached by scrolling), a button that opens a popup by click, and,
+// when ?box=<id> is given, the "Popups box" block rendered through EmDash's own
+// PortableText, as a post would render it. Used by tests/popups.spec.ts.
+import { PortableText } from "emdash/ui";
+import Base from "../layouts/Base.astro";
+
+const box = Astro.url.searchParams.get("box");
+const opener = Astro.url.searchParams.get("opener");
+const paragraphs = [
+	"Rye has almost no gluten, so it cannot be kneaded into shape the way wheat can. What holds a rye loaf together is acid, and acid takes time.",
+	"On day one we feed the starter. On day two the dough rests overnight in the cold room, where the flavour comes from. On day three it bakes slowly, then rests again before we cut it.",
+	"People ask why we do not speed it up. The short answer is that a fast rye is a sticky rye, and a sticky rye is a sad breakfast.",
+	"The long answer involves enzymes, which keep working on the starch long after the loaf leaves the oven, so a rye cut too soon is gummy in the middle.",
+];
+const value = box ? [{ _type: "popups-box", _key: "box1", popup: box }] : [];
+---
+
+<Base title="Why our rye takes three days" robots="noindex, nofollow">
+	<section class="section">
+		<div class="container" style="max-width:680px">
+			<h1>Why our rye takes three days</h1>
+			{opener && <p><button type="button" data-popup={opener}>Get the monthly letter</button> <a href={`#popup-${opener}`}>or this link</a></p>}
+			<p><label>Search the journal <input type="text" name="q" id="search" /></label></p>
+			{paragraphs.map((text) => <p>{text}</p>)}
+			<PortableText value={value} />
+			{[1, 2, 3, 4, 5, 6].map(() => paragraphs.map((text) => <p>{text}</p>))}
+			<p>Come and try a slice on Saturday mornings.</p>
+		</div>
+	</section>
+</Base>

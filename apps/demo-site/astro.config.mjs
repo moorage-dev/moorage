@@ -2,6 +2,7 @@ import node from "@astrojs/node";
 import react from "@astrojs/react";
 import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { analyticsPlugin } from "@moorage/plugin-analytics";
+import { popupsPlugin } from "@moorage/plugin-popups";
 import seo from "@moorage/plugin-seo";
 import icon from "astro-iconset";
 import { defineConfig, fontProviders } from "astro/config";
@@ -54,7 +55,7 @@ export default defineConfig({
 			},
 		}),
 		emdash({
-			plugins: [formsPlugin(), analyticsPlugin(), ...(seoInProcess ? [seo] : [])],
+			plugins: [formsPlugin(), analyticsPlugin(), popupsPlugin(), ...(seoInProcess ? [seo] : [])],
 			sandboxed: seoInProcess ? [] : [seo],
 			sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
 			...(webFonts ? {} : { fonts: false }),

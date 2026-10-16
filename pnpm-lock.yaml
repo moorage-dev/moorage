@@ -122,6 +122,9 @@ importers:
       '@moorage/plugin-analytics':
         specifier: workspace:*
         version: link:../../packages/plugin-analytics
+      '@moorage/plugin-popups':
+        specifier: workspace:*
+        version: link:../../packages/plugin-popups
       '@moorage/plugin-seo':
         specifier: workspace:*
         version: link:../../packages/plugin-seo
