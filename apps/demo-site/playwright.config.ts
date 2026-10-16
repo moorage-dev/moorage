@@ -44,6 +44,7 @@ export default defineConfig({
 			DEMO_SITE_RESTORE: process.env.DEMO_SITE_RESTORE ?? "",
 			DEMO_SITE_IN_PROCESS: process.env.DEMO_SITE_IN_PROCESS ?? "",
 			DEMO_SITE_APPROVALS: process.env.DEMO_SITE_APPROVALS ?? "",
+			DEMO_SITE_LEAD_DELIVERY: process.env.DEMO_SITE_LEAD_DELIVERY ?? "",
 		},
 	},
 });

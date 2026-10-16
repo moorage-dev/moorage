@@ -43,7 +43,7 @@ jobs:
         if: hashFiles('apps/demo-site/playwright.config.ts') != ''
         env:
           DEMO_SITE_IN_PROCESS: "1"
-        run: pnpm --filter demo-site exec playwright test tests/smoke.spec.ts tests/seo.spec.ts tests/site-health.spec.ts tests/restore.spec.ts tests/approvals.spec.ts
+        run: pnpm --filter demo-site exec playwright test tests/smoke.spec.ts tests/seo.spec.ts tests/site-health.spec.ts tests/restore.spec.ts tests/approvals.spec.ts tests/lead-delivery.spec.ts
       - name: Upload Playwright report
         if: failure() && hashFiles('apps/demo-site/playwright-report/index.html') != ''
         uses: actions/upload-artifact@v4

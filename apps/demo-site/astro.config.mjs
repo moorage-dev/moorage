@@ -3,6 +3,7 @@ import react from "@astrojs/react";
 import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { analyticsPlugin } from "@moorage/plugin-analytics";
 import approvals from "@moorage/plugin-approvals";
+import leadDelivery from "@moorage/plugin-lead-delivery";
 import { popupsPlugin } from "@moorage/plugin-popups";
 import restore from "@moorage/plugin-restore";
 import seo from "@moorage/plugin-seo";
@@ -35,6 +36,8 @@ const databaseUrl = process.env.DEMO_SITE_DB ?? "file:./data.db";
 simulateCloudflare(databaseUrl);
 // The same for Content Approval (DEMO_SITE_APPROVALS=in-process).
 const approvalsInProcess = inProcess("DEMO_SITE_APPROVALS");
+// The same for Lead Delivery (DEMO_SITE_LEAD_DELIVERY=in-process).
+const leadInProcess = inProcess("DEMO_SITE_LEAD_DELIVERY");
 
 export default defineConfig({
 	output: "server",
@@ -80,12 +83,14 @@ export default defineConfig({
 				...(healthInProcess ? [siteHealth] : []),
 				...(restoreInProcess ? [restore] : []),
 				...(approvalsInProcess ? [approvals] : []),
+				...(leadInProcess ? [leadDelivery] : []),
 			],
 			sandboxed: [
 				...(seoInProcess ? [] : [seo]),
 				...(healthInProcess ? [] : [siteHealth]),
 				...(restoreInProcess ? [] : [restore]),
 				...(approvalsInProcess ? [] : [approvals]),
+				...(leadInProcess ? [] : [leadDelivery]),
 			],
 			sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
 			...(webFonts ? {} : { fonts: false }),

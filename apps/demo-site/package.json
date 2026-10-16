@@ -26,6 +26,7 @@
 		"@moorage/plugin-restore": "workspace:*",
 		"@moorage/plugin-approvals": "workspace:*",
 		"@moorage/plugin-popups": "workspace:*",
+		"@moorage/plugin-lead-delivery": "workspace:*",
 		"@moorage/plugin-seo": "workspace:*",
 		"@moorage/plugin-site-health": "workspace:*",
 		"@phosphor-icons/react": "catalog:",
