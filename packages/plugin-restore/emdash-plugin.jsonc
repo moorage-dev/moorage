@@ -1,0 +1,61 @@
+{
+	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+	"slug": "restore",
+	// Listing text. Registry search matches exact phrases in name, description,
+	// keywords and sections, so the phrases people type appear verbatim.
+	"name": "Backup & Restore",
+	"description": "Backup & Restore for EmDash on Cloudflare: put the whole site back to any moment in the last 30 days, and undo it. Point in time restore.",
+	"keywords": ["backup", "restore", "point in time restore", "undo", "time travel"],
+	"repo": "https://github.com/moorage-dev/moorage",
+	"sections": {
+		"description": { "file": "listing/description.md" },
+		"installation": { "file": "listing/installation.md" },
+		"faq": { "file": "listing/faq.md" },
+	},
+	"release": {
+		"requires": { "env:emdash": ">=1.3.0" },
+		"artifacts": {
+			"screenshots": [
+				{ "file": "./images/pick-a-moment.png", "lang": "en" },
+				{ "file": "./images/review.png", "lang": "en" },
+				{ "file": "./images/done.png", "lang": "en" },
+				{ "file": "./images/phone.png", "lang": "en" },
+			],
+		},
+	},
+	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
+
+	"license": "MIT",
+	"author": { "name": "Moorage" },
+	"security": { "email": "security@moorage.dev" },
+
+	// Trust contract. Every read and the restore itself go through the owner's own
+	// Cloudflare key to api.cloudflare.com; the plugin asks for no content, user or
+	// media access. Email tells the people who look after the site.
+	"capabilities": ["network:request", "email:send"],
+	"allowedHosts": ["api.cloudflare.com"],
+	"admin": {
+		"pages": [
+			{
+				"path": "/restore",
+				"label": "Restore",
+				"icon": "clock-counter-clockwise",
+				"group": "Tools",
+			},
+		],
+		"settingsSchema": {
+			"token": {
+				"type": "secret",
+				"label": "Key from Cloudflare",
+				"description": "Paste it on the Restore page, which checks it first.",
+			},
+		},
+	},
+	"storage": {
+		// One record per restore: when, back to what, who, the undo point.
+		"restores": { "indexes": ["at"] },
+		// Saved moments: a name and a time.
+		"moments": { "indexes": ["at"] },
+	},
+}
