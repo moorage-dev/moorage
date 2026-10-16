@@ -2,10 +2,10 @@
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
-import type { UserInfo } from "./requests.js";
 
 import { approve, saveNote, sendBack, type Outcome } from "./actions.js";
 import { loadConfig } from "./config.js";
+import type { UserInfo } from "./requests.js";
 import { collectionInfo, readDraft, requestKey, requests, when } from "./requests.js";
 import {
 	ACTION,
@@ -38,7 +38,10 @@ export async function handlePanel(
 
 	if (config && interaction.type === "block_action") {
 		const value = buttonValue(interaction.value);
-		if (value?.key === key && (interaction.action_id === ACTION.approve || interaction.action_id === ACTION.approvePublish)) {
+		if (
+			value?.key === key &&
+			(interaction.action_id === ACTION.approve || interaction.action_id === ACTION.approvePublish)
+		) {
 			outcome = await approve(ctx, config, user, key, {
 				seen: value.seen,
 				publish: interaction.action_id === ACTION.approvePublish,
@@ -47,27 +50,48 @@ export async function handlePanel(
 	}
 	if (config && interaction.type === "form_submit") {
 		const values = isRecord(interaction.values) ? interaction.values : {};
-		if (interaction.action_id === ACTION.sendBack) outcome = await sendBack(ctx, config, user, key, values.note);
-		if (interaction.action_id === ACTION.saveNote) outcome = await saveNote(ctx, user, key, values.note);
+		if (interaction.action_id === ACTION.sendBack)
+			outcome = await sendBack(ctx, config, user, key, values.note);
+		if (interaction.action_id === ACTION.saveNote)
+			outcome = await saveNote(ctx, user, key, values.note);
 	}
-	const toast = outcome ? { toast: { type: outcome.ok ? ("success" as const) : ("error" as const), message: outcome.message } } : {};
+	const toast = outcome
+		? {
+				toast: {
+					type: outcome.ok ? ("success" as const) : ("error" as const),
+					message: outcome.message,
+				},
+			}
+		: {};
 	// After publishing from the panel the editor must reload the entry.
-	const refresh = outcome?.ok && interaction.action_id === ACTION.approvePublish ? { refresh: true as const } : {};
+	const refresh =
+		outcome?.ok && interaction.action_id === ACTION.approvePublish
+			? { refresh: true as const }
+			: {};
 
 	if (!config) {
-		return { blocks: [{ type: "context", text: "Approval is off until an admin saves the Approvals settings." }], ...toast };
+		return {
+			blocks: [
+				{ type: "context", text: "Approval is off until an admin saves the Approvals settings." },
+			],
+			...toast,
+		};
 	}
 	const request = await requests(ctx).get(key);
 	const held = config.collections.includes(entry.collection);
 	if (!held && !request) {
 		const blocks: Block[] = [{ type: "section", text: `Approval is off for ${info.label}.` }];
 		if (!info.keepsDrafts) {
-			blocks.push({ type: "context", text: "EmDash publishes this type's saves at once, so it can't be held." });
+			blocks.push({
+				type: "context",
+				text: "EmDash publishes this type's saves at once, so it can't be held.",
+			});
 		}
 		return { blocks, ...toast };
 	}
 	const draft = await readDraft(ctx, entry.collection, entry.id);
-	if (!draft) return { blocks: [{ type: "context", text: "Save this page to ask for approval." }], ...toast };
+	if (!draft)
+		return { blocks: [{ type: "context", text: "Save this page to ask for approval." }], ...toast };
 
 	if (!request || request.status === "closed") {
 		return {
@@ -82,7 +106,16 @@ export async function handlePanel(
 			blocks.push(
 				{ type: "section", text: "Waiting for your approval" },
 				{ type: "context", text: askedLine(request) },
-				...decisionBlocks({ config, request, draft, info, user, key, changes: liveChanges(info, draft), surface: "panel" }),
+				...decisionBlocks({
+					config,
+					request,
+					draft,
+					info,
+					user,
+					key,
+					changes: liveChanges(info, draft),
+					surface: "panel",
+				}),
 			);
 		} else {
 			blocks.push(
@@ -120,7 +153,10 @@ export async function handlePanel(
 		if (request.approval.fingerprint === draft.fingerprint) {
 			blocks.push(
 				{ type: "section", text: `Approved by ${request.approval.by.name}` },
-				{ type: "context", text: `${when(request.approval.at)}. Press Publish when you're ready, or schedule it.` },
+				{
+					type: "context",
+					text: `${when(request.approval.at)}. Press Publish when you're ready, or schedule it.`,
+				},
 			);
 		} else {
 			const changes = await changesSinceApproval(ctx, info, request, draft);
@@ -143,7 +179,10 @@ export async function handlePanel(
 			text: `Published ${when(request.publishedAt ?? request.updatedAt)}.${request.approval ? ` Approved by ${request.approval.by.name}.` : ""}`,
 		});
 		if (request.approval && request.approval.fingerprint !== draft.fingerprint) {
-			blocks.push({ type: "context", text: "There are newer changes; pressing Publish sends them for approval." });
+			blocks.push({
+				type: "context",
+				text: "There are newer changes; pressing Publish sends them for approval.",
+			});
 		}
 	}
 	// As in the mockup: open where the history explains the state, folded for a writer who waits.

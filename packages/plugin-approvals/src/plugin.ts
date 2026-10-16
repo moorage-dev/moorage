@@ -52,7 +52,12 @@ async function afterSave(
 	const fieldText = labels.length > 0 ? labels.join(", ") : "the page";
 	const now = new Date().toISOString();
 	const updated: ApprovalRequest = { ...request, fingerprint: draft.fingerprint, fields: hashes };
-	if (actor && config && actor.id !== request.requestedBy?.id && actor.role >= approverRole(config.preset)) {
+	if (
+		actor &&
+		config &&
+		actor.id !== request.requestedBy?.id &&
+		actor.role >= approverRole(config.preset)
+	) {
 		const user = await ctx.users?.get(actor.id).catch(() => null);
 		const by = { id: actor.id, name: personName(user) };
 		updated.edits = [...(request.edits ?? []), { by, at: now, fields: labels }].slice(-10);
@@ -85,11 +90,19 @@ const plugin: SandboxedPlugin = {
 				const request = await store.get(key);
 				if (!request) return;
 				const now = new Date().toISOString();
-				if (request.status === "published" && request.publishedAt && Date.parse(now) - Date.parse(request.publishedAt) < SAME_PUBLISH_MS) {
+				if (
+					request.status === "published" &&
+					request.publishedAt &&
+					Date.parse(now) - Date.parse(request.publishedAt) < SAME_PUBLISH_MS
+				) {
 					return;
 				}
 				const updated: ApprovalRequest = { ...request, status: "published", publishedAt: now };
-				addHistory(updated, now, request.status === "approved" ? "Published" : "Published without approval");
+				addHistory(
+					updated,
+					now,
+					request.status === "approved" ? "Published" : "Published without approval",
+				);
 				await store.put(key, updated);
 			} catch (error) {
 				ctx.log.warn("could not record a publish", { error: String(error) });
@@ -136,14 +149,21 @@ const plugin: SandboxedPlugin = {
 		},
 		"editor/panel": {
 			permission: "content:read_drafts",
-			handler: async (routeCtx, ctx) => handlePanel(routeCtx.input, routeCtx.ui?.entry, routeCtx.user, ctx),
+			handler: async (routeCtx, ctx) =>
+				handlePanel(routeCtx.input, routeCtx.ui?.entry, routeCtx.user, ctx),
 		},
 		"editor/ask": {
 			permission: "content:read_drafts",
 			handler: async (routeCtx, ctx) => {
 				const entry = routeCtx.ui?.entry;
 				if (!entry) return { toast: { type: "error", message: "Save this page first." } };
-				const toast = await ask(ctx, await loadConfig(ctx), routeCtx.user, entry.collection, entry.id);
+				const toast = await ask(
+					ctx,
+					await loadConfig(ctx),
+					routeCtx.user,
+					entry.collection,
+					entry.id,
+				);
 				return { toast, refresh: true };
 			},
 		},

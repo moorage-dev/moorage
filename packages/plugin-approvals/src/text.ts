@@ -3,7 +3,17 @@
 // Turns field values into plain text, and two texts into a few words about what changed.
 
 /** Keys inside rich text that hold no words a reader sees. */
-const SKIP_KEYS = new Set(["id", "style", "listItem", "level", "markDefs", "marks", "href", "url", "src"]);
+const SKIP_KEYS = new Set([
+	"id",
+	"style",
+	"listItem",
+	"level",
+	"markDefs",
+	"marks",
+	"href",
+	"url",
+	"src",
+]);
 
 const PICTURE_TYPES = new Set(["image", "file", "media", "gallery"]);
 
@@ -26,7 +36,9 @@ export function textOf(value: unknown): string {
 		// A Portable Text block: its words are the children's text, joined without breaks.
 		if (Array.isArray(value.children)) {
 			return value.children
-				.map((child) => (isRecord(child) && typeof child.text === "string" ? child.text : textOf(child)))
+				.map((child) =>
+					isRecord(child) && typeof child.text === "string" ? child.text : textOf(child),
+				)
 				.join("")
 				.trim();
 		}
@@ -63,7 +75,10 @@ export function textCopy(
 	data: Record<string, unknown>,
 	title: { slug: string; label: string } | null,
 ): FieldText[] {
-	const known = fields.length > 0 ? fields : Object.keys(data).map((slug) => ({ slug, label: slug, type: "string" }));
+	const known =
+		fields.length > 0
+			? fields
+			: Object.keys(data).map((slug) => ({ slug, label: slug, type: "string" }));
 	const copy: FieldText[] = [];
 	for (const field of known) {
 		if (field.slug.startsWith("_")) continue;
@@ -149,7 +164,8 @@ function hunks(before: string[], after: string[]): Hunk[] | null {
 function phrase(hunk: Hunk, tense: Tense): string {
 	const removed = clip(hunk.removed.join(" "));
 	const added = clip(hunk.added.join(" "));
-	if (removed && added) return `"${removed}" ${tense === "future" ? "becomes" : "became"} "${added}"`;
+	if (removed && added)
+		return `"${removed}" ${tense === "future" ? "becomes" : "became"} "${added}"`;
 	if (added) return `${tense === "future" ? "adds" : "added"} "${added}"`;
 	return `${tense === "future" ? "removes" : "removed"} "${removed}"`;
 }
@@ -157,7 +173,8 @@ function phrase(hunk: Hunk, tense: Tense): string {
 /** What changed in one text, in a few words: `"£3.20" becomes "£3.40"; adds "pavlova"`. */
 export function describeTextChange(before: string, after: string, tense: Tense): string {
 	const found = hunks(words(before), words(after));
-	if (found === null) return tense === "future" ? "rewritten throughout" : "was rewritten throughout";
+	if (found === null)
+		return tense === "future" ? "rewritten throughout" : "was rewritten throughout";
 	const shown = found.slice(0, CHANGES_SHOWN).map((h) => phrase(h, tense));
 	const more = found.length - shown.length;
 	const sentence = shown.join("; ");
@@ -170,7 +187,11 @@ export interface FieldChange {
 }
 
 /** Every field whose text differs between two copies, described in words. */
-export function describeChanges(before: FieldText[], after: FieldText[], tense: Tense): FieldChange[] {
+export function describeChanges(
+	before: FieldText[],
+	after: FieldText[],
+	tense: Tense,
+): FieldChange[] {
 	const old = new Map(before.map((f) => [f.slug, f]));
 	const changes: FieldChange[] = [];
 	for (const field of after) {
@@ -187,7 +208,8 @@ export function describeChanges(before: FieldText[], after: FieldText[], tense: 
 		changes.push({ label: field.label, text: `${describeTextChange(was, field.text, tense)}.` });
 	}
 	for (const gone of old.values()) {
-		if (gone.text !== "") changes.push({ label: gone.label, text: tense === "future" ? "removed." : "was removed." });
+		if (gone.text !== "")
+			changes.push({ label: gone.label, text: tense === "future" ? "removed." : "was removed." });
 	}
 	return changes;
 }
@@ -205,7 +227,10 @@ export function stableStringify(value: unknown): string {
 }
 
 /** Identifies one version of a page: its content and address. */
-export async function fingerprint(data: Record<string, unknown>, slug: string | null): Promise<string> {
+export async function fingerprint(
+	data: Record<string, unknown>,
+	slug: string | null,
+): Promise<string> {
 	const clean: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(data)) if (!key.startsWith("_")) clean[key] = value;
 	const bytes = new TextEncoder().encode(stableStringify({ data: clean, slug: slug ?? null }));
@@ -248,7 +273,10 @@ export function fieldHashes(data: Record<string, unknown>): Record<string, strin
 }
 
 /** The fields whose values differ between two sets of hashes. */
-export function changedFields(before: Record<string, string>, after: Record<string, string>): string[] {
+export function changedFields(
+	before: Record<string, string>,
+	after: Record<string, string>,
+): string[] {
 	const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
 	return [...keys].filter((k) => before[k] !== after[k]);
 }

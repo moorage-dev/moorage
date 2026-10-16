@@ -108,7 +108,11 @@ export interface Draft {
  * hook's content: draft revision data over the live data, `_` keys dropped, the draft's
  * address. The fingerprint must match the one the hook computes, or every approval is lost.
  */
-export async function readDraft(ctx: PluginContext, collection: string, id: string): Promise<Draft | null> {
+export async function readDraft(
+	ctx: PluginContext,
+	collection: string,
+	id: string,
+): Promise<Draft | null> {
 	const item = await ctx.content?.get(collection, id);
 	if (!item) return null;
 	const liveData = isRecord(item.data) ? item.data : {};
@@ -159,7 +163,11 @@ export async function collectionInfo(ctx: PluginContext, slug: string): Promise<
 	};
 }
 
-export function titleOf(info: CollectionInfo, data: Record<string, unknown>, fallback: string): string {
+export function titleOf(
+	info: CollectionInfo,
+	data: Record<string, unknown>,
+	fallback: string,
+): string {
 	const value = info.title ? data[info.title.slug] : data.title;
 	return typeof value === "string" && value.trim() !== "" ? value.trim() : fallback;
 }
@@ -173,7 +181,11 @@ export function personName(user: Pick<UserInfo, "name" | "email"> | null | undef
 }
 
 /** Everyone who may approve under the settings, admins first. Excludes the person given. */
-export async function approvers(ctx: PluginContext, config: Config, except?: string | null): Promise<UserInfo[]> {
+export async function approvers(
+	ctx: PluginContext,
+	config: Config,
+	except?: string | null,
+): Promise<UserInfo[]> {
 	if (!ctx.users) return [];
 	const min = approverRole(config.preset);
 	const found: UserInfo[] = [];

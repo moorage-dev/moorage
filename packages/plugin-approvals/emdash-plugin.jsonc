@@ -45,7 +45,9 @@
 	],
 	"allowedHosts": [],
 	"admin": {
-		"pages": [{ "path": "/overview", "label": "Approvals", "icon": "check-circle", "group": "Content" }],
+		"pages": [
+			{ "path": "/overview", "label": "Approvals", "icon": "check-circle", "group": "Content" },
+		],
 		"widgets": [{ "id": "approvals", "title": "Approvals", "size": "third" }],
 		"editorPanels": [{ "id": "approval", "title": "Approval", "route": "editor/panel" }],
 		"editorActions": [

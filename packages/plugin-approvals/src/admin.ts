@@ -2,10 +2,18 @@
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
-import type { UserInfo } from "./requests.js";
 
-import { approve, sendBack, type Outcome } from "./actions.js";
-import { approverRole, CONFIG_KEY, DEFAULT_CONFIG, loadConfig, normalizeConfig, ROLE, type Config } from "./config.js";
+import { approve, ask, sendBack, type Outcome } from "./actions.js";
+import {
+	approverRole,
+	CONFIG_KEY,
+	DEFAULT_CONFIG,
+	loadConfig,
+	normalizeConfig,
+	ROLE,
+	type Config,
+} from "./config.js";
+import type { UserInfo } from "./requests.js";
 import {
 	ago,
 	approvers,
@@ -52,7 +60,9 @@ async function loadLists(ctx: PluginContext): Promise<Lists> {
 	const all = result.items.map((row) => row.data);
 	return {
 		all,
-		waiting: all.filter((r) => r.status === "waiting").sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)),
+		waiting: all
+			.filter((r) => r.status === "waiting")
+			.sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)),
 		sentBack: all.filter((r) => r.status === "sent_back"),
 		done: all.filter((r) => r.status !== "waiting"),
 	};
@@ -73,7 +83,11 @@ function isApprover(config: Config | null, user: UserInfo | undefined): boolean 
 }
 
 /** Only an approver sees everyone's requests; writers see their own. */
-function visible(config: Config | null, user: UserInfo | undefined, list: ApprovalRequest[]): ApprovalRequest[] {
+function visible(
+	config: Config | null,
+	user: UserInfo | undefined,
+	list: ApprovalRequest[],
+): ApprovalRequest[] {
 	if (isApprover(config, user)) return list;
 	return list.filter((r) => user && r.requestedBy?.id === user.id);
 }
@@ -96,7 +110,7 @@ function waitingRows(
 	config: Config | null,
 	user: UserInfo | undefined,
 	names: Map<string, string>,
-	checkCounts: Map<string, number>,
+	checksByKey: Map<string, number>,
 ): Block[] {
 	if (list.length === 0) {
 		return [
@@ -112,7 +126,7 @@ function waitingRows(
 	const blocks: Block[] = [];
 	for (const request of list) {
 		const decide = config ? canReview(config, request, user) : false;
-		const checks = checkCounts.get(key(request)) ?? 0;
+		const checks = checksByKey.get(key(request)) ?? 0;
 		const asker = request.ai
 			? `from an AI tool (${request.requestedBy?.name ?? "someone"}'s key)`
 			: `asked by ${request.requestedBy?.name ?? "a scheduled publish"}`;
@@ -121,7 +135,12 @@ function waitingRows(
 				type: "section",
 				text: request.title,
 				accessory: decide
-					? { type: "button", action_id: ACTION.review, label: "Review", value: { key: key(request) } }
+					? {
+							type: "button",
+							action_id: ACTION.review,
+							label: "Review",
+							value: { key: key(request) },
+						}
 					: openLink(request),
 			},
 			{
@@ -167,7 +186,9 @@ function summary(request: ApprovalRequest): string {
 		case "published":
 			return `Published ${when(request.publishedAt ?? request.updatedAt)}${approvedBy ? ` · ${approvedBy}` : ""}`;
 		case "approved":
-			return a?.override !== undefined ? approvedBy.charAt(0).toUpperCase() + approvedBy.slice(1) : `Approved by ${a?.by.name ?? "?"}, ${when(a?.at ?? request.updatedAt)}`;
+			return a?.override !== undefined
+				? approvedBy.charAt(0).toUpperCase() + approvedBy.slice(1)
+				: `Approved by ${a?.by.name ?? "?"}, ${when(a?.at ?? request.updatedAt)}`;
 		case "sent_back":
 			return `Sent back by ${request.sentBack?.by.name ?? "an approver"}, ${when(request.sentBack?.at ?? request.updatedAt)}: "${request.sentBack?.note ?? ""}"`;
 		case "closed":
@@ -179,8 +200,17 @@ function summary(request: ApprovalRequest): string {
 
 async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise<Block[]> {
 	const rows = list.slice(0, HISTORY_ROWS);
-	if (rows.length === 0) return [{ type: "empty", title: "No decisions yet", description: "Approvals and pages sent back appear here." }];
-	const ids = rows.map((r) => r.approval?.versionId).filter((id): id is string => typeof id === "string");
+	if (rows.length === 0)
+		return [
+			{
+				type: "empty",
+				title: "No decisions yet",
+				description: "Approvals and pages sent back appear here.",
+			},
+		];
+	const ids = rows
+		.map((r) => r.approval?.versionId)
+		.filter((id): id is string => typeof id === "string");
 	const copies = ids.length > 0 ? await versions(ctx).getMany(ids) : new Map();
 	const blocks: Block[] = [];
 	for (const request of rows) {
@@ -195,7 +225,10 @@ async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise
 				label: `Show the approved text (${when(copy.at)})`,
 				blocks: copy.fields
 					.filter((f: { text: string }) => f.text !== "")
-					.map((f: { label: string; text: string }) => ({ type: "section" as const, text: `${f.label}: ${f.text}` })),
+					.map((f: { label: string; text: string }) => ({
+						type: "section" as const,
+						text: `${f.label}: ${f.text}`,
+					})),
 			});
 		}
 		blocks.push({ type: "divider" });
@@ -203,7 +236,11 @@ async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise
 	return blocks;
 }
 
-async function settingsBlocks(ctx: PluginContext, config: Config | null, all: ApprovalRequest[]): Promise<Block[]> {
+async function settingsBlocks(
+	ctx: PluginContext,
+	config: Config | null,
+	all: ApprovalRequest[],
+): Promise<Block[]> {
 	const current = config ?? DEFAULT_CONFIG;
 	const collections = ((await ctx.schema?.listCollections()) ?? []).filter((c) => !c.hidden);
 	const holdable = collections.filter((c) => c.supports.includes("revisions"));
@@ -211,7 +248,9 @@ async function settingsBlocks(ctx: PluginContext, config: Config | null, all: Ap
 	const people = await approvers(ctx, current, null);
 	const everyone = (await ctx.users?.list({ limit: 2 }))?.items.length ?? 0;
 	const overrides = all.filter(
-		(r) => r.approval?.override !== undefined && Date.now() - Date.parse(r.approval.at) < OVERRIDE_WINDOW_MS,
+		(r) =>
+			r.approval?.override !== undefined &&
+			Date.now() - Date.parse(r.approval.at) < OVERRIDE_WINDOW_MS,
 	).length;
 	const cantHold = notHoldable.map((c) => c.label);
 
@@ -225,14 +264,16 @@ async function settingsBlocks(ctx: PluginContext, config: Config | null, all: Ap
 		blocks.push({
 			type: "banner",
 			title: "Approval is off until you save these settings",
-			description: "Nothing is held yet, not even work from AI tools. Pick what needs approval, then press Save.",
+			description:
+				"Nothing is held yet, not even work from AI tools. Pick what needs approval, then press Save.",
 		});
 	}
 	if (everyone < 2) {
 		blocks.push({
 			type: "banner",
 			title: "Approval needs a second person",
-			description: "You are the only person on this site. Until there is another, use Approve without review.",
+			description:
+				"You are the only person on this site. Until there is another, use Approve without review.",
 		});
 	}
 	if (!ctx.email) {
@@ -240,7 +281,8 @@ async function settingsBlocks(ctx: PluginContext, config: Config | null, all: Ap
 			type: "banner",
 			variant: "alert",
 			title: "This site can't send email",
-			description: "Approvers won't get an email when someone asks. They will see requests on the dashboard and on this page.",
+			description:
+				"Approvers won't get an email when someone asks. They will see requests on the dashboard and on this page.",
 		});
 	}
 	const scheduleWarning = "Pages already scheduled will need approval before they go live.";
@@ -260,7 +302,10 @@ async function settingsBlocks(ctx: PluginContext, config: Config | null, all: Ap
 				action_id: "preset",
 				label: "Who needs approval",
 				options: [
-					{ label: "Others need my OK before publishing (recommended for agencies)", value: "others" },
+					{
+						label: "Others need my OK before publishing (recommended for agencies)",
+						value: "others",
+					},
 					{ label: "I need someone else's OK before publishing", value: "me" },
 				],
 				initial_value: current.preset,
@@ -321,7 +366,12 @@ async function settingsBlocks(ctx: PluginContext, config: Config | null, all: Ap
 			text: "The SEO panel, categories, tags and bylines of a page that is already live. EmDash saves those straight to the live page.",
 		},
 		...(cantHold.length > 0
-			? [{ type: "context" as const, text: `Every save in ${nameList(cantHold)}, because ${cantHold.length === 1 ? "it keeps" : "they keep"} no drafts.` }]
+			? [
+					{
+						type: "context" as const,
+						text: `Every save in ${nameList(cantHold)}, because ${cantHold.length === 1 ? "it keeps" : "they keep"} no drafts.`,
+					},
+				]
 			: []),
 		{ type: "context", text: "Taking a page off the site (Unpublish)." },
 		{ type: "divider" },
@@ -341,7 +391,11 @@ async function settingsBlocks(ctx: PluginContext, config: Config | null, all: Ap
 	return blocks;
 }
 
-async function checkCounts(ctx: PluginContext, config: Config | null, list: ApprovalRequest[]): Promise<Map<string, number>> {
+async function checkCounts(
+	ctx: PluginContext,
+	config: Config | null,
+	list: ApprovalRequest[],
+): Promise<Map<string, number>> {
 	const counts = new Map<string, number>();
 	if (!config || config.checks === "off") return counts;
 	for (const request of list.slice(0, 20)) {
@@ -351,12 +405,69 @@ async function checkCounts(ctx: PluginContext, config: Config | null, list: Appr
 			if (!draft) continue;
 			const banner = checksBanner(config, draft, info, true);
 			const first = banner[0];
-			if (first?.type === "banner") counts.set(key(request), (first.description ?? "").split(".").filter((s) => s.trim()).length);
+			if (first?.type === "banner")
+				counts.set(
+					key(request),
+					(first.description ?? "").split(".").filter((s) => s.trim()).length,
+				);
 		} catch {
 			// A row without its count is better than no list.
 		}
 	}
 	return counts;
+}
+
+const DRAFTS_PER_TYPE = 50;
+
+/**
+ * Contributors' drafts, each with "Ask for approval". EmDash shows plugin panels and
+ * toolbar buttons only to people who may edit and publish their own work (Authors and
+ * up), so this list is a Contributor's way to ask.
+ */
+async function draftRows(
+	ctx: PluginContext,
+	config: Config | null,
+	user: UserInfo | undefined,
+	all: ApprovalRequest[],
+): Promise<Block[]> {
+	if (!config || !user || user.role >= ROLE.author || !ctx.content) return [];
+	const open = new Set(all.filter((r) => r.status === "waiting").map((r) => key(r)));
+	const rows: Block[] = [];
+	for (const collection of config.collections) {
+		const info = await collectionInfo(ctx, collection);
+		const result = await ctx.content.list(collection, {
+			limit: DRAFTS_PER_TYPE,
+			orderBy: { updatedAt: "desc" },
+		});
+		for (const item of result.items) {
+			if (item.authorId !== user.id || item.status === "published") continue;
+			if (open.has(`${collection}:${item.id}`)) continue;
+			const title =
+				typeof item.data?.title === "string" && item.data.title.trim()
+					? item.data.title.trim()
+					: "Untitled";
+			rows.push(
+				{
+					type: "section",
+					text: title,
+					accessory: {
+						type: "button",
+						action_id: ACTION.ask,
+						label: "Ask for approval",
+						value: { collection, id: item.id },
+					},
+				},
+				{ type: "context", text: `${info.label} · saved ${ago(item.updatedAt)}` },
+				{ type: "divider" },
+			);
+		}
+	}
+	if (rows.length === 0) return [];
+	return [
+		{ type: "header", text: "Your drafts" },
+		{ type: "context", text: "Ask for approval when a draft is ready. An approver publishes it." },
+		...rows,
+	];
 }
 
 const TABS = { waiting: 0, sentBack: 1, history: 2, settings: 3 } as const;
@@ -395,6 +506,7 @@ async function listPage(
 							],
 				},
 				...waitingRows(waiting, config, user, names, counts),
+				...(await draftRows(ctx, config, user, lists.all)),
 			],
 		},
 		{ label: `Sent back (${sentBack.length})`, blocks: sentBackRows(sentBack, names) },
@@ -424,14 +536,26 @@ async function detailPage(
 	const info = await collectionInfo(ctx, request.collection);
 	const blocks: Block[] = [
 		{ type: "header", text: "Approvals" },
-		{ type: "actions", elements: [{ type: "button", action_id: ACTION.back, label: "‹ Back to the list" }] },
+		{
+			type: "actions",
+			elements: [{ type: "button", action_id: ACTION.back, label: "‹ Back to the list" }],
+		},
 		{ type: "header", text: request.title },
 		{
 			type: "fields",
 			fields: [
-				{ label: "Asked by", value: `${request.ai ? "An AI tool" : (request.requestedBy?.name ?? "A scheduled publish")}, ${when(request.requestedAt)}` },
+				{
+					label: "Asked by",
+					value: `${request.ai ? "An AI tool" : (request.requestedBy?.name ?? "A scheduled publish")}, ${when(request.requestedAt)}`,
+				},
 				{ label: "Content type", value: info.label },
-				{ label: "Wants to", value: request.wants === "schedule" ? `Schedule${request.scheduledAt ? ` for ${when(request.scheduledAt)}` : ""}` : "Publish now" },
+				{
+					label: "Wants to",
+					value:
+						request.wants === "schedule"
+							? `Schedule${request.scheduledAt ? ` for ${when(request.scheduledAt)}` : ""}`
+							: "Publish now",
+				},
 				{ label: "Live now", value: draft.live ? "Yes, an earlier version" : "No" },
 			],
 		},
@@ -454,7 +578,11 @@ function toastOf(outcome: Outcome): BlockResponse["toast"] {
 	return { type: outcome.ok ? "success" : "error", message: outcome.message };
 }
 
-async function widget(ctx: PluginContext, config: Config | null, user: UserInfo | undefined): Promise<BlockResponse> {
+async function widget(
+	ctx: PluginContext,
+	config: Config | null,
+	user: UserInfo | undefined,
+): Promise<BlockResponse> {
 	const lists = await loadLists(ctx);
 	if (!isApprover(config, user)) {
 		const mine = visible(config, user, lists.waiting).length;
@@ -462,36 +590,70 @@ async function widget(ctx: PluginContext, config: Config | null, user: UserInfo 
 		return {
 			blocks: [
 				{ type: "section", text: `${mine} of yours waiting · ${back} sent back` },
-				{ type: "actions", elements: [{ type: "link", label: "See all in Approvals", target: { kind: "plugin-page", path: "/overview" } }] },
+				{
+					type: "actions",
+					elements: [
+						{
+							type: "link",
+							label: "See all in Approvals",
+							target: { kind: "plugin-page", path: "/overview" },
+						},
+					],
+				},
 			],
 		};
 	}
 	const mine = config ? lists.waiting.filter((r) => canDecide(config, r, user)) : [];
-	const blocks: Block[] = [{ type: "stats", items: [{ label: "Waiting for you", value: mine.length }] }];
+	const blocks: Block[] = [
+		{ type: "stats", items: [{ label: "Waiting for you", value: mine.length }] },
+	];
 	for (const request of mine.slice(0, 5)) {
 		blocks.push(
 			{ type: "section", text: request.title },
-			{ type: "context", text: `${request.ai ? "AI tool" : (request.requestedBy?.name ?? "Scheduled")} · ${ago(request.requestedAt)}` },
+			{
+				type: "context",
+				text: `${request.ai ? "AI tool" : (request.requestedBy?.name ?? "Scheduled")} · ${ago(request.requestedAt)}`,
+			},
 		);
 	}
-	blocks.push({ type: "actions", elements: [{ type: "link", label: "See all in Approvals", target: { kind: "plugin-page", path: "/overview" } }] });
+	blocks.push({
+		type: "actions",
+		elements: [
+			{
+				type: "link",
+				label: "See all in Approvals",
+				target: { kind: "plugin-page", path: "/overview" },
+			},
+		],
+	});
 	return { blocks };
 }
 
 /** The Approvals page and the dashboard widget. */
-export async function handleAdmin(input: unknown, user: UserInfo | undefined, ctx: PluginContext): Promise<BlockResponse> {
+export async function handleAdmin(
+	input: unknown,
+	user: UserInfo | undefined,
+	ctx: PluginContext,
+): Promise<BlockResponse> {
 	const interaction = isRecord(input) ? input : {};
 	const config = await loadConfig(ctx);
 	const action = typeof interaction.action_id === "string" ? interaction.action_id : "";
 
-	if (interaction.type === "page_load" && interaction.page === WIDGET_PAGE) return widget(ctx, config, user);
+	if (interaction.type === "page_load" && interaction.page === WIDGET_PAGE)
+		return widget(ctx, config, user);
 
 	if (interaction.type === "form_submit" && action === ACTION.saveSettings) {
 		if ((user?.role ?? 0) < ROLE.admin) {
-			return listPage(ctx, config, user, TABS.waiting, { type: "error", message: "Only admins can change these settings." });
+			return listPage(ctx, config, user, TABS.waiting, {
+				type: "error",
+				message: "Only admins can change these settings.",
+			});
 		}
 		const values = isRecord(interaction.values) ? interaction.values : {};
-		const next = normalizeConfig({ ...values, remind: ctx.email ? values.remind : (config ?? DEFAULT_CONFIG).remind });
+		const next = normalizeConfig({
+			...values,
+			remind: ctx.email ? values.remind : (config ?? DEFAULT_CONFIG).remind,
+		});
 		await ctx.kv.set(CONFIG_KEY, next);
 		const message =
 			next.collections.length === 0 && !next.ai
@@ -500,15 +662,28 @@ export async function handleAdmin(input: unknown, user: UserInfo | undefined, ct
 		return listPage(ctx, next, user, TABS.settings, { type: "success", message });
 	}
 
+	if (config && interaction.type === "block_action" && action === ACTION.ask) {
+		const target = isRecord(interaction.value) ? interaction.value : {};
+		if (typeof target.collection === "string" && typeof target.id === "string") {
+			const toast = await ask(ctx, config, user, target.collection, target.id);
+			return listPage(ctx, config, user, TABS.waiting, toast);
+		}
+	}
 	if (config && interaction.type === "block_action") {
 		const value = buttonValue(interaction.value);
 		if (action === ACTION.review && value) {
 			const detail = await detailPage(ctx, config, user, value.key);
 			if (detail) return detail;
-			return listPage(ctx, config, user, TABS.waiting, { type: "info", message: "This request has already been decided." });
+			return listPage(ctx, config, user, TABS.waiting, {
+				type: "info",
+				message: "This request has already been decided.",
+			});
 		}
 		if ((action === ACTION.approve || action === ACTION.approvePublish) && value) {
-			const outcome = await approve(ctx, config, user, value.key, { seen: value.seen, publish: action === ACTION.approvePublish });
+			const outcome = await approve(ctx, config, user, value.key, {
+				seen: value.seen,
+				publish: action === ACTION.approvePublish,
+			});
 			if (!outcome.ok) {
 				const detail = await detailPage(ctx, config, user, value.key, toastOf(outcome));
 				if (detail) return detail;
@@ -528,7 +703,11 @@ export async function handleAdmin(input: unknown, user: UserInfo | undefined, ct
 		}
 		if (action === ACTION.override && override) {
 			const reason = typeof values.reason === "string" ? values.reason : "";
-			outcome = await approve(ctx, config, user, override, { seen: undefined, publish: false, override: reason });
+			outcome = await approve(ctx, config, user, override, {
+				seen: undefined,
+				publish: false,
+				override: reason,
+			});
 			target = override;
 		}
 		if (outcome && target) {

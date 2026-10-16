@@ -25,7 +25,9 @@ export function approvalsUrl(ctx: PluginContext): string | null {
 
 export function pageUrl(ctx: PluginContext, collection: string, id: string): string | null {
 	const root = siteRoot(ctx);
-	return root ? `${root}/_emdash/admin/content/${encodeURIComponent(collection)}/${encodeURIComponent(id)}` : null;
+	return root
+		? `${root}/_emdash/admin/content/${encodeURIComponent(collection)}/${encodeURIComponent(id)}`
+		: null;
 }
 
 interface Mail {
@@ -44,14 +46,23 @@ async function send(ctx: PluginContext, mail: Mail): Promise<number> {
 	const link = mail.button?.url
 		? `${mail.button.label}: ${mail.button.url}`
 		: "Open Approvals in your site admin.";
-	const text = [mail.heading, "", ...mail.lines, "", link, ...(mail.footer ? ["", mail.footer] : [])].join("\n");
+	const text = [
+		mail.heading,
+		"",
+		...mail.lines,
+		"",
+		link,
+		...(mail.footer ? ["", mail.footer] : []),
+	].join("\n");
 	const html = [
 		`<h2 style="font-size:18px;margin:0 0 10px">${escapeHtml(mail.heading)}</h2>`,
 		...mail.lines.map((line) => `<p>${escapeHtml(line)}</p>`),
 		mail.button?.url
 			? `<p><a href="${escapeHtml(mail.button.url)}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:7px;text-decoration:none">${escapeHtml(mail.button.label)}</a></p>`
 			: "<p>Open Approvals in your site admin.</p>",
-		...(mail.footer ? [`<p style="color:#737373;font-size:13px">${escapeHtml(mail.footer)}</p>`] : []),
+		...(mail.footer
+			? [`<p style="color:#737373;font-size:13px">${escapeHtml(mail.footer)}</p>`]
+			: []),
 	].join("\n");
 	let sent = 0;
 	// One message per person, so nobody sees the others' addresses.
@@ -67,7 +78,11 @@ async function send(ctx: PluginContext, mail: Mail): Promise<number> {
 }
 
 /** To the approvers: someone asked. */
-export async function emailAsked(ctx: PluginContext, config: Config, request: ApprovalRequest): Promise<number> {
+export async function emailAsked(
+	ctx: PluginContext,
+	config: Config,
+	request: ApprovalRequest,
+): Promise<number> {
 	const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id);
 	const asker = request.ai ? "An AI tool" : (request.requestedBy?.name ?? "Someone");
 	const firstName = request.requestedBy?.name.split(" ")[0] ?? "The writer";
@@ -84,13 +99,19 @@ export async function emailAsked(ctx: PluginContext, config: Config, request: Ap
 	});
 }
 
-export async function emailReminder(ctx: PluginContext, config: Config, request: ApprovalRequest): Promise<number> {
+export async function emailReminder(
+	ctx: PluginContext,
+	config: Config,
+	request: ApprovalRequest,
+): Promise<number> {
 	const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id);
 	return send(ctx, {
 		to: people.map((p) => p.email),
 		subject: `Still waiting: "${request.title}"`,
 		heading: `"${request.title}" is still waiting for approval`,
-		lines: [`${request.requestedBy?.name ?? "Someone"} asked on ${when(request.requestedAt)}. It is not live yet.`],
+		lines: [
+			`${request.requestedBy?.name ?? "Someone"} asked on ${when(request.requestedAt)}. It is not live yet.`,
+		],
 		button: { label: "Review and approve", url: approvalsUrl(ctx) },
 	});
 }
@@ -111,7 +132,10 @@ export async function emailWriter(
 			to: [writer.email],
 			subject: `${request.sentBack.by.name} sent back "${request.title}"`,
 			heading: `"${request.title}" needs changes`,
-			lines: [`${first}'s note: "${request.sentBack.note}"`, "Make the changes, save, and press Publish again."],
+			lines: [
+				`${first}'s note: "${request.sentBack.note}"`,
+				"Make the changes, save, and press Publish again.",
+			],
 			button: { label: "Open the page", url: page },
 		});
 	}
@@ -119,7 +143,9 @@ export async function emailWriter(
 	return send(ctx, {
 		to: [writer.email],
 		subject:
-			kind === "published" ? `Approved and published: "${request.title}"` : `Approved: "${request.title}"`,
+			kind === "published"
+				? `Approved and published: "${request.title}"`
+				: `Approved: "${request.title}"`,
 		heading: kind === "published" ? `"${request.title}" is live` : `"${request.title}" is approved`,
 		lines:
 			kind === "published"
@@ -130,7 +156,11 @@ export async function emailWriter(
 }
 
 /** To the other approvers: someone approved without review. */
-export async function emailOverride(ctx: PluginContext, config: Config, request: ApprovalRequest): Promise<number> {
+export async function emailOverride(
+	ctx: PluginContext,
+	config: Config,
+	request: ApprovalRequest,
+): Promise<number> {
 	const by = request.approval?.by;
 	if (!by) return 0;
 	const people = await approvers(ctx, config, by.id);

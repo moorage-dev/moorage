@@ -36,12 +36,18 @@ export function taskName(prefix: string, key: string, at: string): string {
 }
 
 /** The approvers' names for a message, or a general wording when they cannot be read. */
-async function askedNames(ctx: PluginContext, config: Config, request: ApprovalRequest): Promise<string> {
+async function askedNames(
+	ctx: PluginContext,
+	config: Config,
+	request: ApprovalRequest,
+): Promise<string> {
 	try {
 		const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id);
 		const names = people.slice(0, 4).map((p) => personName(p));
 		if (names.length === 0) return "";
-		return people.length > 4 ? `${names.join(", ")} and ${people.length - 4} more` : nameList(names);
+		return people.length > 4
+			? `${names.join(", ")} and ${people.length - 4} more`
+			: nameList(names);
 	} catch {
 		return "";
 	}
@@ -80,10 +86,12 @@ export function holdRequest(
 ): HoldResult {
 	const sameWaiting = existing?.status === "waiting" && existing.fingerprint === input.fingerprint;
 	if (existing && sameWaiting) {
-		const due = !existing.emailedAt || Date.parse(now) - Date.parse(existing.emailedAt) >= EMAIL_EVERY_MS;
+		const due =
+			!existing.emailedAt || Date.parse(now) - Date.parse(existing.emailedAt) >= EMAIL_EVERY_MS;
 		return { request: existing, notify: due, again: true, changed: false };
 	}
-	const changed = existing?.status === "approved" && existing.approval?.fingerprint !== input.fingerprint;
+	const changed =
+		existing?.status === "approved" && existing.approval?.fingerprint !== input.fingerprint;
 	const request: ApprovalRequest = {
 		collection: input.collection,
 		entryId: input.entryId,
@@ -107,7 +115,9 @@ export function holdRequest(
 	addHistory(
 		request,
 		now,
-		changed ? `${who} asked again: the page changed after it was approved` : `${who} asked for approval (${input.how})`,
+		changed
+			? `${who} asked again: the page changed after it was approved`
+			: `${who} asked for approval (${input.how})`,
 	);
 	return {
 		request,
@@ -118,8 +128,15 @@ export function holdRequest(
 	};
 }
 
-export function heldMessage(result: HoldResult, names: string, email: boolean, ai: boolean): string {
-	const asked = names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked` : "The approvers have been asked";
+export function heldMessage(
+	result: HoldResult,
+	names: string,
+	email: boolean,
+	ai: boolean,
+): string {
+	const asked = names
+		? `${names} ${names.includes(" and ") ? "have" : "has"} been asked`
+		: "The approvers have been asked";
 	if (ai) {
 		return `Sent for approval. Not live yet. On this site a person must OK what AI tools publish; ${names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked` : "the approvers have been asked"}. Do not try again: a person will approve and publish it.`;
 	}
@@ -175,7 +192,9 @@ export async function gate(
 		const now = new Date().toISOString();
 		const titleValue = data.title;
 		const title =
-			typeof titleValue === "string" && titleValue.trim() !== "" ? titleValue.trim() : (existing?.title ?? "Untitled");
+			typeof titleValue === "string" && titleValue.trim() !== ""
+				? titleValue.trim()
+				: (existing?.title ?? "Untitled");
 		let requestedBy: ApprovalRequest["requestedBy"] = null;
 		if (event.actor) {
 			const user = await ctx.users?.get(event.actor.id).catch(() => null);
