@@ -37,7 +37,7 @@ function median(run: () => void): number {
 		run();
 		times.push(performance.now() - start);
 	}
-	return times.toSorted((a, b) => a - b)[3] ?? 0;
+	return [...times].sort((a, b) => a - b)[3] ?? 0;
 }
 
 describe("CPU per run", () => {
