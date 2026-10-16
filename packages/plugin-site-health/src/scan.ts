@@ -707,8 +707,10 @@ export async function dueStep(
 				};
 			}
 			fetches += 1;
-			let outcome = await request(ctx, row.url, { method: "HEAD" });
-			let result = verdict(row.url, outcome, "HEAD");
+			// A site that refused HEAD before is asked with GET straight away.
+			const method = row.get ? "GET" : "HEAD";
+			const outcome = await request(ctx, row.url, { method });
+			const result = verdict(row.url, outcome, method);
 			hosts[row.host] = {
 				at: now,
 				...(hosts[row.host]?.slow ? { slow: hosts[row.host]!.slow } : {}),
@@ -729,7 +731,7 @@ export async function dueStep(
 			);
 		}
 		if (result.kind === "retry" && fetches >= FETCH_BUDGET) {
-			item.after = { ...item.before, due: iso(now + HOST_GAP) };
+			item.after = { ...item.before, due: iso(now + HOST_GAP), get: true };
 			continue;
 		}
 		if (result.kind === "unknown" && result.reason === "slow") {
@@ -737,6 +739,7 @@ export async function dueStep(
 			hosts[item.before.host] = { ...host, slow: (host.slow ?? 0) + 1 };
 		}
 		item.after = afterExternal(item.before, result, now);
+		if (item.result.kind === "retry") item.after.get = true;
 	}
 	// Forget hosts not asked for a day, so the record stays small.
 	for (const [host, entry] of Object.entries(hosts))

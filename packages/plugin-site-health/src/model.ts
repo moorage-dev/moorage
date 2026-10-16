@@ -79,6 +79,8 @@ export interface LinkRow {
 	/** When it is next checked from outside ("9999" = only with the next full check). */
 	due: string;
 	fine?: { by: string; at: string };
+	/** The site refuses HEAD requests; ask it with GET. */
+	get?: boolean;
 }
 
 export interface PageRow {

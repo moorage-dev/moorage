@@ -30,7 +30,8 @@ export async function cronRun(raw: PluginContext, now = Date.now()): Promise<voi
 		return;
 	}
 	// The first check runs flat out; later ones take turns with links to other sites.
-	const passTurn = !data.summary || new Date(now).getUTCMinutes() % 2 === 0;
+	// The last run was a check of what is due (or both ran at once): the full check goes next.
+	const passTurn = !data.summary || (data.queue.cronAt ?? "") >= (scan?.cronAt ?? "");
 	if (scan?.status === "running" && passTurn) {
 		data.scan = { ...scan, cronAt: stamp };
 		await passStep(ctx, data, counter, now);

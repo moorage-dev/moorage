@@ -119,7 +119,8 @@ export function verdict(url: string, outcome: Outcome, method: "GET" | "HEAD"): 
 	if (method === "HEAD" && [400, 403, 404, 405, 501].includes(status)) return { kind: "retry" };
 	if (status === 404 || status === 410) return { kind: "gone" };
 	if (status === 429) return { kind: "unknown", reason: "slow" };
-	if (status >= 500) return { kind: "server" };
+	// LinkedIn answers 999 to every checker: a refusal, not an error.
+	if (status >= 500 && status < 600) return { kind: "server" };
 	if ([401, 403, 407, 451, 999].includes(status) || status >= 400) {
 		return { kind: "unknown", reason: "refuses" };
 	}
