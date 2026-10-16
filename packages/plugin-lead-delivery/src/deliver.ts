@@ -281,7 +281,8 @@ export async function attempt(
 	row: Delivery,
 ): Promise<Delivery> {
 	const place = config.places.find((p) => p.id === row.destination);
-	const enquiry = await enquiries(ctx).get(row.enquiryId);
+	const stored = await enquiries(ctx).get(row.enquiryId);
+	const enquiry = stored?.cleared ? null : stored;
 	const now = Date.now();
 	let next: Delivery;
 	if (!place || !enquiry) {
@@ -346,14 +347,26 @@ async function saveTested(ctx: PluginContext) {
 /** Once every place has an enquiry, its contents go; the Forms inbox keeps the original. */
 export async function finishEnquiry(ctx: PluginContext, enquiryId: string) {
 	const enquiry = await enquiries(ctx).get(enquiryId);
-	if (!enquiry) return;
+	if (!enquiry || enquiry.cleared) return;
 	const config = await loadConfig(ctx);
 	const ids = config.places.map((p) => deliveryId(enquiryId, p.id));
 	const mine = [...(await deliveries(ctx).getMany(ids)).values()];
 	if (mine.some((d) => d.status === "retrying")) return;
 	const allThere = mine.every((d) => d.status === "delivered" || d.status === "skipped");
 	if (allThere && mine.length > 0 && enquiry.via !== "test") await count(ctx, "d");
-	if (allThere) await enquiries(ctx).delete(enquiryId);
+	// The contents go; a bare record stays until cleanup so a repeat is still a no-op.
+	if (allThere) {
+		await enquiries(ctx).put(enquiryId, {
+			formId: enquiry.formId,
+			formName: enquiry.formName,
+			receivedAt: enquiry.receivedAt,
+			fields: [],
+			via: enquiry.via,
+			throwaway: false,
+			hasFiles: false,
+			cleared: true,
+		});
+	}
 }
 
 /** Due tries, three at a time, then the next one-shot run. */

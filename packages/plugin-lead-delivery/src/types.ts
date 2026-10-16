@@ -84,6 +84,8 @@ export interface Enquiry {
 	/** Days since the same address last sent this form (within 7 days). */
 	repeatDays?: number;
 	hasFiles: boolean;
+	/** Contents removed after every place had it; kept so a repeat is still recognised. */
+	cleared?: boolean;
 }
 
 export type DeliveryStatus = "delivered" | "retrying" | "fixing" | "gaveup" | "skipped";
