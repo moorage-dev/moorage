@@ -399,6 +399,18 @@ async function mergeLive(
 	await links(ctx).putMany([...merged].map(([id, data]) => ({ id, data })));
 }
 
+/** The home page answered as itself: 2xx, HTML, not a hosting error page. */
+export function isOwnPage(outcome: { status?: number; headers?: Headers; body?: string }): boolean {
+	const status = outcome.status ?? 0;
+	if (status < 200 || status >= 300) return false;
+	const type = outcome.headers?.get("content-type") ?? "";
+	if (type !== "" && !/html/i.test(type)) return false;
+	const head = (outcome.body ?? "").slice(0, 2000);
+	if (/error code: ?\d{3,4}|cf-error-details|Worker threw exception|cloudflare-nginx/i.test(head))
+		return false;
+	return true;
+}
+
 async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): Promise<void> {
 	const origin = publicOrigin(ctx.site.url);
 	if (!origin) {
@@ -415,6 +427,14 @@ async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): P
 	}
 	if (status === 403 || status === 429 || status === 503 || status === 401) {
 		scan.live = "blocked";
+		scan.phase = "live-paths";
+		return;
+	}
+	// Only a real page counts as "the site answered". A failed fetch of a site's own
+	// address can come back as an error page (any status, a Cloudflare error body);
+	// taking that as the site's own answer would call every page broken.
+	if (!isOwnPage(outcome)) {
+		scan.live = "failed";
 		scan.phase = "live-paths";
 		return;
 	}
@@ -692,7 +712,7 @@ export async function dueStep(
 			)
 				continue;
 			taken.add(row.host);
-		} else if (row.kind !== "page" || !origin) continue;
+		} else if (row.kind !== "page" || !origin || data.summary?.live !== "ok") continue;
 		picked.push({ id: item.id, row });
 	}
 	let fetches = 0;

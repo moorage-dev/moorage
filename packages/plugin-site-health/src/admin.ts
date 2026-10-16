@@ -775,7 +775,9 @@ async function checkAgain(
 ): Promise<BlockResponse["toast"]> {
 	const row = await links(ctx).get(id);
 	if (!row) return { type: "info", message: "That address is no longer on your pages." };
-	const origin = publicOrigin(ctx.site.url);
+	// Own pages are opened only when the last full check could open the site;
+	// otherwise an error page from the host would be taken for the site's answer.
+	const origin = data.summary?.live === "ok" ? publicOrigin(ctx.site.url) : null;
 	let after: LinkRow = row;
 	const base = row.state === "fine" ? { ...row, state: "pending" as const, fine: undefined } : row;
 	if (row.kind === "external") {

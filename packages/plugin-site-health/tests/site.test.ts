@@ -460,6 +460,55 @@ describe("a site that cannot open its own pages", () => {
 		expect(text(page)).toContain("This site is not public yet");
 	});
 
+	for (const [name, status, body] of [
+		["a hosting error page", 522, "error code: 522"],
+		["a 'not found' error page from the host", 404, "error code: 1042"],
+	] as const) {
+		it(`degrades to 'could not check' when the site's own address returns ${name}`, async () => {
+			const runtime = await start();
+			const error = () => new Response(body, { status, headers: { "content-type": "text/plain" } });
+			for (const path of [
+				"/",
+				"/about",
+				"/home",
+				"/old-page",
+				"/menu-2024",
+				MISSING_PATH,
+				"/robots.txt",
+				"/sitemap.xml",
+			]) {
+				for (let i = 0; i < 4; i += 1) await runtime.http.respond(`${SITE}${path}`, error());
+			}
+			await runtime.admin.submit(PAGE, "save_options", {
+				recipients: "ellen@acme.test",
+				outbound: false,
+			});
+			await runtime.transport.invokeHook("plugin:activate", {});
+			await finish(runtime);
+			for (let run = 0; run < 3; run += 1) await cron(runtime);
+
+			const result = await summary(runtime);
+			expect(result.live).toBe("failed");
+			expect(result.rows.site).toEqual([]);
+			// Only what the content itself shows: the insecure map and the unpublished page.
+			expect(result.rows.page.map((r) => r.url)).toEqual(["http://maps.example/embed"]);
+			expect(result.rows.link.map((r) => r.url)).toEqual(["/christmas"]);
+			expect(result.unknownRows.map((r) => `${r.url} ${r.reason}`)).toContain("/old-page no-live");
+			expect(await runtime.inspect.email()).toEqual([]);
+			const page = text(await runtime.admin.loadPage(PAGE));
+			expect(page).toContain("We cannot open your pages to check them");
+			expect(page).not.toContain("does not exist");
+
+			// Checking a row again does not open the site either.
+			const asked = runtime.http.requests().length;
+			const again = await runtime.admin.act(PAGE, "fix", {
+				value: `check|${idFor("internal", "/old-page")}`,
+			});
+			expect(again.toast?.message).toContain("It is not counted as broken.");
+			expect(runtime.http.requests().length).toBe(asked);
+		});
+	}
+
 	it("degrades to 'could not check' when the site's own pages refuse us", async () => {
 		const runtime = await start();
 		await runtime.http.respond(`${SITE}/`, html("Checking your browser", 403));
