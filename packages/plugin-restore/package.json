@@ -1,0 +1,74 @@
+{
+	"name": "@moorage/plugin-restore",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Backup & Restore for EmDash on Cloudflare: put the whole site back to any moment in the last 30 days, and undo it. Point in time restore.",
+	"keywords": [
+		"emdash",
+		"emdash-plugin",
+		"emdash-cms",
+		"cms",
+		"backup",
+		"restore",
+		"point-in-time-restore",
+		"undo",
+		"cloudflare",
+		"d1",
+		"time-travel"
+	],
+	"license": "MIT",
+	"author": "Moorage (https://moorage.dev)",
+	"homepage": "https://moorage.dev/plugins/restore",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/moorage-dev/moorage.git",
+		"directory": "packages/plugin-restore"
+	},
+	"bugs": "https://github.com/moorage-dev/moorage/issues",
+	"publishConfig": {
+		"access": "public"
+	},
+	"type": "module",
+	"main": "dist/index.mjs",
+	"exports": {
+		".": {
+			"import": "./dist/index.mjs",
+			"types": "./dist/index.d.mts"
+		},
+		"./sandbox": "./dist/plugin.mjs",
+		"./simulated-cloudflare": "./test-support/simulated-cloudflare.mjs"
+	},
+	"files": [
+		"dist",
+		"!dist/*.tar.gz",
+		"emdash-plugin.jsonc",
+		"listing",
+		"CHANGELOG.md",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"validate": "emdash-plugin validate",
+		"build": "emdash-plugin build",
+		"dev": "emdash-plugin dev",
+		"typecheck": "tsc --noEmit",
+		"test": "emdash-plugin validate && vitest run",
+		"time-travel-check": "node scripts/time-travel-check.mjs",
+		"bundle": "emdash-plugin bundle",
+		"login": "emdash-plugin login",
+		"registry:publish": "emdash-plugin publish",
+		"release:setup": "emdash-plugin release setup"
+	},
+	"peerDependencies": {
+		"emdash": ">=1.3.0"
+	},
+	"devDependencies": {
+		"@emdash-cms/blocks": "catalog:",
+		"@emdash-cms/plugin-cli": "catalog:",
+		"@emdash-cms/plugin-test": "catalog:",
+		"@moorage/typescript-config": "workspace:*",
+		"emdash": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

@@ -1,0 +1,5 @@
+{
+	"extends": "@moorage/typescript-config/library.json",
+	"include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
+	"exclude": ["node_modules", "dist"]
+}
