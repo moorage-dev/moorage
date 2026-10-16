@@ -1,6 +1,12 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import { definePlugin, getRequestContext, getSiteSetting, pluginResponse, PluginRouteError } from "emdash";
+import {
+	definePlugin,
+	getRequestContext,
+	getSiteSetting,
+	pluginResponse,
+	PluginRouteError,
+} from "emdash";
 import type { PluginContext, PluginDescriptor, RouteContext } from "emdash";
 
 import pkg from "../package.json" with { type: "json" };
@@ -14,8 +20,15 @@ import {
 	type ProblemKind,
 	type Problems,
 } from "./admin.js";
-import { isLive, normalizeStore, PROBLEMS_KEY, STORE_KEY, type Popup, type Store } from "./config.js";
 import type { PreviewAnswer } from "./client/types.js";
+import {
+	isLive,
+	normalizeStore,
+	PROBLEMS_KEY,
+	STORE_KEY,
+	type Popup,
+	type Store,
+} from "./config.js";
 import { checkForm } from "./forms.js";
 import { clientItem, pageFragments } from "./fragment.js";
 import {
@@ -38,7 +51,12 @@ const { version } = pkg;
 
 /** Permanent id: part of every route URL and storage key. */
 export const PLUGIN_ID = "popups";
-const CAPABILITIES = ["hooks.page-fragments:register", "schema:read", "media:read", "email:send"] as const;
+const CAPABILITIES = [
+	"hooks.page-fragments:register",
+	"schema:read",
+	"media:read",
+	"email:send",
+] as const;
 
 /**
  * Add to `plugins: []` in `astro.config.mjs`. There are no options:
@@ -112,7 +130,11 @@ function originOf(ctx: RouteContext): string | undefined {
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The email to whoever looks after the site when a popup cannot open. */
-export function alertEmail(siteName: string, popup: Popup, kind: ProblemKind): { subject: string; text: string } {
+export function alertEmail(
+	siteName: string,
+	popup: Popup,
+	kind: ProblemKind,
+): { subject: string; text: string } {
 	const fix =
 		kind === "missing"
 			? `Its form "${popup.form}" no longer exists under Forms. Open Forms, copy the short name of the form you want, and paste it in this popup under Popups > Edit > Change > What it says.`
@@ -200,8 +222,14 @@ export function createPlugin() {
 					const range =
 						input?.type === "form_submit" && input.action_id === "range"
 							? {
-									from: typeof values.from === "string" && DAY.test(values.from.slice(0, 10)) ? values.from.slice(0, 10) : "",
-									to: typeof values.to === "string" && DAY.test(values.to.slice(0, 10)) ? values.to.slice(0, 10) : "",
+									from:
+										typeof values.from === "string" && DAY.test(values.from.slice(0, 10))
+											? values.from.slice(0, 10)
+											: "",
+									to:
+										typeof values.to === "string" && DAY.test(values.to.slice(0, 10))
+											? values.to.slice(0, 10)
+											: "",
 								}
 							: { from: "", to: "" };
 					const origin = originOf(ctx);
@@ -213,7 +241,9 @@ export function createPlugin() {
 						origin,
 						pluginId: PLUGIN_ID,
 						totals: totals(all),
-						rows: all.filter((row) => (!range.from || row.day >= range.from) && (!range.to || row.day <= range.to)),
+						rows: all.filter(
+							(row) => (!range.from || row.day >= range.from) && (!range.to || row.day <= range.to),
+						),
 						range,
 						problems,
 						media,
@@ -259,7 +289,11 @@ export function createPlugin() {
 					const problems = await readProblems(ctx);
 					const before = problems[popup.id];
 					const today = utcDay(now);
-					const entry: Problem = { k: kind, at: now, ...(before?.k === kind && before.mailed ? { mailed: before.mailed } : {}) };
+					const entry: Problem = {
+						k: kind,
+						at: now,
+						...(before?.k === kind && before.mailed ? { mailed: before.mailed } : {}),
+					};
 					// Nothing is written more than once a minute for the same report.
 					if (before && before.k === kind && now - before.at < 60_000) return { saved: false };
 					if (ctx.email && store.settings.emails.length && entry.mailed !== today) {
@@ -304,7 +338,9 @@ export function createPlugin() {
 				methods: ["GET"],
 				response: "raw",
 				handler: async (ctx) => {
-					const params = ctx.request ? new URL(ctx.request.url).searchParams : new URLSearchParams();
+					const params = ctx.request
+						? new URL(ctx.request.url).searchParams
+						: new URLSearchParams();
 					const from = DAY.test(params.get("from") ?? "") ? params.get("from") : null;
 					const to = DAY.test(params.get("to") ?? "") ? params.get("to") : null;
 					const store = await readStore(ctx);
@@ -343,15 +379,26 @@ export function createPlugin() {
 					const store = await readStore(ctx);
 					const popup = store.popups.find((p) => p.id === id && p.kind === "inline");
 					const now = Date.now();
-					if (!popup || !isLive(popup, now) || (popup.start !== null && now < popup.start)) return { box: null };
+					if (!popup || !isLive(popup, now) || (popup.start !== null && now < popup.start))
+						return { box: null };
 					return {
 						box: {
 							id: popup.id,
 							heading: popup.heading,
 							text: popup.text,
-							picture: popup.picture ? { url: popup.picture.url, alt: popup.picture.alt, width: popup.picture.width, height: popup.picture.height } : null,
+							picture: popup.picture
+								? {
+										url: popup.picture.url,
+										alt: popup.picture.alt,
+										width: popup.picture.width,
+										height: popup.picture.height,
+									}
+								: null,
 							form: popup.contains === "form" ? popup.form : "",
-							button: popup.contains === "button" && popup.buttonLabel && popup.buttonUrl ? { label: popup.buttonLabel, url: popup.buttonUrl } : null,
+							button:
+								popup.contains === "button" && popup.buttonLabel && popup.buttonUrl
+									? { label: popup.buttonLabel, url: popup.buttonUrl }
+									: null,
 							scheme: store.settings.scheme,
 							colors: store.settings.custom ? store.settings.colors : null,
 						},

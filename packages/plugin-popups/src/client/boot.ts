@@ -1,7 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import { CLOSE } from "./icons.js";
 import { styles } from "./css.js";
+import { CLOSE } from "./icons.js";
 import type { ClientConfig, ClientItem, PreviewAnswer } from "./types.js";
 
 /**
@@ -36,7 +36,8 @@ interface Visit {
 export const MEMORY_KEY = "popups";
 export const VISIT_KEY = "popups_visit";
 const DAY = 86_400_000;
-const TEXT_FIELD = "input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]),textarea,select,[contenteditable]";
+const TEXT_FIELD =
+	"input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]),textarea,select,[contenteditable]";
 
 interface Field {
 	type: string;
@@ -47,7 +48,13 @@ interface Field {
 	required: boolean;
 	defaultValue?: string;
 	options?: Array<{ label: string; value: string }>;
-	validation?: { minLength?: number; maxLength?: number; min?: number; max?: number; pattern?: string };
+	validation?: {
+		minLength?: number;
+		maxLength?: number;
+		min?: number;
+		max?: number;
+		pattern?: string;
+	};
 	condition?: { field: string; op: string; value?: string };
 }
 interface Definition {
@@ -109,16 +116,28 @@ export function boot(c: ClientConfig): void {
 		}
 		if (mine.c) {
 			const ago = Math.floor((now - mine.c) / DAY);
-			if (!item.a) return "this browser closed it " + (ago ? days(ago) + " ago" : "today") + "; it does not show again after a close";
+			if (!item.a)
+				return (
+					"this browser closed it " +
+					(ago ? days(ago) + " ago" : "today") +
+					"; it does not show again after a close"
+				);
 			if (now - mine.c < item.a * DAY) {
 				return (
-					"this browser closed it " + (ago ? days(ago) + " ago" : "today") + "; it shows again after a " + (item.a === 7 ? "week" : "month")
+					"this browser closed it " +
+					(ago ? days(ago) + " ago" : "today") +
+					"; it shows again after a " +
+					(item.a === 7 ? "week" : "month")
 				);
 			}
 		}
 		if (!auto || item.k === "bar") return "";
-		if (item.k === "modal" && firstPage && !(item.f && !phone())) return "this is the first page of the visit";
-		if (visit.s && visit.s !== item.i) return "another popup already showed in this visit";
+		if (item.k === "modal" && firstPage && !(item.f && !phone()))
+			return "this is the first page of the visit";
+		if (visit.s)
+			return visit.s === item.i
+				? "it already showed in this visit"
+				: "another popup already showed in this visit";
 		return "";
 	};
 
@@ -134,7 +153,9 @@ export function boot(c: ClientConfig): void {
 		});
 		if (hide.length) {
 			const style = d.createElement("style");
-			style.textContent = hide.map((bar) => "#popups-bar-" + bar.i + "{display:none!important}").join("");
+			style.textContent = hide
+				.map((bar) => "#popups-bar-" + bar.i + "{display:none!important}")
+				.join("");
 			d.head.appendChild(style);
 		}
 	}
@@ -144,7 +165,10 @@ export function boot(c: ClientConfig): void {
 	let staff = false;
 	const count = (item: ClientItem, event: "seen" | "sent" | "clicked" | "closed") => {
 		if (staff || previewId || !w.navigator.sendBeacon) return;
-		w.navigator.sendBeacon(c.api + "count", new Blob([JSON.stringify({ p: item.i, e: event, m: phone() })], { type: "application/json" }));
+		w.navigator.sendBeacon(
+			c.api + "count",
+			new Blob([JSON.stringify({ p: item.i, e: event, m: phone() })], { type: "application/json" }),
+		);
 	};
 	const report = (item: ClientItem, problem: string) => {
 		if (previewId) return;
@@ -218,7 +242,10 @@ export function boot(c: ClientConfig): void {
 					const form = ((await response.json()) as { data: Definition }).data;
 					const fields = form.pages.flatMap((page) => page.fields);
 					// Turnstile and file uploads only work in a box in a page in this version.
-					if (form.settings.spamProtection === "turnstile" || fields.some((f) => f.type === "file")) {
+					if (
+						form.settings.spamProtection === "turnstile" ||
+						fields.some((f) => f.type === "file")
+					) {
 						return { problem: "unsupported" };
 					}
 					return { ok: form };
@@ -240,7 +267,8 @@ export function boot(c: ClientConfig): void {
 			(v.min !== undefined ? ' min="' + v.min + '"' : "") +
 			(v.max !== undefined ? ' max="' + v.max + '"' : "") +
 			(v.pattern ? ' pattern="' + esc(v.pattern) + '"' : "");
-		const label = esc(f.label) + (f.required ? "" : ' <span class="opt">' + esc(c.t.optional) + "</span>");
+		const label =
+			esc(f.label) + (f.required ? "" : ' <span class="opt">' + esc(c.t.optional) + "</span>");
 		const help = f.helpText ? '<span class="help">' + esc(f.helpText) + "</span>" : "";
 		const choice = (type: string) =>
 			"<fieldset><legend>" +
@@ -265,8 +293,21 @@ export function boot(c: ClientConfig): void {
 				.join("") +
 			"</fieldset>";
 		let body: string;
-		if (f.type === "hidden") return '<input type="hidden"' + attrs + ' value="' + esc(f.defaultValue || "") + '">';
-		if (f.type === "textarea") body = '<label for="' + id + '">' + label + '</label><textarea class="in" id="' + id + '"' + attrs + ">" + esc(f.defaultValue || "") + "</textarea>";
+		if (f.type === "hidden")
+			return '<input type="hidden"' + attrs + ' value="' + esc(f.defaultValue || "") + '">';
+		if (f.type === "textarea")
+			body =
+				'<label for="' +
+				id +
+				'">' +
+				label +
+				'</label><textarea class="in" id="' +
+				id +
+				'"' +
+				attrs +
+				">" +
+				esc(f.defaultValue || "") +
+				"</textarea>";
 		else if (f.type === "select")
 			body =
 				'<label for="' +
@@ -278,20 +319,55 @@ export function boot(c: ClientConfig): void {
 				'"' +
 				attrs +
 				">" +
-				(f.options || []).map((o) => '<option value="' + esc(o.value) + '"' + (o.value === f.defaultValue ? " selected" : "") + ">" + esc(o.label) + "</option>").join("") +
+				(f.options || [])
+					.map(
+						(o) =>
+							'<option value="' +
+							esc(o.value) +
+							'"' +
+							(o.value === f.defaultValue ? " selected" : "") +
+							">" +
+							esc(o.label) +
+							"</option>",
+					)
+					.join("") +
 				"</select>";
 		else if (f.type === "radio") body = choice("radio");
 		else if (f.type === "checkbox-group") body = choice("checkbox");
 		else if (f.type === "checkbox")
-			body = '<label class="c"><input type="checkbox"' + attrs + ' value="' + esc(f.defaultValue || "1") + '"> ' + esc(f.label) + "</label>";
+			body =
+				'<label class="c"><input type="checkbox"' +
+				attrs +
+				' value="' +
+				esc(f.defaultValue || "1") +
+				'"> ' +
+				esc(f.label) +
+				"</label>";
 		else {
 			const type = ["email", "tel", "url", "number", "date"].includes(f.type) ? f.type : "text";
-			const auto = type === "email" ? ' autocomplete="email"' : type === "tel" ? ' autocomplete="tel"' : "";
-			body = '<label for="' + id + '">' + label + '</label><input class="in" type="' + type + '" id="' + id + '"' + attrs + auto + ' value="' + esc(f.defaultValue || "") + '">';
+			const auto =
+				type === "email" ? ' autocomplete="email"' : type === "tel" ? ' autocomplete="tel"' : "";
+			body =
+				'<label for="' +
+				id +
+				'">' +
+				label +
+				'</label><input class="in" type="' +
+				type +
+				'" id="' +
+				id +
+				'"' +
+				attrs +
+				auto +
+				' value="' +
+				esc(f.defaultValue || "") +
+				'">';
 		}
 		return (
 			"<div" +
-			(f.condition ? " data-condition='" + esc(JSON.stringify(f.condition)).replace(/'/g, "&#39;") + "'" : "") +
+			(f.condition
+				? " data-condition='" + esc(JSON.stringify(f.condition)).replace(/'/g, "&#39;") + "'"
+				: "") +
 			">" +
 			body +
 			help +
@@ -303,13 +379,27 @@ export function boot(c: ClientConfig): void {
 	/** Show or hide fields whose condition depends on another field, as the forms plugin does. */
 	const conditions = (form: HTMLFormElement) => {
 		form.querySelectorAll<HTMLElement>("[data-condition]").forEach((box) => {
-			const rule = JSON.parse(box.getAttribute("data-condition") || "{}") as { field: string; op: string; value?: string };
+			const rule = JSON.parse(box.getAttribute("data-condition") || "{}") as {
+				field: string;
+				op: string;
+				value?: string;
+			};
 			const input = form.elements.namedItem(rule.field) as HTMLInputElement | null;
 			const value = input ? input.value : "";
 			const shown =
-				rule.op === "eq" ? value === (rule.value ?? "") : rule.op === "neq" ? value !== (rule.value ?? "") : rule.op === "filled" ? value !== "" : rule.op === "empty" ? value === "" : true;
+				rule.op === "eq"
+					? value === (rule.value ?? "")
+					: rule.op === "neq"
+						? value !== (rule.value ?? "")
+						: rule.op === "filled"
+							? value !== ""
+							: rule.op === "empty"
+								? value === ""
+								: true;
 			box.hidden = !shown;
-			box.querySelectorAll<HTMLInputElement>("input,select,textarea").forEach((el) => (el.disabled = !shown));
+			box
+				.querySelectorAll<HTMLInputElement>("input,select,textarea")
+				.forEach((el) => (el.disabled = !shown));
 		});
 	};
 
@@ -343,17 +433,29 @@ export function boot(c: ClientConfig): void {
 				(content.img.h ? ' height="' + content.img.h + '"' : "") +
 				">"
 			: "";
-		const no = content.no ? '<button type="button" class="q" data-pp-close>' + esc(content.no) + "</button>" : "";
+		const no = content.no
+			? '<button type="button" class="q" data-pp-close>' + esc(content.no) + "</button>"
+			: "";
 		const action = form
 			? '<form class="f" novalidate>' +
-				form.pages.flatMap((page) => page.fields).map(fieldHtml).join("") +
-				(form.settings.spamProtection === "honeypot" ? '<div class="hp" aria-hidden="true"><label>Leave blank<input name="_hp" tabindex="-1" autocomplete="off"></label></div>' : "") +
+				form.pages
+					.flatMap((page) => page.fields)
+					.map(fieldHtml)
+					.join("") +
+				(form.settings.spamProtection === "honeypot"
+					? '<div class="hp" aria-hidden="true"><label>Leave blank<input name="_hp" tabindex="-1" autocomplete="off"></label></div>'
+					: "") +
 				'<p class="msg" role="alert"></p><div class="r"><button type="submit" class="p">' +
 				esc(form.settings.submitLabel || "Submit") +
 				"</button>" +
 				no +
 				"</div></form>"
-			: '<div class="r">' + (content.b ? '<a class="p" href="' + esc(content.b.u) + '" data-pp-go>' + esc(content.b.l) + "</a>" : "") + no + "</div>";
+			: '<div class="r">' +
+				(content.b
+					? '<a class="p" href="' + esc(content.b.u) + '" data-pp-go>' + esc(content.b.l) + "</a>"
+					: "") +
+				no +
+				"</div>";
 		const inner =
 			'<button type="button" class="x' +
 			(modal && content.img && !sheet ? " on-pic" : "") +
@@ -375,7 +477,15 @@ export function boot(c: ClientConfig): void {
 		const theme = "<style>" + styles(look, c.col) + "</style>";
 		if (modal) {
 			root.innerHTML =
-				theme + '<dialog class="pp modal' + (sheet ? " sheet" : "") + (form ? " hf" : "") + '" aria-labelledby="' + hid + '">' + inner + "</dialog>";
+				theme +
+				'<dialog class="pp modal' +
+				(sheet ? " sheet" : "") +
+				(form ? " hf" : "") +
+				'" aria-labelledby="' +
+				hid +
+				'">' +
+				inner +
+				"</dialog>";
 		} else {
 			root.innerHTML =
 				theme +
@@ -417,7 +527,8 @@ export function boot(c: ClientConfig): void {
 			else if (modal && target === box) {
 				const r = box.getBoundingClientRect();
 				const e = event as MouseEvent;
-				if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) close(finished ? "done" : "closed");
+				if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
+					close(finished ? "done" : "closed");
 			}
 		});
 		root.addEventListener("keydown", (event) => {
@@ -433,7 +544,9 @@ export function boot(c: ClientConfig): void {
 			});
 			(box as HTMLDialogElement).showModal();
 			// Focus goes to the first field; on a phone sheet to the heading, so no keyboard jumps up uninvited.
-			const first = sheet ? null : box.querySelector<HTMLElement>(".in,.f input:not([type=hidden])");
+			const first = sheet
+				? null
+				: box.querySelector<HTMLElement>(".in,.f input:not([type=hidden])");
 			(first || box.querySelector<HTMLElement>("h2"))?.focus();
 		} else {
 			// A slide-in leaves the page usable: it does not take focus. Its heading is announced once,
@@ -471,7 +584,8 @@ export function boot(c: ClientConfig): void {
 				for (const [key, value] of new FormData(formEl)) {
 					if (typeof value !== "string") continue;
 					const had = data[key];
-					data[key] = had === undefined ? value : Array.isArray(had) ? [...had, value] : [had, value];
+					data[key] =
+						had === undefined ? value : Array.isArray(had) ? [...had, value] : [had, value];
 				}
 				try {
 					const response = await w.fetch(c.forms + "submit", {
@@ -479,7 +593,10 @@ export function boot(c: ClientConfig): void {
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify({ formId: content.form, data }),
 					});
-					const body = (await response.json()) as { data?: typeof answer; error?: { message?: string } };
+					const body = (await response.json()) as {
+						data?: typeof answer;
+						error?: { message?: string };
+					};
 					if (!response.ok || !body.data) throw new Error(body.error?.message || "");
 					answer = body.data;
 				} catch (error) {
@@ -497,7 +614,11 @@ export function boot(c: ClientConfig): void {
 				marker.hidden = true;
 				d.body.appendChild(marker);
 				marker.className = "ec-form-status ec-form-status--success";
-				d.dispatchEvent(new CustomEvent("emdash:form-submitted", { detail: { formId: content.form, source: "popups" } }));
+				d.dispatchEvent(
+					new CustomEvent("emdash:form-submitted", {
+						detail: { formId: content.form, source: "popups" },
+					}),
+				);
 				if (answer.redirect && /^(https?:|\/(?!\/))/i.test(answer.redirect)) {
 					w.location.href = answer.redirect;
 					return;
@@ -519,7 +640,9 @@ export function boot(c: ClientConfig): void {
 			// The thank-you heading takes over the name of the popup.
 			box.querySelector<HTMLElement>("h2#" + hid)?.remove();
 			box.querySelector(".ok h2")!.id = hid;
-			box.querySelectorAll(":scope > p:not(.pv),:scope > .pic,:scope > .thumb").forEach((el) => el.remove());
+			box
+				.querySelectorAll(":scope > p:not(.pv),:scope > .pic,:scope > .thumb")
+				.forEach((el) => el.remove());
 			box.querySelector<HTMLElement>(".ok h2")?.focus();
 		});
 	};
@@ -531,7 +654,9 @@ export function boot(c: ClientConfig): void {
 			const typing = d.activeElement?.matches?.(TEXT_FIELD);
 			if (!clicked && typing) {
 				// Never interrupt someone typing; look again a little after they leave the field.
-				d.addEventListener("focusout", () => setTimeout(() => attempt(item, false), 1500), { once: true });
+				d.addEventListener("focusout", () => setTimeout(() => attempt(item, false), 1500), {
+					once: true,
+				});
 				return;
 			}
 			if (!clicked && bannerWaits()) return afterBanner(() => attempt(item, false));
@@ -604,19 +729,46 @@ export function boot(c: ClientConfig): void {
 					// No session: a visitor who copied the link sees nothing.
 					if (!answer) return;
 					if (previewScheme) html.style.colorScheme = previewScheme;
-					const item = { ...answer.item, k: answer.item.k === "bar" ? ("slide" as const) : answer.item.k };
+					const item = {
+						...answer.item,
+						k: answer.item.k === "bar" ? ("slide" as const) : answer.item.k,
+					};
 					let why = answer.off ? "it is turned off" : reason(answer.item, true);
 					if (!why && bannerWaits()) why = "the cookie banner is still waiting for an answer";
-					if (why === "it has not started yet" && answer.startText) why = "it starts on " + answer.startText;
+					if (why === "it has not started yet" && answer.startText)
+						why = "it starts on " + answer.startText;
 					if (why === "it has ended" && answer.endText) why = "it ended on " + answer.endText;
 					const when =
-						answer.item.t === "click" ? "when they click its button or link" : answer.item.t === "exit" ? "when they are about to leave (computers only)" : answer.item.t === "load" ? "as the page opens" : "after they have read a while";
-					const tag = "Preview: nothing is counted. " + (why ? "Hidden for a real visitor: " + why + "." : "A real visitor sees it " + when + ".");
+						answer.item.t === "click"
+							? "when they click its button or link"
+							: answer.item.t === "exit"
+								? "when they are about to leave (computers only)"
+								: answer.item.t === "load"
+									? "as the page opens"
+									: "after they have read a while";
+					const tag =
+						"Preview: nothing is counted. " +
+						(why
+							? "Hidden for a real visitor: " + why + "."
+							: "A real visitor sees it " + when + ".");
 					let form: Definition | undefined;
 					if (item.c.form) {
 						const result = await loadForm(item.c.form);
 						if ("ok" in result) form = result.ok;
-						else item.c = { ...item.c, form: undefined, x: item.c.x + " [The form cannot be shown: " + (result.problem === "paused" ? "it is paused under Forms" : result.problem === "unsupported" ? "it uses Turnstile or a file upload" : "it was not found") + ".]" };
+						else
+							item.c = {
+								...item.c,
+								form: undefined,
+								x:
+									item.c.x +
+									" [The form cannot be shown: " +
+									(result.problem === "paused"
+										? "it is paused under Forms"
+										: result.problem === "unsupported"
+											? "it uses Turnstile or a file upload"
+											: "it was not found") +
+									".]",
+							};
 					}
 					show(item, form, true, tag);
 				})
@@ -650,7 +802,9 @@ export function boot(c: ClientConfig): void {
 			d.addEventListener("click", (event) => {
 				const target = (event.target as Element).closest?.("a[href*='#popup-'],[data-popup]");
 				if (!target) return;
-				const name = target.getAttribute("data-popup") || (target.getAttribute("href") || "").split("#popup-")[1];
+				const name =
+					target.getAttribute("data-popup") ||
+					(target.getAttribute("href") || "").split("#popup-")[1];
 				const item = clickable.find((each) => each.n === name);
 				if (!item || reason(item, false).startsWith("it ")) return;
 				event.preventDefault();
@@ -659,7 +813,12 @@ export function boot(c: ClientConfig): void {
 		}
 
 		// At most one popup or slide-in that opens by itself: the first in the list that may.
-		const auto = c.items.find((item) => item.k !== "bar" && (item.t === "read" || (item.t === "exit" && !phone())) && !reason(item, true));
+		const auto = c.items.find(
+			(item) =>
+				item.k !== "bar" &&
+				(item.t === "read" || (item.t === "exit" && !phone())) &&
+				!reason(item, true),
+		);
 		if (auto) arm(auto);
 	};
 

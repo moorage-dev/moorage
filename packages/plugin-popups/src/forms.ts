@@ -25,7 +25,8 @@ interface Definition {
 /** What a definition means for a popup of this kind. Turnstile and files only work in a box in a page. */
 export function judgeDefinition(definition: Definition, overlay: boolean): FormCheck {
 	const pages = Array.isArray(definition.pages) ? definition.pages : [];
-	if (overlay && definition.settings?.spamProtection === "turnstile") return { result: "turnstile" };
+	if (overlay && definition.settings?.spamProtection === "turnstile")
+		return { result: "turnstile" };
 	if (overlay && pages.some((page) => (page.fields ?? []).some((field) => field.type === "file"))) {
 		return { result: "files" };
 	}
@@ -64,7 +65,10 @@ export async function checkForm(
 }
 
 /** The plain sentence the owner reads about a check, and whether the save is refused. */
-export function describeCheck(check: FormCheck, form: string): { refuse: boolean; text: string } | null {
+export function describeCheck(
+	check: FormCheck,
+	form: string,
+): { refuse: boolean; text: string } | null {
 	switch (check.result) {
 		case "ok":
 			return null;

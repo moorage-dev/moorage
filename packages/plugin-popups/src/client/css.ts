@@ -67,7 +67,10 @@ export function ownColors(col?: { g: string; f: string; x: string; y: string }):
 }
 
 /** The whole stylesheet for a light, dark or device-following look. */
-export function styles(scheme: "auto" | "light" | "dark", col?: { g: string; f: string; x: string; y: string }): string {
+export function styles(
+	scheme: "auto" | "light" | "dark",
+	col?: { g: string; f: string; x: string; y: string },
+): string {
 	if (col) return CSS + ownColors(col);
 	if (scheme === "dark") return CSS + DARK;
 	if (scheme === "auto") return `${CSS}@media(prefers-color-scheme:dark){${DARK}}`;

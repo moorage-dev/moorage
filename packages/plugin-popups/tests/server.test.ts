@@ -5,7 +5,16 @@ import { gzipSync } from "node:zlib";
 import type { RouteContext } from "emdash";
 import { describe, expect, it } from "vitest";
 
-import { colorProblems, isSafeLink, normalizeStore, parsePaths, pathMatches, showsOn, simplify, uniqueHandle } from "../src/config.js";
+import {
+	colorProblems,
+	isSafeLink,
+	normalizeStore,
+	parsePaths,
+	pathMatches,
+	showsOn,
+	simplify,
+	uniqueHandle,
+} from "../src/config.js";
 import { checkForm, describeCheck, judgeDefinition } from "../src/forms.js";
 import { clientItem, isPopupPreview, pageFragments, scriptJson, tagLink } from "../src/fragment.js";
 import { alertEmail, createPlugin } from "../src/index.js";
@@ -14,7 +23,10 @@ import { describeMoment, fromMoment, toMoment } from "../src/time.js";
 import { fakeContext, popup } from "./helpers.js";
 
 const NOW = Date.UTC(2026, 9, 16, 12);
-const page = (path: string, extra: Partial<{ url: string; collection: string; editMode: boolean; preview: boolean }> = {}) => ({
+const page = (
+	path: string,
+	extra: Partial<{ url: string; collection: string; editMode: boolean; preview: boolean }> = {},
+) => ({
 	path,
 	url: `https://hartleys.test${path}`,
 	editMode: false,
@@ -29,14 +41,20 @@ describe("time in the site's time zone", () => {
 		const summer = toMoment("2026-07-01", "09:30", "Europe/London")!;
 		expect(new Date(summer).toISOString()).toBe("2026-07-01T08:30:00.000Z");
 		expect(fromMoment(summer, "Europe/London")).toEqual({ date: "2026-07-01", clock: "09:30" });
-		expect(new Date(toMoment("2026-12-31", "18:00", "America/New_York")!).toISOString()).toBe("2026-12-31T23:00:00.000Z");
+		expect(new Date(toMoment("2026-12-31", "18:00", "America/New_York")!).toISOString()).toBe(
+			"2026-12-31T23:00:00.000Z",
+		);
 	});
 
 	it("handles the nights the clocks change", () => {
 		// 01:30 does not exist in London on 29 March 2026: moved on by the hour that was skipped.
-		expect(new Date(toMoment("2026-03-29", "01:30", "Europe/London")!).toISOString()).toBe("2026-03-29T01:30:00.000Z");
+		expect(new Date(toMoment("2026-03-29", "01:30", "Europe/London")!).toISOString()).toBe(
+			"2026-03-29T01:30:00.000Z",
+		);
 		// 01:30 happens twice on 25 October 2026: the first one (still summer time).
-		expect(new Date(toMoment("2026-10-25", "01:30", "Europe/London")!).toISOString()).toBe("2026-10-25T00:30:00.000Z");
+		expect(new Date(toMoment("2026-10-25", "01:30", "Europe/London")!).toISOString()).toBe(
+			"2026-10-25T00:30:00.000Z",
+		);
 	});
 
 	it("refuses days that do not exist and describes moments plainly", () => {
@@ -59,13 +77,21 @@ describe("checks on what is saved", () => {
 	});
 
 	it("refuses unreadable colours with the reason", () => {
-		expect(colorProblems({ background: "#fbf8f3", text: "#2b2420", accent: "#8a3b12" })).toEqual([]);
-		expect(colorProblems({ background: "#ffffff", text: "#bbbbbb", accent: "#8a3b12" })[0]).toMatch(/hard to read/);
+		expect(colorProblems({ background: "#fbf8f3", text: "#2b2420", accent: "#8a3b12" })).toEqual(
+			[],
+		);
+		expect(colorProblems({ background: "#ffffff", text: "#bbbbbb", accent: "#8a3b12" })[0]).toMatch(
+			/hard to read/,
+		);
 		expect(colorProblems({ background: "#ffffff", text: "", accent: "" })[0]).toMatch(/all three/);
 	});
 
 	it("reads addresses as plain prefixes", () => {
-		expect(parsePaths("/contact\nhttps://x.test/order?a=1\n/\n cakes/ ")).toEqual(["/contact", "/order", "/cakes/"]);
+		expect(parsePaths("/contact\nhttps://x.test/order?a=1\n/\n cakes/ ")).toEqual([
+			"/contact",
+			"/order",
+			"/cakes/",
+		]);
 		expect(pathMatches("/cakes/lemon", "/cakes/")).toBe(true);
 		expect(pathMatches("/cakes", "/cakes/")).toBe(true);
 		expect(pathMatches("/cakeshop", "/cakes")).toBe(false);
@@ -76,7 +102,9 @@ describe("checks on what is saved", () => {
 		expect(simplify("Monthly letter!")).toBe("monthly-letter");
 		expect(simplify("Crème brûlée")).toBe("creme-brulee");
 		expect(uniqueHandle("Offer", ["offer", "offer-2"])).toBe("offer-3");
-		const store = normalizeStore({ popups: [popup({ id: "aaaa1111" }), popup({ id: "bbbb2222" })] });
+		const store = normalizeStore({
+			popups: [popup({ id: "aaaa1111" }), popup({ id: "bbbb2222" })],
+		});
 		expect(store.popups.map((p) => p.handle)).toEqual(["monthly-letter", "monthly-letter-2"]);
 	});
 
@@ -90,10 +118,21 @@ describe("checks on what is saved", () => {
 describe("where a popup shows", () => {
 	it("matches every page, prefixes or collections, never the excluded pages", () => {
 		expect(showsOn(popup({ exclude: ["/contact"] }), { path: "/contact" })).toBe(false);
-		expect(showsOn(popup({ where: "prefix", prefixes: ["/cakes/"] }), { path: "/cakes/lemon" })).toBe(true);
-		expect(showsOn(popup({ where: "prefix", prefixes: ["/cakes/"] }), { path: "/breads" })).toBe(false);
-		expect(showsOn(popup({ where: "collections", collections: ["posts"] }), { path: "/x", collection: "posts" })).toBe(true);
-		expect(showsOn(popup({ where: "collections", collections: ["posts"] }), { path: "/x" })).toBe(false);
+		expect(
+			showsOn(popup({ where: "prefix", prefixes: ["/cakes/"] }), { path: "/cakes/lemon" }),
+		).toBe(true);
+		expect(showsOn(popup({ where: "prefix", prefixes: ["/cakes/"] }), { path: "/breads" })).toBe(
+			false,
+		);
+		expect(
+			showsOn(popup({ where: "collections", collections: ["posts"] }), {
+				path: "/x",
+				collection: "posts",
+			}),
+		).toBe(true);
+		expect(showsOn(popup({ where: "collections", collections: ["posts"] }), { path: "/x" })).toBe(
+			false,
+		);
 	});
 });
 
@@ -103,17 +142,28 @@ describe("campaign tags on button links", () => {
 		expect(tagLink("https://shop.example/cakes", p, "https://hartleys.test")).toBe(
 			"https://shop.example/cakes?utm_source=popups&utm_medium=slide-in&utm_campaign=christmas-cakes",
 		);
-		expect(tagLink("https://hartleys.test/cakes", p, "https://hartleys.test")).toBe("https://hartleys.test/cakes");
+		expect(tagLink("https://hartleys.test/cakes", p, "https://hartleys.test")).toBe(
+			"https://hartleys.test/cakes",
+		);
 		expect(tagLink("/cakes", p, "https://hartleys.test")).toBe("/cakes");
 		expect(tagLink("mailto:jo@x.test", p, "")).toBe("mailto:jo@x.test");
-		expect(tagLink("https://shop.example/?utm_source=mail", p, "")).toBe("https://shop.example/?utm_source=mail");
+		expect(tagLink("https://shop.example/?utm_source=mail", p, "")).toBe(
+			"https://shop.example/?utm_source=mail",
+		);
 	});
 });
 
 describe("the page hook", () => {
 	const store = normalizeStore({
 		popups: [
-			popup({ id: "bar00001", kind: "bar", name: "Boxing Day hours", heading: "Open on Boxing Day, 10:00 to 14:00.", buttonLabel: "See all opening hours", buttonUrl: "/hours" }),
+			popup({
+				id: "bar00001",
+				kind: "bar",
+				name: "Boxing Day hours",
+				heading: "Open on Boxing Day, 10:00 to 14:00.",
+				buttonLabel: "See all opening hours",
+				buttonUrl: "/hours",
+			}),
 			popup({ id: "mod00001", where: "prefix", prefixes: ["/journal/"] }),
 			popup({ id: "off00001", on: false }),
 			popup({ id: "end00001", end: NOW - 1000 }),
@@ -123,7 +173,10 @@ describe("the page hook", () => {
 
 	it("adds one script and the top bar to a matching page", () => {
 		const out = pageFragments(store, "popups", page("/journal/rye"), NOW);
-		expect(out.map((f) => `${f.kind}@${f.placement}`)).toEqual(["inline-script@head", "html@body:start"]);
+		expect(out.map((f) => `${f.kind}@${f.placement}`)).toEqual([
+			"inline-script@head",
+			"html@body:start",
+		]);
 		const code = (out[0] as { code: string }).code;
 		expect(code).toContain('"i":"bar00001"');
 		expect(code).toContain('"i":"mod00001"');
@@ -145,7 +198,12 @@ describe("the page hook", () => {
 
 	it("adds the preview loader for a preview link even with nothing live, without the bars", () => {
 		expect(isPopupPreview("https://x.test/?popups_preview=abcd1234&scheme=dark")).toBe(true);
-		const out = pageFragments(normalizeStore({}), "popups", page("/", { url: "https://hartleys.test/?popups_preview=abcd1234" }), NOW);
+		const out = pageFragments(
+			normalizeStore({}),
+			"popups",
+			page("/", { url: "https://hartleys.test/?popups_preview=abcd1234" }),
+			NOW,
+		);
 		expect(out).toHaveLength(1);
 		expect(out[0]!.kind).toBe("inline-script");
 	});
@@ -158,7 +216,8 @@ describe("the page hook", () => {
 	});
 
 	it("keeps the browser script small", () => {
-		const code = (pageFragments(store, "popups", page("/journal/x"), NOW)[0] as { code: string }).code;
+		const code = (pageFragments(store, "popups", page("/journal/x"), NOW)[0] as { code: string })
+			.code;
 		// Everything, including the form drawing and the stylesheet: at most 9 KB over the wire.
 		expect(gzipSync(code).length).toBeLessThan(9 * 1024);
 	});
@@ -172,14 +231,47 @@ describe("the page hook", () => {
 });
 
 describe("the form check", () => {
-	const answer = (status: number, body: unknown = {}) => async () => new Response(JSON.stringify(body), { status });
+	const answer =
+		(status: number, body: unknown = {}) =>
+		async () =>
+			new Response(JSON.stringify(body), { status });
 	it("knows a missing, paused, unusable or fine form", async () => {
-		expect(await checkForm("https://x.test", "newsleter", true, answer(404))).toEqual({ result: "missing" });
-		expect(await checkForm("https://x.test", "news", true, answer(410))).toEqual({ result: "paused" });
-		expect(await checkForm("https://x.test", "news", true, answer(200, { success: true, data: { name: "Newsletter", pages: [], settings: { spamProtection: "turnstile" } } }))).toEqual({ result: "turnstile" });
-		expect(await checkForm("https://x.test", "news", false, answer(200, { success: true, data: { name: "Newsletter", pages: [], settings: { spamProtection: "turnstile" } } }))).toEqual({ result: "ok", name: "Newsletter" });
-		expect(judgeDefinition({ pages: [{ fields: [{ type: "file" }] }] }, true)).toEqual({ result: "files" });
-		expect(await checkForm("https://x.test", "news", true, async () => { throw new Error("offline"); })).toEqual({ result: "unchecked" });
+		expect(await checkForm("https://x.test", "newsleter", true, answer(404))).toEqual({
+			result: "missing",
+		});
+		expect(await checkForm("https://x.test", "news", true, answer(410))).toEqual({
+			result: "paused",
+		});
+		expect(
+			await checkForm(
+				"https://x.test",
+				"news",
+				true,
+				answer(200, {
+					success: true,
+					data: { name: "Newsletter", pages: [], settings: { spamProtection: "turnstile" } },
+				}),
+			),
+		).toEqual({ result: "turnstile" });
+		expect(
+			await checkForm(
+				"https://x.test",
+				"news",
+				false,
+				answer(200, {
+					success: true,
+					data: { name: "Newsletter", pages: [], settings: { spamProtection: "turnstile" } },
+				}),
+			),
+		).toEqual({ result: "ok", name: "Newsletter" });
+		expect(judgeDefinition({ pages: [{ fields: [{ type: "file" }] }] }, true)).toEqual({
+			result: "files",
+		});
+		expect(
+			await checkForm("https://x.test", "news", true, async () => {
+				throw new Error("offline");
+			}),
+		).toEqual({ result: "unchecked" });
 		expect(await checkForm(undefined, "news", true)).toEqual({ result: "unchecked" });
 	});
 
@@ -196,25 +288,61 @@ describe("the form check", () => {
 
 describe("results", () => {
 	it("takes only the exact shape, counts only live popups, and adds atomically", async () => {
-		expect(parseCount({ p: "abcd1234", e: "seen", m: true })).toEqual({ popup: "abcd1234", event: "seen", phone: true });
+		expect(parseCount({ p: "abcd1234", e: "seen", m: true })).toEqual({
+			popup: "abcd1234",
+			event: "seen",
+			phone: true,
+		});
 		expect(parseCount({ p: "abcd1234", e: "seen", m: true, x: 1 })).toBeNull();
 		expect(parseCount({ p: "abcd1234", e: "hacked", m: true })).toBeNull();
 		const fake = fakeContext();
 		const live = [popup(), popup({ id: "off00001", on: false })];
-		expect(await addCount(fake.ctx, live, { popup: "off00001", event: "seen", phone: false }, NOW)).toBe("not-live");
-		expect(await addCount(fake.ctx, live, { popup: "nope0000", event: "seen", phone: false }, NOW)).toBe("not-live");
+		expect(
+			await addCount(fake.ctx, live, { popup: "off00001", event: "seen", phone: false }, NOW),
+		).toBe("not-live");
+		expect(
+			await addCount(fake.ctx, live, { popup: "nope0000", event: "seen", phone: false }, NOW),
+		).toBe("not-live");
 		await addCount(fake.ctx, live, { popup: "abcd1234", event: "seen", phone: true }, NOW);
 		await addCount(fake.ctx, live, { popup: "abcd1234", event: "seen", phone: false }, NOW);
 		await addCount(fake.ctx, live, { popup: "abcd1234", event: "sent", phone: false }, NOW);
-		expect(fake.rows.get("abcd1234:2026-10-16")).toMatchObject({ seen: 2, phone: 1, sent: 1, clicked: 0 });
+		expect(fake.rows.get("abcd1234:2026-10-16")).toMatchObject({
+			seen: 2,
+			phone: 1,
+			sent: 1,
+			clicked: 0,
+		});
 	});
 
 	it("adds up since each popup started, rates from 100 views, and writes a safe spreadsheet", async () => {
 		const fake = fakeContext();
-		fake.rows.set("a:2026-10-03", { popup: "abcd1234", day: "2026-10-03", seen: 90, sent: 3, clicked: 0, closed: 10, phone: 40 });
-		fake.rows.set("a:2026-10-04", { popup: "abcd1234", day: "2026-10-04", seen: 20, sent: 2, clicked: 0, closed: 5, phone: 10 });
+		fake.rows.set("a:2026-10-03", {
+			popup: "abcd1234",
+			day: "2026-10-03",
+			seen: 90,
+			sent: 3,
+			clicked: 0,
+			closed: 10,
+			phone: 40,
+		});
+		fake.rows.set("a:2026-10-04", {
+			popup: "abcd1234",
+			day: "2026-10-04",
+			seen: 20,
+			sent: 2,
+			clicked: 0,
+			closed: 5,
+			phone: 10,
+		});
 		const rows = await readRows(fake.ctx, null, null);
-		expect(totals(rows).get("abcd1234")).toEqual({ seen: 110, sent: 5, clicked: 0, closed: 15, phone: 50, since: "2026-10-03" });
+		expect(totals(rows).get("abcd1234")).toEqual({
+			seen: 110,
+			sent: 5,
+			clicked: 0,
+			closed: 15,
+			phone: 50,
+			since: "2026-10-03",
+		});
 		expect(await readRows(fake.ctx, "2026-10-04", null)).toHaveLength(1);
 		expect(rate(5, 99)).toBeNull();
 		expect(rate(5, 110)).toBe(5);
@@ -225,30 +353,69 @@ describe("results", () => {
 });
 
 describe("routes", () => {
-	const routes = createPlugin().routes as Record<string, { handler: (ctx: RouteContext) => Promise<unknown> }>;
-	const call = (fake: ReturnType<typeof fakeContext>, name: string, input: unknown, url = "https://hartleys.test/x") =>
-		routes[name]!.handler({ ...fake.ctx, input, request: new Request(url), user: { id: "u", role: 50 } } as unknown as RouteContext);
+	const routes = createPlugin().routes as Record<
+		string,
+		{ handler: (ctx: RouteContext) => Promise<unknown> }
+	>;
+	const call = (
+		fake: ReturnType<typeof fakeContext>,
+		name: string,
+		input: unknown,
+		url = "https://hartleys.test/x",
+	) =>
+		routes[name]!.handler({
+			...fake.ctx,
+			input,
+			request: new Request(url),
+			user: { id: "u", role: 50 },
+		} as unknown as RouteContext);
 
 	it("stores one problem per popup and emails once a day, the site's name first", async () => {
 		const fake = fakeContext(
-			{ popups: { popups: [popup({ contains: "form", form: "newsleter" })], settings: { emails: ["jo@hartleys.test", "web@studio.test"] } } },
+			{
+				popups: {
+					popups: [popup({ contains: "form", form: "newsleter" })],
+					settings: { emails: ["jo@hartleys.test", "web@studio.test"] },
+				},
+			},
 			{ email: true },
 		);
 		expect(await call(fake, "problem", { p: "abcd1234", k: "missing" })).toEqual({ saved: true });
 		expect(fake.sent).toHaveLength(1);
-		expect(fake.sent[0]).toMatchObject({ to: "jo@hartleys.test", cc: ["web@studio.test"], subject: `Hartley's Bakery: the popup "Monthly letter" cannot open` });
+		expect(fake.sent[0]).toMatchObject({
+			to: "jo@hartleys.test",
+			cc: ["web@studio.test"],
+			subject: `Hartley's Bakery: the popup "Monthly letter" cannot open`,
+		});
 		// A second report the same day sends nothing more.
 		const kept = fake.kv.get("problems") as Record<string, { at: number }>;
 		kept.abcd1234!.at -= 120_000;
 		await call(fake, "problem", { p: "abcd1234", k: "missing" });
 		expect(fake.sent).toHaveLength(1);
 		await expect(call(fake, "problem", { p: "abcd1234", k: "other" })).rejects.toThrow();
-		expect(alertEmail("", popup({ form: "x" }), "paused").subject).toBe('Your site: the popup "Monthly letter" cannot open');
+		expect(alertEmail("", popup({ form: "x" }), "paused").subject).toBe(
+			'Your site: the popup "Monthly letter" cannot open',
+		);
 	});
 
 	it("lists boxes for the editor's block, and serves a live box", async () => {
-		const fake = fakeContext({ popups: { popups: [popup({ id: "inl00001", kind: "inline", name: "Letter box", contains: "form", form: "newsletter" }), popup()] } });
-		expect(await call(fake, "boxes", {})).toEqual({ items: [{ id: "inl00001", name: "Letter box" }] });
+		const fake = fakeContext({
+			popups: {
+				popups: [
+					popup({
+						id: "inl00001",
+						kind: "inline",
+						name: "Letter box",
+						contains: "form",
+						form: "newsletter",
+					}),
+					popup(),
+				],
+			},
+		});
+		expect(await call(fake, "boxes", {})).toEqual({
+			items: [{ id: "inl00001", name: "Letter box" }],
+		});
 		const answer = (await call(fake, "box", { id: "inl00001" })) as { box: { form: string } };
 		expect(answer.box.form).toBe("newsletter");
 		expect(await call(fake, "box", { id: "abcd1234" })).toEqual({ box: null });
@@ -256,8 +423,21 @@ describe("routes", () => {
 
 	it("downloads results as a spreadsheet", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
-		fake.rows.set("a", { popup: "abcd1234", day: "2026-10-03", seen: 1, sent: 0, clicked: 0, closed: 0, phone: 0 });
-		const out = (await call(fake, "export", null, "https://hartleys.test/_emdash/api/plugins/popups/export?from=2026-10-01")) as {
+		fake.rows.set("a", {
+			popup: "abcd1234",
+			day: "2026-10-03",
+			seen: 1,
+			sent: 0,
+			clicked: 0,
+			closed: 0,
+			phone: 0,
+		});
+		const out = (await call(
+			fake,
+			"export",
+			null,
+			"https://hartleys.test/_emdash/api/plugins/popups/export?from=2026-10-01",
+		)) as {
 			headers: Array<[string, string]>;
 			body: { value: string };
 		};
@@ -267,7 +447,10 @@ describe("routes", () => {
 
 	it("gives a signed-in editor the draft to preview", async () => {
 		const fake = fakeContext({ popups: { popups: [popup({ on: false })] } });
-		const answer = (await call(fake, "preview", { id: "abcd1234" })) as { off: boolean; item: { i: string } };
+		const answer = (await call(fake, "preview", { id: "abcd1234" })) as {
+			off: boolean;
+			item: { i: string };
+		};
 		expect(answer.off).toBe(true);
 		expect(answer.item.i).toBe("abcd1234");
 	});

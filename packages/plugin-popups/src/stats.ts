@@ -12,7 +12,9 @@ import { utcDay } from "./time.js";
  */
 
 export const COUNTS = "counts";
-export const STORAGE = { [COUNTS]: { indexes: ["popup", "day", ["popup", "day"]] } } satisfies PluginStorageConfig;
+export const STORAGE = {
+	[COUNTS]: { indexes: ["popup", "day", ["popup", "day"]] },
+} satisfies PluginStorageConfig;
 export const DESCRIPTOR_STORAGE = { [COUNTS]: { indexes: ["popup", "day"] } };
 
 export const EVENTS = ["seen", "sent", "clicked", "closed"] as const;
@@ -81,7 +83,15 @@ export async function addCount(
 		if (done.applied) return "counted";
 		const existing = await rows.get(id);
 		if (existing) return "full";
-		const first: CountRow = { popup: popup.id, day, seen: 0, sent: 0, clicked: 0, closed: 0, phone: 0 };
+		const first: CountRow = {
+			popup: popup.id,
+			day,
+			seen: 0,
+			sent: 0,
+			clicked: 0,
+			closed: 0,
+			phone: 0,
+		};
 		first[input.event] = 1;
 		if (input.event === "seen" && input.phone) first.phone = 1;
 		const created = await rows.compareAndSet(id, null, first);
@@ -155,10 +165,20 @@ function cell(value: string | number): string {
 
 /** One row per popup per day, for a spreadsheet. */
 export function toCsv(rows: CountRow[], names: Map<string, string>): string {
-	const lines = [["Day", "Popup", "Seen", "Signed up", "Clicked", "Closed", "Seen on phones"].join(",")];
+	const lines = [
+		["Day", "Popup", "Seen", "Signed up", "Clicked", "Closed", "Seen on phones"].join(","),
+	];
 	for (const row of rows) {
 		lines.push(
-			[row.day, names.get(row.popup) ?? "(deleted popup)", row.seen, row.sent, row.clicked, row.closed, row.phone]
+			[
+				row.day,
+				names.get(row.popup) ?? "(deleted popup)",
+				row.seen,
+				row.sent,
+				row.clicked,
+				row.closed,
+				row.phone,
+			]
 				.map(cell)
 				.join(","),
 		);

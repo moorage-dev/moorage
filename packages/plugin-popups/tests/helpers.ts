@@ -28,7 +28,10 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown> = 
 	});
 }
 
-export function fakeContext(stored: Record<string, unknown> = {}, options: { email?: boolean } = {}): FakeContext {
+export function fakeContext(
+	stored: Record<string, unknown> = {},
+	options: { email?: boolean } = {},
+): FakeContext {
 	const kv = new Map<string, unknown>(Object.entries(stored));
 	const rows = new Map<string, Record<string, unknown>>();
 	const sent: Array<Record<string, unknown>> = [];
@@ -45,7 +48,10 @@ export function fakeContext(stored: Record<string, unknown> = {}, options: { ema
 			rows.set(id, data);
 			return { applied: true, revision: "1" };
 		},
-		async updateIf(id: string, args: { where: Record<string, unknown>; delta?: Record<string, { inc: number }> }) {
+		async updateIf(
+			id: string,
+			args: { where: Record<string, unknown>; delta?: Record<string, { inc: number }> },
+		) {
 			const row = rows.get(id);
 			if (!row || !matches(row, args.where)) return { applied: false };
 			for (const [key, change] of Object.entries(args.delta ?? {})) {
@@ -80,7 +86,17 @@ export function fakeContext(stored: Record<string, unknown> = {}, options: { ema
 			async list() {
 				return {
 					items: [
-						{ id: "m1", filename: "loaves-1600.jpg", mimeType: "image/jpeg", url: "/_emdash/api/media/file/loaves.jpg", alt: "Three sourdough loaves", width: 1600, height: 1000, size: 1, createdAt: "" },
+						{
+							id: "m1",
+							filename: "loaves-1600.jpg",
+							mimeType: "image/jpeg",
+							url: "/_emdash/api/media/file/loaves.jpg",
+							alt: "Three sourdough loaves",
+							width: 1600,
+							height: 1000,
+							size: 1,
+							createdAt: "",
+						},
 					],
 					hasMore: false,
 				};

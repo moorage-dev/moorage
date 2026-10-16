@@ -31,21 +31,28 @@ export const TEXT: ClientConfig["t"] = {
 	required: "Please fill this in.",
 };
 
-
 /**
  * Campaign tags for a button link, so Google Analytics shows the visit as
  * coming from the popup. Only links to other websites: tags on a site's own
  * links would overwrite where the visitor really came from. Links that carry
  * their own tags are left alone.
  */
-export function tagLink(link: string, popup: Pick<Popup, "handle" | "kind">, siteOrigin: string): string {
+export function tagLink(
+	link: string,
+	popup: Pick<Popup, "handle" | "kind">,
+	siteOrigin: string,
+): string {
 	if (!/^https?:\/\//i.test(link)) return link;
 	try {
 		const url = new URL(link);
 		if (siteOrigin && url.origin === siteOrigin) return link;
-		if ([...url.searchParams.keys()].some((key) => key.toLowerCase().startsWith("utm_"))) return link;
+		if ([...url.searchParams.keys()].some((key) => key.toLowerCase().startsWith("utm_")))
+			return link;
 		url.searchParams.set("utm_source", "popups");
-		url.searchParams.set("utm_medium", popup.kind === "bar" ? "top-bar" : popup.kind === "slide" ? "slide-in" : "popup");
+		url.searchParams.set(
+			"utm_medium",
+			popup.kind === "bar" ? "top-bar" : popup.kind === "slide" ? "slide-in" : "popup",
+		);
 		url.searchParams.set("utm_campaign", popup.handle);
 		return url.href;
 	} catch {
@@ -56,7 +63,11 @@ export function tagLink(link: string, popup: Pick<Popup, "handle" | "kind">, sit
 /** What the browser needs to know about one popup, and nothing else. */
 export function clientItem(popup: Popup, siteOrigin: string): ClientItem | null {
 	if (popup.kind === "inline") return null;
-	const c: ClientItem["c"] = { h: popup.heading, x: popup.text, no: popup.decline === "none" ? "" : DECLINE_LABEL[popup.decline] };
+	const c: ClientItem["c"] = {
+		h: popup.heading,
+		x: popup.text,
+		no: popup.decline === "none" ? "" : DECLINE_LABEL[popup.decline],
+	};
 	if (popup.picture) {
 		c.img = { u: popup.picture.url, a: popup.picture.alt };
 		if (popup.picture.width) c.img.w = popup.picture.width;
@@ -83,7 +94,11 @@ export function clientItem(popup: Popup, siteOrigin: string): ClientItem | null 
 	return item;
 }
 
-export function clientConfig(settings: Settings, items: ClientItem[], pluginId: string): ClientConfig {
+export function clientConfig(
+	settings: Settings,
+	items: ClientItem[],
+	pluginId: string,
+): ClientConfig {
 	const out: ClientConfig = {
 		api: `/_emdash/api/plugins/${pluginId}/`,
 		forms: FORMS_API,
@@ -91,7 +106,12 @@ export function clientConfig(settings: Settings, items: ClientItem[], pluginId: 
 		items,
 		t: TEXT,
 	};
-	if (settings.custom && settings.colors.background && settings.colors.text && settings.colors.accent) {
+	if (
+		settings.custom &&
+		settings.colors.background &&
+		settings.colors.text &&
+		settings.colors.accent
+	) {
 		const { background: g, text: f, accent: x } = settings.colors;
 		out.col = { g, f, x, y: buttonText(x) };
 	}
@@ -110,8 +130,7 @@ export function clientScriptFor(config: ClientConfig): string {
 	return clientCode.replace(PLACEHOLDER, () => scriptJson(config));
 }
 
-const esc = (text: string) =>
-	text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+const esc = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 /**
  * A top bar as server HTML, in a declarative shadow root, so it is on screen
@@ -171,14 +190,22 @@ export function pageFragments(
 	if (isQuiet(page)) return [];
 	const origin = originOf(page.url);
 	const items = store.popups
-		.filter((popup) => isLive(popup, now) && showsOn(popup, { path: page.path, collection: page.collection }))
+		.filter(
+			(popup) =>
+				isLive(popup, now) && showsOn(popup, { path: page.path, collection: page.collection }),
+		)
 		.map((popup) => clientItem(popup, origin))
 		.filter((item): item is ClientItem => item !== null);
 	const preview = isPopupPreview(page.url);
 	if (items.length === 0 && !preview) return [];
 	const config = clientConfig(store.settings, items, pluginId);
 	const out: PageFragmentContribution[] = [
-		{ kind: "inline-script", placement: "head", key: `${pluginId}:boot`, code: clientScriptFor(config) },
+		{
+			kind: "inline-script",
+			placement: "head",
+			key: `${pluginId}:boot`,
+			code: clientScriptFor(config),
+		},
 	];
 	const bars = preview ? [] : items.filter((item) => item.k === "bar");
 	if (bars.length) {

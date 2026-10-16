@@ -9,8 +9,7 @@
 export function validZone(zone: unknown): string {
 	if (typeof zone !== "string" || zone === "") return "UTC";
 	try {
-		new Intl.DateTimeFormat("en", { timeZone: zone });
-		return zone;
+		return new Intl.DateTimeFormat("en", { timeZone: zone }).resolvedOptions().timeZone;
 	} catch {
 		return "UTC";
 	}
@@ -68,7 +67,10 @@ export function toMoment(date: string, clock: string, zone: string): number | nu
 	const check = new Date(wall);
 	if (check.getUTCDate() !== day || check.getUTCMonth() !== month - 1) return null;
 	// The zone's offset half a day either side covers both sides of any change of the clocks.
-	const candidates = [wall - offset(wall - 43_200_000, zone), wall - offset(wall + 43_200_000, zone)];
+	const candidates = [
+		wall - offset(wall - 43_200_000, zone),
+		wall - offset(wall + 43_200_000, zone),
+	];
 	const wanted = `${date.trim()} ${pad(hour)}:${pad(minute)}`;
 	const real = candidates.filter((ms) => {
 		const found = fromMoment(ms, zone);
@@ -83,7 +85,10 @@ const pad = (n: number) => String(n).padStart(2, "0");
 /** The day ("2026-11-01") and half-hour ("09:00") of a moment in the zone. */
 export function fromMoment(ms: number, zone: string): { date: string; clock: string } {
 	const p = partsIn(ms, zone);
-	return { date: `${p.year}-${pad(p.month)}-${pad(p.day)}`, clock: `${pad(p.hour)}:${pad(p.minute)}` };
+	return {
+		date: `${p.year}-${pad(p.month)}-${pad(p.day)}`,
+		clock: `${pad(p.hour)}:${pad(p.minute)}`,
+	};
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -97,7 +102,10 @@ export function describeMoment(ms: number, zone: string, now: number): string {
 }
 
 /** Every half hour of the day, for the time list. */
-export const HALF_HOURS: string[] = Array.from({ length: 48 }, (_, i) => `${pad(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`);
+export const HALF_HOURS: string[] = Array.from(
+	{ length: 48 },
+	(_, i) => `${pad(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`,
+);
 
 /** The UTC day "2026-11-01" of a moment, used for count rows. */
 export function utcDay(ms: number): string {

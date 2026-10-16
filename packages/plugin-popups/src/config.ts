@@ -213,7 +213,9 @@ export function normalizeSettings(raw: unknown): Settings {
 		},
 		corner: pick(s.corner, ["right", "left"] as const, "right"),
 		emails: Array.isArray(s.emails)
-			? s.emails.filter((e): e is string => typeof e === "string" && isEmail(e)).slice(0, MAX_EMAILS)
+			? s.emails
+					.filter((e): e is string => typeof e === "string" && isEmail(e))
+					.slice(0, MAX_EMAILS)
 			: [],
 	};
 }
@@ -278,7 +280,8 @@ export function colorProblems(colors: Colors): string[] {
 
 /** Links a popup may send visitors to: https, http, a page on this site, email or phone. */
 export function isSafeLink(value: string, allowContact = true): boolean {
-	if (allowContact && /^(mailto:[^@\s"'<>]+@[^@\s"'<>]+|tel:\+?[0-9 ()-]{3,30})$/i.test(value)) return true;
+	if (allowContact && /^(mailto:[^@\s"'<>]+@[^@\s"'<>]+|tel:\+?[0-9 ()-]{3,30})$/i.test(value))
+		return true;
 	if (!value || value.length > 1000 || /[\s"'<>\\]/.test(value)) return false;
 	if (value.startsWith("/") && !value.startsWith("//")) return true;
 	try {
