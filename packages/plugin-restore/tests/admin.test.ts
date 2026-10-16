@@ -345,7 +345,7 @@ describe("reviewing and restoring", () => {
 		);
 
 		const history = await s.ctx.storage.restores!.query({ orderBy: { at: "desc" } });
-		expect((history.items[0]?.data as RestoreRecord).to).toBe(at);
+		expect((history.items[0]?.data as RestoreRecord | undefined)?.to).toBe(at);
 		expect(await s.ctx.kv.get("lock")).toBeNull();
 		expect(s.emails[0]?.subject).toMatch(/^Rosie's Bakery: the site was put back to /);
 
