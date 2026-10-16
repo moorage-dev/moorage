@@ -356,7 +356,9 @@ function problemsTab(ctx: PluginContext, data: Loaded, admin: boolean, state: Pa
 					"unknown_table",
 					"What happened",
 					unknown.map((row) => {
-						const action = openLink(row, ctx.site.url);
+						// An address on this site can still be fixed (sent elsewhere); another site's is opened.
+						const action =
+							row.kind === "internal" ? fixMenu(row, admin) : openLink(row, ctx.site.url);
 						return { text: rowText(row, null), ...(action ? { action } : {}) };
 					}),
 				),
@@ -839,15 +841,18 @@ async function nudge(
 	data: Loaded,
 	counter: { ops: number },
 	now: number,
+	force = false,
 ): Promise<void> {
 	try {
-		if (!data.scan) {
+		// No check yet, or only one that found no pages (switched on before setup added them).
+		if (!data.scan || (!data.summary && data.scan.status === "done")) {
 			data.scan = await startPass(ctx, data, now);
 			await passStep(ctx, data, counter, now);
 			return;
 		}
 		const last = Date.parse(data.scan.lastStepAt ?? data.scan.startedAt);
-		if (data.scan.status === "running" && now - last > STALLED_MS)
+		// "Refresh" always moves a running check; a plain visit only when it has stalled.
+		if (data.scan.status === "running" && (force || now - last > STALLED_MS))
 			await passStep(ctx, data, counter, now);
 	} catch (error) {
 		ctx.log.warn("could not move the check along", { error: String(error) });
@@ -882,7 +887,7 @@ export async function handleAdmin(
 		data.options = { ...data.options, recipients: [user.email.toLowerCase()] };
 		await ctx.kv.set(KEY.options, data.options);
 	} else if (interaction.type === "page_load" || action === "refresh") {
-		await nudge(ctx, data, counter, now);
+		await nudge(ctx, data, counter, now, action === "refresh");
 	}
 
 	const withFine = async (s: PageState): Promise<PageState> =>
