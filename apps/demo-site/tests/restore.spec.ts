@@ -102,7 +102,8 @@ test("going back to just before a change: enquiries first, lost text, tick, red 
 		"INSERT INTO options (name, value) VALUES ('site:timezone', '\"Asia/Kolkata\"') ON CONFLICT (name) DO UPDATE SET value = excluded.value",
 	).run();
 	d.prepare("UPDATE users SET created_at = ?, updated_at = ?").run(ago(3 * HOUR), ago(3 * HOUR));
-	const admin = d.prepare("SELECT id FROM users ORDER BY created_at LIMIT 1").get() as {
+	// The person dev-bypass signs in ("You"); other specs rename it and leave more users behind.
+	const admin = d.prepare("SELECT id FROM users WHERE email = 'dev@emdash.local'").get() as {
 		id: string;
 	};
 	const pricing = d.prepare("SELECT id FROM ec_pages WHERE slug = 'pricing'").get() as {
