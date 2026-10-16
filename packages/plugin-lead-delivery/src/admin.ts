@@ -31,6 +31,7 @@ import {
 	servesForm,
 	weekCounts,
 } from "./deliver.js";
+import { UNREADABLE_KEY } from "./enquiry.js";
 import { addForm, checkReach, refreshDefinitions } from "./forms.js";
 import { CHOICES, choiceFor, matchedCount, parseHubSpot, UNMATCHED } from "./hubspot.js";
 import { instructions } from "./messages.js";
@@ -116,6 +117,14 @@ function kindLabel(place: Place | undefined): string {
 	return place.name;
 }
 
+/**
+ * Let long unbroken words (email addresses, web addresses) wrap after "@", "." and "/", so the
+ * first column of a table can shrink on a phone and the status and action stay on screen.
+ */
+export function breakable(text: string): string {
+	return text.replace(/([@./])(?=\S)/g, "$1\u200b");
+}
+
 function rowText(d: Delivery, config: Config): string {
 	const parts = [d.who, `${d.formName} → ${placeName(config, d.destination)}`, ago(d.createdAt)];
 	if (d.status === "retrying" && d.nextAt) {
@@ -123,7 +132,7 @@ function rowText(d: Delivery, config: Config): string {
 			`try ${Math.min(d.attempts + 1, MAX_ATTEMPTS)} of ${MAX_ATTEMPTS}, next ${inTime(d.nextAt)}`,
 		);
 	}
-	return [...parts, ...d.notes].filter(Boolean).join(" · ");
+	return breakable([...parts, ...d.notes].filter(Boolean).join(" · "));
 }
 
 function rowAction(id: string, d: Delivery) {
@@ -196,6 +205,16 @@ async function enquiriesBlocks(data: Data, view: View): Promise<Block[]> {
 			title: `No enquiries from ${form.name} ${since(form.lastAt!)}`,
 			description:
 				"It usually gets some every few days. Check the form still sends: send yourself a test through it on your site.",
+		});
+	}
+	const unreadable = await ctx.kv.get<{ formName: string; at: string }>(UNREADABLE_KEY);
+	if (unreadable && Date.now() - Date.parse(unreadable.at) < 7 * 86_400_000) {
+		blocks.push({
+			type: "banner",
+			variant: "alert",
+			title: `An enquiry from ${unreadable.formName} was sent as plain text`,
+			description:
+				"Lead delivery could not read its fields one by one, usually because EmDash's forms changed how they write their emails. Nothing was lost. Check for an update to Lead delivery, or connect the form straight to Lead delivery instead (Connect forms).",
 		});
 	}
 	if (stuck) {
@@ -367,13 +386,15 @@ async function placesList(data: Data): Promise<Block[]> {
 	for (const place of config.places) {
 		const status = await placeStatus(ctx, place);
 		rows.push({
-			place: [
-				place.name,
-				formsText(place, data.forms),
-				status.lastAt ? `last ${ago(status.lastAt)}` : "",
-			]
-				.filter(Boolean)
-				.join(" · "),
+			place: breakable(
+				[
+					place.name,
+					formsText(place, data.forms),
+					status.lastAt ? `last ${ago(status.lastAt)}` : "",
+				]
+					.filter(Boolean)
+					.join(" · "),
+			),
 			status: status.label,
 			action: testButton(place, data.user),
 		});
@@ -418,7 +439,7 @@ async function placesList(data: Data): Promise<Block[]> {
 			submit: { label: "Save", action_id: "save_alerts" },
 		},
 		context(
-			`One email a day at most for each kind of problem: an enquiry that could not be delivered, a form that has gone quiet, or retries that are not running. The subject starts with "${siteName(ctx)}".`,
+			`One email a day at most for each kind of problem: an enquiry that could not be delivered, a form that has gone quiet, or retries that are not running. The subject starts with "${siteName(ctx, data.origin)}".`,
 		),
 	];
 	return blocks;
@@ -589,16 +610,16 @@ function matchingBlocks(data: Data, place: Place): Block[] {
 				{
 					type: "toggle",
 					action_id: "throwaway",
-					label: "Mark throwaway addresses in HubSpot",
+					label: "Mark possibly fake email addresses in HubSpot",
 					description:
-						"Throwaway addresses (like mailinator.com) are still sent. Recommended if you want to filter them out in HubSpot.",
+						"Addresses from services that hand out short-lived inboxes (like mailinator.com) are often made up. They are still sent. Recommended if you want to filter them out in HubSpot.",
 					initial_value: Boolean(place.throwawayField),
 				},
 				{
 					type: "text_input",
 					action_id: "throwaway_field",
 					label: "HubSpot field to mark (a checkbox field on your HubSpot form)",
-					initial_value: place.throwawayField || "throwaway_email",
+					initial_value: place.throwawayField || "possibly_fake_email",
 					condition: { field: "throwaway", eq: true },
 				},
 			);
@@ -628,7 +649,7 @@ async function placeDetail(data: Data, place: Place, view: View): Promise<Block[
 	const waiting = await deliveries(data.ctx).count({ destination: place.id, status: "retrying" });
 	const problem = status.problem;
 	const statusText =
-		status.label === "Needs fixing" && problem?.field && place.kind === "hubspot"
+		problem?.field && place.kind === "hubspot"
 			? `Needs fixing: HubSpot refused ${labelOf(data, problem.formId, problem.field)}`
 			: status.label;
 	const blocks: Block[] = [
@@ -780,7 +801,7 @@ function connectBlocks(data: Data): Block[] {
 				{
 					type: "code",
 					code: instructions({
-						site: siteName(ctx),
+						site: siteName(ctx, data.origin),
 						origin: data.origin,
 						key: config.key,
 						forms: forms.map((f) => f.slug),
@@ -1126,7 +1147,7 @@ export async function handleAdmin(
 			);
 		}
 		const throwawayField =
-			values.throwaway === true ? str(values.throwaway_field).trim() || "throwaway_email" : "";
+			values.throwaway === true ? str(values.throwaway_field).trim() || "possibly_fake_email" : "";
 		const updated: Place = {
 			...place,
 			mapping: { ...place.mapping, [form]: mapping },
@@ -1250,9 +1271,9 @@ export async function handleAdmin(
 			to: to!,
 			...(cc.length ? { cc } : {}),
 			...(user?.email ? { replyTo: user.email } : {}),
-			subject: `${siteName(ctx)}: how to connect the forms to Lead Delivery`,
+			subject: `${siteName(ctx, data.origin)}: how to connect the forms to Lead Delivery`,
 			text: instructions({
-				site: siteName(ctx),
+				site: siteName(ctx, data.origin),
 				origin: data.origin,
 				key: data.config.key,
 				forms: Object.keys(data.forms),

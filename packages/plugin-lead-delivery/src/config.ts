@@ -9,6 +9,7 @@ export const FORMS_KEY = "forms";
 export const ALERTS_KEY = "alerts";
 export const TICK_KEY = "tick";
 export const PING_KEY = "ping";
+export const ORIGIN_KEY = "origin";
 
 /** Plugin id as EmDash mounts it: `/_emdash/api/plugins/<id>/<route>`. */
 export const PLUGIN_ID = "lead-delivery";
@@ -116,8 +117,12 @@ export function parseAddresses(text: string): { list: string[] } | { bad: string
 	return { list: [...new Set(list.map((a) => a.toLowerCase()))] };
 }
 
-export function siteName(ctx: PluginContext): string {
-	return ctx.site.name?.trim() || "Your website";
+/** The site's name; when it has none, its address (crumbandco.uk), so a subject still says which site. */
+export function siteName(ctx: PluginContext, requestUrl?: string): string {
+	const name = ctx.site.name?.trim();
+	if (name) return name;
+	const origin = siteOrigin(ctx, requestUrl);
+	return origin ? new URL(origin).host : "Your website";
 }
 
 export function plural(count: number, one: string, many = `${one}s`): string {
@@ -156,4 +161,16 @@ export function since(iso: string, now = Date.now()): string {
 
 export function day(iso: string): string {
 	return iso.slice(0, 10);
+}
+
+/** Remember the site's address from a request, for runs that have none (scheduled tasks). */
+export async function rememberOrigin(ctx: PluginContext, requestUrl: string) {
+	const origin = siteOrigin(ctx, requestUrl);
+	if (origin && (await ctx.kv.get<string>(ORIGIN_KEY)) !== origin)
+		await ctx.kv.set(ORIGIN_KEY, origin);
+}
+
+/** `siteName` for code that runs without a request. */
+export async function siteLabel(ctx: PluginContext): Promise<string> {
+	return siteName(ctx, (await ctx.kv.get<string>(ORIGIN_KEY)) ?? undefined);
 }

@@ -84,6 +84,8 @@ export interface Enquiry {
 	/** Days since the same address last sent this form (within 7 days). */
 	repeatDays?: number;
 	hasFiles: boolean;
+	/** Read from an email whose format was not recognised; kept as text. */
+	unreadable?: boolean;
 	/** Contents removed after every place had it; kept so a repeat is still recognised. */
 	cleared?: boolean;
 }

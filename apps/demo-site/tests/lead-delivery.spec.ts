@@ -150,7 +150,7 @@ test("adding an email place through the form", async () => {
 	await expect(page.getByRole("heading", { name: "Email to orders@acme.test" })).toBeVisible();
 	await page.getByRole("button", { name: "Back to all places" }).click();
 	await expect(
-		page.getByRole("cell", { name: /Email to orders@acme\.test · All forms/ }),
+		page.getByRole("cell", { name: /Email to orders@\u200b?acme\.\u200b?test · All forms/ }),
 	).toBeVisible();
 	await expect(page.getByRole("cell", { name: "Not used yet" })).toBeVisible();
 	await page.close();
@@ -171,7 +171,7 @@ test("the email way end to end: a form sent on the site reaches the inbox, the p
 				],
 			},
 		],
-		settings: { spamProtection: "none", notifyEmails: [privateAddress] },
+		settings: { spamProtection: "none", notifyEmails: [privateAddress, "owner@acme.test"] },
 	});
 	if (created.status() === 409) {
 		// Another spec made the form first: point its notifications here.
@@ -181,7 +181,7 @@ test("the email way end to end: a form sent on the site reaches the inbox, the p
 		const id = forms.find((f) => f.slug === FORM)!.id;
 		await post("/_emdash/api/plugins/emdash-forms/forms/update", {
 			id,
-			settings: { notifyEmails: [privateAddress], digestEnabled: false },
+			settings: { notifyEmails: [privateAddress, "owner@acme.test"], digestEnabled: false },
 		});
 	} else {
 		expect(created.status()).toBe(200);
@@ -207,11 +207,16 @@ test("the email way end to end: a form sent on the site reaches the inbox, the p
 	expect(enquiry.cc).toEqual(["anna@acme.test"]);
 	expect(enquiry.subject).toMatch(/: new enquiry from Tom Reyes \(Lead test\)$/);
 	expect(enquiry.text).toContain("Message: Three tiers, lemon and elderflower.");
-	expect(emails.some((e) => e.message.to.endsWith("@lead-delivery.invalid"))).toBe(false);
+	// Nothing reached the email provider for the private domain: not as the recipient, not as a copy.
+	expect(JSON.stringify(emails)).not.toContain("@lead-delivery.invalid");
+	// The owner's own notification from the forms plugin still arrives, unchanged.
+	const own = emails.find((e) => e.message.to === "owner@acme.test")?.message;
+	expect(own?.subject).toBe("New submission: Lead test");
+	expect(own?.text).toContain("Your name: Tom Reyes");
 
 	await open(page);
 	await expect(
-		page.getByRole("cell", { name: /Tom Reyes · Lead test → Email to orders@acme\.test/ }),
+		page.getByRole("cell", { name: /Tom Reyes · Lead test → Email to orders@/ }),
 	).toBeVisible();
 	await expect(page.getByRole("cell", { name: "Delivered" }).first()).toBeVisible();
 	await expect(page.getByText("Received", { exact: true })).toBeVisible();
@@ -275,9 +280,11 @@ test("an app that cannot be reached is tried again, never shown in red", async (
 	await expect(row.getByRole("cell", { name: "Trying again" })).toBeVisible();
 	await expect(row.getByText(/try 2 of 8, next in/)).toBeVisible();
 	await expect(row.getByRole("button", { name: "Send now" })).toBeVisible();
-	// The throwaway address is flagged, not dropped.
+	// A possibly fake address is flagged, not dropped.
 	await expect(
-		page.getByRole("row", { name: /Ben Ode · Lead test → Email to orders.*Throwaway address/ }),
+		page.getByRole("row", {
+			name: /Ben Ode · Lead test → Email to orders.*Possibly fake email address/,
+		}),
 	).toBeVisible();
 	// Trying again is not an error.
 	await expect(page.locator('[role="alert"]').filter({ hasText: "could not reach" })).toHaveCount(
@@ -320,17 +327,30 @@ test("on a phone the status and the action of every row stay on screen", async (
 		hasTouch: true,
 	});
 	const page = await phone.newPage();
-	await open(page);
-	const row = page.getByRole("row", { name: /Ben Ode · Lead test → Zapier/ });
-	await expect(row).toBeVisible();
-	for (const target of [
-		row.getByRole("cell", { name: "Trying again" }),
-		row.getByRole("button", { name: "Send now" }),
-	]) {
-		const box = await target.boundingBox();
-		expect(box).not.toBeNull();
-		expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+	/** Every status badge and action button sits inside the table's visible box (it clips). */
+	async function allInside(): Promise<void> {
+		const tables = page.locator("table");
+		await expect(tables.first()).toBeVisible();
+		const outside = await tables.evaluateAll((list) =>
+			list.flatMap((table) => {
+				const box = (table.parentElement ?? table).getBoundingClientRect();
+				const right = Math.min(box.right, window.innerWidth);
+				return [...table.querySelectorAll("tbody tr")].flatMap((tr) =>
+					[...tr.querySelectorAll("td:nth-child(2) > *, td:nth-child(3) button")]
+						.filter((el) => el.getBoundingClientRect().right > right + 0.5)
+						.map((el) => el.textContent ?? ""),
+				);
+			}),
+		);
+		expect(outside).toEqual([]);
 	}
+	await open(page);
+	await expect(page.getByRole("row", { name: /Ben Ode · Lead test → Zapier/ })).toBeVisible();
+	await allInside();
+	await page.getByRole("tab", { name: "Where enquiries go", exact: true }).click();
+	await allInside();
+	await page.getByRole("tab", { name: "Connect forms", exact: true }).click();
+	await allInside();
 	await phone.close();
 });
 

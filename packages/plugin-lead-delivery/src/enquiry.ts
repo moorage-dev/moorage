@@ -1,5 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import type { PluginContext } from "emdash";
+
 import { isEmail } from "./config.js";
 import { isThrowaway } from "./throwaway.js";
 import type { Enquiry, FieldInfo, KnownForm } from "./types.js";
@@ -213,4 +215,39 @@ export async function fromEmail(
 /** Fields of a form as the plugin knows them, for matching and tests. */
 export function fieldsOf(enquiry: Enquiry): FieldInfo[] {
 	return enquiry.fields.map(({ key, label, type }) => ({ key, label, ...(type ? { type } : {}) }));
+}
+
+export const UNREADABLE_KEY = "unreadable";
+
+/**
+ * An email to the private address that does not read as the forms plugin's notification (its
+ * format changed, or something else sent it). Kept as one block of text so nothing is lost.
+ */
+export async function fromUnreadableEmail(subject: string, text: string): Promise<Received> {
+	const formName =
+		(subject.startsWith(SUBJECT_PREFIX) ? subject.slice(SUBJECT_PREFIX.length) : subject).trim() ||
+		"A form";
+	const email = /[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[A-Za-z]{2,}/.exec(text)?.[0];
+	return {
+		id: `m${(await sha256(`${subject}\n${text}`)).slice(0, 40)}`,
+		enquiry: {
+			...finish({
+				formId: slugify(formName),
+				formName,
+				receivedAt: new Date().toISOString(),
+				fields: [
+					{ key: "text", label: "Enquiry", type: "textarea", value: text.trim().slice(0, 10_000) },
+					...(email ? [{ key: "email", label: "Email", type: "email", value: email }] : []),
+				],
+				via: "email",
+				hasFiles: false,
+			}),
+			unreadable: true,
+		},
+	};
+}
+
+/** Remember that a form's email could not be read field by field, for the admin's banner. */
+export async function noteUnreadable(ctx: PluginContext, formName: string) {
+	await ctx.kv.set(UNREADABLE_KEY, { formName, at: new Date().toISOString() });
 }

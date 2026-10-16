@@ -8,7 +8,7 @@ import {
 	loadConfig,
 	loadForms,
 	saveForms,
-	siteName,
+	siteLabel,
 	since,
 	TICK_KEY,
 } from "./config.js";
@@ -150,13 +150,14 @@ export async function receive(
 	const createdAt = new Date(now).toISOString();
 	const who = enquiry.name ?? enquiry.email ?? "Someone";
 	const notes: string[] = [];
-	if (enquiry.throwaway) notes.push("Throwaway address");
+	if (enquiry.throwaway) notes.push("Possibly fake email address");
 	if (enquiry.repeatDays) {
 		notes.push(
 			`Same address ${enquiry.repeatDays === 1 ? "yesterday" : `${enquiry.repeatDays} days ago`}`,
 		);
 	}
 	if (enquiry.via === "test") notes.push("Test");
+	if (enquiry.unreadable) notes.push("Sent as text: its fields could not be read");
 	if (enquiry.hasFiles) notes.push("Has an attachment, see Forms → Submissions");
 
 	const rows: Array<{ id: string; data: Delivery }> = [];
@@ -231,7 +232,7 @@ export async function sendTo(
 		}
 		const [first, ...copies] = place.to ?? [];
 		if (!first) return done({ kind: "fixing", plain: "This place has no email address." });
-		const message = enquiryEmail(siteName(ctx), enquiry, test);
+		const message = enquiryEmail(await siteLabel(ctx), enquiry, test);
 		try {
 			await ctx.email.send({
 				to: first,
@@ -434,7 +435,7 @@ async function alertFailures(ctx: PluginContext, config: Config) {
 		config,
 		"failure",
 		failureAlert(
-			siteName(ctx),
+			await siteLabel(ctx),
 			rows.map((r) => ({ delivery: r.data, place: placeName(config, r.data.destination) })),
 		),
 	);
@@ -462,7 +463,7 @@ export async function checkQuiet(ctx: PluginContext, config: Config) {
 		config,
 		"quiet",
 		quietAlert(
-			siteName(ctx),
+			await siteLabel(ctx),
 			fresh.map((f) => quietLine(f, since(f.lastAt!))),
 		),
 	);
@@ -484,7 +485,7 @@ export async function schedulerStuck(ctx: PluginContext): Promise<boolean> {
 
 export async function alertIfStuck(ctx: PluginContext, config: Config) {
 	if (await schedulerStuck(ctx))
-		await alertOnce(ctx, config, "scheduler", schedulerAlert(siteName(ctx)));
+		await alertOnce(ctx, config, "scheduler", schedulerAlert(await siteLabel(ctx)));
 }
 
 const SCHEDULE_KEY = "schedule";

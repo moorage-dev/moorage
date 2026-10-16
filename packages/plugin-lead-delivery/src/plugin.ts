@@ -3,7 +3,14 @@
 import { pluginResponse, type SandboxedPlugin } from "emdash/plugin";
 
 import { handleAdmin } from "./admin.js";
-import { loadConfig, loadForms, PING_KEY, PRIVATE_DOMAIN, privateEmail } from "./config.js";
+import {
+	loadConfig,
+	loadForms,
+	PING_KEY,
+	PRIVATE_DOMAIN,
+	privateEmail,
+	rememberOrigin,
+} from "./config.js";
 import {
 	alertIfStuck,
 	DELIVER_TASK,
@@ -13,7 +20,7 @@ import {
 	receive,
 	runDue,
 } from "./deliver.js";
-import { fromEmail, fromWebhook } from "./enquiry.js";
+import { fromEmail, fromUnreadableEmail, fromWebhook, noteUnreadable } from "./enquiry.js";
 
 const FORMS_PLUGIN = "emdash-forms";
 
@@ -46,29 +53,40 @@ const plugin: SandboxedPlugin = {
 		},
 		// The email way: a form's notification email to the private address carries the
 		// enquiry. It is recorded here and that one email is cancelled; nothing is sent there.
-		"email:beforeSend": async (event, ctx) => {
-			const to = event.message.to.trim().toLowerCase();
-			if (!to.endsWith(`@${PRIVATE_DOMAIN}`)) return event.message;
-			try {
-				const config = await loadConfig(ctx);
-				if (event.source === FORMS_PLUGIN && to === privateEmail(config.key).toLowerCase()) {
-					const received = await fromEmail(
-						event.message.subject,
-						event.message.text,
-						await loadForms(ctx),
-					);
-					// Delivered by the every-minute run: forms waits for this email before answering
-					// the visitor, and EmDash refuses a second email from inside this one. Nothing is
-					// scheduled from here either: run in the site's process, a task scheduled inside
-					// the email pipeline would carry it along and hit the same refusal.
-					if (received) {
+		"email:beforeSend": {
+			// Fail closed: if this hook throws or runs out of time, EmDash stops that send
+			// ("abort"), so an email to the private address can never fall through to a provider.
+			errorPolicy: "abort",
+			handler: async (event, ctx) => {
+				const message = event.message;
+				const isPrivate = (address: string) =>
+					address.trim().toLowerCase().endsWith(`@${PRIVATE_DOMAIN}`);
+				if (!isPrivate(message.to)) {
+					// Never copy anyone at the private domain, whoever sends it.
+					if (!message.cc?.some(isPrivate)) return message;
+					return { ...message, cc: message.cc.filter((address) => !isPrivate(address)) };
+				}
+				try {
+					const config = await loadConfig(ctx);
+					const to = message.to.trim().toLowerCase();
+					if (event.source === FORMS_PLUGIN && to === privateEmail(config.key).toLowerCase()) {
+						// A changed email format is still recorded, as text, and the admin says so.
+						const received =
+							(await fromEmail(message.subject, message.text, await loadForms(ctx))) ??
+							(await fromUnreadableEmail(message.subject, message.text));
+						if (received.enquiry.unreadable) await noteUnreadable(ctx, received.enquiry.formName);
+						// Delivered by the every-minute run: forms waits for this email before answering
+						// the visitor, and EmDash refuses a second email from inside this one. Nothing is
+						// scheduled from here either: run in the site's process, a task scheduled inside
+						// the email pipeline would carry it along and hit the same refusal.
 						await receive(ctx, received.id, received.enquiry, { inline: false, schedule: false });
 					}
+				} catch (error) {
+					ctx.log.error("could not record an enquiry from its email", { error: String(error) });
 				}
-			} catch (error) {
-				ctx.log.error("could not record an enquiry from its email", { error: String(error) });
-			}
-			return false;
+				// Every email to the private domain is cancelled: an old address, another sender, anything.
+				return false;
+			},
 		},
 	},
 	routes: {
@@ -77,6 +95,7 @@ const plugin: SandboxedPlugin = {
 			permission: "plugins:read",
 			handler: async (routeCtx, ctx) => {
 				await ensureSchedule(ctx);
+				await rememberOrigin(ctx, routeCtx.request.url);
 				return handleAdmin(routeCtx.input, routeCtx.user, routeCtx.request.url, ctx);
 			},
 		},
@@ -100,6 +119,7 @@ const plugin: SandboxedPlugin = {
 				const formId = typeof payload?.formId === "string" ? payload.formId : "";
 				const received = fromWebhook(payload, forms[formId]);
 				if (!received) return text(400, "This is not a form enquiry.");
+				await rememberOrigin(ctx, routeCtx.request.url);
 				const result = await receive(ctx, received.id, received.enquiry, { inline: true });
 				await ensureSchedule(ctx);
 				await alertIfStuck(ctx, config);

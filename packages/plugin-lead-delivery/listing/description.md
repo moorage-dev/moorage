@@ -8,7 +8,7 @@ Every enquiry sent through your EmDash forms goes where you work: your inbox, Hu
 - **A delivery log** your clients can read: who, which form, where it went, and whether it arrived. Send again with one press.
 - **Retries**: 8 tries over about two days when a service does not answer.
 - **Alerts** by email to everyone who looks after the site, at most once a day for each kind: an enquiry that could not be delivered, a form that usually gets enquiries and has gone quiet for 3 days, retries that are not running.
-- **Flags**: throwaway addresses and the same person sending again are marked, never dropped. Optionally, don't send the same person twice within 24 hours.
+- **Flags**: possibly fake email addresses and the same person sending again are marked, never dropped. Optionally, don't send the same person twice within 24 hours.
 
 ## What it does not do
 

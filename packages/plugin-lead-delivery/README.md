@@ -11,7 +11,7 @@ Lead Delivery for [EmDash](https://emdashcms.com) sends every enquiry from your 
   - Paste the HubSpot form's share link or embed code. No HubSpot key is stored.
   - Each form field is matched to a HubSpot field from a list. This happens automatically where the names make it obvious, and works before the first enquiry when the site can look the form up.
   - Consent goes to HubSpot only when someone ticked a consent box, or when you say your HubSpot account has its privacy (GDPR) settings on.
-  - Throwaway addresses can be marked in a HubSpot field you choose.
+  - Possibly fake email addresses (from services that hand out short-lived inboxes) can be marked in a HubSpot field you choose.
 - **Another app (Zapier, Make, n8n or your own).** Each enquiry is sent as flat JSON, signed with the [Standard Webhooks](https://www.standardwebhooks.com/) headers, with one secret for each app.
 - **A delivery log** that Editors (usually your client) can read. It shows who sent the enquiry, from which form, where it went and whether it arrived, with a Send again button.
 - **Retries.** An enquiry that gets no answer is tried 8 times over about two days. When a service refuses an enquiry for a reason that would fail the same way again, it is not retried. Instead, the admin says in plain words what to fix, with the service's own words beneath.
@@ -19,7 +19,7 @@ Lead Delivery for [EmDash](https://emdashcms.com) sends every enquiry from your 
   - an enquiry could not be delivered;
   - a form that usually gets enquiries has had none for 3 days;
   - retries are waiting because scheduled tasks are not running.
-- **Flags, not filters.** Throwaway addresses (about 150 known domains) and the same person sending again are marked in the log, and are still delivered. If you want, turn on "Don't send the same person twice within 24 hours" for a place.
+- **Flags, not filters.** Possibly fake email addresses (from about 150 services that hand out short-lived inboxes) and the same person sending again are marked in the log, and are still delivered. If you want, turn on "Don't send the same person twice within 24 hours" for a place.
 - **The page and UTM values** are sent with each enquiry when the form provides them: form fields named `page_url`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term` or `utm_content`.
 - **Send a test** to each place. For HubSpot it asks first, because a test adds a contact.
 - **A dashboard widget**, "Enquiries this week".
