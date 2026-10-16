@@ -432,8 +432,9 @@ export function boot(c: ClientConfig): void {
 				close(finished ? "done" : "closed");
 			});
 			(box as HTMLDialogElement).showModal();
-			const first = box.querySelector<HTMLElement>(".in,.f input:not([type=hidden])");
-			if (first) first.focus();
+			// Focus goes to the first field; on a phone sheet to the heading, so no keyboard jumps up uninvited.
+			const first = sheet ? null : box.querySelector<HTMLElement>(".in,.f input:not([type=hidden])");
+			(first || box.querySelector<HTMLElement>("h2"))?.focus();
 		} else {
 			// A slide-in leaves the page usable: it does not take focus. Its heading is announced once,
 			// and the page keeps whatever has focus clear of it.
@@ -505,6 +506,7 @@ export function boot(c: ClientConfig): void {
 			finished = true;
 			// The box keeps its height and swaps to the thank-you; it never closes by itself.
 			box.style.minHeight = box.offsetHeight + "px";
+			box.classList.add("done");
 			const thanks = previewId ? "Preview: nothing was sent." : answer.message || "";
 			formEl.outerHTML =
 				'<div class="ok" role="status"><span class="tick"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4"/></svg></span><h2 tabindex="-1">' +
@@ -514,7 +516,9 @@ export function boot(c: ClientConfig): void {
 				'<div class="r"><button type="button" class="p" data-pp-close>' +
 				esc(c.t.close) +
 				"</button></div></div>";
+			// The thank-you heading takes over the name of the popup.
 			box.querySelector<HTMLElement>("h2#" + hid)?.remove();
+			box.querySelector(".ok h2")!.id = hid;
 			box.querySelectorAll(":scope > p:not(.pv),:scope > .pic,:scope > .thumb").forEach((el) => el.remove());
 			box.querySelector<HTMLElement>(".ok h2")?.focus();
 		});

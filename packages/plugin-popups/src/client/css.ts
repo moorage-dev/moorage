@@ -46,7 +46,7 @@ export const CSS =
 	// Slide-in: a bottom corner.
 	".slide{position:fixed;right:16px;bottom:16px;width:360px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:20px;border-radius:10px;box-shadow:var(--sw)}.slide.l{right:auto;left:16px}.slide h2{font-size:19px;padding-right:36px}.slide .x{top:4px;right:4px}.slide .r{clear:both}" +
 	// Popup: a centred dialog that dims the page.
-	"dialog.modal{width:min(480px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 32px);overflow:auto;margin:auto;padding:28px;border-radius:var(--r);box-shadow:var(--w)}dialog.modal::backdrop{background:var(--bd)}dialog.modal h2{padding-right:30px}dialog.modal .pic+h2{padding-right:0}" +
+	"dialog.modal{width:min(480px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 32px);overflow:auto;margin:auto;padding:28px;border-radius:var(--r);box-shadow:var(--w)}dialog.modal::backdrop{background:var(--bd)}dialog.modal h2{padding-right:30px}dialog.modal .pic+h2{padding-right:0}dialog.modal.done[open]{display:grid;align-content:center}" +
 	// Over the picture, the close button gets its own dark backing so it stays visible.
 	".x.on-pic{color:#fff;background:rgb(0 0 0/.45)}" +
 	"@media(prefers-reduced-motion:no-preference){.slide,dialog.modal[open]{animation:pi .25s ease-out}}@media(prefers-reduced-motion:reduce){.slide,dialog.modal[open]{animation:po .2s}}" +
