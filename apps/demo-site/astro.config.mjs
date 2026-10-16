@@ -2,11 +2,14 @@ import node from "@astrojs/node";
 import react from "@astrojs/react";
 import { formsPlugin } from "@emdash-cms/plugin-forms";
 import { analyticsPlugin } from "@moorage/plugin-analytics";
+import restore from "@moorage/plugin-restore";
 import seo from "@moorage/plugin-seo";
 import icon from "astro-iconset";
 import { defineConfig, fontProviders } from "astro/config";
 import emdash, { local } from "emdash/astro";
 import { sqlite } from "emdash/db";
+
+import { simulateCloudflare } from "./simulated-cloudflare.mjs";
 
 // Web fonts are downloaded from Google at build time, which fails a build whenever
 // that download does. This is a test fixture, so it uses system fonts unless asked:
@@ -17,6 +20,10 @@ const webFonts = process.env.DEMO_SITE_FONTS === "1";
 // instead, the way a site without a sandbox runner (the Workers free plan) installs it; CI runs
 // the SEO browser tests both ways.
 const seoInProcess = process.env.DEMO_SITE_SEO === "in-process";
+// Restore the same way (DEMO_SITE_RESTORE=in-process). It never reaches Cloudflare: see simulated-cloudflare.mjs.
+const restoreInProcess = process.env.DEMO_SITE_RESTORE === "in-process";
+const databaseUrl = process.env.DEMO_SITE_DB ?? "file:./data.db";
+simulateCloudflare(databaseUrl);
 
 export default defineConfig({
 	output: "server",
@@ -54,12 +61,17 @@ export default defineConfig({
 			},
 		}),
 		emdash({
-			plugins: [formsPlugin(), analyticsPlugin(), ...(seoInProcess ? [seo] : [])],
-			sandboxed: seoInProcess ? [] : [seo],
+			plugins: [
+				formsPlugin(),
+				analyticsPlugin(),
+				...(seoInProcess ? [seo] : []),
+				...(restoreInProcess ? [restore] : []),
+			],
+			sandboxed: [...(seoInProcess ? [] : [seo]), ...(restoreInProcess ? [] : [restore])],
 			sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
 			...(webFonts ? {} : { fonts: false }),
 			// Browser tests point this at their own database so they never touch yours.
-			database: sqlite({ url: process.env.DEMO_SITE_DB ?? "file:./data.db" }),
+			database: sqlite({ url: databaseUrl }),
 			storage: local({
 				directory: "./uploads",
 				baseUrl: "/_emdash/api/media/file",
