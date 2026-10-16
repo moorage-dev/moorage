@@ -35,10 +35,11 @@ export const ADMIN_ROLE = 50;
 const TAB = { status: 0, tools: 1, banner: 2, advanced: 3 } as const;
 
 const AUDIENCE_LABEL: Record<Audience, string> = {
-	europe: "Visitors in Europe and the UK (recommended)",
-	"europe-india": "Visitors in Europe, the UK and India",
-	everyone: "Everyone",
-	none: "No one, I use another consent tool",
+	europe:
+		"Where the law says ask first: the EU, EEA, UK and Switzerland (recommended if you only count visits, for example with Google Analytics)",
+	"europe-india": "Those places, plus India (its consent rules apply from 2027)",
+	everyone: "Everyone, everywhere (recommended if you use Clarity, Meta Pixel or Google Ads)",
+	none: "No one: another consent tool asks instead",
 };
 
 const TOOL_LABEL: Record<ToolId, string> = {
@@ -95,6 +96,10 @@ function toolRule(config: AnalyticsConfig, tool: ToolId): string {
 	return `Waits for ${whoWaits(audience)} to accept ${kind} cookies.${rest}`;
 }
 
+function toolDoes(tool: "clarity" | "meta" | "ads"): string {
+	return tool === "clarity" ? "records visits" : "is used for advertising";
+}
+
 /** Things the owner should fix or know, most important first. */
 export function warnings(config: AnalyticsConfig): Array<{ title: string; description: string }> {
 	const list: Array<{ title: string; description: string }> = [];
@@ -104,7 +109,7 @@ export function warnings(config: AnalyticsConfig): Array<{ title: string; descri
 		list.push({
 			title: "Your tools load without asking anyone",
 			description:
-				'You chose "No one, I use another consent tool". Make sure that tool really holds these tools back until visitors agree, or choose who sees the banner under Cookie banner.',
+				'You chose "No one: another consent tool asks instead". Make sure that tool really holds these tools back until visitors agree, or choose who sees the banner under Cookie banner.',
 		});
 	}
 	if (asks && banner.audience !== "none" && banner.policyUrl === "") {
@@ -112,6 +117,13 @@ export function warnings(config: AnalyticsConfig): Array<{ title: string; descri
 			title: "The banner has no link to your privacy policy",
 			description:
 				"Visitors must be able to read what they are agreeing to. Add your privacy policy page under Cookie banner.",
+		});
+	}
+	const watching = (["clarity", "meta", "ads"] as const).filter((tool) => tools[tool]);
+	if (watching.length && (banner.audience === "europe" || banner.audience === "europe-india")) {
+		list.push({
+			title: "Consider asking every visitor",
+			description: `${watching.map((tool) => TOOL_NAMES[tool]).join(", ")} ${watching.length > 1 ? "record visits or advertise" : toolDoes(watching[0]!)}. In the US and elsewhere that is safer with consent first. Choose "Everyone, everywhere" under Cookie banner.`,
 		});
 	}
 	if (asks && banner.audience !== "none" && !banner.settingsButton) {
@@ -279,6 +291,10 @@ function bannerBlocks(state: PageState): Block[] {
 	const { banner } = config;
 	return [
 		...errorBlocks(state),
+		{
+			type: "context",
+			text: "Visitors who are not asked, for example in the US, can always turn the tools off with Cookie settings, as US state laws such as California's require, and Global Privacy Control is always respected. Tools that record visits or advertise are safer behind a banner for everyone.",
+		},
 		{
 			type: "context",
 			text: 'Visitors must always be able to change their mind. A small "Cookies" button lets them; it stays away on pages that have a link with the attribute data-cookie-settings, for example "Cookie settings" in your footer.',

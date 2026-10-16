@@ -380,3 +380,29 @@ describe("dark mode colours and the preview", () => {
 		expect(text).toContain("https://acme.test/?cookie_preview=dark");
 	});
 });
+
+describe("who is asked", () => {
+	it("suggests asking everyone when a tool records visits or advertises", async () => {
+		const asksEurope = await load(
+			fakeContext({ [CONFIG_KEY]: { tools: { clarity: "ab12cd34ef" } } }),
+		);
+		expect(JSON.stringify(asksEurope)).toContain("Consider asking every visitor");
+		expect(JSON.stringify(asksEurope)).toContain("Microsoft Clarity records visits");
+		const asksEveryone = await load(
+			fakeContext({
+				[CONFIG_KEY]: { tools: { clarity: "ab12cd34ef" }, banner: { audience: "everyone" } },
+			}),
+		);
+		expect(JSON.stringify(asksEveryone)).not.toContain("Consider asking every visitor");
+		const onlyAnalytics = await load(
+			fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } }),
+		);
+		expect(JSON.stringify(onlyAnalytics)).not.toContain("Consider asking every visitor");
+	});
+
+	it("says beside each choice what it is for", async () => {
+		const text = JSON.stringify(await load(fakeContext()));
+		expect(text).toContain("recommended if you use Clarity, Meta Pixel or Google Ads");
+		expect(text).toContain("for example in the US");
+	});
+});
