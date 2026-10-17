@@ -50,6 +50,8 @@ emdash({
 
 It needs EmDash 1.3 or later and the official forms plugin. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one).
 
+**On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
+
 ## Connecting a form
 
 EmDash's form editor cannot yet be pointed at another plugin. Until it can, someone who looks after the site's code connects each form once. Open **Lead delivery → Connect forms**, add your forms by their short name (the Slug column under Forms), and press **Check this site**. The plugin then writes the instructions for your web person and can email them. There are two ways to connect, and the check says which one works on your site:

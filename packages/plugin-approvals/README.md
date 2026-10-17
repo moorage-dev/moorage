@@ -42,6 +42,8 @@ export default defineConfig({
 
 On a site without a sandbox runner, list it under `plugins: [approvals]` instead; it behaves the same. Needs EmDash 1.3.0 or later.
 
+**On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
+
 Then open **Approvals** in the sidebar. **Nothing is held until an admin saves the Settings tab once**, AI tools included.
 
 ## Settings
