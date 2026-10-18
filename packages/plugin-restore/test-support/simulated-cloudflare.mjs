@@ -136,6 +136,20 @@ export function interceptCloudflare(options) {
 	globalThis.fetch = async (input, init) => {
 		const url = input instanceof Request ? input.url : String(input);
 		if (url.startsWith("https://api.cloudflare.com/")) return simulator.fetch(input, init);
+		// EmDash checks where a plugin's request goes by asking Cloudflare's public DNS first; answer
+		// for api.cloudflare.com here too, so a slow or failed lookup never fails the demo's tests.
+		const lookup = new URL(url);
+		if (
+			lookup.origin === "https://cloudflare-dns.com" &&
+			lookup.searchParams.get("name") === "api.cloudflare.com"
+		) {
+			const type = lookup.searchParams.get("type") === "AAAA" ? 28 : 1;
+			const data = type === 28 ? "2606:4700::6810:84e5" : "104.16.132.229";
+			return Response.json({
+				Status: 0,
+				Answer: [{ name: "api.cloudflare.com", type, TTL: 300, data }],
+			});
+		}
 		return original(input, init);
 	};
 	return simulator;
