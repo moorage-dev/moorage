@@ -50,11 +50,12 @@ describe("CPU per run", () => {
 		});
 		// Milliseconds differ from machine to machine (CI measured 60 where a laptop measures 12),
 		// so compare with a fixed piece of work on the same machine: copying the same pages
-		// through JSON. Reading the links takes about twice that.
+		// through JSON. Reading the links takes about twice that on a laptop and up to 4.5 times on
+		// a CI runner; ten times would mean a real slowdown, not a busy machine.
 		const copy = fastest(() => {
 			for (const entry of entries) JSON.parse(JSON.stringify(entry));
 		});
-		expect(ms).toBeLessThan(Math.max(copy, 1) * 4);
+		expect(ms).toBeLessThan(Math.max(copy, 1) * 10);
 	});
 
 	it("scans two 200 KB pages in well under the limit", () => {
