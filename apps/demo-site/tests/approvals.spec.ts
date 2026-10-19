@@ -407,4 +407,29 @@ test.describe.serial("Content Approval", () => {
 		await ellen.page.goto(APPROVALS);
 		await expect(ellen.page.getByText(/Pages · asked by Jo Park/)).toBeVisible({ timeout: 60_000 });
 	});
+
+	// EmDash 1.3.1 shows plugin editor buttons and panels to a Contributor on their own draft but
+	// answers their requests with 403: it asks for content:edit_own (Author and up) before any plugin
+	// code runs, and a plugin cannot hide them by role. The README sends Contributors to the
+	// Approvals page instead. When EmDash fixes this, this test fails: then update it and the README.
+	test("Jo, a Contributor, gets EmDash's own failure from the editor's plugin button", async () => {
+		const draft = await createPage(jo, "Bake sale", "Saturday bake sale");
+		created.push(draft);
+		const page = await front(jo);
+		try {
+			await page.goto(`/_emdash/admin/content/pages/${draft}`);
+			const ask = page.getByRole("button", { name: "Ask for approval" });
+			await expect(ask).toBeVisible({ timeout: 60_000 });
+			const answered = page.waitForResponse((response) =>
+				response.url().includes("/plugin-extensions/approvals/action/ask"),
+			);
+			await ask.click();
+			expect((await answered).status()).toBe(403);
+			await expect(page.getByText("Plugin action failed")).toBeVisible();
+			await page.getByRole("button", { name: "Approval", exact: true }).click();
+			await expect(page.getByText("Plugin panel unavailable.")).toBeVisible();
+		} finally {
+			await leave(jo);
+		}
+	});
 });

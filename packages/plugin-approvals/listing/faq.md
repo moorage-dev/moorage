@@ -16,7 +16,7 @@ Yes. **Approve and publish** approves the exact version they looked at and puts 
 
 ## Can I see what was approved later?
 
-Yes. The History tab keeps a text copy of every approved version and who approved it.
+Yes. The History tab shows, for each page decided recently, the text of its latest approval and who approved it. The page's own Revisions panel keeps every version.
 
 ## What if the approver spots a typo?
 

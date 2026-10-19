@@ -21,10 +21,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * A stored date as people write it: "19 Oct 2026", or "19 Oct 2026, 14:05 UTC" when it has a
+ * time. The plugin cannot know the site's time zone, so times are in UTC and say so. Any other
+ * text comes back unchanged.
+ */
+export function readableDate(text: string): string {
+	const dateOnly = DATE_ONLY.test(text);
+	if (!dateOnly && !DATE_TIME.test(text)) return text;
+	const date = new Date(dateOnly ? `${text}T00:00:00Z` : text);
+	if (Number.isNaN(date.getTime())) return text;
+	// "2026-02-31" parses as 3 March: not a real date, so leave it as written.
+	if (dateOnly && date.toISOString().slice(0, 10) !== text) return text;
+	const day = `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+	if (date.getTime() % 86_400_000 === 0) return day;
+	const hh = String(date.getUTCHours()).padStart(2, "0");
+	const mm = String(date.getUTCMinutes()).padStart(2, "0");
+	return `${day}, ${hh}:${mm} UTC`;
+}
+
+/** Text with each line that is a stored date made readable, for copies saved before 0.1.2. */
+export function readableDates(text: string): string {
+	return text
+		.split("\n")
+		.map((line) => readableDate(line))
+		.join("\n");
+}
+
 /** Plain text of one field's value: rich text and blocks become paragraphs. */
 export function textOf(value: unknown): string {
 	if (value === null || value === undefined) return "";
-	if (typeof value === "string") return value.trim();
+	if (typeof value === "string") return readableDate(value.trim());
 	if (typeof value === "number" || typeof value === "boolean") return String(value);
 	if (Array.isArray(value)) {
 		return value
@@ -69,6 +100,8 @@ export interface FieldText {
 	picture?: boolean;
 	/** For pictures: a stable string of the value, to tell whether it changed. */
 	value?: string;
+	/** Dates: a change names the old and the new value in full. */
+	whole?: boolean;
 }
 
 /** The text copy of a version: one entry per field, in the schema's order. */
@@ -93,6 +126,8 @@ export function textCopy(
 				picture: true,
 				value: value === undefined || value === null ? "" : JSON.stringify(value),
 			});
+		} else if (field.type === "datetime") {
+			copy.push({ slug: field.slug, label: field.label, text: textOf(value), whole: true });
 		} else {
 			copy.push({ slug: field.slug, label: field.label, text: textOf(value) });
 		}
@@ -205,9 +240,14 @@ export function describeChanges(
 			}
 			continue;
 		}
-		const was = previous?.text ?? "";
+		// Copies saved before dates were made readable still hold the stored form.
+		const was = readableDates(previous?.text ?? "");
 		if (was === field.text) continue;
-		changes.push({ label: field.label, text: `${describeTextChange(was, field.text, tense)}.` });
+		const text =
+			field.whole && was !== "" && field.text !== ""
+				? phrase({ removed: [was], added: [field.text] }, tense)
+				: describeTextChange(was, field.text, tense);
+		changes.push({ label: field.label, text: `${text}.` });
 	}
 	for (const gone of old.values()) {
 		if (gone.text !== "")
