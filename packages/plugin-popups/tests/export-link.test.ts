@@ -59,6 +59,24 @@ describe("signed download link", () => {
 		expect(await checkExport(kv, query, NOW - 60_000)).toBeNull();
 	});
 
+	it("makes one secret when two admin pages open at once, so both links work", async () => {
+		const fake = fakeContext();
+		const kv = fake.ctx.kv;
+		const [a, b] = await Promise.all([
+			signExport(kv, { from: "2026-10-01", to: "" }, NOW),
+			signExport(kv, { from: "", to: "2026-10-07" }, NOW),
+		]);
+		expect(await checkExport(kv, new URLSearchParams(a), NOW)).toEqual({
+			from: "2026-10-01",
+			to: "",
+		});
+		expect(await checkExport(kv, new URLSearchParams(b), NOW)).toEqual({
+			from: "",
+			to: "2026-10-07",
+		});
+		expect(typeof fake.kv.get("export-secret")).toBe("string");
+	});
+
 	it("keeps one secret, and refuses everything when there is none", async () => {
 		const { kv, store, query } = await signed();
 		const secret = store.get("export-secret");

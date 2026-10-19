@@ -33,6 +33,7 @@ export function fakeContext(
 	options: { email?: boolean } = {},
 ): FakeContext {
 	const kv = new Map<string, unknown>(Object.entries(stored));
+	const revisions = new Map<string, number>();
 	const rows = new Map<string, Record<string, unknown>>();
 	const sent: Array<Record<string, unknown>> = [];
 	let reads = 0;
@@ -79,6 +80,23 @@ export function fakeContext(
 			},
 			async set(key: string, value: unknown) {
 				kv.set(key, structuredClone(value));
+				revisions.set(key, (revisions.get(key) ?? 0) + 1);
+			},
+			async getVersioned(key: string) {
+				reads++;
+				// Yield, so two callers at once both read before either writes.
+				await Promise.resolve();
+				if (!kv.has(key)) return null;
+				return { value: kv.get(key), revision: String(revisions.get(key) ?? 0) };
+			},
+			// Like EmDash's: a null revision creates only when absent.
+			async compareAndSet(key: string, expected: string | null, value: unknown) {
+				const current = kv.has(key) ? String(revisions.get(key) ?? 0) : null;
+				if (current !== expected) return { applied: false };
+				kv.set(key, structuredClone(value));
+				const revision = (revisions.get(key) ?? 0) + 1;
+				revisions.set(key, revision);
+				return { applied: true, revision: String(revision) };
 			},
 		},
 		storage: { counts: collection },

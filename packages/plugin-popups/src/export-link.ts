@@ -25,7 +25,7 @@ const DIGITS = /^\d{1,13}$/;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 const encoder = new TextEncoder();
 
-type Kv = Pick<PluginContext["kv"], "get" | "set">;
+type Kv = Pick<PluginContext["kv"], "getVersioned" | "compareAndSet">;
 
 export interface ExportRange {
 	/** YYYY-MM-DD or "" for since the start. */
@@ -57,15 +57,27 @@ function signedText(range: ExportRange, expires: number): Uint8Array<ArrayBuffer
 	return encoder.encode(`popups-export:v1|${range.from}|${range.to}|${expires}`);
 }
 
+function secretBytes(value: unknown): Uint8Array<ArrayBuffer> | null {
+	const raw = typeof value === "string" ? fromB64url(value) : null;
+	return raw && raw.length >= 32 ? raw : null;
+}
+
+/**
+ * The site's signing key. The first time, it is made with a compare-and-set, so
+ * two admin pages opening at once agree on one secret: the one that loses reads
+ * and uses the winner's.
+ */
 async function key(kv: Kv, create: boolean): Promise<CryptoKey | null> {
-	let stored = await kv.get<string>(SECRET_KEY);
-	let raw = typeof stored === "string" ? fromB64url(stored) : null;
-	if (!raw || raw.length < 32) {
-		if (!create) return null;
-		raw = crypto.getRandomValues(new Uint8Array(32));
-		stored = toB64url(raw);
-		await kv.set(SECRET_KEY, stored);
+	let raw: Uint8Array<ArrayBuffer> | null = null;
+	for (let attempt = 0; attempt < 3 && !raw; attempt++) {
+		const stored = await kv.getVersioned<string>(SECRET_KEY);
+		raw = secretBytes(stored?.value);
+		if (raw || !create) break;
+		const fresh = crypto.getRandomValues(new Uint8Array(32));
+		const written = await kv.compareAndSet(SECRET_KEY, stored?.revision ?? null, toB64url(fresh));
+		if (written.applied) raw = fresh;
 	}
+	if (!raw) return null;
 	return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, [
 		"sign",
 		"verify",
@@ -79,7 +91,8 @@ export async function signExport(kv: Kv, range: ExportRange, now: number): Promi
 		to: DAY.test(range.to) ? range.to : "",
 	};
 	const expires = now + EXPORT_LINK_MS;
-	const secret = (await key(kv, true))!;
+	const secret = await key(kv, true);
+	if (!secret) throw new Error("Could not store the download signing secret");
 	const signature = new Uint8Array(
 		await crypto.subtle.sign("HMAC", secret, signedText(clean, expires)),
 	);
