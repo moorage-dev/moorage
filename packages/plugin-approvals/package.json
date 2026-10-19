@@ -1,6 +1,6 @@
 {
 	"name": "@moorage/plugin-approvals",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Content approval for EmDash: Publish sends a page for approval; approve and publish in one step, or send it back with a note.",
 	"keywords": [
 		"emdash",

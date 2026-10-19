@@ -1,5 +1,11 @@
 # @moorage/plugin-seo
 
+## 0.1.6
+
+### Patch Changes
+
+- ba5f9ed: The Redirects tab now shows imported redirects as soon as they are added, and drops them as soon as you remove the batch, without reloading the page. The README and listing now say the importer reads CSV exports only.
+
 ## 0.1.5
 
 ### Patch Changes
