@@ -181,7 +181,8 @@ describe("New popup, four steps", () => {
 		});
 		// Instructions for the web person, in a box to copy; never in the owner's path as code.
 		const code = all(s4).find((b) => b.type === "code") as Extract<Block, { type: "code" }>;
-		expect(code.code).toContain("#popup-monthly-letter");
+		// With the leading slash: EmDash's menu refuses a custom link that is only "#...".
+		expect(code.code).toContain("link to /#popup-monthly-letter");
 		expect(code.code).toContain('data-popup="monthly-letter"');
 		const preview = JSON.stringify(all(s4).filter((b) => b.type === "actions"));
 		expect(preview).toContain(`https://hartleys.test/?popups_preview=${id}&scheme=dark`);
@@ -347,7 +348,9 @@ describe("Numbers and Settings", () => {
 			phones: "50%",
 			since: "3 Oct",
 		});
-		expect(words(page)).toContain("https://hartleys.test/_emdash/api/plugins/popups/export");
+		expect(words(page)).toMatch(
+			/https:\/\/hartleys\.test\/_emdash\/api\/plugins\/popups\/export\?expires=\d+&sig=[\w-]{43}/,
+		);
 		expect(all(page).some((b) => b.type === "chart")).toBe(true);
 		const ranged = await submit(fake, "range", "range::", { from: "2026-10-05", to: "" });
 		const rows = (
@@ -357,7 +360,7 @@ describe("Numbers and Settings", () => {
 			>
 		).rows;
 		expect(rows[0]).toMatchObject({ seen: "50" });
-		expect(words(ranged)).toContain("export?from=2026-10-05");
+		expect(words(ranged)).toMatch(/export\?from=2026-10-05&expires=\d+&sig=/);
 	});
 
 	it("refuses unreadable colours and wrong email addresses, and saves good ones", async () => {

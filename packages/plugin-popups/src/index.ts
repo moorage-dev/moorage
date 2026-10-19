@@ -29,6 +29,7 @@ import {
 	type Popup,
 	type Store,
 } from "./config.js";
+import { checkExport, signExport } from "./export-link.js";
 import { checkForm, type FormCheck } from "./forms.js";
 import { clientItem, pageFragments } from "./fragment.js";
 import {
@@ -303,6 +304,8 @@ export function createPlugin() {
 						zone,
 						now,
 						origin,
+						// A plain link cannot send EmDash's request header, so the download is signed.
+						exportQuery: origin ? await signExport(ctx.kv, range, now) : undefined,
 						pluginId: PLUGIN_ID,
 						totals: totals(all),
 						rows: all.filter(
@@ -408,17 +411,25 @@ export function createPlugin() {
 					};
 				},
 			},
-			// Results as a spreadsheet: one row per popup per day.
+			// Results as a spreadsheet: one row per popup per day. A plain link in the
+			// admin cannot send EmDash's request header, so this route is public and
+			// serves only a link the admin page signed in the last ten minutes for
+			// exactly these dates (see export-link.ts). Counts and names, no visitor data.
 			export: {
-				permission: "plugins:read",
+				public: true,
 				methods: ["GET"],
 				response: "raw",
 				handler: async (ctx) => {
 					const params = ctx.request
 						? new URL(ctx.request.url).searchParams
 						: new URLSearchParams();
-					const from = DAY.test(params.get("from") ?? "") ? params.get("from") : null;
-					const to = DAY.test(params.get("to") ?? "") ? params.get("to") : null;
+					const range = await checkExport(ctx.kv, params, Date.now());
+					if (!range)
+						throw PluginRouteError.forbidden(
+							"This download link has expired or is not valid. Open Popups again and download from there.",
+						);
+					const from = range.from || null;
+					const to = range.to || null;
 					const store = await readStore(ctx);
 					const rows = await readRows(ctx, from, to);
 					const names = new Map(store.popups.map((p) => [p.id, p.name]));

@@ -450,7 +450,7 @@ describe("routes", () => {
 		expect(await call(fake, "box", { id: "abcd1234" })).toEqual({ box: null });
 	});
 
-	it("downloads results as a spreadsheet", async () => {
+	it("downloads results as a spreadsheet from a link the admin page signed", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		fake.rows.set("a", {
 			popup: "abcd1234",
@@ -461,17 +461,31 @@ describe("routes", () => {
 			closed: 0,
 			phone: 0,
 		});
-		const out = (await call(
-			fake,
-			"export",
-			null,
-			"https://hartleys.test/_emdash/api/plugins/popups/export?from=2026-10-01",
-		)) as {
+		const shown = JSON.stringify(
+			await call(fake, "admin", {
+				type: "form_submit",
+				action_id: "range",
+				block_id: "range::",
+				values: { from: "2026-10-01", to: "" },
+			}),
+		);
+		const link = /"url":"([^"]+\/export\?[^"]+)"/.exec(shown)![1]!;
+		expect(link).toMatch(
+			/^https:\/\/hartleys\.test\/_emdash\/api\/plugins\/popups\/export\?from=2026-10-01&expires=/,
+		);
+		const out = (await call(fake, "export", null, link)) as {
 			headers: Array<[string, string]>;
 			body: { value: string };
 		};
 		expect(out.headers).toContainEqual(["content-type", "text/csv; charset=utf-8"]);
+		expect(out.headers).toContainEqual(["cache-control", "no-store"]);
+		expect(out.headers.find(([name]) => name === "content-disposition")?.[1]).toMatch(
+			/^attachment; filename="popups-2026-10-01-to-\d{4}-\d{2}-\d{2}\.csv"$/,
+		);
 		expect(out.body.value).toContain("2026-10-03,Monthly letter,1");
+		await expect(
+			call(fake, "export", null, "https://hartleys.test/_emdash/api/plugins/popups/export"),
+		).rejects.toMatchObject({ status: 403 });
 	});
 
 	it("finds a picture's public address as the signed-in person, and only a same-site file address", async () => {
