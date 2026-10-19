@@ -14,7 +14,14 @@ import {
 } from "./config.js";
 import { fieldsOf } from "./enquiry.js";
 import { classifyHubSpot, hubspotBody, submitUrl, type Outcome } from "./hubspot.js";
-import { enquiryEmail, failureAlert, quietAlert, quietLine, schedulerAlert } from "./messages.js";
+import {
+	enquiryEmail,
+	failureAlert,
+	quietAlert,
+	quietLine,
+	repeatNote,
+	schedulerAlert,
+} from "./messages.js";
 import type { Config, Delivery, Enquiry, KnownForm, Place } from "./types.js";
 import { appRequest, classifyApp } from "./webhook.js";
 
@@ -136,10 +143,7 @@ export async function receive(
 	const recent = enquiry.email ? await recentForForm(ctx, enquiry.formId, now - 7 * DAY_MS) : [];
 	const previous = recent.find((r) => r.data.email === enquiry.email && !r.data.test);
 	if (previous) {
-		enquiry.repeatDays = Math.max(
-			1,
-			Math.round((now - Date.parse(previous.data.createdAt)) / DAY_MS),
-		);
+		enquiry.repeatAfterMs = Math.max(0, now - Date.parse(previous.data.createdAt));
 	}
 
 	const created = await enquiries(ctx).compareAndSet(id, null, enquiry);
@@ -151,11 +155,7 @@ export async function receive(
 	const who = enquiry.name ?? enquiry.email ?? "Someone";
 	const notes: string[] = [];
 	if (enquiry.throwaway) notes.push("Possibly fake email address");
-	if (enquiry.repeatDays) {
-		notes.push(
-			`Same address ${enquiry.repeatDays === 1 ? "yesterday" : `${enquiry.repeatDays} days ago`}`,
-		);
-	}
+	if (enquiry.repeatAfterMs !== undefined) notes.push(repeatNote(enquiry.repeatAfterMs));
 	if (enquiry.via === "test") notes.push("Test");
 	if (enquiry.unreadable) notes.push("Sent as text: its fields could not be read");
 	if (enquiry.hasFiles) notes.push("Has an attachment, see Forms → Submissions");

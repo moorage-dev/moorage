@@ -81,8 +81,8 @@ export interface Enquiry {
 	utm?: Record<string, string>;
 	via: "web" | "email" | "test";
 	throwaway: boolean;
-	/** Days since the same address last sent this form (within 7 days). */
-	repeatDays?: number;
+	/** Milliseconds since the same address last sent this form (within 7 days). */
+	repeatAfterMs?: number;
 	hasFiles: boolean;
 	/** Read from an email whose format was not recognised; kept as text. */
 	unreadable?: boolean;

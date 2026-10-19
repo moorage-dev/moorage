@@ -1,6 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import { inboundUrl, privateEmail } from "./config.js";
+import { inboundUrl, plural, privateEmail } from "./config.js";
 import type { Delivery, Enquiry, KnownForm, ReachResult } from "./types.js";
 
 const UTM_LABELS: Record<string, string> = {
@@ -39,11 +39,38 @@ export function enquiryEmail(site: string, enquiry: Enquiry, test: boolean) {
 	};
 }
 
+/** The service's own words as one plain line: no markup, no runs of spaces, not too long. */
+export function ownWords(raw: string, max = 300): string {
+	const flat = raw
+		.replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+		.replace(/<[^>]*>/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/** The log note on a repeat enquiry, by elapsed time: the sandbox does not know the site's time zone. */
+export function repeatNote(elapsedMs: number): string {
+	const minutes = Math.floor(Math.max(0, elapsedMs) / 60_000);
+	if (minutes < 1) return "Same address less than a minute earlier";
+	if (minutes < 60) return `Same address ${plural(minutes, "minute")} earlier`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `Same address ${plural(hours, "hour")} earlier`;
+	return `Same address ${plural(Math.floor(hours / 24), "day")} earlier`;
+}
+
 export function failureAlert(site: string, rows: Array<{ delivery: Delivery; place: string }>) {
-	const parts = rows.map(
-		({ delivery, place }) =>
-			`${delivery.who}'s enquiry from the ${delivery.formName} form could not be sent to "${place}".\n\n${delivery.plain ?? "Its service refused it."}`,
-	);
+	const parts = rows.map(({ delivery, place }) => {
+		const words = delivery.raw ? ownWords(delivery.raw) : "";
+		return [
+			`${delivery.who}'s enquiry from the ${delivery.formName} form could not be sent to "${place}".`,
+			"",
+			delivery.plain ?? "Its service refused it.",
+			...(words ? ["", words] : []),
+		].join("\n");
+	});
+	// Most reasons already end "press Send again"; say where it is only when none does.
+	const saysSendAgain = rows.some(({ delivery }) => delivery.plain?.includes("Send again"));
 	return {
 		subject:
 			rows.length === 1
@@ -51,8 +78,9 @@ export function failureAlert(site: string, rows: Array<{ delivery: Delivery; pla
 				: `${site}: ${rows.length} enquiries could not be delivered`,
 		text: [
 			...parts.flatMap((part) => [part, ""]),
-			"Then press Send again in Lead delivery → Enquiries.",
-			"",
+			...(saysSendAgain
+				? []
+				: ["When it is fixed, press Send again in Lead delivery → Enquiries.", ""]),
 			"The enquiry is safe: it is waiting in Lead delivery and in Forms → Submissions.",
 			"You get this email at most once a day.",
 		].join("\n"),

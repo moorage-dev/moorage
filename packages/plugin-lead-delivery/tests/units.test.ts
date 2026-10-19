@@ -12,9 +12,15 @@ import {
 	matchedCount,
 	parseHubSpot,
 } from "../src/hubspot.js";
-import { enquiryEmail, failureAlert, instructions, quietAlert } from "../src/messages.js";
+import {
+	enquiryEmail,
+	failureAlert,
+	instructions,
+	quietAlert,
+	repeatNote,
+} from "../src/messages.js";
 import { isThrowaway, THROWAWAY_COUNT } from "../src/throwaway.js";
-import type { Enquiry, KnownForm, Place } from "../src/types.js";
+import type { Delivery, Enquiry, KnownForm, Place } from "../src/types.js";
 import { appPayload, classifyApp, sign } from "../src/webhook.js";
 
 const CAKES: KnownForm = {
@@ -332,6 +338,83 @@ describe("emails and words", () => {
 		expect(quietAlert("Crumb & Co.", ["No enquiries from Newsletter since Monday."]).subject).toBe(
 			"Crumb & Co.: no enquiries from Newsletter since Monday",
 		);
+	});
+
+	it("puts the service's own words in the failure alert and says Send again once", () => {
+		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Place;
+		const refused = classifyApp(zap, 400, "", "Invalid payload");
+		const row = (who: string, plain?: string, raw?: string): Delivery => ({
+			enquiryId: who,
+			destination: "p1",
+			formId: "wedding-cakes",
+			formName: "Wedding cakes",
+			who,
+			status: "fixing",
+			attempts: 1,
+			nextAt: "",
+			createdAt: "2026-10-16T09:00:00.000Z",
+			notes: [],
+			...(plain ? { plain } : {}),
+			...(raw ? { raw } : {}),
+		});
+		const sendAgain = (text: string) => text.match(/Send again/g)?.length ?? 0;
+
+		const one = failureAlert("Crumb & Co.", [
+			{
+				delivery: row(
+					"Tom Reyes",
+					refused.plain,
+					"Zapier answered 400:   Invalid payload:\n  missing   email  ",
+				),
+				place: "Zapier",
+			},
+		]).text;
+		expect(one).toContain(
+			`${refused.plain}\n\nZapier answered 400: Invalid payload: missing email\n`,
+		);
+		expect(sendAgain(one)).toBe(1);
+
+		// An HTML error page arrives as plain words, cut short.
+		const html = `Zapier answered 400: <!DOCTYPE html><html><head><style>p{color:red}</style></head><body><p>Bad   request</p>${"x".repeat(400)}</body></html>`;
+		const page = failureAlert("Crumb & Co.", [
+			{ delivery: row("Tom", refused.plain, html), place: "Zapier" },
+		]).text;
+		expect(page).toContain("Zapier answered 400: Bad request xxx");
+		expect(page).not.toMatch(/<|color:red/);
+		expect(page).toContain("x…\n");
+
+		// A reason that does not say Send again: the email says it once, with where it is.
+		const gone = classifyApp(zap, 404, "", "").plain!;
+		const missing = failureAlert("Crumb & Co.", [
+			{ delivery: row("Ann", gone, "Zapier answered 404"), place: "Zapier" },
+		]).text;
+		expect(sendAgain(missing)).toBe(1);
+		expect(missing).toContain("press Send again in Lead delivery → Enquiries.");
+
+		// Two rows that each say it: once per row, no extra footer.
+		const two = failureAlert("Crumb & Co.", [
+			{ delivery: row("Tom", refused.plain), place: "Zapier" },
+			{ delivery: row("Ann", refused.plain), place: "Zapier" },
+		]).text;
+		expect(sendAgain(two)).toBe(2);
+		expect(two).not.toContain("in Lead delivery → Enquiries.");
+	});
+
+	it("says how long before a repeat came, by elapsed time, not calendar day", () => {
+		const label = repeatNote;
+		const MIN = 60_000;
+		const HOUR = 60 * MIN;
+		expect(label(0)).toBe("Same address less than a minute earlier");
+		expect(label(59 * 1000)).toBe("Same address less than a minute earlier");
+		expect(label(MIN)).toBe("Same address 1 minute earlier");
+		expect(label(5 * MIN)).toBe("Same address 5 minutes earlier");
+		expect(label(59 * MIN)).toBe("Same address 59 minutes earlier");
+		expect(label(60 * MIN)).toBe("Same address 1 hour earlier");
+		expect(label(23 * HOUR + 59 * MIN)).toBe("Same address 23 hours earlier");
+		expect(label(24 * HOUR)).toBe("Same address 1 day earlier");
+		expect(label(47 * HOUR + 59 * MIN)).toBe("Same address 1 day earlier");
+		expect(label(48 * HOUR)).toBe("Same address 2 days earlier");
+		expect(label(6 * 24 * HOUR + 23 * HOUR)).toBe("Same address 6 days earlier");
 	});
 
 	it("writes instructions for the way that works on this site", () => {
