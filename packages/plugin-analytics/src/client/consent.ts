@@ -81,6 +81,8 @@ export function decide(
 	if (saved && saved.v === rule.v && day - saved.d < rule.days && rule.who) {
 		return { a: saved.a, m: saved.m && !gpc, ask: false };
 	}
-	if (rule.who === 2 || (rule.who === 1 && inAskRegion)) return { a: false, m: false, ask: true };
+	// who: 1 asks Europe, the UK and Switzerland; 3 the same plus India (inAskRegion says which); 2 everyone.
+	if (rule.who === 2 || ((rule.who === 1 || rule.who === 3) && inAskRegion))
+		return { a: false, m: false, ask: true };
 	return { a: true, m: !gpc, ask: false };
 }

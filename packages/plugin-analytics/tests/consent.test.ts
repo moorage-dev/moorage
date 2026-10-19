@@ -78,6 +78,21 @@ describe("the decision", () => {
 		expect(decide({ ...RULE, who: 2 }, null, false, false, DAY).ask).toBe(true);
 	});
 
+	it("asks visitors in the asked places when the site chose Europe, the UK and India", () => {
+		// The India choice asks the same people as the Europe choice, plus India: a visitor in an
+		// asked place sees the banner and nothing loads; a visitor elsewhere is not asked.
+		expect(decide({ ...RULE, who: 3 }, null, true, false, DAY)).toEqual({
+			a: false,
+			m: false,
+			ask: true,
+		});
+		expect(decide({ ...RULE, who: 3 }, null, false, false, DAY)).toEqual({
+			a: true,
+			m: true,
+			ask: false,
+		});
+	});
+
 	it("asks no one when another consent tool is in charge", () => {
 		expect(decide({ ...RULE, who: 0 }, null, true, false, DAY)).toEqual({
 			a: true,

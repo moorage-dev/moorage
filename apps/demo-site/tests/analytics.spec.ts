@@ -449,6 +449,40 @@ test.describe("a visitor who is not asked", () => {
 		await configure(IDS);
 	});
 
+	test("with India chosen, visitors in Europe and India are asked first and nothing loads before", async ({
+		page,
+		context,
+	}) => {
+		await configure(IDS, { audience: "europe-india" });
+		try {
+			const hits = await stubVendors(context);
+			// A new visitor each time: no earlier country answer, nothing remembered in the browser.
+			const visitorFrom = async (country: string) => {
+				await page.unroute(`**${API}/geo`);
+				if (page.url().startsWith("http")) await page.evaluate(() => localStorage.clear());
+				await inCountry(page, country);
+			};
+			for (const country of ["DE", "IN"]) {
+				await visitorFrom(country);
+				await page.goto("/");
+				await expect(banner(page)).toBeVisible();
+				await settle(page);
+				expect(hits).toEqual([]);
+			}
+			// Everyone else is not asked.
+			await visitorFrom("US");
+			await page.goto("/");
+			await expect(banner(page)).toBeHidden();
+			await expect
+				.poll(() => hits)
+				.toEqual(
+					expect.arrayContaining([`https://www.googletagmanager.com/gtag/js?id=${IDS.ga4}`]),
+				);
+		} finally {
+			await configure(IDS);
+		}
+	});
+
 	test("tools load without a banner outside Europe, and can still be turned off", async ({
 		page,
 		context,
