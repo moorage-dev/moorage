@@ -85,11 +85,11 @@ function toolRule(config: AnalyticsConfig, tool: ToolId): string {
 	if (audience === "none") return "Loads for every visitor without asking.";
 	const rest =
 		audience === "europe" || audience === "europe-india"
-			? " Loads straight away for everyone else."
+			? " Loads for everyone else without asking."
 			: "";
 	if (tool === "gtm") {
 		return config.gtmLoading === "immediate"
-			? "Loads straight away for every visitor, before they answer."
+			? "Loads for every visitor, before they answer."
 			: `Waits for ${whoWaits(audience)} to accept at least one kind of cookie.${rest}`;
 	}
 	const kind = category === "marketing" ? "Marketing" : "Analytics";
@@ -457,7 +457,10 @@ function previewBlocks(state: PageState): Block[] {
 	if (!state.origin) return [];
 	if (enabledTools(state.config).length === 0) {
 		return [
-			{ type: "context", text: "Add a tool on the Tools tab to preview the banner on your site." },
+			{
+				type: "context",
+				text: "Add a tool on the Tracking tools tab to preview the banner on your site.",
+			},
 		];
 	}
 	const link = (label: string, look: "light" | "dark", appearance: "primary" | "secondary") => ({
