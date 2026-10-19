@@ -26,7 +26,7 @@ import {
 	when,
 	type ApprovalRequest,
 } from "./requests.js";
-import { nameList } from "./text.js";
+import { nameList, readableDates } from "./text.js";
 import {
 	ACTION,
 	askedLine,
@@ -227,7 +227,7 @@ async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise
 					.filter((f: { text: string }) => f.text !== "")
 					.map((f: { label: string; text: string }) => ({
 						type: "section" as const,
-						text: `${f.label}: ${f.text}`,
+						text: `${f.label}: ${readableDates(f.text)}`,
 					})),
 			});
 		}

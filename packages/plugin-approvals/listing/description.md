@@ -2,10 +2,10 @@ A second person OKs a page before it goes live. Writers keep pressing Publish; w
 
 ## What it does
 
-- **Publish asks for approval.** On the content types you choose, Publish and Schedule are held and the writer reads "Sent for approval. Not live yet." Contributors get an **Ask for approval** button.
+- **Publish asks for approval.** On the content types you choose, Publish and Schedule are held and the writer reads "Sent for approval. Not live yet." Contributors ask from the Approvals page, with an **Ask for approval** button on each of their drafts.
 - **Approve and publish in one step**, approve to publish later, or **send it back** with a note.
 - **What changed, in words**: `Content: "£3.20" becomes "£3.40"`, compared with the live page, and after an approval with the approved version.
-- **A text copy of each approved version**, kept in the history, so nobody can say they never saw it.
+- **A text copy of what was approved**: the History tab shows the text of each page's latest approval, so nobody can say they never saw it.
 - **Approvers can fix a typo**: edit, save, approve. The history says it was edited by the approver.
 - **Two plain choices**: "Others need my OK before publishing" or "I need someone else's OK before publishing". Nobody approves their own request.
 - **AI tools connected to your site always need a person's OK**, on every content type.
