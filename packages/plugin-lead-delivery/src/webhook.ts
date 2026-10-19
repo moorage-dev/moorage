@@ -125,6 +125,6 @@ export function classifyApp(
 	return {
 		kind: "fixing",
 		raw,
-		plain: `${app} refused the enquiry. Its own words are below. Check the address and the app, then press Send again.`,
+		plain: `${app} refused the enquiry${bodyText.trim() ? ". Its own words are below" : ` without saying why (it answered ${status})`}. Check the address and the app, then press Send again.`,
 	};
 }

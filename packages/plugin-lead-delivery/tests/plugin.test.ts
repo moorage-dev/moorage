@@ -250,9 +250,28 @@ describe("delivery problems", () => {
 		await inbound(runtime, payload("01H"));
 		const list = (await rows(runtime)).sort((a, b) => a.enquiryId.localeCompare(b.enquiryId));
 		expect(list.map((r) => r.status)).toEqual(["delivered", "skipped"]);
-		expect(list[1]!.notes).toEqual(["Same address yesterday", "Same person within 24 hours"]);
+		expect(list[1]!.notes).toEqual([
+			"Same address less than a minute earlier",
+			"Same person within 24 hours",
+		]);
 		const page = await runtime.admin.loadPage(PAGE, { user: admin });
 		expect(text(page)).toContain("Not sent");
+	});
+	it("says a repeat five minutes later came five minutes earlier, not yesterday", async () => {
+		const { runtime, admin } = await start();
+		await addPlace(runtime, admin, { kind: "app", app: "zapier", url: HOOK });
+		await runtime.http.respond(HOOK, new Response("ok"));
+		await inbound(runtime, payload("01G"));
+		// The plugin runs in its own clock, so move the first enquiry five minutes back instead.
+		const [first] = await runtime.inspect.storage.list<Delivery>("deliveries");
+		const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000 - 1000).toISOString();
+		await runtime.fixtures.plugin.storage("deliveries", first!.id, {
+			...first!.data,
+			createdAt: fiveMinutesAgo,
+		});
+		await inbound(runtime, payload("01H"));
+		const list = (await rows(runtime)).sort((a, b) => a.enquiryId.localeCompare(b.enquiryId));
+		expect(list[1]!.notes).toEqual(["Same address 5 minutes earlier"]);
 	});
 });
 

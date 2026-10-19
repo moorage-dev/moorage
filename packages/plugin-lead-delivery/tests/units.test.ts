@@ -12,9 +12,15 @@ import {
 	matchedCount,
 	parseHubSpot,
 } from "../src/hubspot.js";
-import { enquiryEmail, failureAlert, instructions, quietAlert } from "../src/messages.js";
+import {
+	enquiryEmail,
+	failureAlert,
+	instructions,
+	quietAlert,
+	repeatNote,
+} from "../src/messages.js";
 import { isThrowaway, THROWAWAY_COUNT } from "../src/throwaway.js";
-import type { Enquiry, KnownForm, Place } from "../src/types.js";
+import type { Delivery, Enquiry, KnownForm, Place } from "../src/types.js";
 import { appPayload, classifyApp, sign } from "../src/webhook.js";
 
 const CAKES: KnownForm = {
@@ -332,6 +338,165 @@ describe("emails and words", () => {
 		expect(quietAlert("Crumb & Co.", ["No enquiries from Newsletter since Monday."]).subject).toBe(
 			"Crumb & Co.: no enquiries from Newsletter since Monday",
 		);
+	});
+
+	it("puts the service's own words in the failure alert and says Send again once", () => {
+		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Place;
+		const refused = classifyApp(zap, 400, "", "Invalid payload");
+		const row = (who: string, plain?: string, raw?: string): Delivery => ({
+			enquiryId: who,
+			destination: "p1",
+			formId: "wedding-cakes",
+			formName: "Wedding cakes",
+			who,
+			status: "fixing",
+			attempts: 1,
+			nextAt: "",
+			createdAt: "2026-10-16T09:00:00.000Z",
+			notes: [],
+			...(plain ? { plain } : {}),
+			...(raw ? { raw } : {}),
+		});
+		const sendAgain = (text: string) => text.match(/Send again/g)?.length ?? 0;
+
+		const one = failureAlert("Crumb & Co.", [
+			{
+				delivery: row(
+					"Tom Reyes",
+					refused.plain,
+					"Zapier answered 400:   Invalid payload:\n  missing   email  ",
+				),
+				place: "Zapier",
+			},
+		]).text;
+		expect(one).toContain(
+			`${refused.plain}\n\nZapier answered 400: Invalid payload: missing email\n`,
+		);
+		expect(sendAgain(one)).toBe(1);
+
+		// An HTML error page arrives as plain words, cut short.
+		const html = `Zapier answered 400: <!DOCTYPE html><html><head><style>p{color:red}</style></head><body><p>Bad   request</p>${"x".repeat(400)}</body></html>`;
+		const page = failureAlert("Crumb & Co.", [
+			{ delivery: row("Tom", refused.plain, html), place: "Zapier" },
+		]).text;
+		expect(page).toContain("Zapier answered 400: Bad request xxx");
+		expect(page).not.toMatch(/<|color:red/);
+		expect(page).toContain("x…\n");
+
+		// A reason that does not say Send again: the email says it once, with where it is.
+		const gone = classifyApp(zap, 404, "", "").plain!;
+		const missing = failureAlert("Crumb & Co.", [
+			{ delivery: row("Ann", gone, "Zapier answered 404"), place: "Zapier" },
+		]).text;
+		expect(sendAgain(missing)).toBe(1);
+		expect(missing).toContain("press Send again in Lead delivery → Enquiries.");
+
+		// Two rows that each say it: once per row, no extra footer.
+		const two = failureAlert("Crumb & Co.", [
+			{ delivery: row("Tom", refused.plain), place: "Zapier" },
+			{ delivery: row("Ann", refused.plain), place: "Zapier" },
+		]).text;
+		expect(sendAgain(two)).toBe(2);
+		expect(two).not.toContain("in Lead delivery → Enquiries.");
+	});
+
+	it("never says the service's own words are below when it gave none", () => {
+		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Place;
+		for (const body of ["", "  \n "]) {
+			const app = classifyApp(zap, 400, "", body);
+			expect(app.plain).toBe(
+				"Zapier refused the enquiry without saying why (it answered 400). Check the address and the app, then press Send again.",
+			);
+		}
+		for (const body of ["", "{}", '{"errors":[{"errorType":"SOMETHING"}]}']) {
+			expect(classifyHubSpot(400, body).plain).not.toContain("own words");
+			expect(classifyHubSpot(400, body).plain).toContain("without saying why (it answered 400)");
+		}
+		expect(classifyHubSpot(400, '{"message":"Bad form"}').plain).toContain(
+			"Its own words are below.",
+		);
+		// A timeout, a network error or an empty 500 is tried again, never refused for good.
+		expect(classifyApp(zap, 500, "", "").kind).toBe("retry");
+
+		const row = (plain: string, raw?: string): Delivery => ({
+			enquiryId: "01A",
+			destination: "p1",
+			formId: "wedding-cakes",
+			formName: "Wedding cakes",
+			who: "Tom",
+			status: "fixing",
+			attempts: 1,
+			nextAt: "",
+			createdAt: "2026-10-16T09:00:00.000Z",
+			notes: [],
+			plain,
+			...(raw ? { raw } : {}),
+		});
+		const said =
+			"Zapier refused the enquiry. Its own words are below. Check the address and the app, then press Send again.";
+		// A row stored before this fix, with the claim but no words (none, or only markup).
+		for (const raw of [undefined, "  ", "<html><body></body></html>"]) {
+			const { text } = failureAlert("Crumb", [{ delivery: row(said, raw), place: "Zapier" }]);
+			expect(text).not.toContain("own words");
+			expect(text).toContain(
+				"Zapier refused the enquiry. Check the address and the app, then press Send again.",
+			);
+		}
+		// Gave up after no answer: the reason does not claim words, the error is shown as it is.
+		const gaveUp = failureAlert("Crumb", [
+			{
+				delivery: row(
+					"Zapier did not answer after 8 tries over two days. Check it is working, then press Send again.",
+					"No answer: TimeoutError: The operation timed out.",
+				),
+				place: "Zapier",
+			},
+		]).text;
+		expect(gaveUp).not.toContain("own words");
+		expect(gaveUp).toContain("No answer: TimeoutError: The operation timed out.");
+	});
+
+	it("sends the failure alert as plain text only, with the service's words as text", () => {
+		const alert = failureAlert("Crumb", [
+			{
+				delivery: {
+					enquiryId: "01A",
+					destination: "p1",
+					formId: "f",
+					formName: "Wedding cakes",
+					who: "Tom",
+					status: "fixing",
+					attempts: 1,
+					nextAt: "",
+					createdAt: "2026-10-16T09:00:00.000Z",
+					notes: [],
+					plain: "Zapier refused the enquiry. Its own words are below.",
+					raw: `Zapier answered 400: <script>alert("x")</script>Tom & "Jerry's" <b>cakes</b>`,
+				},
+				place: "Zapier",
+			},
+		]);
+		// No HTML body exists, so there is nothing to escape; the text body has no markup.
+		expect(Object.keys(alert).sort()).toEqual(["subject", "text"]);
+		expect(alert.text).toContain(`Zapier answered 400: Tom & "Jerry's" cakes`);
+		expect(alert.text).not.toMatch(/<|alert\(/);
+	});
+
+	it("says how long before a repeat came, by elapsed time, not calendar day", () => {
+		const label = repeatNote;
+		const MIN = 60_000;
+		const HOUR = 60 * MIN;
+		expect(label(0)).toBe("Same address less than a minute earlier");
+		expect(label(59 * 1000)).toBe("Same address less than a minute earlier");
+		expect(label(MIN)).toBe("Same address 1 minute earlier");
+		expect(label(5 * MIN)).toBe("Same address 5 minutes earlier");
+		expect(label(59 * MIN)).toBe("Same address 59 minutes earlier");
+		expect(label(60 * MIN)).toBe("Same address 1 hour earlier");
+		expect(label(23 * HOUR + 59 * MIN)).toBe("Same address 23 hours earlier");
+		expect(label(24 * HOUR)).toBe("Same address 1 day earlier");
+		expect(label(47 * HOUR + 59 * MIN)).toBe("Same address 1 day earlier");
+		expect(label(48 * HOUR)).toBe("Same address 2 days earlier");
+		expect(label(6 * 24 * HOUR + 23 * HOUR)).toBe("Same address 6 days earlier");
 	});
 
 	it("writes instructions for the way that works on this site", () => {

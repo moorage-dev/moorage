@@ -232,7 +232,6 @@ export function classifyHubSpot(status: number, bodyText: string): Outcome {
 	return {
 		kind: "fixing",
 		raw,
-		plain:
-			"HubSpot refused this enquiry. Its own words are below. Fix the HubSpot form or the matching under Where enquiries go, then press Send again.",
+		plain: `HubSpot refused this enquiry${(first?.message ?? message).trim() ? ". Its own words are below" : ` without saying why (it answered ${status})`}. Fix the HubSpot form or the matching under Where enquiries go, then press Send again.`,
 	};
 }
