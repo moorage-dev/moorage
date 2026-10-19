@@ -16,7 +16,7 @@ Not yet. For an address on your own site, "Send visitors to another page" fixes 
 
 ### My site is not public yet. Does it work?
 
-Links inside your pages are checked against your own pages straight away. Menus, page errors and the Checklist start once the site has a public address.
+Partly. Links inside your pages that point to one of your pages or posts are checked straight away, and a link to a page that is not published yet shows as broken. Links to any other address on your own site, the menus, page errors and the Checklist need the site to open its own pages, so they wait until it has a public address; until then those links are listed under "Links we could not check", never as broken.
 
 ### Who gets the emails?
 

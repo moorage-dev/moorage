@@ -48,7 +48,7 @@ emdash({
 });
 ```
 
-It needs EmDash 1.3 or later and the official forms plugin. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one).
+It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin 0.2.11 or later: earlier versions save a ticked single checkbox, such as a consent box, as unticked, so the enquiry arrives without consent. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one).
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 

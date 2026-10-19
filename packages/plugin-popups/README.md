@@ -57,7 +57,7 @@ export default defineConfig({
 });
 ```
 
-It needs EmDash 1.3.0 or later. There are no options; everything is set on the admin page.
+It needs EmDash 1.3.0 or later, and for forms in popups the forms plugin 0.2.11 or later: earlier versions save a ticked checkbox, such as a consent box, as unticked. There are no options; everything is set on the admin page.
 
 ### What your theme must render
 
