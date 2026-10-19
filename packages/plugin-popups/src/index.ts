@@ -424,10 +424,17 @@ export function createPlugin() {
 						? new URL(ctx.request.url).searchParams
 						: new URLSearchParams();
 					const range = await checkExport(ctx.kv, params, Date.now());
+					// A sentence, not an error object: this opens in a browser tab.
 					if (!range)
-						throw PluginRouteError.forbidden(
-							"This download link has expired or is not valid. Open Popups again and download from there.",
-						);
+						return pluginResponse({
+							status: 403,
+							headers: { "content-type": "text/plain; charset=utf-8" },
+							body: {
+								kind: "text",
+								value:
+									"This download link has expired (it works for ten minutes) or is not valid. Open Marketing > Popups again and download from the Numbers tab.",
+							},
+						});
 					const from = range.from || null;
 					const to = range.to || null;
 					const store = await readStore(ctx);

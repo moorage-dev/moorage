@@ -483,9 +483,14 @@ describe("routes", () => {
 			/^attachment; filename="popups-2026-10-01-to-\d{4}-\d{2}-\d{2}\.csv"$/,
 		);
 		expect(out.body.value).toContain("2026-10-03,Monthly letter,1");
-		await expect(
-			call(fake, "export", null, "https://hartleys.test/_emdash/api/plugins/popups/export"),
-		).rejects.toMatchObject({ status: 403 });
+		const refused = (await call(
+			fake,
+			"export",
+			null,
+			"https://hartleys.test/_emdash/api/plugins/popups/export",
+		)) as { status: number; body: { value: string } };
+		expect(refused.status).toBe(403);
+		expect(refused.body.value).toContain("This download link has expired");
 	});
 
 	it("finds a picture's public address as the signed-in person, and only a same-site file address", async () => {

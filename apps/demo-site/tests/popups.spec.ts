@@ -296,7 +296,9 @@ test.describe("admin", () => {
 		expect(good.headers()["content-disposition"]).toMatch(/^attachment; filename="popups-/);
 		const changed = new URL(url);
 		changed.searchParams.set("from", "2020-01-01");
-		expect((await page.request.get(changed.href)).status()).toBe(403);
+		const refused = await page.request.get(changed.href);
+		expect(refused.status()).toBe(403);
+		expect(await refused.text()).toContain("This download link has expired");
 		expect((await page.request.get(`${url.origin}${url.pathname}`)).status()).toBe(403);
 		await page.close();
 	});
