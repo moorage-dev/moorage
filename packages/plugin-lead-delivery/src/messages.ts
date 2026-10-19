@@ -62,10 +62,12 @@ export function repeatNote(elapsedMs: number): string {
 export function failureAlert(site: string, rows: Array<{ delivery: Delivery; place: string }>) {
 	const parts = rows.map(({ delivery, place }) => {
 		const words = delivery.raw ? ownWords(delivery.raw) : "";
+		const reason = delivery.plain ?? "Its service refused it.";
 		return [
 			`${delivery.who}'s enquiry from the ${delivery.formName} form could not be sent to "${place}".`,
 			"",
-			delivery.plain ?? "Its service refused it.",
+			// Never point at words that are not there.
+			words ? reason : reason.replace(" Its own words are below.", ""),
 			...(words ? ["", words] : []),
 		].join("\n");
 	});

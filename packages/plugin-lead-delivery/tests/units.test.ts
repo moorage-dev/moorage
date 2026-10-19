@@ -400,6 +400,88 @@ describe("emails and words", () => {
 		expect(two).not.toContain("in Lead delivery → Enquiries.");
 	});
 
+	it("never says the service's own words are below when it gave none", () => {
+		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Place;
+		for (const body of ["", "  \n "]) {
+			const app = classifyApp(zap, 400, "", body);
+			expect(app.plain).toBe(
+				"Zapier refused the enquiry without saying why (it answered 400). Check the address and the app, then press Send again.",
+			);
+		}
+		for (const body of ["", "{}", '{"errors":[{"errorType":"SOMETHING"}]}']) {
+			expect(classifyHubSpot(400, body).plain).not.toContain("own words");
+			expect(classifyHubSpot(400, body).plain).toContain("without saying why (it answered 400)");
+		}
+		expect(classifyHubSpot(400, '{"message":"Bad form"}').plain).toContain(
+			"Its own words are below.",
+		);
+		// A timeout, a network error or an empty 500 is tried again, never refused for good.
+		expect(classifyApp(zap, 500, "", "").kind).toBe("retry");
+
+		const row = (plain: string, raw?: string): Delivery => ({
+			enquiryId: "01A",
+			destination: "p1",
+			formId: "wedding-cakes",
+			formName: "Wedding cakes",
+			who: "Tom",
+			status: "fixing",
+			attempts: 1,
+			nextAt: "",
+			createdAt: "2026-10-16T09:00:00.000Z",
+			notes: [],
+			plain,
+			...(raw ? { raw } : {}),
+		});
+		const said =
+			"Zapier refused the enquiry. Its own words are below. Check the address and the app, then press Send again.";
+		// A row stored before this fix, with the claim but no words (none, or only markup).
+		for (const raw of [undefined, "  ", "<html><body></body></html>"]) {
+			const { text } = failureAlert("Crumb", [{ delivery: row(said, raw), place: "Zapier" }]);
+			expect(text).not.toContain("own words");
+			expect(text).toContain(
+				"Zapier refused the enquiry. Check the address and the app, then press Send again.",
+			);
+		}
+		// Gave up after no answer: the reason does not claim words, the error is shown as it is.
+		const gaveUp = failureAlert("Crumb", [
+			{
+				delivery: row(
+					"Zapier did not answer after 8 tries over two days. Check it is working, then press Send again.",
+					"No answer: TimeoutError: The operation timed out.",
+				),
+				place: "Zapier",
+			},
+		]).text;
+		expect(gaveUp).not.toContain("own words");
+		expect(gaveUp).toContain("No answer: TimeoutError: The operation timed out.");
+	});
+
+	it("sends the failure alert as plain text only, with the service's words as text", () => {
+		const alert = failureAlert("Crumb", [
+			{
+				delivery: {
+					enquiryId: "01A",
+					destination: "p1",
+					formId: "f",
+					formName: "Wedding cakes",
+					who: "Tom",
+					status: "fixing",
+					attempts: 1,
+					nextAt: "",
+					createdAt: "2026-10-16T09:00:00.000Z",
+					notes: [],
+					plain: "Zapier refused the enquiry. Its own words are below.",
+					raw: `Zapier answered 400: <script>alert("x")</script>Tom & "Jerry's" <b>cakes</b>`,
+				},
+				place: "Zapier",
+			},
+		]);
+		// No HTML body exists, so there is nothing to escape; the text body has no markup.
+		expect(Object.keys(alert).sort()).toEqual(["subject", "text"]);
+		expect(alert.text).toContain(`Zapier answered 400: Tom & "Jerry's" cakes`);
+		expect(alert.text).not.toMatch(/<|alert\(/);
+	});
+
 	it("says how long before a repeat came, by elapsed time, not calendar day", () => {
 		const label = repeatNote;
 		const MIN = 60_000;
