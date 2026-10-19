@@ -290,13 +290,13 @@ describe("status wording", () => {
 			},
 		});
 		expect(toolStatus(europe, "ga4")).toBe(
-			"Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies. Loads straight away for everyone else.",
+			"Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies. Loads for everyone else without asking.",
 		);
 		expect(toolStatus(europe, "meta")).toBe(
-			"Meta Pixel: on. Waits for visitors in Europe and the UK to accept Marketing cookies. Loads straight away for everyone else.",
+			"Meta Pixel: on. Waits for visitors in Europe and the UK to accept Marketing cookies. Loads for everyone else without asking.",
 		);
 		expect(toolStatus(europe, "gtm")).toBe(
-			"Google Tag Manager: on. Waits for visitors in Europe and the UK to accept at least one kind of cookie. Loads straight away for everyone else.",
+			"Google Tag Manager: on. Waits for visitors in Europe and the UK to accept at least one kind of cookie. Loads for everyone else without asking.",
 		);
 		expect(toolStatus(europe, "cloudflare")).toBe(
 			"Cloudflare Web Analytics: on. Counts visitors without cookies, so it does not wait.",
@@ -308,6 +308,10 @@ describe("status wording", () => {
 		const none = config({ tools: { ga4: "G-AB12CD34EF" }, banner: { audience: "none" } });
 		expect(toolStatus(none, "ga4")).toBe(
 			"Google Analytics: on. Loads for every visitor without asking.",
+		);
+		const early = config({ tools: { gtm: "GTM-AB12CD3" }, gtmLoading: "immediate" });
+		expect(toolStatus(early, "gtm")).toBe(
+			"Google Tag Manager: on. Loads for every visitor, before they answer.",
 		);
 	});
 
@@ -378,6 +382,16 @@ describe("dark mode colours and the preview", () => {
 		const text = JSON.stringify(response);
 		expect(text).toContain("https://acme.test/?cookie_preview=light");
 		expect(text).toContain("https://acme.test/?cookie_preview=dark");
+	});
+
+	it("points to the Tracking tools tab when there is no tool to preview", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		const text = JSON.stringify(response);
+		expect(text).toContain(
+			"Add a tool on the Tracking tools tab to preview the banner on your site.",
+		);
+		expect(text).not.toContain("cookie_preview=");
 	});
 });
 

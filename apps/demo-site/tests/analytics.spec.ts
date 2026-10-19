@@ -931,7 +931,7 @@ test.describe("the consent record and the admin page", () => {
 		await page.getByRole("tab", { name: "Status" }).click();
 		await expect(
 			page.getByText(
-				"Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies. Loads straight away for everyone else.",
+				"Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies. Loads for everyone else without asking.",
 			),
 		).toBeVisible();
 		await expect(page.getByText("The banner has no link to your privacy policy")).toBeHidden();
