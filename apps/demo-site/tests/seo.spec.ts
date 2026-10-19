@@ -125,6 +125,8 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page 
 	await page.getByRole("button", { name: "Add 1 redirect" }).click();
 	await page.getByRole("button", { name: "Add", exact: true }).click();
 	await expect(page.getByText("1 redirect added from your list")).toBeVisible();
+	// The list below shows the imported redirect without a reload.
+	await expect(page.getByRole("cell", { name: "/old-contact" })).toBeVisible();
 
 	// The old addresses now really send visitors to the new ones.
 	for (const [from, to] of [

@@ -8,7 +8,7 @@ Yes, in two parts. EmDash itself does titles, descriptions, sitemaps and canonic
 
 ## How do I import redirects from WordPress?
 
-Export them from Redirection, Yoast SEO Premium or Rank Math, open SEO > Redirects > Import from WordPress, paste the list and press "Check list". Nothing is added until you confirm.
+Export them as CSV from Redirection, Yoast SEO Premium or Rank Math (Rank Math's CSV export is in its paid version; Redirection's JSON, .htaccess and Nginx exports are not read), open SEO > Redirects > Import from WordPress, paste the list and press "Check list". Nothing is added until you confirm.
 
 ## How do I noindex a collection in EmDash?
 

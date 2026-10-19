@@ -208,6 +208,21 @@ describe("Redirects tab", () => {
 		expect(await state(runtime)).toBeNull();
 	});
 
+	it("shows the redirects just added, and drops them once removed, without a reload", async () => {
+		const runtime = await start();
+		await runtime.fixtures.redirect({ source: "/kept", destination: "/home" });
+		await runtime.admin.submit(PAGE, "check_redirects", { list: "/old-1,/new-1\n/old-2,/new-2" });
+		const row = '"source":"/old-1","destination":"/new-1"';
+
+		const added = await runtime.admin.act(PAGE, "add_redirects");
+		expect(JSON.stringify(added.blocks)).toContain(row);
+		expect(JSON.stringify(added.blocks)).toContain('"source":"/kept"');
+
+		const removed = await runtime.admin.act(PAGE, "remove_redirects");
+		expect(JSON.stringify(removed.blocks)).not.toContain(row);
+		expect(JSON.stringify(removed.blocks)).toContain('"source":"/kept"');
+	});
+
 	it("continues an interrupted import and counts rows already created as added", async () => {
 		const runtime = await start();
 		await runtime.admin.submit(PAGE, "check_redirects", { list: "/a,/x\n/b,/y\n/c,/z" });
