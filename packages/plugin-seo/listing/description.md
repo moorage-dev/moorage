@@ -7,7 +7,7 @@ EmDash already handles titles, descriptions, sitemaps, canonicals and social tag
 - **Pages to fix.** A list of pages with a missing description (an excerpt counts as one), a shared title or a canonical pointing elsewhere, each with a link to the page. No score and no traffic light: a list that can reach zero.
 - **Google preview** in the entry editor: the address, title and description as Google may show them, with up to three things to fix.
 - **Hide from search (noindex)** per collection, with a warning on the SEO page whenever something is hidden.
-- **Redirects.** Add, change and remove redirects, or paste a list exported from Redirection, Yoast SEO Premium or Rank Math.
+- **Redirects.** Add, change and remove redirects, or paste a CSV export from Redirection, Yoast SEO Premium or Rank Math.
 
 ## What it does not do
 

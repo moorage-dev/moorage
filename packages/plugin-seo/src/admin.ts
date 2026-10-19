@@ -1294,6 +1294,16 @@ export async function handleAdmin(
 			toast: { type: "success", message },
 		});
 	};
+	/** The data with the redirects list read again, after redirects were added or removed. */
+	const rowsReread = async (changed: AdminData): Promise<AdminData> => {
+		try {
+			const { rows, more } = await listRedirects(ctx);
+			return { ...changed, redirectRows: rows, moreRedirects: more };
+		} catch {
+			// An import may use up the request's operations; the list then shows on the next one.
+			return changed;
+		}
+	};
 	/** Show the Redirects tab again after a change, with the list re-read. */
 	const redirectsChanged = async (
 		error: string | null,
@@ -1309,8 +1319,7 @@ export async function handleAdmin(
 				problem: error,
 			});
 		}
-		const { rows, more } = await listRedirects(ctx);
-		return render({ ...data, redirectRows: rows, moreRedirects: more }, ctx, admin, {
+		return render(await rowsReread(data), ctx, admin, {
 			tab: TAB.redirects,
 			toast: { type: "success", message: done },
 		});
@@ -1377,7 +1386,7 @@ export async function handleAdmin(
 				return render(data, ctx, admin, { tab: TAB.redirects });
 			}
 			const redirects = await addMore(ctx, data.redirects);
-			return render({ ...data, redirects }, ctx, admin, {
+			return render(await rowsReread({ ...data, redirects }), ctx, admin, {
 				tab: TAB.redirects,
 				toast:
 					redirects.status === "done"
@@ -1407,7 +1416,8 @@ export async function handleAdmin(
 		}
 		if (action === "remove_redirects" && data.redirects) {
 			const left = await removeBatch(ctx, data.redirects);
-			return render({ ...data, redirects: left === 0 ? null : data.redirects }, ctx, admin, {
+			const changed = { ...data, redirects: left === 0 ? null : data.redirects };
+			return render(await rowsReread(changed), ctx, admin, {
 				tab: TAB.redirects,
 				toast:
 					left === 0
