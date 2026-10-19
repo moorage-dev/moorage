@@ -1,5 +1,11 @@
 # @moorage/plugin-popups
 
+## 0.1.1
+
+### Patch Changes
+
+- dde14f2: README: forms in popups need the forms plugin 0.2.11 or later, because earlier versions save a ticked single checkbox, such as a consent box, as unticked. No code change.
+
 ## 0.1.0
 
 ### Minor Changes
