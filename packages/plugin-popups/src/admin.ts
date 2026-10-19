@@ -62,6 +62,8 @@ export interface PageState {
 	now: number;
 	/** The site's address (https://example.com), for preview and download links. */
 	origin?: string;
+	/** The signed query string for the spreadsheet download of the dates on screen. */
+	exportQuery?: string;
 	pluginId: string;
 	totals: Map<string, Totals>;
 	/** Rows for the chosen dates on the Numbers tab. */
@@ -332,9 +334,6 @@ function numbersBlocks(state: PageState): Block[] {
 		}),
 		{ seen: 0, sent: 0, clicked: 0, closed: 0 },
 	);
-	const query = new URLSearchParams();
-	if (from) query.set("from", from);
-	if (to) query.set("to", to);
 	const blocks: Block[] = [
 		...errorBlocks(state),
 		{
@@ -363,7 +362,7 @@ function numbersBlocks(state: PageState): Block[] {
 			submit: { label: "Show these dates", action_id: "range" },
 		},
 	];
-	if (state.origin) {
+	if (state.origin && state.exportQuery) {
 		blocks.push({
 			type: "actions",
 			elements: [
@@ -372,7 +371,7 @@ function numbersBlocks(state: PageState): Block[] {
 					label: "Download as a spreadsheet (CSV)",
 					target: {
 						kind: "external",
-						url: `${state.origin}/_emdash/api/plugins/${state.pluginId}/export${query.size ? `?${query}` : ""}`,
+						url: `${state.origin}/_emdash/api/plugins/${state.pluginId}/export?${state.exportQuery}`,
 					},
 					appearance: "secondary",
 				},
@@ -921,7 +920,7 @@ function clickInstructions(popup: Popup): Block[] {
 		},
 		{
 			type: "code",
-			code: `To open the popup "${popup.name}" when a visitor clicks:\n- link to #popup-${popup.handle} (a menu item works too), or\n- add data-popup="${popup.handle}" to any button.`,
+			code: `To open the popup "${popup.name}" when a visitor clicks:\n- link to /#popup-${popup.handle} (also as a menu item's custom link), or\n- add data-popup="${popup.handle}" to any button.\nIt opens on the pages this popup is set to show on.`,
 		},
 	];
 }

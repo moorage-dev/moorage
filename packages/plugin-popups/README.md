@@ -23,9 +23,9 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
   - Never while someone is typing.
   - Never again for someone who signed up or clicked. After a close it shows again after a week, after a month, or never.
   - Always a 44 px close button, and Esc closes it. Nothing closes by itself, and the "No thanks" words come from a fixed list.
-- **Results:** the views (at least half of it on screen for a second), sign-ups, clicks and closes since each popup started, or for dates you choose, with a spreadsheet download. Rates appear from 100 views. It stores no cookies and nothing about any visitor. Button links to other websites get campaign tags (`utm_source=popups`), so Google Analytics shows those visits as coming from the popup.
+- **Results:** the views (at least half of it on screen for a second), sign-ups, clicks and closes since each popup started, or for dates you choose, with a spreadsheet download (daily counts per popup; the download link works for ten minutes, so open the page again for a fresh one). Rates appear from 100 views. It stores no cookies and nothing about any visitor. Button links to other websites get campaign tags (`utm_source=popups`), so Google Analytics shows those visits as coming from the popup.
 - **Preview:** "Preview on your site" (light or dark) shows the popup at once, for you only. It says whether a real visitor would see it now and, if not, why ("this browser closed it 3 days ago; it shows again after a month"). Nothing is counted and the form does not send.
-- **Checks:** the form's short name is checked when you save. Colours that are hard to read are refused, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day.
+- **Checks:** the form's short name is checked when you save. Colours that are hard to read are refused, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
 
 | Popup, computer                            | Popup, phone                            | Slide-in                                     | Box in a page                                    |
 | ------------------------------------------ | --------------------------------------- | -------------------------------------------- | ------------------------------------------------ |
@@ -78,7 +78,7 @@ The box in a page is a Portable Text block, so it shows wherever your theme rend
 
 ### Opening a popup with a click
 
-For a popup set to "when they click", link to `#popup-<name>` (a menu item works too) or add `data-popup="<name>"` to any button. The admin shows the exact name in a box to copy.
+For a popup set to "when they click", link to `/#popup-<name>` or add `data-popup="<name>"` to any button. In a menu, use `/#popup-<name>` as the custom link (EmDash's menu refuses a link that starts with `#`). A click opens the popup on any page it is set to show on; on other pages the link leads to the home page. The admin shows the exact name in a box to copy.
 
 ### Theme colours
 
@@ -96,11 +96,13 @@ Popups take your theme's colours from these CSS variables. All of them are optio
 |              | Show on the first page they visit (popups, computers only) | Off                                              |
 |              | Where, never on these pages, phones or computers           | Every page; phones and computers                 |
 |              | Show again after a close                                   | After a month                                    |
-|              | Starts, ends (date and time, site's time zone), on or off  | No dates; off until turned on                    |
+|              | Starts, ends (date and time, site's time zone), on or off  | No dates; on ("Save and finish" starts it)       |
 | Settings tab | Light or dark                                              | Follow the visitor's device                      |
 |              | Own colours (checked for contrast)                         | Off: theme colours                               |
 |              | Slide-in corner                                            | Bottom right                                     |
 |              | Emails when a popup cannot open                            | None                                             |
+
+A new popup is off while you make it. Its last step has "Turn it on" already switched on, so "Save and finish" starts it at its start time; switch it off first to keep it off.
 
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
 
@@ -112,7 +114,7 @@ Editors can change words, pictures, dates and on or off, preview, and read the r
 
 **A change I made does not show.** Cached pages refresh within a few minutes. The dates travel with the page, so a popup that has ended stops showing even on a cached page.
 
-**My popup with a form never opens.** Open the admin page: a red warning names the problem (the form was deleted, or it uses Turnstile or a file upload). Use the Preview link to see why a real visitor would not see it.
+**My popup with a form never opens.** Open the admin page: a warning names the problem. A red one means the form was deleted, or it uses Turnstile or a file upload; a yellow one means the form is paused under Forms. Use the Preview link to see why a real visitor would not see it.
 
 **Are my own visits counted?** No. A browser that has signed in to the admin is never counted.
 

@@ -1,11 +1,14 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import { readFile } from "node:fs/promises";
+
 import {
 	expect,
 	test,
 	type APIRequestContext,
 	type Browser,
 	type BrowserContext,
+	type Download,
 	type Page,
 } from "@playwright/test";
 
@@ -244,6 +247,59 @@ test.describe("admin", () => {
 		);
 		const draft = /change:([a-z0-9]+)/.exec(all)?.[1] ?? id;
 		if (draft) made.push(draft);
+		await page.close();
+	});
+
+	test("the Numbers tab downloads a spreadsheet", async () => {
+		test.setTimeout(240_000);
+		const page = await adminContext.newPage();
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await page.locator("text=New popup").first().waitFor({ timeout: 150_000 });
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		if (await welcome.isVisible().catch(() => false))
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		await page.getByRole("tab", { name: "Numbers" }).click();
+		// The link opens in a new tab, which receives the file.
+		const download = new Promise<Download>((resolve) => {
+			adminContext.on("page", (opened) => opened.once("download", resolve));
+			page.once("download", resolve);
+		});
+		await page.getByRole("link", { name: "Download as a spreadsheet (CSV)" }).click();
+		const file = await Promise.race([download, page.waitForTimeout(15_000).then(() => null)]);
+		const shown = await Promise.all(
+			adminContext
+				.pages()
+				.filter((p) => p !== page)
+				.map((p) => p.textContent("body").catch(() => "")),
+		);
+		expect(file, `no download arrived; the new tab says: ${shown.join(" | ")}`).not.toBeNull();
+		expect(file!.suggestedFilename()).toMatch(/^popups-start-to-\d{4}-\d{2}-\d{2}\.csv$/);
+		const path = await file!.path();
+		const text = await readFile(path, "utf8");
+		expect(text.split("\r\n")[0]).toBe("Day,Popup,Seen,Signed up,Clicked,Closed,Seen on phones");
+		for (const opened of adminContext.pages()) await opened.close();
+	});
+
+	test("the download link refuses a changed, unsigned or plain request", async () => {
+		const page = await adminContext.newPage();
+		const blocks = JSON.stringify(
+			await (
+				await admin.post(`${API}/admin`, { headers: H, data: { type: "page_load", page: "/" } })
+			).json(),
+		);
+		const link = /"url":"([^"]+\/export(?:\?[^"]*)?)"/.exec(blocks)?.[1];
+		expect(link).toBeTruthy();
+		const url = new URL(link!);
+		const good = await page.request.get(url.href);
+		expect(good.status()).toBe(200);
+		expect(good.headers()["cache-control"]).toContain("no-store");
+		expect(good.headers()["content-disposition"]).toMatch(/^attachment; filename="popups-/);
+		const changed = new URL(url);
+		changed.searchParams.set("from", "2020-01-01");
+		const refused = await page.request.get(changed.href);
+		expect(refused.status()).toBe(403);
+		expect(await refused.text()).toContain("This download link has expired");
+		expect((await page.request.get(`${url.origin}${url.pathname}`)).status()).toBe(403);
 		await page.close();
 	});
 });

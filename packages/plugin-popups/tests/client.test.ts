@@ -206,6 +206,18 @@ describe("click openers", () => {
 		// Clicked: centred, not a sheet, even on a phone.
 		expect(dialog.classList.contains("sheet")).toBe(false);
 	});
+
+	it("open from a menu's /#popup-<name> link on any page the popup shows on", async () => {
+		history.replaceState(null, "", "/blog/some-post");
+		document.body.innerHTML = '<nav><a id=a href="/#popup-p0">Newsletter</a></nav>';
+		boot(config({ trigger: "click" }));
+		await ready();
+		document.querySelector<HTMLElement>("#a")!.click();
+		await ready();
+		expect(shadow().querySelector("dialog")!.hasAttribute("open")).toBe(true);
+		expect(location.pathname).toBe("/blog/some-post");
+		history.replaceState(null, "", "/");
+	});
 });
 
 describe("top bars", () => {
