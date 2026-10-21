@@ -8,7 +8,7 @@ Content Approval for [EmDash](https://emdashcms.com): a second person OKs a page
 
 - **Holds publishing** on the content types you tick: Publish and Schedule, from the editor, from AI tools, from other plugins and from scheduled runs. A held Publish makes the request by itself.
 - **Ask for approval**: a button in the editor's toolbar for Authors (on their own pages), Editors and Admins. Contributors ask from **Approvals > Your drafts**, which has an "Ask for approval" button on each of their drafts. EmDash 1.3.1 still shows Contributors the editor's button and the Approval panel but refuses them before the plugin runs, so the button says "Plugin action failed" and the panel "Plugin panel unavailable." (see the FAQ).
-- **Decide** in the page's Approval panel or on the Approvals page: **Approve and publish**, **Approve** (publish later), or **Send back** with a note. Admins can also **Approve without review**, with a reason that is recorded and emailed to the other approvers.
+- **Decide** in the page's Approval panel or on the Approvals page: **Approve and publish**, **Approve** (publish later), or **Send back** with a note. Admins can also **Approve without review**, with a reason that is recorded and emailed to the other approvers. Nobody approves their own request: the Approvals page lists yours apart, under **Yours, waiting**, with what it waits for, and an admin can open their own and **Publish without review**, with a reason.
 - **What changed, in words**: `Content: "£3.20" becomes "£3.40"; adds "pavlova"`, against the live page; after an approval, against the version that was approved. Pictures say "changed". The page's own Revisions panel compares every version.
 - **A text copy of what was approved**: the History tab shows, for each page decided recently, the text of its latest approval, so nobody can say they never saw it. Earlier approved texts are not shown; the page's own Revisions panel keeps every version. Dates read "19 Oct 2026", or "19 Oct 2026, 14:05 UTC" with a time: the plugin cannot see the site's time zone, so times are in UTC.
 - **Approvers can fix a typo**: they edit and save the page as usual, then approve. The history says "Edited by Ellen Marsh before approving: Content".
@@ -77,7 +77,9 @@ Holds publishing (`hooks.content-policy:register`); reads content, drafts and th
 
 **Can a writer get around it?** Not through Publish or Schedule on a ticked content type, from anywhere. What EmDash saves straight to a live page (see above) is not held.
 
-**What if I am the only person on the site?** Settings says approval needs a second person; until there is one, an admin can use Approve without review.
+**What if I am the only person on the site?** Under "I need someone else's OK" your own pages wait for an editor or another admin. When nobody else can approve, Settings, the Approvals page and the held Publish all say approval needs a second person; until there is one, open your request in Approvals and use **Publish without review**.
+
+**The links in approval emails point to an old address.** Plugins keep the site address EmDash had when the server started. After changing the site's address, restart the site.
 
 **Is it free?** Yes, on any number of sites, with no account and no key. MIT License.
 

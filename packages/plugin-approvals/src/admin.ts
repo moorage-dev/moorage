@@ -8,6 +8,7 @@ import {
 	approverRole,
 	CONFIG_KEY,
 	DEFAULT_CONFIG,
+	isHeldRole,
 	loadConfig,
 	normalizeConfig,
 	ROLE,
@@ -37,6 +38,7 @@ import {
 	formKey,
 	historyBlock,
 	liveChanges,
+	peopleList,
 } from "./views.js";
 
 export const WIDGET_PAGE = "widget:approvals";
@@ -72,7 +74,7 @@ function key(request: ApprovalRequest): string {
 	return `${request.collection}:${request.entryId}`;
 }
 
-/** Approvers review; an admin may also open their own request to approve it without review. */
+/** Approvers review; an admin may also open their own request to publish it without review. */
 function canReview(config: Config, request: ApprovalRequest, user: UserInfo | undefined): boolean {
 	if (canDecide(config, request, user)) return true;
 	return request.status === "waiting" && !request.ai && (user?.role ?? 0) >= ROLE.admin;
@@ -105,10 +107,9 @@ function openLink(request: ApprovalRequest) {
 	};
 }
 
-function waitingRows(
+/** Requests this person may decide on. */
+function forYouRows(
 	list: ApprovalRequest[],
-	config: Config | null,
-	user: UserInfo | undefined,
 	names: Map<string, string>,
 	checksByKey: Map<string, number>,
 ): Block[] {
@@ -116,16 +117,13 @@ function waitingRows(
 		return [
 			{
 				type: "empty",
-				title: "Nothing waiting",
-				description: isApprover(config, user)
-					? "Pages you're asked to approve appear here."
-					: "Pages you send for approval appear here.",
+				title: "Nothing waiting for you",
+				description: "Pages you're asked to approve appear here.",
 			},
 		];
 	}
 	const blocks: Block[] = [];
 	for (const request of list) {
-		const decide = config ? canReview(config, request, user) : false;
 		const checks = checksByKey.get(key(request)) ?? 0;
 		const asker = request.ai
 			? `from an AI tool (${request.requestedBy?.name ?? "someone"}'s key)`
@@ -134,14 +132,12 @@ function waitingRows(
 			{
 				type: "section",
 				text: request.title,
-				accessory: decide
-					? {
-							type: "button",
-							action_id: ACTION.review,
-							label: "Review",
-							value: { key: key(request) },
-						}
-					: openLink(request),
+				accessory: {
+					type: "button",
+					action_id: ACTION.review,
+					label: "Review",
+					value: { key: key(request) },
+				},
 			},
 			{
 				type: "context",
@@ -150,6 +146,57 @@ function waitingRows(
 					asker,
 					ago(request.requestedAt),
 					...(checks > 0 ? [`${checks} ${checks === 1 ? "thing" : "things"} to check`] : []),
+				].join(" · "),
+			},
+			{ type: "divider" },
+		);
+	}
+	return blocks;
+}
+
+/** This person's own requests, each with why it waits. An admin may open theirs to publish it without review. */
+function yoursRows(
+	list: ApprovalRequest[],
+	config: Config | null,
+	user: UserInfo | undefined,
+	names: Map<string, string>,
+	others: UserInfo[],
+): Block[] {
+	if (list.length === 0) {
+		return [
+			{
+				type: "empty",
+				title: "Nothing of yours waiting",
+				description: "Pages you send for approval appear here.",
+			},
+		];
+	}
+	const alone = others.length === 0;
+	const reason = alone
+		? "needs a second person: nobody else on this site can approve it"
+		: `waiting for ${peopleList(others)}`;
+	const blocks: Block[] = [];
+	for (const request of list) {
+		const open = config ? canReview(config, request, user) : false;
+		blocks.push(
+			{
+				type: "section",
+				text: request.title,
+				accessory: open
+					? {
+							type: "button",
+							action_id: ACTION.review,
+							label: alone ? "Publish without review" : "View",
+							value: { key: key(request) },
+						}
+					: openLink(request),
+			},
+			{
+				type: "context",
+				text: [
+					names.get(request.collection) ?? request.collection,
+					`asked ${ago(request.requestedAt)}`,
+					reason,
 				].join(" · "),
 			},
 			{ type: "divider" },
@@ -239,6 +286,7 @@ async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise
 async function settingsBlocks(
 	ctx: PluginContext,
 	config: Config | null,
+	user: UserInfo | undefined,
 	all: ApprovalRequest[],
 ): Promise<Block[]> {
 	const current = config ?? DEFAULT_CONFIG;
@@ -246,7 +294,9 @@ async function settingsBlocks(
 	const holdable = collections.filter((c) => c.supports.includes("revisions"));
 	const notHoldable = collections.filter((c) => !c.supports.includes("revisions"));
 	const people = await approvers(ctx, current, null);
-	const everyone = (await ctx.users?.list({ limit: 2 }))?.items.length ?? 0;
+	// Under "I need someone else's OK" the admin's own work waits for another approver.
+	const alone =
+		config?.preset === "me" && user !== undefined && !people.some((p) => p.id !== user.id);
 	const overrides = all.filter(
 		(r) =>
 			r.approval?.override !== undefined &&
@@ -268,12 +318,12 @@ async function settingsBlocks(
 				"Nothing is held yet, not even work from AI tools. Pick what needs approval, then press Save.",
 		});
 	}
-	if (everyone < 2) {
+	if (alone) {
 		blocks.push({
 			type: "banner",
 			title: "Approval needs a second person",
 			description:
-				"You are the only person on this site. Until there is another, use Approve without review.",
+				"Nobody else here can approve your pages: that takes an editor or another admin. Until there is one, publish yours with Publish without review.",
 		});
 	}
 	if (!ctx.email) {
@@ -303,10 +353,15 @@ async function settingsBlocks(
 				label: "Who needs approval",
 				options: [
 					{
-						label: "Others need my OK before publishing (recommended for agencies)",
+						label:
+							"Others need my OK before publishing (recommended for agencies). Admins approve everyone else's changes.",
 						value: "others",
 					},
-					{ label: "I need someone else's OK before publishing", value: "me" },
+					{
+						label:
+							"I need someone else's OK before publishing. Everyone needs approval, admins too; an editor or another admin approves.",
+						value: "me",
+					},
 				],
 				initial_value: current.preset,
 			},
@@ -324,7 +379,10 @@ async function settingsBlocks(
 				label: "Check for a search description and a sharing picture",
 				options: [
 					{ label: "Show as a reminder (recommended)", value: "remind" },
-					{ label: "Require before approval", value: "require" },
+					{
+						label: "Require before approval (both filled in, in the page's SEO panel)",
+						value: "require",
+					},
 					{ label: "Don't check", value: "off" },
 				],
 				initial_value: current.checks,
@@ -356,7 +414,7 @@ async function settingsBlocks(
 		},
 		{
 			type: "context",
-			text: "Others need my OK: admins approve everyone else's changes. I need someone else's OK: everyone needs approval, admins too, and an editor or another admin approves. Nobody approves their own request. A change after approval needs approval again. AI tools: anything an AI tool publishes is held, on every content type, even those not ticked; the person whose key the tool uses may approve it. \"Require before approval\" stops the approver until both are filled in, in each page's SEO panel.",
+			text: "Nobody approves their own request. A change after approval needs approval again.",
 		},
 		{ type: "divider" },
 		{ type: "header", text: "What approval can't hold" },
@@ -385,7 +443,7 @@ async function settingsBlocks(
 		},
 		{
 			type: "context",
-			text: `Approve without review was used ${overrides} ${overrides === 1 ? "time" : "times"} in the last 30 days.`,
+			text: `Approved or published without review ${overrides} ${overrides === 1 ? "time" : "times"} in the last 30 days.`,
 		},
 	);
 	return blocks;
@@ -485,33 +543,67 @@ async function listPage(
 	const waiting = visible(config, user, lists.waiting);
 	const sentBack = visible(config, user, lists.sentBack);
 	const done = visible(config, user, lists.done);
-	const mine = config ? waiting.filter((r) => canDecide(config, r, user)).length : 0;
-	const counts = await checkCounts(ctx, config, waiting);
+	// Nobody decides on their own request: an approver's own requests are listed apart.
+	const forYou = config ? waiting.filter((r) => canDecide(config, r, user)) : [];
+	const yours = waiting.filter((r) => !forYou.includes(r));
+	const counts = await checkCounts(ctx, config, forYou);
 	const admin = (user?.role ?? 0) >= ROLE.admin;
+	const others = config && user ? await approvers(ctx, config, user.id) : [];
+	// Under "I need someone else's OK" an approver's own work is held too.
+	const onlyApprover =
+		approver && config !== null && isHeldRole(config.preset, user?.role) && others.length === 0;
+
+	const waitingBlocks: Block[] = [
+		{
+			type: "stats",
+			items: approver
+				? [
+						{ label: "Waiting for you", value: forYou.length },
+						{ label: "Yours waiting", value: yours.length },
+						{ label: "Sent back", value: sentBack.length },
+					]
+				: [
+						{ label: "Yours waiting", value: yours.length },
+						{ label: "Sent back", value: sentBack.length },
+					],
+		},
+	];
+	if (onlyApprover) {
+		waitingBlocks.push({
+			type: "banner",
+			title: "Only you can approve on this site",
+			description: admin
+				? "Your own pages wait for a second person, an editor or another admin. Until there is one, open yours below and use Publish without review."
+				: "Your own pages wait for a second person. Until there is one, an admin can publish them without review.",
+		});
+	}
+	if (approver) {
+		waitingBlocks.push(
+			{ type: "header", text: "For you to approve" },
+			...forYouRows(forYou, names, counts),
+		);
+		if (yours.length > 0)
+			waitingBlocks.push(
+				{ type: "header", text: "Yours, waiting" },
+				...yoursRows(yours, config, user, names, others),
+			);
+	} else {
+		waitingBlocks.push(
+			{ type: "header", text: "Yours, waiting" },
+			...yoursRows(yours, config, user, names, others),
+		);
+	}
 
 	const panels = [
 		{
 			label: `Waiting (${waiting.length})`,
-			blocks: [
-				{
-					type: "stats" as const,
-					items: approver
-						? [
-								{ label: "Waiting for you", value: mine },
-								{ label: "Sent back", value: sentBack.length },
-							]
-						: [
-								{ label: "Yours waiting", value: waiting.length },
-								{ label: "Sent back", value: sentBack.length },
-							],
-				},
-				...waitingRows(waiting, config, user, names, counts),
-				...(await draftRows(ctx, config, user, lists.all)),
-			],
+			blocks: [...waitingBlocks, ...(await draftRows(ctx, config, user, lists.all))],
 		},
 		{ label: `Sent back (${sentBack.length})`, blocks: sentBackRows(sentBack, names) },
 		{ label: "History", blocks: await historyRows(ctx, done) },
-		...(admin ? [{ label: "Settings", blocks: await settingsBlocks(ctx, config, lists.all) }] : []),
+		...(admin
+			? [{ label: "Settings", blocks: await settingsBlocks(ctx, config, user, lists.all) }]
+			: []),
 	];
 	return {
 		blocks: [
@@ -534,6 +626,7 @@ async function detailPage(
 	const draft = await readDraft(ctx, request.collection, request.entryId);
 	if (!draft) return null;
 	const info = await collectionInfo(ctx, request.collection);
+	const others = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id);
 	const blocks: Block[] = [
 		{ type: "header", text: "Approvals" },
 		{
@@ -568,6 +661,7 @@ async function detailPage(
 			key: requestKey,
 			changes: liveChanges(info, draft),
 			surface: "page",
+			others,
 		}),
 		historyBlock(request),
 	];
@@ -604,9 +698,13 @@ async function widget(
 		};
 	}
 	const mine = config ? lists.waiting.filter((r) => canDecide(config, r, user)) : [];
+	const yours = lists.waiting.filter(
+		(r) => !r.ai && user !== undefined && r.requestedBy?.id === user.id,
+	).length;
 	const blocks: Block[] = [
 		{ type: "stats", items: [{ label: "Waiting for you", value: mine.length }] },
 	];
+	if (yours > 0) blocks.push({ type: "context", text: `${yours} of yours waiting` });
 	for (const request of mine.slice(0, 5)) {
 		blocks.push(
 			{ type: "section", text: request.title },
@@ -701,11 +799,11 @@ export async function handleAdmin(
 			outcome = await sendBack(ctx, config, user, back, values.note);
 			target = back;
 		}
-		if (action === ACTION.override && override) {
+		if ((action === ACTION.override || action === ACTION.overridePublish) && override) {
 			const reason = typeof values.reason === "string" ? values.reason : "";
 			outcome = await approve(ctx, config, user, override, {
 				seen: undefined,
-				publish: false,
+				publish: action === ACTION.overridePublish,
 				override: reason,
 			});
 			target = override;

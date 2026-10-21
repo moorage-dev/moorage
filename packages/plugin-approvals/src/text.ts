@@ -328,3 +328,12 @@ export function nameList(names: string[]): string {
 	if (names.length <= 1) return names[0] ?? "";
 	return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+/** Why your own request waits when nobody else can approve it, and what to do. */
+export function secondPerson(admin: boolean): string {
+	return `Approval needs a second person: nobody else on this site can approve it yet. ${
+		admin
+			? "To publish it now, use Publish without review in Approvals."
+			: "An admin can publish it without review."
+	}`;
+}

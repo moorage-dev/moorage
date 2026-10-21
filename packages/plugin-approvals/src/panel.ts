@@ -6,7 +6,7 @@ import type { PluginContext } from "emdash";
 import { approve, saveNote, sendBack, type Outcome } from "./actions.js";
 import { loadConfig } from "./config.js";
 import type { UserInfo } from "./requests.js";
-import { collectionInfo, readDraft, requestKey, requests, when } from "./requests.js";
+import { approvers, collectionInfo, readDraft, requestKey, requests, when } from "./requests.js";
 import {
 	ACTION,
 	askedLine,
@@ -16,6 +16,7 @@ import {
 	decisionBlocks,
 	historyBlock,
 	liveChanges,
+	ownRequestBlocks,
 } from "./views.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -54,6 +55,12 @@ export async function handlePanel(
 			outcome = await sendBack(ctx, config, user, key, values.note);
 		if (interaction.action_id === ACTION.saveNote)
 			outcome = await saveNote(ctx, user, key, values.note);
+		if (interaction.action_id === ACTION.overridePublish)
+			outcome = await approve(ctx, config, user, key, {
+				seen: undefined,
+				publish: true,
+				override: typeof values.reason === "string" ? values.reason : "",
+			});
 	}
 	const toast = outcome
 		? {
@@ -65,7 +72,9 @@ export async function handlePanel(
 		: {};
 	// After publishing from the panel the editor must reload the entry.
 	const refresh =
-		outcome?.ok && interaction.action_id === ACTION.approvePublish
+		outcome?.ok &&
+		(interaction.action_id === ACTION.approvePublish ||
+			interaction.action_id === ACTION.overridePublish)
 			? { refresh: true as const }
 			: {};
 
@@ -123,6 +132,8 @@ export async function handlePanel(
 				{ type: "context", text: `Asked on ${when(request.requestedAt)}. Not live yet.` },
 			);
 			if (user && request.requestedBy?.id === user.id) {
+				const others = await approvers(ctx, config, user.id);
+				blocks.push(...ownRequestBlocks(request, user, key, others));
 				blocks.push({
 					type: "form",
 					block_id: `note:${key}`,
