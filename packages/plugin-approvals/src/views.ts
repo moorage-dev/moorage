@@ -9,13 +9,14 @@ import type { UserInfo } from "./requests.js";
 import {
 	copyOf,
 	mayApprove,
+	personName,
 	versions,
 	when,
 	type ApprovalRequest,
 	type CollectionInfo,
 	type Draft,
 } from "./requests.js";
-import { describeChanges, type FieldChange } from "./text.js";
+import { describeChanges, nameList, type FieldChange } from "./text.js";
 
 const HISTORY_SHOWN = 10;
 
@@ -24,6 +25,7 @@ export const ACTION = {
 	approve: "approve",
 	sendBack: "send_back",
 	override: "override",
+	overridePublish: "override_publish",
 	saveNote: "save_note",
 	review: "review",
 	back: "back",
@@ -130,7 +132,53 @@ export function askedLine(request: ApprovalRequest): string {
 	return [`${who} asked on ${when(request.requestedAt)}. Not live yet.`, ...edits].join(" ");
 }
 
-/** The approver's decision: what changed, the checks, the buttons and Send back. */
+type Named = Pick<UserInfo, "name" | "email">;
+
+/** "Ellen Marsh and Tom Achebe", "A, B, C and 2 more". */
+export function peopleList(people: Named[]): string {
+	const names = people.slice(0, 3).map((p) => personName(p));
+	return people.length > 3 ? `${names.join(", ")} and ${people.length - 3} more` : nameList(names);
+}
+
+/** Why your own request waits: whom it waits for, or that nobody else can approve it. */
+export function waitReason(others: Named[]): string {
+	return others.length === 0
+		? "Nobody else on this site can approve it yet."
+		: `Waiting for ${peopleList(others)}.`;
+}
+
+/**
+ * Your own request: why it waits and, for an admin, Publish without review. Nobody approves
+ * their own request, so there is no Approve or Send back here.
+ */
+export function ownRequestBlocks(
+	request: ApprovalRequest,
+	user: UserInfo | undefined,
+	key: string,
+	others: Named[],
+): Block[] {
+	const blocks: Block[] = [{ type: "section", text: waitReason(others) }];
+	if ((user?.role ?? 0) < ROLE.admin || request.ai) return blocks;
+	const alone = others.length === 0;
+	blocks.push(
+		{
+			type: "context",
+			text: `You asked for this, so ${alone ? "a second person approves it once there is one" : "someone else approves it"}. If it can't wait, publish it without review and give a reason: it is recorded in the page's history${alone ? "" : " and emailed to the other approvers"}.`,
+		},
+		{
+			type: "form",
+			block_id: `ov:${key}`,
+			fields: [{ type: "text_input", action_id: "reason", label: "Reason", multiline: true }],
+			submit: { label: "Publish without review", action_id: ACTION.overridePublish },
+		},
+	);
+	return blocks;
+}
+
+/**
+ * The review: what changed and the checks, then the approver's buttons and Send back or,
+ * on your own request, why it waits (`others`: who else may approve it).
+ */
 export function decisionBlocks(input: {
 	config: Config;
 	request: ApprovalRequest;
@@ -140,6 +188,7 @@ export function decisionBlocks(input: {
 	key: string;
 	changes: FieldChange[] | null;
 	surface: "panel" | "page";
+	others?: Named[];
 }): Block[] {
 	const { config, request, draft, info, user, key, changes, surface } = input;
 	const writer = request.ai
@@ -176,6 +225,10 @@ export function decisionBlocks(input: {
 		});
 	}
 	blocks.push(...checksBanner(config, draft, info, surface === "page"));
+	if (!canDecide(config, request, user)) {
+		blocks.push(...ownRequestBlocks(request, user, key, input.others ?? []));
+		return blocks;
+	}
 	const canPublish = (user?.role ?? 0) >= ROLE.editor;
 	blocks.push({
 		type: "actions",

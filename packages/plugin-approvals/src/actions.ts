@@ -21,7 +21,7 @@ import {
 	type ApprovalRequest,
 	type Draft,
 } from "./requests.js";
-import { fieldHashes, nameList } from "./text.js";
+import { fieldHashes, nameList, secondPerson } from "./text.js";
 
 export interface Outcome {
 	ok: boolean;
@@ -128,11 +128,12 @@ export async function approve(
 			: `${by.name} approved`,
 	);
 	await store.put(key, approved);
-
-	if (options.override !== undefined) await emailOverride(ctx, config, approved);
+	// Nobody is emailed about their own decision.
+	const ownRequest = approved.requestedBy?.id === user.id;
 
 	if (!options.publish) {
-		await emailWriter(ctx, approved, "approved");
+		if (options.override !== undefined) await emailOverride(ctx, config, approved);
+		if (!ownRequest) await emailWriter(ctx, approved, "approved");
 		const writer = approved.requestedBy?.name;
 		return {
 			ok: true,
@@ -148,6 +149,7 @@ export async function approve(
 		await ctx.content.publish(request.collection, request.entryId, { _rev: versioned._rev });
 	} catch (error) {
 		ctx.log.warn("approved but could not publish", { error: String(error) });
+		if (options.override !== undefined) await emailOverride(ctx, config, approved);
 		return {
 			ok: false,
 			message: "Approved, but it could not be published just now. Press Publish on the page.",
@@ -161,8 +163,16 @@ export async function approve(
 	};
 	addHistory(published, now, `Published by ${by.name}`);
 	await store.put(key, published);
-	await emailWriter(ctx, published, "published");
 	const writer = published.requestedBy?.name;
+	if (options.override !== undefined) {
+		await emailOverride(ctx, config, published);
+		if (!ownRequest) await emailWriter(ctx, published, "published");
+		return {
+			ok: true,
+			message: `Published without review. It's live now.${writer && !ownRequest ? ` ${firstName(writer)} has been told.` : ""}`,
+		};
+	}
+	if (!ownRequest) await emailWriter(ctx, published, "published");
 	return {
 		ok: true,
 		message: `Approved and published. It's live now.${writer && !published.ai && writer !== by.name ? ` ${firstName(writer)} has been told.` : ""}`,
@@ -293,16 +303,15 @@ export async function ask(
 	}
 	const people = await approvers(ctx, config, user.id);
 	const names = nameList(people.slice(0, 4).map((p) => personName(p)));
-	if (result.again)
-		return {
-			type: "info",
-			message: `Already waiting for approval. ${names || "The approvers"} ${people.length === 1 ? "was" : "were"} asked.`,
-		};
 	if (people.length === 0)
 		return {
 			type: "info",
-			message:
-				"Sent for approval. Approval needs a second person: nobody else on this site can approve it yet.",
+			message: `${result.again ? "Already waiting for approval." : "Sent for approval."} ${secondPerson(user.role >= ROLE.admin)}`,
+		};
+	if (result.again)
+		return {
+			type: "info",
+			message: `Already waiting for approval. ${names} ${people.length === 1 ? "was" : "were"} asked.`,
 		};
 	return {
 		type: "success",

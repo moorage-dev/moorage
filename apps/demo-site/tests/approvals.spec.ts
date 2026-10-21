@@ -170,17 +170,20 @@ test.describe.serial("Content Approval", () => {
 	let jo: Person;
 	const created: string[] = [];
 
+	// Ellen starts alone: the first tests run on a one-admin site. Sam and Jo join later.
 	test.beforeAll(async ({ browser }) => {
 		test.setTimeout(180_000);
 		ellen = await signIn(browser);
 		await updateUser(ellen, ellen.id, { name: "Ellen Marsh", email: "ellen@agency.test" });
-		sam = await signIn(browser);
-		await updateUser(sam, sam.id, { name: "Sam Reyes", email: "sam@bakery.test" });
-		await updateUser(ellen, sam.id, { role: ROLE.editor });
-		jo = await signIn(browser);
-		await updateUser(jo, jo.id, { name: "Jo Park", email: "jo@bakery.test" });
-		await updateUser(ellen, jo.id, { role: ROLE.contributor });
 	});
+
+	async function saveSettings(values: Record<string, unknown>): Promise<void> {
+		const saved = await ellen.page.request.post(`${API}/plugins/approvals/admin`, {
+			headers: HEADERS,
+			data: { type: "form_submit", action_id: "save_settings", values },
+		});
+		expect(saved.ok(), await saved.text()).toBe(true);
+	}
 
 	test.afterAll(async () => {
 		// Leave the site as the other tests expect it: nothing held, no extra pages.
@@ -235,6 +238,71 @@ test.describe.serial("Content Approval", () => {
 			page.getByText("Saved. Publishing now asks for approval where you chose."),
 		).toBeVisible();
 		await expect(page.getByText("Approval is off until you save these settings")).toHaveCount(0);
+	});
+
+	test("alone under 'I need someone else's OK', Ellen's own page waits, and she publishes it without review", async () => {
+		await saveSettings({
+			collections: ["pages"],
+			preset: "me",
+			ai: true,
+			checks: "remind",
+			remind: true,
+		});
+		const hours = await createPage(ellen, "Opening hours", "Open 8 till 4, Monday to Saturday");
+		created.push(hours);
+		const page = await front(ellen);
+		await page.goto(`/_emdash/admin/content/pages/${hours}`);
+		await page.getByRole("button", { name: "Publish now" }).click({ timeout: 60_000 });
+		await page.getByRole("dialog").getByRole("button", { name: "Publish now" }).click();
+		await expect(
+			page.getByText(
+				/^Sent for approval\. Not live yet\. Approval needs a second person: nobody else on this site can approve it yet\. To publish it now, use Publish without review in Approvals\./,
+			),
+		).toBeVisible();
+		expect(await status(ellen, hours)).toBe("draft");
+
+		await leave(ellen);
+		await expect(page.getByText("Only you can approve on this site")).toBeVisible({
+			timeout: 60_000,
+		});
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible();
+		await expect(page.getByText("Nothing waiting for you")).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Yours, waiting" })).toBeVisible();
+		await expect(page.getByText("Opening hours", { exact: true })).toBeVisible();
+		await expect(
+			page.getByText(/needs a second person: nobody else on this site can approve it/),
+		).toBeVisible();
+
+		await page.getByRole("button", { name: "Publish without review" }).click();
+		await expect(page.getByText("Nobody else on this site can approve it yet.")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Approve and publish" })).toHaveCount(0);
+		await expect(page.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
+		await expect(page.getByRole("button", { name: "Send back" })).toHaveCount(0);
+		// A reason is required.
+		await page.getByRole("button", { name: "Publish without review" }).click();
+		await expect(page.getByText("Write the reason first.")).toBeVisible();
+		await page.getByRole("textbox", { name: "Reason" }).fill("I run this site on my own.");
+		await page.getByRole("button", { name: "Publish without review" }).click();
+		await expect(page.getByText("Published without review. It's live now.")).toBeVisible();
+		await expect.poll(() => status(ellen, hours)).toBe("published");
+
+		await saveSettings({
+			collections: ["pages"],
+			preset: "others",
+			ai: true,
+			checks: "remind",
+			remind: true,
+		});
+	});
+
+	test("Sam and Jo join the site", async ({ browser }) => {
+		test.setTimeout(180_000);
+		sam = await signIn(browser);
+		await updateUser(sam, sam.id, { name: "Sam Reyes", email: "sam@bakery.test" });
+		await updateUser(ellen, sam.id, { role: ROLE.editor });
+		jo = await signIn(browser);
+		await updateUser(jo, jo.id, { name: "Jo Park", email: "jo@bakery.test" });
+		await updateUser(ellen, jo.id, { role: ROLE.contributor });
 	});
 
 	let menu: string;

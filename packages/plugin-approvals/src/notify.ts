@@ -169,7 +169,7 @@ export async function emailWriter(
 	});
 }
 
-/** To the other approvers: someone approved without review. */
+/** To the other approvers: someone approved or published without review. */
 export async function emailOverride(
 	ctx: PluginContext,
 	config: Config,
@@ -178,10 +178,11 @@ export async function emailOverride(
 	const by = request.approval?.by;
 	if (!by) return 0;
 	const people = await approvers(ctx, config, by.id);
+	const done = request.approval?.published ? "published" : "approved";
 	return send(ctx, {
 		to: people.map((p) => p.email),
-		subject: `${by.name} approved "${request.title}" without review`,
-		heading: `"${request.title}" was approved without review`,
+		subject: `${by.name} ${done} "${request.title}" without review`,
+		heading: `"${request.title}" was ${done} without review`,
 		lines: [`${by.name} gave this reason: "${request.approval?.override ?? ""}"`],
 		button: { label: "See it in Approvals", url: approvalsUrl(ctx) },
 	});

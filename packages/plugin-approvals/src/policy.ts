@@ -2,7 +2,7 @@
 
 import type { ContentPolicyDecision, ContentPolicyEvent, PluginContext } from "emdash";
 
-import { isHeldRole, loadConfig, type Config } from "./config.js";
+import { isHeldRole, loadConfig, ROLE, type Config } from "./config.js";
 import { EMAIL_EVERY_MS, REMIND_AFTER_MS } from "./notify.js";
 import {
 	addHistory,
@@ -13,7 +13,7 @@ import {
 	when,
 	type ApprovalRequest,
 } from "./requests.js";
-import { cleanReason, fieldHashes, fingerprint, nameList } from "./text.js";
+import { cleanReason, fieldHashes, fingerprint, nameList, secondPerson } from "./text.js";
 
 export const CHECK_FAILED =
 	"Not published: approval could not be checked just now. Nothing has changed. Try again in a minute; if it keeps happening, tell whoever looks after the site.";
@@ -35,12 +35,15 @@ export function taskName(prefix: string, key: string, at: string): string {
 	return `${prefix}-${safe}`.slice(0, 128);
 }
 
-/** The approvers' names for a message, or a general wording when they cannot be read. */
+/**
+ * The approvers' names for a message: "" when nobody else can approve, null when they
+ * cannot be read (a general wording stands in).
+ */
 async function askedNames(
 	ctx: PluginContext,
 	config: Config,
 	request: ApprovalRequest,
-): Promise<string> {
+): Promise<string | null> {
 	try {
 		// One page of people at most: this runs inside the publish, which has a time limit.
 		const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id, 1);
@@ -50,7 +53,7 @@ async function askedNames(
 			? `${names.join(", ")} and ${people.length - 4} more`
 			: nameList(names);
 	} catch {
-		return "";
+		return null;
 	}
 }
 
@@ -131,15 +134,22 @@ export function holdRequest(
 
 export function heldMessage(
 	result: HoldResult,
-	names: string,
+	asked: string | null,
 	email: boolean,
 	ai: boolean,
+	admin = false,
 ): string {
-	const asked = names
-		? `${names} ${names.includes(" and ") ? "have" : "has"} been asked`
-		: "The approvers have been asked";
+	const names = asked ?? "";
 	if (ai) {
 		return `Sent for approval. Not live yet. On this site a person must OK what AI tools publish; ${names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked` : "the approvers have been asked"}. Do not try again: a person will approve and publish it.`;
+	}
+	if (asked === "") {
+		const lead = result.again
+			? "Still waiting for approval."
+			: result.changed
+				? "Sent for approval again."
+				: "Sent for approval.";
+		return `${lead} Not live yet. ${secondPerson(admin)}`;
 	}
 	if (result.again) {
 		return `Still waiting for approval. Not live yet. ${names || "The approvers"} ${names.includes(" and ") || !names ? "were" : "was"} asked on ${when(result.request.requestedAt)}.`;
@@ -147,7 +157,10 @@ export function heldMessage(
 	if (result.changed) {
 		return `Sent for approval again. Not live yet. This page changed after ${result.approvedBy ?? "it was"} approved it, so ${names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked again` : "the approvers have been asked again"}.`;
 	}
-	return `Sent for approval. Not live yet. ${asked}; ${email ? "you'll get an email when they decide" : "watch for it in Approvals"}.`;
+	const said = names
+		? `${names} ${names.includes(" and ") ? "have" : "has"} been asked`
+		: "The approvers have been asked";
+	return `Sent for approval. Not live yet. ${said}; ${email ? "you'll get an email when they decide" : "watch for it in Approvals"}.`;
 }
 
 /**
@@ -303,7 +316,10 @@ export async function gate(
 			);
 		}
 		const names = await askedNames(ctx, config, result.request);
-		return refuse(heldMessage(result, names, Boolean(ctx.email), event.origin.source === "mcp"));
+		const admin = (event.actor?.role ?? 0) >= ROLE.admin;
+		return refuse(
+			heldMessage(result, names, Boolean(ctx.email), event.origin.source === "mcp", admin),
+		);
 	} catch (error) {
 		ctx.log.error("approval check failed; the publish was refused", { error: String(error) });
 		return refuse(CHECK_FAILED);

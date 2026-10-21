@@ -522,3 +522,184 @@ describe("the Approvals page", () => {
 		expect(text(widget)).toContain("Summer menu");
 	});
 });
+
+/** A site where the admin is the only person who can approve: one admin and a Contributor. */
+async function soloSite(config: Record<string, unknown>) {
+	const runtime = await createPluginRuntimeTestHost({
+		site: { name: "Harbour Street Bakery", url: "https://bakery.test", locale: "en" },
+	});
+	host = runtime;
+	await runtime.fixtures.collection({
+		slug: "pages",
+		label: "Pages",
+		supports: ["drafts", "revisions"],
+		fields: [
+			{ slug: "title", label: "Title", type: "string" },
+			{ slug: "content", label: "Content", type: "text" },
+		],
+	});
+	const admin = await runtime.fixtures.user({
+		email: "ellen@agency.test",
+		name: "Ellen Marsh",
+		role: "admin",
+	});
+	const contributor = await runtime.fixtures.user({
+		email: "jo@bakery.test",
+		name: "Jo Park",
+		role: "contributor",
+	});
+	await runtime.fixtures.plugin.kv("config", config);
+	const created = await runtime.actions.content.create("pages", {
+		data: { title: "Summer menu", content: "Iced coffee £3.20 and lemon tart" },
+		slug: "summer-menu",
+		authorId: admin.id,
+		actor: { id: admin.id, role: admin.role },
+	});
+	if (!created.success) throw new Error(created.error.message);
+	return { host: runtime, admin, contributor, id: created.data.item.id };
+}
+
+describe("your own request", () => {
+	const ME = { ...HELD, preset: "me" };
+
+	async function holdOwn(s: Awaited<ReturnType<typeof soloSite>>) {
+		return s.host.actions.content.publish("pages", s.id, {
+			actor: { id: s.admin.id, role: s.admin.role },
+			origin: { source: "api" },
+		});
+	}
+
+	it("tells an admin who is the only approver that it needs a second person, and what to do", async () => {
+		const s = await soloSite(ME);
+		const held = await holdOwn(s);
+		expect(held.success).toBe(false);
+		if (held.success) return;
+		expect(held.error.message).toMatch(/^Sent for approval\. Not live yet\./);
+		expect(held.error.message).toContain("nobody else on this site can approve it yet");
+		expect(held.error.message).toContain("Publish without review");
+		expect(held.error.message).not.toContain("have been asked");
+		expect(held.error.message.length).toBeLessThanOrEqual(500);
+		const again = await holdOwn(s);
+		expect(again.success).toBe(false);
+		if (again.success) return;
+		expect(again.error.message).toContain("nobody else on this site can approve it yet");
+		expect(again.error.message).not.toContain("The approvers were asked");
+	});
+
+	it("lists it under 'Yours, waiting' with the reason, not as waiting for you", async () => {
+		const s = await soloSite(ME);
+		await holdOwn(s);
+		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(body).toContain('"label":"Waiting for you","value":0');
+		expect(body).toContain('"label":"Yours waiting","value":1');
+		expect(body).toContain("For you to approve");
+		expect(body).toContain("Yours, waiting");
+		expect(body).toContain("needs a second person: nobody else on this site can approve it");
+		expect(body).toContain("Only you can approve on this site");
+		// The empty "for you" list first, then yours with its row.
+		expect(body.indexOf("For you to approve")).toBeLessThan(body.indexOf("Yours, waiting"));
+		expect(body.indexOf("Yours, waiting")).toBeLessThan(body.indexOf("Summer menu"));
+		const widget = text(await s.host.admin.loadWidget("approvals", { user: s.admin }));
+		expect(widget).toContain('"label":"Waiting for you","value":0');
+		expect(widget).toContain("1 of yours waiting");
+	});
+
+	it("offers Publish without review instead of Approve, and it publishes with a reason", async () => {
+		const s = await soloSite(ME);
+		await holdOwn(s);
+		const review = await s.host.admin.act("/overview", "review", {
+			user: s.admin,
+			value: { key: `pages:${s.id}` },
+		});
+		expect(buttonValue(review, "approve_publish")).toBeUndefined();
+		expect(buttonValue(review, "approve")).toBeUndefined();
+		expect(text(review)).not.toContain('"action_id":"send_back"');
+		expect(text(review)).not.toContain("Approve without review");
+		expect(text(review)).toContain(
+			'"submit":{"label":"Publish without review","action_id":"override_publish"}',
+		);
+		expect(text(review)).toContain("Nobody else on this site can approve it yet.");
+
+		const empty = await s.host.admin.submit(
+			"/overview",
+			"override_publish",
+			{ reason: " " },
+			{ user: s.admin, blockId: `ov:pages:${s.id}` },
+		);
+		expect(empty.toast?.type).toBe("error");
+		const done = await s.host.admin.submit(
+			"/overview",
+			"override_publish",
+			{ reason: "Only one of us runs this site" },
+			{ user: s.admin, blockId: `ov:pages:${s.id}` },
+		);
+		expect(done.toast?.message).toBe("Published without review. It's live now.");
+		expect((await s.host.inspect.content.get("pages", s.id))?.status).toBe("published");
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `pages:${s.id}`);
+		expect(stored).toMatchObject({
+			status: "published",
+			approval: { override: "Only one of us runs this site", published: true },
+		});
+	});
+
+	it("shows the same in the page's Approval panel", async () => {
+		const s = await soloSite(ME);
+		await holdOwn(s);
+		const panel = await s.host.admin.loadEditorPanel("approval", "pages", s.id, { user: s.admin });
+		expect(buttonValue(panel, "approve")).toBeUndefined();
+		expect(text(panel)).toContain("Nobody else on this site can approve it yet.");
+		expect(text(panel)).toContain('"action_id":"override_publish"');
+		const done = await s.host.admin.submitEditorPanel(
+			"approval",
+			"pages",
+			s.id,
+			"override_publish",
+			{ reason: "Only one of us runs this site" },
+			{ user: s.admin, blockId: `ov:pages:${s.id}` },
+		);
+		expect(done.toast?.message).toBe("Published without review. It's live now.");
+		expect(done.refresh).toBe(true);
+		expect((await s.host.inspect.content.get("pages", s.id))?.status).toBe("published");
+	});
+
+	it("warns in Settings that approval needs a second person, only when it does", async () => {
+		const solo = await soloSite(ME);
+		const alone = text(await solo.host.admin.loadPage("/overview", { user: solo.admin }));
+		expect(alone).toContain("Approval needs a second person");
+		await solo.host.dispose();
+		host = undefined;
+		const s = await site(ME);
+		const team = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(team).not.toContain("Approval needs a second person");
+		expect(team).not.toContain("Only you can approve on this site");
+	});
+
+	it("shows an editor why theirs waits, and no buttons they cannot use", async () => {
+		const s = await site(ME);
+		const id = await page(s);
+		await s.host.actions.content.publish("pages", id, actor(s.editor));
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.editor }));
+		expect(list).toContain("Yours, waiting");
+		expect(list).toContain("waiting for Ellen Marsh and Tom Achebe");
+		expect(list).toContain('"label":"Waiting for you","value":0');
+		expect(list).not.toContain('"action_id":"review"');
+		const review = await s.host.admin.act("/overview", "review", {
+			user: s.editor,
+			value: { key: `pages:${id}` },
+		});
+		expect(buttonValue(review, "approve")).toBeUndefined();
+		expect(text(review)).not.toContain("Publish without review");
+		const panel = text(
+			await s.host.admin.loadEditorPanel("approval", "pages", id, { user: s.editor }),
+		);
+		expect(panel).toContain("Waiting for Ellen Marsh and Tom Achebe.");
+		expect(panel).not.toContain("Publish without review");
+		// Someone else's request keeps the approver's buttons.
+		const other = await s.host.admin.act("/overview", "review", {
+			user: s.admin,
+			value: { key: `pages:${id}` },
+		});
+		expect(buttonValue(other, "approve_publish")).toBeDefined();
+		expect(text(other)).toContain("Approve without review (admins)");
+	});
+});
