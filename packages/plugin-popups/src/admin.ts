@@ -1188,7 +1188,15 @@ export interface Helpers {
 	publicUrl(mediaId: string): Promise<string | null>;
 }
 
-const SAVED = "Saved. It can take a few minutes to reach visitors.";
+/**
+ * Cached pages keep a popup's old version for a few minutes at each Cloudflare
+ * location. A plugin cannot clear EmDash's page cache (its route handlers get
+ * no cache handle), so a save that changes what visitors see says so, and one
+ * that does not (a popup nobody sees yet, the alert addresses) does not.
+ */
+const LATER = "It can take a few minutes to reach visitors.";
+const SAVED = `Saved. ${LATER}`;
+const savedFor = (visible: boolean) => (visible ? SAVED : "Saved.");
 const REFUSED: BlockResponse["toast"] = {
 	type: "error",
 	message: "Nothing was saved. See the message at the top.",
@@ -1269,7 +1277,9 @@ export async function handleInteraction(
 					store: save,
 					toast: {
 						type: "success",
-						message: popup.on ? `"${popup.name}" is off.` : `"${popup.name}" is on. ${SAVED}`,
+						message: popup.on
+							? `"${popup.name}" is off.${isLive(popup, state.now) ? ` ${LATER}` : ""}`
+							: `"${popup.name}" is on. ${SAVED}`,
 					},
 				}),
 			};
@@ -1311,7 +1321,10 @@ export async function handleInteraction(
 					...state,
 					store: save,
 					problems,
-					toast: { type: "success", message: `Deleted "${popup.name}".` },
+					toast: {
+						type: "success",
+						message: `Deleted "${popup.name}".${isLive(popup, state.now) ? ` ${LATER}` : ""}`,
+					},
 				}),
 			};
 		}
@@ -1379,7 +1392,17 @@ export async function handleInteraction(
 		return {
 			save,
 			response: renderPage(
-				{ ...state, store: save, toast: { type: "success", message: SAVED } },
+				{
+					...state,
+					store: save,
+					toast: {
+						type: "success",
+						// The look shows on every live popup; the alert addresses never reach visitors.
+						message: savedFor(
+							action === "save_look" && store.popups.some((p) => isLive(p, state.now)),
+						),
+					},
+				},
 				TAB.settings,
 			),
 		};
@@ -1423,10 +1446,17 @@ export async function handleInteraction(
 			const following = saved.kind === "inline" && step === 2 ? 4 : step + 1;
 			return { save, problems, response: popupPage(view, saved, following) };
 		}
+		// Visitors see the change if the popup was live before the save or is live after it.
+		const before = find(popup.id);
+		const visible = (!!before && isLive(before, state.now)) || isLive(saved, state.now);
 		return {
 			save,
 			problems,
-			response: popupPage({ ...view, toast: { type: "success", message: SAVED } }, saved, 4),
+			response: popupPage(
+				{ ...view, toast: { type: "success", message: savedFor(visible) } },
+				saved,
+				4,
+			),
 		};
 	};
 

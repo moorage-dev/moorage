@@ -382,6 +382,33 @@ describe("finished popups", () => {
 		).toContain("Only an administrator");
 	});
 
+	it("says a change can take a few minutes to reach visitors only when visitors see it", async () => {
+		const LATER = "It can take a few minutes to reach visitors.";
+		const toast = (response: BlockResponse) => response.toast?.message ?? "";
+		const fake = fakeContext({
+			popups: { popups: [popup(), popup({ id: "off00001", name: "Quiet", on: false })] },
+		});
+		// A live popup's words: cached pages keep the old ones for a while.
+		expect(toast(await submit(fake, "save_s2", "s2:abcd1234:x", { heading: "New words" }))).toContain(
+			LATER,
+		);
+		// A turned-off popup's words: no visitor sees them yet.
+		expect(toast(await submit(fake, "save_s2", "s2:off00001:x", { heading: "Hush" }))).toBe("Saved.");
+		// The look applies to every live popup.
+		expect(toast(await submit(fake, "save_look", "look", { scheme: "dark" }))).toContain(LATER);
+		// Alert addresses are never shown to visitors.
+		expect(toast(await submit(fake, "save_emails", "emails", { emails: "jo@hartleys.test" }))).toBe(
+			"Saved.",
+		);
+		// Turning off and deleting a live popup take time to leave cached pages too.
+		expect(toast(await press(fake, "row", "toggle:abcd1234"))).toContain(LATER);
+		await press(fake, "row", "toggle:abcd1234");
+		expect(toast(await press(fake, "row", "delete:abcd1234"))).toContain(LATER);
+		expect(toast(await press(fake, "row", "delete:off00001"))).not.toContain(LATER);
+		// With nothing live, the look reaches no one.
+		expect(toast(await submit(fake, "save_look", "look", { scheme: "light" }))).toBe("Saved.");
+	});
+
 	it("turns off, duplicates turned off, and deletes", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		await press(fake, "row", "toggle:abcd1234");
