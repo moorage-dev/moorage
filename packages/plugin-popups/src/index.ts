@@ -31,7 +31,7 @@ import {
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, type FormCheck } from "./forms.js";
-import { clientItem, pageFragments } from "./fragment.js";
+import { clientItem, isPopupPreview, pageFragments } from "./fragment.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import {
 	addCount,
@@ -167,6 +167,19 @@ export async function publicMediaUrl(
 	}
 }
 
+/**
+ * A page the site's owner is looking at to check their work: edit mode, an
+ * EmDash preview link, or a link from "Preview on your site". Its popups are
+ * read fresh (see settings-memo.ts).
+ */
+export function isOwnerView(
+	url: string,
+	request: { editMode?: boolean; preview?: unknown } | undefined,
+): boolean {
+	if (request?.editMode === true || request?.preview !== undefined) return true;
+	return /[?&]_preview=/.test(url) || isPopupPreview(url);
+}
+
 /** The email to whoever looks after the site when a popup cannot open. */
 export function alertEmail(
 	siteName: string,
@@ -243,8 +256,10 @@ export function createPlugin() {
 			// May run three times for one page. The popups are kept in memory between
 			// page views (settings-memo.ts), so a warm page view reads nothing.
 			"page:fragments": async (event, ctx) => {
-				const store = await memoSettings(ctx, () => readStore(ctx));
 				const request = getRequestContext();
+				const store = await memoSettings(ctx, () => readStore(ctx), {
+					fresh: isOwnerView(event.page.url, request),
+				});
 				return pageFragments(
 					store,
 					PLUGIN_ID,
@@ -477,8 +492,12 @@ export function createPlugin() {
 				request: { body: "json", maxBytes: 128 },
 				handler: async (ctx) => {
 					const id = (ctx.input as { id?: unknown } | null)?.id;
-					// Asked for by the box's component while the page renders: kept like the page hook's.
-					const store = await memoSettings(ctx, () => readStore(ctx));
+					// Asked for by the box's component while the page renders: kept like the
+					// page hook's. The route runs inside the page's request, so its context
+					// says whether this is a preview or edit mode.
+					const store = await memoSettings(ctx, () => readStore(ctx), {
+						fresh: isOwnerView("", getRequestContext()),
+					});
 					const popup = store.popups.find((p) => p.id === id && p.kind === "inline");
 					const now = Date.now();
 					if (!popup || !isLive(popup, now) || (popup.start !== null && now < popup.start))

@@ -10,11 +10,11 @@ import { fakeContext, type FakeContext } from "./helpers.js";
 
 type Hook = (event: PageFragmentEvent, ctx: PluginContext) => Promise<unknown>;
 
-const render = (fake: FakeContext) =>
+const render = (fake: FakeContext, query = "") =>
 	(createPlugin().hooks["page:fragments"]!.handler as Hook)(
 		{
 			page: {
-				url: "https://acme.test/",
+				url: `https://acme.test/${query}`,
 				path: "/",
 				locale: null,
 				kind: "custom",
@@ -57,6 +57,21 @@ describe("settings kept between page views", () => {
 		expect(after).not.toContain("G-AB12CD34EF");
 	});
 
+	it("reads fresh for the banner preview, so a save made elsewhere shows at once", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		await render(fake);
+		// Saved in another isolate: this one still keeps the old settings for page views.
+		fake.kv.set(CONFIG_KEY, { tools: { ga4: "G-ZZ98YY76XX" } });
+		expect(await render(fake)).toContain("G-AB12CD34EF");
+		const preview = await render(fake, "?cookie_preview=light");
+		expect(preview).toContain("G-ZZ98YY76XX");
+		expect(preview).not.toContain("G-AB12CD34EF");
+		expect(fake.reads()).toBe(2);
+		// What the preview read is the newest there is, so page views use it from now on.
+		expect(await render(fake)).toContain("G-ZZ98YY76XX");
+		expect(fake.reads()).toBe(2);
+	});
+
 	it("picks up a change made elsewhere once the settings are 30 seconds old", async () => {
 		vi.useFakeTimers({ now: new Date("2026-10-21T10:00:00Z"), toFake: ["Date"] });
 		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
@@ -79,20 +94,20 @@ describe("memoSettings", () => {
 		let reads = 0;
 		const read = async () => ({ n: ++reads });
 		const [a, b] = await Promise.all([
-			memoSettings(owner("p", "https://a.test"), read, 0),
-			memoSettings(owner("p", "https://a.test"), read, 0),
+			memoSettings(owner("p", "https://a.test"), read, { now: 0 }),
+			memoSettings(owner("p", "https://a.test"), read, { now: 0 }),
 		]);
 		expect(reads).toBe(1);
 		expect(a).toEqual(b);
 		expect(a).not.toBe(b);
 		a.n = 99;
-		expect(await memoSettings(owner("p", "https://a.test"), read, 1)).toEqual({ n: 1 });
-		expect(await memoSettings(owner("p", "https://b.test"), read, 1)).toEqual({ n: 2 });
+		expect(await memoSettings(owner("p", "https://a.test"), read, { now: 1 })).toEqual({ n: 1 });
+		expect(await memoSettings(owner("p", "https://b.test"), read, { now: 1 })).toEqual({ n: 2 });
 
 		const failing = async (): Promise<{ n: number }> => {
 			throw new Error("database away");
 		};
-		await expect(memoSettings(owner("q"), failing, 0)).rejects.toThrow("database away");
-		expect(await memoSettings(owner("q"), read, 1)).toEqual({ n: 3 });
+		await expect(memoSettings(owner("q"), failing, { now: 0 })).rejects.toThrow("database away");
+		expect(await memoSettings(owner("q"), read, { now: 1 })).toEqual({ n: 3 });
 	});
 });

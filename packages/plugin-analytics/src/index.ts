@@ -50,6 +50,19 @@ async function readConfig(ctx: PluginContext): Promise<AnalyticsConfig> {
 }
 
 /**
+ * A page the site's owner is looking at to check their work: edit mode, an
+ * EmDash preview link, or this plugin's "Preview the banner" link. Its settings
+ * are read fresh (see settings-memo.ts).
+ */
+export function isOwnerView(
+	url: string,
+	request: { editMode?: boolean; preview?: unknown } | undefined,
+): boolean {
+	if (request?.editMode === true || request?.preview !== undefined) return true;
+	return /[?&](_preview|cookie_preview)=/.test(url);
+}
+
+/**
  * The visitor's country, for deciding whether to show the banner. On
  * Cloudflare it comes with the request; elsewhere it is unknown and the
  * browser falls back to its time zone. Nothing is looked up and nothing stored.
@@ -74,8 +87,10 @@ export function createPlugin() {
 			// May run three times for one page. The settings are kept in memory between
 			// page views (settings-memo.ts), so a warm page view reads nothing.
 			"page:fragments": async (event, ctx) => {
-				const config = await memoSettings(ctx, () => readConfig(ctx));
 				const request = getRequestContext();
+				const config = await memoSettings(ctx, () => readConfig(ctx), {
+					fresh: isOwnerView(event.page.url, request),
+				});
 				return pageFragments(config, PLUGIN_ID, {
 					path: event.page.path,
 					url: event.page.url,

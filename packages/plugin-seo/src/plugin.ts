@@ -25,6 +25,15 @@ async function loadConfig(ctx: PluginContext) {
 	return normalizeConfig(await ctx.kv.get(CONFIG_KEY));
 }
 
+/**
+ * An EmDash preview link, which its owner opens to check their work: settings
+ * are read fresh for it (see settings-memo.ts). A sandboxed hook sees only the
+ * page, not the request, so edit mode (a cookie) cannot be told apart here.
+ */
+function isPreviewUrl(url: string): boolean {
+	return /[?&]_preview=/.test(url);
+}
+
 /** Recompute an entry's record after it changed. Never fails the save. */
 async function refreshEntry(ctx: PluginContext, collection: string, content: unknown) {
 	const id = (content as { id?: unknown } | null)?.id;
@@ -60,7 +69,7 @@ const plugin: SandboxedPlugin = {
 				}
 			};
 			const [config, found] = await Promise.all([
-				memoSettings(ctx, () => loadConfig(ctx)),
+				memoSettings(ctx, () => loadConfig(ctx), { fresh: isPreviewUrl(page.url) }),
 				readRecord(),
 			]);
 

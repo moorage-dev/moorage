@@ -19,9 +19,9 @@ const hook = plugin.hooks!["page:metadata"] as unknown as Hook;
 
 const RECORD: EntryRecord = { v: 1, publishedAt: null, updatedAt: null, authors: [], custom: [] };
 
-function page(content?: PublicPageContext["content"]): PublicPageContext {
+function page(content?: PublicPageContext["content"], query = ""): PublicPageContext {
 	return {
-		url: "https://acme.test/about",
+		url: `https://acme.test/about${query}`,
 		path: "/about",
 		locale: null,
 		kind: content ? "content" : "custom",
@@ -86,6 +86,21 @@ describe("settings kept between page views", () => {
 		expect(site.reads()).toBe(1);
 	});
 
+	it("reads fresh for an EmDash preview link, so a save made elsewhere shows at once", async () => {
+		const site = fake({ site: { name: "Acme Dental" } });
+		await hook({ page: page() }, site.ctx);
+		// Saved in another isolate: this one still keeps the old config for page views.
+		site.kv.set("config", { site: { name: "Acme Clinic" } });
+		expect(name(await hook({ page: page() }, site.ctx))).toBe("Acme Dental");
+		expect(name(await hook({ page: page(undefined, "?_preview=token") }, site.ctx))).toBe(
+			"Acme Clinic",
+		);
+		expect(site.reads()).toBe(2);
+		// What the preview read is the newest there is, so page views use it from now on.
+		expect(name(await hook({ page: page() }, site.ctx))).toBe("Acme Clinic");
+		expect(site.reads()).toBe(2);
+	});
+
 	it("picks up a change made elsewhere once the config is 30 seconds old", async () => {
 		vi.useFakeTimers({ now: new Date("2026-10-21T10:00:00Z"), toFake: ["Date"] });
 		const site = fake({ site: { name: "Acme Dental" } });
@@ -123,20 +138,20 @@ describe("memoSettings", () => {
 		let reads = 0;
 		const read = async () => ({ n: ++reads });
 		const [a, b] = await Promise.all([
-			memoSettings(owner("p", "https://a.test"), read, 0),
-			memoSettings(owner("p", "https://a.test"), read, 0),
+			memoSettings(owner("p", "https://a.test"), read, { now: 0 }),
+			memoSettings(owner("p", "https://a.test"), read, { now: 0 }),
 		]);
 		expect(reads).toBe(1);
 		expect(a).toEqual(b);
 		expect(a).not.toBe(b);
 		a.n = 99;
-		expect(await memoSettings(owner("p", "https://a.test"), read, 1)).toEqual({ n: 1 });
-		expect(await memoSettings(owner("p", "https://b.test"), read, 1)).toEqual({ n: 2 });
+		expect(await memoSettings(owner("p", "https://a.test"), read, { now: 1 })).toEqual({ n: 1 });
+		expect(await memoSettings(owner("p", "https://b.test"), read, { now: 1 })).toEqual({ n: 2 });
 
 		const failing = async (): Promise<{ n: number }> => {
 			throw new Error("database away");
 		};
-		await expect(memoSettings(owner("q"), failing, 0)).rejects.toThrow("database away");
-		expect(await memoSettings(owner("q"), read, 1)).toEqual({ n: 3 });
+		await expect(memoSettings(owner("q"), failing, { now: 0 })).rejects.toThrow("database away");
+		expect(await memoSettings(owner("q"), read, { now: 1 })).toEqual({ n: 3 });
 	});
 });

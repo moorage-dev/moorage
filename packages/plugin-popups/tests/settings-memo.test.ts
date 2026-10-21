@@ -10,11 +10,11 @@ import { fakeContext, popup, type FakeContext } from "./helpers.js";
 
 type Hook = (event: PageFragmentEvent, ctx: PluginContext) => Promise<unknown>;
 
-const render = (fake: FakeContext) =>
+const render = (fake: FakeContext, query = "") =>
 	(createPlugin().hooks["page:fragments"]!.handler as Hook)(
 		{
 			page: {
-				url: "https://hartleys.test/",
+				url: `https://hartleys.test/${query}`,
 				path: "/",
 				locale: null,
 				kind: "custom",
@@ -59,6 +59,19 @@ describe("popups kept between page views", () => {
 		expect(await render(fake)).toContain("abcd1234");
 		await toggle(fake);
 		expect(await render(fake)).not.toContain("abcd1234");
+	});
+
+	it("reads fresh for a preview link, so a save made elsewhere shows at once", async () => {
+		const fake = fakeContext({ [STORE_KEY]: { popups: [popup()] } });
+		await render(fake);
+		// Saved in another isolate: this one still keeps the old popups for page views.
+		fake.kv.set(STORE_KEY, { popups: [popup({ heading: "Saved a moment ago" })] });
+		expect(await render(fake)).not.toContain("Saved a moment ago");
+		expect(await render(fake, "?popups_preview=abcd1234")).toContain("Saved a moment ago");
+		expect(fake.reads()).toBe(2);
+		// What the preview read is the newest there is, so page views use it from now on.
+		expect(await render(fake)).toContain("Saved a moment ago");
+		expect(fake.reads()).toBe(2);
 	});
 
 	it("picks up a change made elsewhere once the popups are 30 seconds old", async () => {
