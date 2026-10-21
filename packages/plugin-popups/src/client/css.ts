@@ -42,7 +42,7 @@ export const CSS =
 	".pic{display:block;width:calc(100% + 56px);max-width:none;margin:-28px -28px 18px;height:180px;object-fit:cover;border-radius:calc(var(--r) - 1px) calc(var(--r) - 1px) 0 0}" +
 	".thumb{float:left;width:72px;height:72px;object-fit:cover;border-radius:8px;margin:0 14px 6px 0}" +
 	// Top bar: in the page flow, above the header.
-	".bar{position:relative;border-width:0 0 1px;min-height:44px;padding:10px 60px 10px 16px;font-size:15px}.bar .i{max-width:1200px;margin:0 auto;text-align:center}.bar .i a{font-weight:600;text-decoration:underline;text-underline-offset:3px;margin-left:6px}.bar .x{top:0;right:4px}.bar .pv{margin:0 8px 0 0}" +
+	".bar{position:relative;border-width:0 0 1px;min-height:44px;padding:10px 60px 10px 16px;font-size:15px}.bar .i{max-width:1200px;margin:0 auto;text-align:center}.bar .i a{font-weight:600;text-decoration:underline;text-underline-offset:3px;margin-left:6px}.bar .x{top:0;right:4px}.bar .pv{display:block;width:fit-content;max-width:100%;margin:0 auto 6px}" +
 	// A box in a page, as its preview draws it: in the content, the size of the server's box.
 	".box{position:relative;max-width:640px;margin:28px auto;padding:24px;border-radius:10px}.box .pic{width:calc(100% + 48px);margin:-24px -24px 18px}" +
 	// Slide-in: a bottom corner.
@@ -61,7 +61,7 @@ export const CSS =
 	".slide{inset:auto 0 0;margin:0;width:100%;max-width:100%;max-height:45vh;border-width:1px 0 0;border-radius:12px 12px 0 0;padding:18px 16px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -12px 32px -16px rgb(0 0 0/.35)}.slide.l{left:0}" +
 	"dialog.modal:not(.sheet){padding:20px}dialog.modal:not(.sheet) .pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}" +
 	".r{flex-direction:column;align-items:stretch}.r .q{justify-content:center}" +
-	".bar{font-size:14px}.bar .i{text-align:left}}";
+	".bar{font-size:14px}.bar .i{text-align:left}.bar .pv{margin-left:0}}";
 
 /** The owner's own colours (already checked for contrast), used exactly as chosen. */
 export function ownColors(col?: { g: string; f: string; x: string; y: string }): string {

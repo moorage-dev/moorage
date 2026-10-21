@@ -13,6 +13,7 @@ import pkg from "../package.json" with { type: "json" };
 import {
 	ADMIN_ROLE,
 	handleInteraction,
+	mayShowStep2,
 	type Interaction,
 	type MediaOption,
 	type PageState,
@@ -30,7 +31,7 @@ import {
 	type Store,
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
-import { checkForm, type FormCheck } from "./forms.js";
+import { checkForm, listForms, type FormCheck } from "./forms.js";
 import { isPopupPreview, pageFragments, previewItem } from "./fragment.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import {
@@ -188,7 +189,7 @@ export function alertEmail(
 ): { subject: string; text: string } {
 	const fix =
 		kind === "missing"
-			? `Its form "${popup.form}" no longer exists under Forms. Open Forms, copy the short name of the form you want, and paste it in this popup under Popups > Edit > Change > What it says.`
+			? `Its form "${popup.form}" no longer exists under Forms. Open Forms, copy the short name of the form you want, and paste it in this popup under Popups > Edit > What it says.`
 			: kind === "paused"
 				? `Its form "${popup.form}" is paused under Forms. The popup opens again by itself once the form is turned back on.`
 				: `Its form "${popup.form}" uses Cloudflare Turnstile or a file upload, which only work in a box in a page for now. Choose another form for this popup, or put this form in a box in a page.`;
@@ -290,15 +291,20 @@ export function createPlugin() {
 					const admin = (ctx.user?.role ?? 0) >= ADMIN_ROLE;
 					if (admin) await ensurePruneScheduled(ctx).catch(() => {});
 					const now = Date.now();
-					const [store, stored, zone, media, collections, all] = await Promise.all([
+					const input = ctx.input as Interaction | undefined;
+					const origin = originOf(ctx);
+					const [store, stored, zone, media, collections, all, forms] = await Promise.all([
 						readStore(ctx),
 						readProblems(ctx),
 						siteZone(),
 						listMedia(ctx),
 						listCollections(ctx),
 						readRows(ctx, null, null).catch(() => []),
+						// Only an Admin picks the form, and only step 2 shows it: no extra request otherwise.
+						admin && mayShowStep2(input)
+							? listForms(origin, ctx.request?.headers.get("cookie") ?? "")
+							: null,
 					]);
-					const input = ctx.input as Interaction | undefined;
 					// Only when the page opens: a fixed form clears its red warning.
 					const problems = input?.type === "page_load" ? await recheck(ctx, store, stored) : stored;
 					const values = (input?.values ?? {}) as Record<string, unknown>;
@@ -315,7 +321,6 @@ export function createPlugin() {
 											: "",
 								}
 							: { from: "", to: "" };
-					const origin = originOf(ctx);
 					const state: PageState = {
 						store,
 						admin,
@@ -332,6 +337,7 @@ export function createPlugin() {
 						range,
 						problems,
 						media,
+						forms,
 						collections,
 						emailReady: !!ctx.email,
 					};

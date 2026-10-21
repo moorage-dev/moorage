@@ -17,7 +17,8 @@ export function barInner(item: ClientItem, close: string, tag?: string): string 
 		: "";
 	return (
 		'<div class="pp bar" role="region" aria-label="Announcement"><div class="i">' +
-		(tag ? '<span class="pv">' + esc(tag) + "</span> " : "") +
+		// A preview's label is a row of its own above the bar's words.
+		(tag ? '<span class="pv">' + esc(tag) + "</span>" : "") +
 		esc(item.c.h) +
 		(item.c.x ? " " + esc(item.c.x) : "") +
 		link +

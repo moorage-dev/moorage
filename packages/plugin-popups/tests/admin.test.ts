@@ -94,6 +94,43 @@ describe("the list", () => {
 		});
 	});
 
+	it("puts Edit, Preview and Turn off on each row, and only Duplicate and Delete in a menu", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const page = await load(fake);
+		const table = all(page).find((b) => b.type === "table" && b.block_id === "list") as Extract<
+			Block,
+			{ type: "table" }
+		>;
+		expect(table.columns.map((c) => [c.key, c.format ?? "text"]).slice(0, 6)).toEqual([
+			["name", "text"],
+			["status", "badge"],
+			["edit", "element"],
+			["preview", "element"],
+			["onoff", "element"],
+			["more", "element"],
+		]);
+		expect(table.rows[0]).toMatchObject({
+			edit: { type: "button", action_id: "row", label: "Edit", value: "change:abcd1234" },
+			preview: { type: "button", action_id: "row", label: "Preview", value: "preview:abcd1234" },
+			onoff: { type: "button", action_id: "row", label: "Turn off", value: "toggle:abcd1234" },
+			more: {
+				type: "menu",
+				action_id: "row",
+				items: [
+					{ label: "Duplicate", value: "duplicate:abcd1234" },
+					{ label: "Delete", value: "delete:abcd1234" },
+				],
+			},
+		});
+		// No sentence is needed to explain a menu any more.
+		expect(words(page)).not.toContain("▾");
+		const editor = all(await load(fake, EDITOR)).find(
+			(b) => b.type === "table" && b.block_id === "list",
+		) as Extract<Block, { type: "table" }>;
+		expect(editor.columns.map((c) => c.key)).not.toContain("more");
+		expect(editor.rows[0]).toMatchObject({ onoff: { label: "Turn off" } });
+	});
+
 	it("shows red only when a popup really cannot open", async () => {
 		forms({ cakes: { status: 410 } });
 		const fake = fakeContext({
@@ -153,11 +190,16 @@ describe("New popup, four steps", () => {
 		const picture = formOf(s2, "save_s2").fields.find((f) => f.action_id === "picture");
 		expect(picture).toMatchObject({
 			type: "combobox",
-			options: [
-				{ value: "none" },
-				{ value: "m1", label: "Three sourdough loaves (loaves-1600.jpg)" },
-			],
+			options: [{ value: "none" }, { value: "m1", label: "loaves-1600.jpg" }],
 		});
+		// A short label: never the full alt text or an id; and one line of help under the form.
+		expect(JSON.stringify(picture)).not.toContain("Three sourdough loaves");
+		const help = all(s2)
+			.filter((b) => b.type === "context")
+			.map((b) => (b as { text: string }).text);
+		expect(help.at(-1)).toBe(
+			"Pictures come from Media; forms and their thank-you message from Forms.",
+		);
 		const s3 = await submit(fake, "save_s2", formOf(s2, "save_s2").block_id!, {
 			heading: "Fresh from the oven, once a month",
 			text: "One email a month.",
@@ -203,6 +245,58 @@ describe("New popup, four steps", () => {
 			collections: ["posts"],
 			exclude: ["/contact"],
 			trigger: "click",
+		});
+	});
+
+	it("offers the site's forms to choose from, and a box to type in when Forms cannot list them", async () => {
+		const asked: Array<{ url: string; headers: Headers }> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string, init: { headers?: HeadersInit }) => {
+				asked.push({ url, headers: new Headers(init.headers) });
+				return new Response(
+					JSON.stringify({
+						data: {
+							items: [
+								{ id: "f1", name: "Newsletter", slug: "newsletter", status: "active" },
+								{ id: "f2", name: "Cake orders", slug: "cakes", status: "paused" },
+							],
+						},
+					}),
+				);
+			}),
+		);
+		const fake = fakeContext({
+			popups: { popups: [popup({ contains: "form", form: "old-letter" })] },
+		});
+		const page = await press(fake, "row", "change:abcd1234");
+		const field = formOf(page, "save_s2").fields.find((f) => f.action_id === "form");
+		expect(field).toMatchObject({
+			type: "select",
+			label: "Form",
+			initial_value: "old-letter",
+			options: [
+				{ value: "newsletter", label: "Newsletter" },
+				{ value: "cakes", label: "Cake orders (paused under Forms)" },
+				// A form since deleted under Forms still shows as chosen.
+				{ value: "old-letter", label: "old-letter (no longer under Forms)" },
+			],
+		});
+		// Asked as the signed-in person, the way the admin itself asks.
+		const list = asked.find((a) => a.url.endsWith("/_emdash/api/plugins/emdash-forms/forms/list"));
+		expect(list?.url).toBe("https://hartleys.test/_emdash/api/plugins/emdash-forms/forms/list");
+		expect(list?.headers.get("X-EmDash-Request")).toBe("1");
+		// The list alone never asks Forms.
+		asked.length = 0;
+		await load(fake);
+		expect(asked).toEqual([]);
+
+		// No Forms plugin, or the list cannot be read: the box to type in.
+		forms({});
+		const typed = await press(fake, "row", "change:abcd1234");
+		expect(formOf(typed, "save_s2").fields.find((f) => f.action_id === "form")).toMatchObject({
+			type: "text_input",
+			initial_value: "old-letter",
 		});
 	});
 
@@ -292,6 +386,35 @@ describe("finished popups", () => {
 		).toContain("Only an administrator");
 	});
 
+	it("says a change can take a few minutes to reach visitors only when visitors see it", async () => {
+		const LATER = "It can take a few minutes to reach visitors.";
+		const toast = (response: BlockResponse) => response.toast?.message ?? "";
+		const fake = fakeContext({
+			popups: { popups: [popup(), popup({ id: "off00001", name: "Quiet", on: false })] },
+		});
+		// A live popup's words: cached pages keep the old ones for a while.
+		expect(
+			toast(await submit(fake, "save_s2", "s2:abcd1234:x", { heading: "New words" })),
+		).toContain(LATER);
+		// A turned-off popup's words: no visitor sees them yet.
+		expect(toast(await submit(fake, "save_s2", "s2:off00001:x", { heading: "Hush" }))).toBe(
+			"Saved.",
+		);
+		// The look applies to every live popup.
+		expect(toast(await submit(fake, "save_look", "look", { scheme: "dark" }))).toContain(LATER);
+		// Alert addresses are never shown to visitors.
+		expect(toast(await submit(fake, "save_emails", "emails", { emails: "jo@hartleys.test" }))).toBe(
+			"Saved.",
+		);
+		// Turning off and deleting a live popup take time to leave cached pages too.
+		expect(toast(await press(fake, "row", "toggle:abcd1234"))).toContain(LATER);
+		await press(fake, "row", "toggle:abcd1234");
+		expect(toast(await press(fake, "row", "delete:abcd1234"))).toContain(LATER);
+		expect(toast(await press(fake, "row", "delete:off00001"))).not.toContain(LATER);
+		// With nothing live, the look reaches no one.
+		expect(toast(await submit(fake, "save_look", "look", { scheme: "light" }))).toBe("Saved.");
+	});
+
 	it("turns off, duplicates turned off, and deletes", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		await press(fake, "row", "toggle:abcd1234");
@@ -305,7 +428,7 @@ describe("finished popups", () => {
 		expect(stored(fake).popups).toHaveLength(1);
 	});
 
-	it("shows the preview links from the Edit menu", async () => {
+	it("shows the preview links from the row's Preview button", async () => {
 		const fake = fakeContext({
 			popups: { popups: [popup({ where: "prefix", prefixes: ["/journal/"] })] },
 		});

@@ -203,7 +203,7 @@ async function inbox(): Promise<Array<{ data: Record<string, unknown> }>> {
 }
 
 test.describe("admin", () => {
-	test("the page lives under Marketing and refuses a form that does not exist", async () => {
+	test("the page lives under Marketing and offers the site's forms to choose from", async () => {
 		const page = await adminContext.newPage();
 		await page.setViewportSize({ width: 1280, height: 1400 });
 		await page.goto("/_emdash/admin/plugins/popups/");
@@ -222,15 +222,13 @@ test.describe("admin", () => {
 		await page.getByRole("button", { name: "Next: what it says" }).click();
 		await page.getByLabel(/^Heading/).fill("Hello");
 		await page.getByText("A form from Forms (made once there; sign-ups land in its inbox)").click();
-		await page.getByLabel(/The form's short name/).fill("newsleter");
 		await page.getByLabel("Thank-you heading, shown after the form is sent").fill("Thanks");
+		// Without a form chosen, nothing is saved.
 		await page.getByRole("button", { name: "Next: when and where" }).click();
-		await expect(
-			page.getByText(
-				'There is no form called "newsleter". Open Forms, copy the short name from the list, and paste it here.',
-			),
-		).toBeVisible();
-		await page.getByLabel(/The form's short name/).fill("newsletter");
+		await expect(page.getByText("Choose the form.")).toBeVisible();
+		// The forms made under Forms, by name: nothing to type or copy.
+		await page.getByRole("combobox", { name: "Form", exact: true }).click();
+		await page.getByRole("option", { name: "Newsletter", exact: true }).click();
 		await page.getByRole("button", { name: "Next: when and where" }).click();
 		await expect(page.getByText("3 When and where (now)", { exact: false })).toBeVisible();
 		const id = /s3:([a-z0-9]+):/.exec(
@@ -692,6 +690,20 @@ test.describe("each kind where a visitor sees it", () => {
 			await expect(tag(page, "[data-popups-bar]")).toHaveText(
 				"Preview: nothing is counted. Hidden for a real visitor: it is turned off.",
 			);
+			// The label sits on its own row above the bar's words, never on the same line.
+			const rows = await page.evaluate(() => {
+				const root = document.querySelector("[data-popups-bar]")!.shadowRoot!;
+				const box = (sel: string) => root.querySelector(sel)!.getBoundingClientRect();
+				const label = box(".pv");
+				// Where the bar's own words are drawn, whatever element holds them.
+				const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+				let text: Node | null = null;
+				while ((text = walker.nextNode()) && !text.textContent?.includes("Checkout"));
+				const range = document.createRange();
+				range.selectNodeContents(text!);
+				return { labelBottom: label.bottom, wordsTop: range.getBoundingClientRect().top };
+			});
+			expect(rows.wordsTop).toBeGreaterThanOrEqual(rows.labelBottom);
 			await page.close();
 		}
 	});

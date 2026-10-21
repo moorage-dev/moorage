@@ -23,7 +23,7 @@ import {
 	type Popup,
 	type Store,
 } from "./config.js";
-import { describeCheck, type FormCheck } from "./forms.js";
+import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
 import { rate, type CountRow, type Totals } from "./stats.js";
 import { describeMoment, fromMoment, HALF_HOURS, toMoment } from "./time.js";
 
@@ -71,6 +71,8 @@ export interface PageState {
 	range: { from: string; to: string };
 	problems: Problems;
 	media: MediaOption[];
+	/** The site's forms for step 2's dropdown; absent when Forms could not list them. */
+	forms?: FormOption[] | null;
 	collections: Array<{ slug: string; label: string }>;
 	/** An email provider is set up in EmDash. */
 	emailReady: boolean;
@@ -194,12 +196,12 @@ const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; descr
 		missing: (p) => ({
 			title: `"${p.name}" cannot open: there is no form called "${p.form}" any more`,
 			description:
-				"Open Forms, copy the short name of the form you want, then paste it in this popup under Change ▸ What it says. Visitors see nothing broken in the meantime; the popup simply stays closed.",
+				"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit ▸ What it says. Visitors see nothing broken in the meantime; the popup simply stays closed.",
 		}),
 		unsupported: (p) => ({
 			title: `"${p.name}" cannot open: its form uses Turnstile or a file upload`,
 			description:
-				"Those only work in a box in a page for now. Choose another form under Change ▸ What it says, or make a box in a page with this form.",
+				"Those only work in a box in a page for now. Choose another form under Edit ▸ What it says, or make a box in a page with this form.",
 		}),
 		paused: (p) => ({
 			title: `"${p.name}" is waiting: its form "${p.form}" is paused under Forms`,
@@ -207,19 +209,38 @@ const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; descr
 		}),
 	};
 
-function menuFor(popup: Popup, admin: boolean): Record<string, unknown> {
-	const items = [
-		{ label: "Change", value: `change:${popup.id}` },
-		{ label: "Preview", value: `preview:${popup.id}` },
-		{ label: popup.on ? "Turn off" : "Turn on", value: `toggle:${popup.id}` },
-	];
-	if (admin) {
-		items.push(
-			{ label: "Duplicate", value: `duplicate:${popup.id}` },
-			{ label: "Delete", value: `delete:${popup.id}` },
-		);
-	}
-	return { type: "menu", action_id: "row", label: "Edit", items, style: "secondary" };
+/**
+ * A row's own buttons, as SEO's Redirects list has them: Edit, Preview and Turn
+ * on or off in plain sight, and only Duplicate and Delete in a menu (for an
+ * Admin). A table cell holds a button, link or menu, so on/off is a button,
+ * not a switch. An unfinished popup has no on/off: Edit finishes it.
+ */
+function rowActions(popup: Popup, admin: boolean): Record<string, unknown> {
+	const button = (label: string, verb: string) => ({
+		type: "button",
+		action_id: "row",
+		label,
+		value: `${verb}:${popup.id}`,
+	});
+	return {
+		edit: button("Edit", "change"),
+		preview: button("Preview", "preview"),
+		onoff: popup.step < 4 ? null : button(popup.on ? "Turn off" : "Turn on", "toggle"),
+		...(admin
+			? {
+					more: {
+						type: "menu",
+						action_id: "row",
+						label: "More",
+						items: [
+							{ label: "Duplicate", value: `duplicate:${popup.id}` },
+							{ label: "Delete", value: `delete:${popup.id}` },
+						],
+						style: "secondary",
+					},
+				}
+			: {}),
+	};
 }
 
 function listBlocks(state: PageState): Block[] {
@@ -266,6 +287,9 @@ function listBlocks(state: PageState): Block[] {
 			{ key: "name", label: "Name" },
 			{ key: "status", label: "Status", format: "badge" },
 			{ key: "edit", label: "", format: "element" },
+			{ key: "preview", label: "", format: "element" },
+			{ key: "onoff", label: "", format: "element" },
+			...(state.admin ? [{ key: "more", label: "", format: "element" as const }] : []),
 			{ key: "where", label: "Shows on" },
 			{ key: "seen", label: "Seen" },
 			{ key: "responses", label: "Responses" },
@@ -273,7 +297,7 @@ function listBlocks(state: PageState): Block[] {
 		rows: store.popups.map((popup) => ({
 			name: `${popup.name} (${kindLine(popup)})`,
 			status: statusOf(popup, state),
-			edit: menuFor(popup, state.admin),
+			...rowActions(popup, state.admin),
 			where: showsOnText(popup, state),
 			seen: num(state.totals.get(popup.id)?.seen),
 			responses: responsesText(popup, state.totals.get(popup.id)),
@@ -282,7 +306,7 @@ function listBlocks(state: PageState): Block[] {
 	blocks.push(
 		{
 			type: "context",
-			text: `Edit ▾ opens: Change, Preview, ${state.admin ? "Turn off, Duplicate, Delete" : "Turn off"}. "Seen" counts since each popup started: at least half of it was on screen for a second. Counts are approximate: some browsers block them, and your own visits while signed in are not counted.`,
+			text: `"Seen" counts since each popup started: at least half of it was on screen for a second. Counts are approximate: some browsers block them, and your own visits while signed in are not counted.`,
 		},
 		{
 			type: "context",
@@ -629,18 +653,56 @@ function step1Form(state: PageState, popup: Popup | undefined, wizard: boolean):
 }
 
 function pictureOptions(state: PageState, popup: Popup | undefined) {
+	// A short label, the file name: alt text is a sentence, and media has no title of its own.
 	const options = [{ value: "none", label: "No picture" }];
-	for (const item of state.media) {
-		options.push({
-			value: item.id,
-			label: item.alt ? `${item.alt} (${item.filename})` : item.filename,
-		});
-	}
+	for (const item of state.media) options.push({ value: item.id, label: item.filename });
 	// A picture since removed from the list still shows as chosen.
 	if (popup?.picture && !state.media.some((m) => m.id === popup.picture!.id)) {
-		options.push({ value: popup.picture.id, label: popup.picture.alt || "The current picture" });
+		options.push({ value: popup.picture.id, label: "The current picture" });
 	}
 	return options;
+}
+
+/** A dropdown of the site's forms, or a box to type the short name in when Forms cannot list them. */
+function formField(state: PageState, popup: Popup): Record<string, unknown> {
+	const chosen = typed(state, "form", popup.form);
+	const condition = { field: "contains", eq: "form" };
+	if (!state.forms?.length) {
+		return {
+			type: "text_input",
+			action_id: "form",
+			label: "The form's short name, as shown under Forms (for example: newsletter)",
+			placeholder: "newsletter",
+			initial_value: chosen,
+			condition,
+		};
+	}
+	const options = state.forms.map((form) => ({
+		value: form.slug,
+		label: form.paused ? `${form.name} (paused under Forms)` : form.name,
+	}));
+	// A form since deleted under Forms still shows as chosen.
+	if (chosen && !state.forms.some((form) => form.slug === chosen)) {
+		options.push({ value: chosen, label: `${chosen} (no longer under Forms)` });
+	}
+	return {
+		type: "select",
+		action_id: "form",
+		label: "Form",
+		options,
+		...(chosen ? { initial_value: chosen } : {}),
+		condition,
+	};
+}
+
+/** Whether the page drawn after this interaction can show step 2, which lists the site's forms. */
+export function mayShowStep2(input: Interaction | undefined): boolean {
+	const action = typeof input?.action_id === "string" ? input.action_id : "";
+	const value = typeof input?.value === "string" ? input.value : "";
+	if (input?.type === "form_submit") return /^save_s[1-4]$/.test(action);
+	if (input?.type !== "block_action") return false;
+	if (action === "row") return value.startsWith("change:") || value.startsWith("toggle:");
+	return action === "nav" && value.startsWith("back:");
 }
 
 function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
@@ -687,24 +749,14 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 			],
 			initial_value: typed(state, "contains", popup.contains),
 		});
-		fields.push(
-			{
-				type: "text_input",
-				action_id: "form",
-				label: "The form's short name, as shown under Forms (for example: newsletter)",
-				placeholder: "newsletter",
-				initial_value: typed(state, "form", popup.form),
-				condition: { field: "contains", eq: "form" },
-			},
-			{
-				type: "text_input",
-				action_id: "thanks",
-				label: "Thank-you heading, shown after the form is sent",
-				placeholder: "Thanks, you're on the list",
-				initial_value: typed(state, "thanks", popup.thanks),
-				condition: { field: "contains", eq: "form" },
-			},
-		);
+		fields.push(formField(state, popup), {
+			type: "text_input",
+			action_id: "thanks",
+			label: "Thank-you heading, shown after the form is sent",
+			placeholder: "Thanks, you're on the list",
+			initial_value: typed(state, "thanks", popup.thanks),
+			condition: { field: "contains", eq: "form" },
+		});
 	}
 	const buttonCondition = bar || !state.admin ? undefined : { field: "contains", eq: "button" };
 	if (bar || state.admin || popup.contains === "button") {
@@ -743,12 +795,6 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 		});
 	}
 	const blocks: Block[] = [];
-	if (popup.picture) {
-		blocks.push({
-			type: "context",
-			text: `Picture now: ${popup.picture.alt || "a picture from your media library"}.`,
-		});
-	}
 	blocks.push({
 		type: "form",
 		block_id: formId("s2", popup),
@@ -762,7 +808,7 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 		blocks.push({
 			type: "context",
 			text: state.admin
-				? "Pictures come from Media; add new ones there. With a form: the short name is checked when you save. The thank-you text under the heading is the form's own confirmation message, set under Forms; if the form sends visitors to another page instead, that wins. Forms with file uploads or Cloudflare Turnstile cannot be used in a popup or slide-in yet; put them in a box in a page."
+				? "Pictures come from Media; forms and their thank-you message from Forms."
 				: popup.contains === "form"
 					? `It contains the form "${popup.form}". Only an administrator can change the form.`
 					: "Pictures come from Media; add new ones there.",
@@ -1139,7 +1185,15 @@ export interface Helpers {
 	publicUrl(mediaId: string): Promise<string | null>;
 }
 
-const SAVED = "Saved. It can take a few minutes to reach visitors.";
+/**
+ * Cached pages keep a popup's old version for a few minutes at each Cloudflare
+ * location. A plugin cannot clear EmDash's page cache (its route handlers get
+ * no cache handle), so a save that changes what visitors see says so, and one
+ * that does not (a popup nobody sees yet, the alert addresses) does not.
+ */
+const LATER = "It can take a few minutes to reach visitors.";
+const SAVED = `Saved. ${LATER}`;
+const savedFor = (visible: boolean) => (visible ? SAVED : "Saved.");
 const REFUSED: BlockResponse["toast"] = {
 	type: "error",
 	message: "Nothing was saved. See the message at the top.",
@@ -1220,7 +1274,9 @@ export async function handleInteraction(
 					store: save,
 					toast: {
 						type: "success",
-						message: popup.on ? `"${popup.name}" is off.` : `"${popup.name}" is on. ${SAVED}`,
+						message: popup.on
+							? `"${popup.name}" is off.${isLive(popup, state.now) ? ` ${LATER}` : ""}`
+							: `"${popup.name}" is on. ${SAVED}`,
 					},
 				}),
 			};
@@ -1262,7 +1318,10 @@ export async function handleInteraction(
 					...state,
 					store: save,
 					problems,
-					toast: { type: "success", message: `Deleted "${popup.name}".` },
+					toast: {
+						type: "success",
+						message: `Deleted "${popup.name}".${isLive(popup, state.now) ? ` ${LATER}` : ""}`,
+					},
 				}),
 			};
 		}
@@ -1330,7 +1389,17 @@ export async function handleInteraction(
 		return {
 			save,
 			response: renderPage(
-				{ ...state, store: save, toast: { type: "success", message: SAVED } },
+				{
+					...state,
+					store: save,
+					toast: {
+						type: "success",
+						// The look shows on every live popup; the alert addresses never reach visitors.
+						message: savedFor(
+							action === "save_look" && store.popups.some((p) => isLive(p, state.now)),
+						),
+					},
+				},
 				TAB.settings,
 			),
 		};
@@ -1374,10 +1443,17 @@ export async function handleInteraction(
 			const following = saved.kind === "inline" && step === 2 ? 4 : step + 1;
 			return { save, problems, response: popupPage(view, saved, following) };
 		}
+		// Visitors see the change if the popup was live before the save or is live after it.
+		const before = find(popup.id);
+		const visible = (!!before && isLive(before, state.now)) || isLive(saved, state.now);
 		return {
 			save,
 			problems,
-			response: popupPage({ ...view, toast: { type: "success", message: SAVED } }, saved, 4),
+			response: popupPage(
+				{ ...view, toast: { type: "success", message: savedFor(visible) } },
+				saved,
+				4,
+			),
 		};
 	};
 
@@ -1472,7 +1548,11 @@ export async function handleInteraction(
 		const buttonLabel = text(values, "button_label", popup.buttonLabel);
 		const buttonUrl = text(values, "button_url", popup.buttonUrl);
 		if (contains === "form" && !form)
-			errors.push("Type the form's short name, as shown under Forms.");
+			errors.push(
+				state.forms?.length
+					? "Choose the form."
+					: "Type the form's short name, as shown under Forms.",
+			);
 		if (contains === "button") {
 			if (popup.kind !== "bar" && (!buttonLabel || !buttonUrl))
 				errors.push("Write the button words and where the button goes.");
