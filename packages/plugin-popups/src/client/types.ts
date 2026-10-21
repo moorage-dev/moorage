@@ -66,6 +66,8 @@ export interface PreviewAnswer {
 	item: ClientItem;
 	/** The popup is turned off or not finished: a real visitor never sees it. */
 	off: boolean;
+	/** Off because its four steps were never finished with "Save and finish". */
+	unfinished?: boolean;
 	/** When it ends or starts, in the site's words ("31 Dec, 18:00"). */
 	endText?: string;
 	startText?: string;

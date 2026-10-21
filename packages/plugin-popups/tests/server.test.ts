@@ -570,6 +570,12 @@ describe("routes", () => {
 		};
 		expect(answer.off).toBe(true);
 		expect(answer.item.i).toBe("abcd1234");
+		expect(answer).not.toHaveProperty("unfinished");
+		const draft = fakeContext({ popups: { popups: [popup({ on: false, step: 3 })] } });
+		expect(await call(draft, "preview", { id: "abcd1234" })).toMatchObject({
+			off: true,
+			unfinished: true,
+		});
 	});
 
 	it("gives a box in a page to preview too, without a way out or campaign tags", async () => {

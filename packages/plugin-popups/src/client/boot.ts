@@ -764,6 +764,8 @@ export function boot(c: ClientConfig): void {
 					}
 					/** Why a real visitor would not see it here and now, in plain words; "" when they would. */
 					const hidden = (): string => {
+						if (answer.unfinished)
+							return 'it is not finished yet (press "Save and finish" in step 4)';
 						if (answer.off) return "it is turned off";
 						if (!c.here) return "it does not show on this page";
 						// A box in a page shows to everyone inside its dates: nothing else applies.

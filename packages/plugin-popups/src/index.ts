@@ -427,6 +427,7 @@ export function createPlugin() {
 					return {
 						item,
 						off: !popup.on || popup.step < 4,
+						...(popup.step < 4 ? { unfinished: true } : {}),
 						...(popup.start ? { startText: describeMoment(popup.start, zone, now) } : {}),
 						...(popup.end ? { endText: describeMoment(popup.end, zone, now) } : {}),
 					};

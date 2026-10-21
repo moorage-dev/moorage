@@ -345,21 +345,36 @@ describe("forms", () => {
 /** Open a preview of one popup, as the private route would answer for it. */
 async function preview(
 	raw: Partial<Popup>,
-	options: { here?: boolean; off?: boolean; width?: number; visit?: number } = {},
+	options: {
+		here?: boolean;
+		off?: boolean;
+		unfinished?: boolean;
+		width?: number;
+		visit?: number;
+		/** The previewed popup's id; the live popups on the page get pop00000, pop10000, … */
+		id?: string;
+		live?: Array<Partial<Popup>>;
+	} = {},
 ) {
-	win.happyDOM.setURL("https://hartleys.test/?popups_preview=pop00000&scheme=light");
+	const id = options.id ?? "pop00000";
+	win.happyDOM.setURL(`https://hartleys.test/?popups_preview=${id}&scheme=light`);
 	if (options.width)
 		Object.defineProperty(window, "innerWidth", { value: options.width, configurable: true });
 	if (options.visit) sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: options.visit }));
-	const item = previewItem(popup({ id: "pop00000", ...raw }), "");
+	const item = previewItem(popup({ id, ...raw }), "");
+	const data = {
+		item,
+		off: !!options.off || !!options.unfinished,
+		...(options.unfinished ? { unfinished: true } : {}),
+	};
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(
-			async () =>
-				new Response(JSON.stringify({ success: true, data: { item, off: !!options.off } })),
-		),
+		vi.fn(async () => new Response(JSON.stringify({ success: true, data }))),
 	);
-	boot({ ...config(), ...(options.here === false ? {} : { here: 1 as const }) });
+	boot({
+		...config(...(options.live ?? [])),
+		...(options.here === false ? {} : { here: 1 as const }),
+	});
 	await ready();
 	await ready();
 }
@@ -435,6 +450,52 @@ describe("preview", () => {
 		// A click skips the first-page rule.
 		expect(shadow().querySelector(".pv")!.textContent).toBe(
 			"Preview: nothing is counted. A real visitor sees it when they click its button or link.",
+		);
+	});
+
+	it("draws it again when the window is narrowed past a phone's width, but not once it was closed", async () => {
+		await preview({ kind: "modal" }, { visit: 2 });
+		expect(shadow().querySelector("dialog")!.classList.contains("sheet")).toBe(false);
+		Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+		window.dispatchEvent(new Event("resize"));
+		await ready();
+		expect(shadow().querySelector("dialog")!.classList.contains("sheet")).toBe(true);
+		expect(document.querySelectorAll("#popups")).toHaveLength(1);
+		shadow().querySelector<HTMLElement>("[data-pp-close]")!.click();
+		expect(host()).toBeNull();
+		Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+		window.dispatchEvent(new Event("resize"));
+		await ready();
+		expect(host()).toBeNull();
+	});
+
+	it("says when another popup or top bar on the page shows first", async () => {
+		const slides = [{ kind: "slide" as const }, { kind: "slide" as const }];
+		await preview({ kind: "slide" }, { id: "pop10000", live: slides, visit: 2 });
+		expect(shadow().querySelector(".pv")!.textContent).toBe(
+			"Preview: nothing is counted. Hidden for a real visitor: another popup opens first on this page.",
+		);
+		host()!.remove();
+		await preview({ kind: "slide" }, { id: "pop00000", live: slides, visit: 2 });
+		expect(shadow().querySelector(".pv")!.textContent).toBe(
+			"Preview: nothing is counted. A real visitor sees it after they have read a while.",
+		);
+		host()!.remove();
+		const bars = [{ kind: "bar" as const }, { kind: "bar" as const }];
+		await preview({ kind: "bar" }, { id: "pop10000", live: bars });
+		expect(
+			document.querySelector("#popups-bar-pop10000")!.shadowRoot!.querySelector(".pv")!.textContent,
+		).toBe(
+			"Preview: nothing is counted. Hidden for a real visitor: another top bar shows first on this page.",
+		);
+	});
+
+	it("says a popup whose steps are not finished is not finished, not merely off", async () => {
+		await preview({ kind: "bar" }, { unfinished: true });
+		expect(
+			document.querySelector("#popups-bar-pop00000")!.shadowRoot!.querySelector(".pv")!.textContent,
+		).toBe(
+			'Preview: nothing is counted. Hidden for a real visitor: it is not finished yet (press "Save and finish" in step 4).',
 		);
 	});
 
