@@ -749,17 +749,14 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 			],
 			initial_value: typed(state, "contains", popup.contains),
 		});
-		fields.push(
-			formField(state, popup),
-			{
-				type: "text_input",
-				action_id: "thanks",
-				label: "Thank-you heading, shown after the form is sent",
-				placeholder: "Thanks, you're on the list",
-				initial_value: typed(state, "thanks", popup.thanks),
-				condition: { field: "contains", eq: "form" },
-			},
-		);
+		fields.push(formField(state, popup), {
+			type: "text_input",
+			action_id: "thanks",
+			label: "Thank-you heading, shown after the form is sent",
+			placeholder: "Thanks, you're on the list",
+			initial_value: typed(state, "thanks", popup.thanks),
+			condition: { field: "contains", eq: "form" },
+		});
 	}
 	const buttonCondition = bar || !state.admin ? undefined : { field: "contains", eq: "button" };
 	if (bar || state.admin || popup.contains === "button") {

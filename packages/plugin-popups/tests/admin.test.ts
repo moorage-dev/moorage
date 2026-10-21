@@ -194,8 +194,12 @@ describe("New popup, four steps", () => {
 		});
 		// A short label: never the full alt text or an id; and one line of help under the form.
 		expect(JSON.stringify(picture)).not.toContain("Three sourdough loaves");
-		const help = all(s2).filter((b) => b.type === "context").map((b) => (b as { text: string }).text);
-		expect(help.at(-1)).toBe("Pictures come from Media; forms and their thank-you message from Forms.");
+		const help = all(s2)
+			.filter((b) => b.type === "context")
+			.map((b) => (b as { text: string }).text);
+		expect(help.at(-1)).toBe(
+			"Pictures come from Media; forms and their thank-you message from Forms.",
+		);
 		const s3 = await submit(fake, "save_s2", formOf(s2, "save_s2").block_id!, {
 			heading: "Fresh from the oven, once a month",
 			text: "One email a month.",
@@ -389,11 +393,13 @@ describe("finished popups", () => {
 			popups: { popups: [popup(), popup({ id: "off00001", name: "Quiet", on: false })] },
 		});
 		// A live popup's words: cached pages keep the old ones for a while.
-		expect(toast(await submit(fake, "save_s2", "s2:abcd1234:x", { heading: "New words" }))).toContain(
-			LATER,
-		);
+		expect(
+			toast(await submit(fake, "save_s2", "s2:abcd1234:x", { heading: "New words" })),
+		).toContain(LATER);
 		// A turned-off popup's words: no visitor sees them yet.
-		expect(toast(await submit(fake, "save_s2", "s2:off00001:x", { heading: "Hush" }))).toBe("Saved.");
+		expect(toast(await submit(fake, "save_s2", "s2:off00001:x", { heading: "Hush" }))).toBe(
+			"Saved.",
+		);
 		// The look applies to every live popup.
 		expect(toast(await submit(fake, "save_look", "look", { scheme: "dark" }))).toContain(LATER);
 		// Alert addresses are never shown to visitors.
