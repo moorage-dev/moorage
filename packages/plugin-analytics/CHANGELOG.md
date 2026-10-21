@@ -1,5 +1,11 @@
 # @moorage/plugin-analytics
 
+## 0.2.5
+
+### Patch Changes
+
+- 079b9ad: Pages render faster: settings are kept for 30 seconds between page views, and a save takes effect at once.
+
 ## 0.2.4
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @moorage/plugin-seo
 
+## 0.1.7
+
+### Patch Changes
+
+- 079b9ad: Pages render faster: settings are kept for 30 seconds between page views, and a save takes effect at once.
+
 ## 0.1.6
 
 ### Patch Changes

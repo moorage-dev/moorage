@@ -1,5 +1,11 @@
 # @moorage/plugin-popups
 
+## 0.1.3
+
+### Patch Changes
+
+- 079b9ad: Pages render faster: settings are kept for 30 seconds between page views, and a save takes effect at once.
+
 ## 0.1.2
 
 ### Patch Changes
