@@ -32,6 +32,7 @@ import {
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, type FormCheck } from "./forms.js";
 import { clientItem, pageFragments } from "./fragment.js";
+import { forgetSettings, memoSettings } from "./settings-memo.js";
 import {
 	addCount,
 	DESCRIPTOR_STORAGE,
@@ -76,6 +77,7 @@ export function popupsPlugin(): PluginDescriptor {
 	};
 }
 
+/** Always a fresh read. Page views use `memoSettings` around it; the admin and the writes do not. */
 async function readStore(ctx: PluginContext): Promise<Store> {
 	return normalizeStore(await ctx.kv.get(STORE_KEY));
 }
@@ -238,9 +240,10 @@ export function createPlugin() {
 			],
 		},
 		hooks: {
-			// May run three times for one page: one read, then pure work.
+			// May run three times for one page. The popups are kept in memory between
+			// page views (settings-memo.ts), so a warm page view reads nothing.
 			"page:fragments": async (event, ctx) => {
-				const store = await readStore(ctx);
+				const store = await memoSettings(ctx, () => readStore(ctx));
 				const request = getRequestContext();
 				return pageFragments(
 					store,
@@ -321,7 +324,11 @@ export function createPlugin() {
 						checkForm: (form, overlay) => checkForm(origin, form, overlay),
 						publicUrl: (mediaId) => publicMediaUrl(ctx, origin, mediaId),
 					});
-					if (outcome.save) await ctx.kv.set(STORE_KEY, outcome.save);
+					if (outcome.save) {
+						await ctx.kv.set(STORE_KEY, outcome.save);
+						// After the write, so a page view in between cannot keep the old popups.
+						forgetSettings(PLUGIN_ID);
+					}
 					if (outcome.problems) await ctx.kv.set(PROBLEMS_KEY, outcome.problems);
 					return outcome.response;
 				},
@@ -470,7 +477,8 @@ export function createPlugin() {
 				request: { body: "json", maxBytes: 128 },
 				handler: async (ctx) => {
 					const id = (ctx.input as { id?: unknown } | null)?.id;
-					const store = await readStore(ctx);
+					// Asked for by the box's component while the page renders: kept like the page hook's.
+					const store = await memoSettings(ctx, () => readStore(ctx));
 					const popup = store.popups.find((p) => p.id === id && p.kind === "inline");
 					const now = Date.now();
 					if (!popup || !isLive(popup, now) || (popup.start !== null && now < popup.start))

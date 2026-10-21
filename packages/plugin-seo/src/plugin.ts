@@ -18,7 +18,9 @@ import {
 import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
 import { isNoindex, mergeRobots } from "./robots.js";
 import { loadScan, SCAN_KEY, SCAN_TASK, scanStep, startScan } from "./scan.js";
+import { memoSettings } from "./settings-memo.js";
 
+/** Always a fresh read. Page views use `memoSettings` around it; saves and record builds do not. */
 async function loadConfig(ctx: PluginContext) {
 	return normalizeConfig(await ctx.kv.get(CONFIG_KEY));
 }
@@ -42,18 +44,33 @@ async function refreshEntry(ctx: PluginContext, collection: string, content: unk
  */
 const plugin: SandboxedPlugin = {
 	hooks: {
-		// Runs on every uncached public render. Steady state is two reads: the
-		// config and the entry's precomputed record.
+		// Runs on every uncached public render. Steady state is one read, the
+		// entry's precomputed record: the config is kept in memory between page
+		// views (settings-memo.ts), and when it is not, both are read at once.
 		"page:metadata": async (event, ctx) => {
 			const { page } = event;
-			const config = await loadConfig(ctx);
+			const content = page.content;
+			// A failed record read is reported below; it never fails the page.
+			const readRecord = async () => {
+				if (!content) return null;
+				try {
+					return { stored: await entryStore(ctx).get(entryKey(content.collection, content.id)) };
+				} catch (error) {
+					return { error };
+				}
+			};
+			const [config, found] = await Promise.all([
+				memoSettings(ctx, () => loadConfig(ctx)),
+				readRecord(),
+			]);
 
 			let record: EntryRecord | null = null;
-			if (page.content) {
-				const { collection, id } = page.content;
+			if (content && found) {
+				const { collection, id } = content;
 				try {
+					if ("error" in found) throw found.error;
+					const { stored } = found;
 					const store = entryStore(ctx);
-					const stored = await store.get(entryKey(collection, id));
 					// First render of an entry saved before the plugin was installed.
 					record = stored ?? (await buildEntryRecord(ctx, collection, id, config));
 					// The picture this render shares (what becomes og:image) is something

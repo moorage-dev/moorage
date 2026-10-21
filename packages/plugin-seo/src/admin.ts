@@ -39,6 +39,7 @@ import {
 	type ScanState,
 	type Stats,
 } from "./scan.js";
+import { forgetSettings } from "./settings-memo.js";
 import { parseUrl } from "./url.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
@@ -1289,6 +1290,8 @@ export async function handleAdmin(
 		// Normalising before the write keeps stored data in the shape the page hook reads.
 		const config = normalizeConfig(outcome.config);
 		await ctx.kv.set(CONFIG_KEY, config);
+		// After the write, so a page view in between cannot keep the old settings.
+		forgetSettings(ctx.plugin.id);
 		return render({ ...data, config }, ctx, admin, {
 			...outcome.state,
 			toast: { type: "success", message },

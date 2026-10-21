@@ -3,6 +3,7 @@
 import type { PluginContext, StorageCollection } from "emdash";
 
 import { normalizePopup, type Popup } from "../src/config.js";
+import { forgetAllSettings } from "../src/settings-memo.js";
 
 /**
  * A stand-in for what EmDash hands the plugin: a key-value store and the count
@@ -32,6 +33,8 @@ export function fakeContext(
 	stored: Record<string, unknown> = {},
 	options: { email?: boolean } = {},
 ): FakeContext {
+	// A new fake is a new site: nothing kept in memory from an earlier test.
+	forgetAllSettings();
 	const kv = new Map<string, unknown>(Object.entries(stored));
 	const revisions = new Map<string, number>();
 	const rows = new Map<string, Record<string, unknown>>();

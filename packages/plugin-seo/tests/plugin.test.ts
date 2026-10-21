@@ -144,11 +144,9 @@ describe("page:metadata", () => {
 			await runtime.inspect.storage.get<EntryRecord>("entries", `pages:${entry.id}`),
 		).toMatchObject({ v: 1, authors: [], custom: [] });
 
-		// Back in search, the page is described with the collection's type.
-		await runtime.fixtures.plugin.kv("config", {
-			site: { type: "Dentist", name: "Acme Dental", address: { streetAddress: "1 Main St" } },
-			collections: { pages: { type: "ContactPage" } },
-		});
+		// Back in search (saved on the SEO page, so it shows at once), the page is
+		// described with the collection's type.
+		await runtime.admin.act("/overview", "set_visible", { value: "pages|show" });
 		const shown = await metadata(
 			runtime,
 			page({
@@ -162,6 +160,32 @@ describe("page:metadata", () => {
 			"ContactPage",
 			"BreadcrumbList",
 		]);
+	});
+
+	it("keeps the config in the sandbox between page views, and a save shows at once", async () => {
+		const runtime = await runtimeHost();
+		const orgName = async () =>
+			graphNodes(jsonLd(await metadata(runtime, page()), "primary")).find(
+				(node) => node["@type"] === "Organization",
+			)?.name;
+		await runtime.admin.submit("/overview", "save_identity", {
+			kind: "organization",
+			name: "Acme Dental",
+		});
+		expect(await orgName()).toBe("Acme Dental");
+
+		// Written straight to the database, the way a save in another isolate looks
+		// from here: this isolate keeps the copy it read (for up to 30 seconds).
+		await runtime.fixtures.plugin.kv("config", { site: { name: "Written elsewhere" } });
+		expect(await orgName()).toBe("Acme Dental");
+
+		// A save on the SEO page shows on the very next page view.
+		const saved = await runtime.admin.submit("/overview", "save_identity", {
+			kind: "organization",
+			name: "Acme Clinic",
+		});
+		expect(saved.toast?.type).toBe("success");
+		expect(await orgName()).toBe("Acme Clinic");
 	});
 
 	it("keeps an editor's noindex from the SEO panel", async () => {
