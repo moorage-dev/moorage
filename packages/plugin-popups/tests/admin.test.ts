@@ -244,6 +244,58 @@ describe("New popup, four steps", () => {
 		});
 	});
 
+	it("offers the site's forms to choose from, and a box to type in when Forms cannot list them", async () => {
+		const asked: Array<{ url: string; headers: Headers }> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string, init: { headers?: HeadersInit }) => {
+				asked.push({ url, headers: new Headers(init.headers) });
+				return new Response(
+					JSON.stringify({
+						data: {
+							items: [
+								{ id: "f1", name: "Newsletter", slug: "newsletter", status: "active" },
+								{ id: "f2", name: "Cake orders", slug: "cakes", status: "paused" },
+							],
+						},
+					}),
+				);
+			}),
+		);
+		const fake = fakeContext({
+			popups: { popups: [popup({ contains: "form", form: "old-letter" })] },
+		});
+		const page = await press(fake, "row", "change:abcd1234");
+		const field = formOf(page, "save_s2").fields.find((f) => f.action_id === "form");
+		expect(field).toMatchObject({
+			type: "select",
+			label: "Form",
+			initial_value: "old-letter",
+			options: [
+				{ value: "newsletter", label: "Newsletter" },
+				{ value: "cakes", label: "Cake orders (paused under Forms)" },
+				// A form since deleted under Forms still shows as chosen.
+				{ value: "old-letter", label: "old-letter (no longer under Forms)" },
+			],
+		});
+		// Asked as the signed-in person, the way the admin itself asks.
+		const list = asked.find((a) => a.url.endsWith("/_emdash/api/plugins/emdash-forms/forms/list"));
+		expect(list?.url).toBe("https://hartleys.test/_emdash/api/plugins/emdash-forms/forms/list");
+		expect(list?.headers.get("X-EmDash-Request")).toBe("1");
+		// The list alone never asks Forms.
+		asked.length = 0;
+		await load(fake);
+		expect(asked).toEqual([]);
+
+		// No Forms plugin, or the list cannot be read: the box to type in.
+		forms({});
+		const typed = await press(fake, "row", "change:abcd1234");
+		expect(formOf(typed, "save_s2").fields.find((f) => f.action_id === "form")).toMatchObject({
+			type: "text_input",
+			initial_value: "old-letter",
+		});
+	});
+
 	it("refuses a form that does not exist, or one that cannot work in a popup, the moment it is saved", async () => {
 		const fake = fakeContext({ popups: { popups: [popup({ step: 1 })] } });
 		forms({

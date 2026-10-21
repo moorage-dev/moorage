@@ -23,7 +23,7 @@ import {
 	type Popup,
 	type Store,
 } from "./config.js";
-import { describeCheck, type FormCheck } from "./forms.js";
+import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
 import { rate, type CountRow, type Totals } from "./stats.js";
 import { describeMoment, fromMoment, HALF_HOURS, toMoment } from "./time.js";
 
@@ -71,6 +71,8 @@ export interface PageState {
 	range: { from: string; to: string };
 	problems: Problems;
 	media: MediaOption[];
+	/** The site's forms for step 2's dropdown; absent when Forms could not list them. */
+	forms?: FormOption[] | null;
 	collections: Array<{ slug: string; label: string }>;
 	/** An email provider is set up in EmDash. */
 	emailReady: boolean;
@@ -661,6 +663,48 @@ function pictureOptions(state: PageState, popup: Popup | undefined) {
 	return options;
 }
 
+/** A dropdown of the site's forms, or a box to type the short name in when Forms cannot list them. */
+function formField(state: PageState, popup: Popup): Record<string, unknown> {
+	const chosen = typed(state, "form", popup.form);
+	const condition = { field: "contains", eq: "form" };
+	if (!state.forms?.length) {
+		return {
+			type: "text_input",
+			action_id: "form",
+			label: "The form's short name, as shown under Forms (for example: newsletter)",
+			placeholder: "newsletter",
+			initial_value: chosen,
+			condition,
+		};
+	}
+	const options = state.forms.map((form) => ({
+		value: form.slug,
+		label: form.paused ? `${form.name} (paused under Forms)` : form.name,
+	}));
+	// A form since deleted under Forms still shows as chosen.
+	if (chosen && !state.forms.some((form) => form.slug === chosen)) {
+		options.push({ value: chosen, label: `${chosen} (no longer under Forms)` });
+	}
+	return {
+		type: "select",
+		action_id: "form",
+		label: "Form",
+		options,
+		...(chosen ? { initial_value: chosen } : {}),
+		condition,
+	};
+}
+
+/** Whether the page drawn after this interaction can show step 2, which lists the site's forms. */
+export function mayShowStep2(input: Interaction | undefined): boolean {
+	const action = typeof input?.action_id === "string" ? input.action_id : "";
+	const value = typeof input?.value === "string" ? input.value : "";
+	if (input?.type === "form_submit") return /^save_s[1-4]$/.test(action);
+	if (input?.type !== "block_action") return false;
+	if (action === "row") return value.startsWith("change:") || value.startsWith("toggle:");
+	return action === "nav" && value.startsWith("back:");
+}
+
 function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 	const bar = popup.kind === "bar";
 	const inline = popup.kind === "inline";
@@ -706,14 +750,7 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 			initial_value: typed(state, "contains", popup.contains),
 		});
 		fields.push(
-			{
-				type: "text_input",
-				action_id: "form",
-				label: "The form's short name, as shown under Forms (for example: newsletter)",
-				placeholder: "newsletter",
-				initial_value: typed(state, "form", popup.form),
-				condition: { field: "contains", eq: "form" },
-			},
+			formField(state, popup),
 			{
 				type: "text_input",
 				action_id: "thanks",
@@ -1484,7 +1521,11 @@ export async function handleInteraction(
 		const buttonLabel = text(values, "button_label", popup.buttonLabel);
 		const buttonUrl = text(values, "button_url", popup.buttonUrl);
 		if (contains === "form" && !form)
-			errors.push("Type the form's short name, as shown under Forms.");
+			errors.push(
+				state.forms?.length
+					? "Choose the form."
+					: "Type the form's short name, as shown under Forms.",
+			);
 		if (contains === "button") {
 			if (popup.kind !== "bar" && (!buttonLabel || !buttonUrl))
 				errors.push("Write the button words and where the button goes.");
