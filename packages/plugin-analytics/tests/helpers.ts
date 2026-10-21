@@ -2,6 +2,8 @@
 
 import type { PluginContext, StorageCollection } from "emdash";
 
+import { forgetAllSettings } from "../src/settings-memo.js";
+
 /**
  * A stand-in for what EmDash hands the plugin: a key-value store, one storage
  * collection and a scheduler, all in memory. Reads are counted, so tests can
@@ -27,6 +29,8 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown> = 
 }
 
 export function fakeContext(stored: Record<string, unknown> = {}): FakeContext {
+	// A new fake is a new site: nothing kept in memory from an earlier test.
+	forgetAllSettings();
 	const kv = new Map<string, unknown>(Object.entries(stored));
 	const rows = new Map<string, Record<string, unknown>>();
 	const scheduled: Array<{ name: string; schedule: string }> = [];
