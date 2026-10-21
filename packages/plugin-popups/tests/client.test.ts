@@ -4,11 +4,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { barInner } from "../src/client/bar.js";
 import { boot, MEMORY_KEY, VISIT_KEY } from "../src/client/boot.js";
 import type { ClientConfig, ClientItem } from "../src/client/types.js";
 import type { Popup } from "../src/config.js";
 import { normalizeSettings } from "../src/config.js";
-import { clientConfig, clientItem } from "../src/fragment.js";
+import { clientConfig, clientItem, previewItem } from "../src/fragment.js";
 import { popup } from "./helpers.js";
 
 /**
@@ -341,6 +342,28 @@ describe("forms", () => {
 	});
 });
 
+/** Open a preview of one popup, as the private route would answer for it. */
+async function preview(
+	raw: Partial<Popup>,
+	options: { here?: boolean; off?: boolean; width?: number; visit?: number } = {},
+) {
+	win.happyDOM.setURL("https://hartleys.test/?popups_preview=pop00000&scheme=light");
+	if (options.width)
+		Object.defineProperty(window, "innerWidth", { value: options.width, configurable: true });
+	if (options.visit) sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: options.visit }));
+	const item = previewItem(popup({ id: "pop00000", ...raw }), "");
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(
+			async () =>
+				new Response(JSON.stringify({ success: true, data: { item, off: !!options.off } })),
+		),
+	);
+	boot({ ...config(), ...(options.here === false ? {} : { here: 1 as const }) });
+	await ready();
+	await ready();
+}
+
 describe("preview", () => {
 	it("shows at once with the reason a real visitor would not see it, and remembers nothing", async () => {
 		win.happyDOM.setURL("https://hartleys.test/?popups_preview=pop00000&scheme=dark");
@@ -353,7 +376,7 @@ describe("preview", () => {
 				async () => new Response(JSON.stringify({ success: true, data: { item, off: false } })),
 			),
 		);
-		boot(config());
+		boot({ ...config(), here: 1 });
 		await ready();
 		await ready();
 		expect(shadow().querySelector(".pv")!.textContent).toBe(
@@ -363,5 +386,74 @@ describe("preview", () => {
 		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.c).toBe(closed);
 		expect(sessionStorage.getItem(VISIT_KEY)).toBeNull();
 		expect(beacons).toEqual([]);
+	});
+
+	it("draws a top bar at the start of the page with the server's own markup, not a slide-in", async () => {
+		document.body.innerHTML = "<header>Site</header><main><h1>Home</h1></main>";
+		await preview(
+			{ kind: "bar", heading: "Checkout our new plugins!", trigger: "load" },
+			{ off: true },
+		);
+		expect(host()).toBeNull();
+		const bar = document.body.firstElementChild as HTMLElement;
+		expect(bar.getAttribute("data-popups-bar")).toBe("pop00000");
+		const item = previewItem(
+			popup({ id: "pop00000", kind: "bar", heading: "Checkout our new plugins!" }),
+			"",
+		);
+		const tagText = "Preview: nothing is counted. Hidden for a real visitor: it is turned off.";
+		const same = document.createElement("div");
+		same.innerHTML = barInner(item, "Close", tagText);
+		expect(bar.shadowRoot!.querySelector(".bar")!.outerHTML).toBe(same.innerHTML);
+		expect(bar.shadowRoot!.querySelector(".pv")!.textContent).toBe(tagText);
+		bar.shadowRoot!.querySelector<HTMLElement>("[data-pp-close]")!.click();
+		expect(document.querySelector("[data-popups-bar]")).toBeNull();
+		expect(localStorage.getItem(MEMORY_KEY)).toBeNull();
+	});
+
+	it("says when the popup is not set for this page", async () => {
+		await preview({ kind: "slide" }, { here: false });
+		expect(shadow().querySelector(".pv")!.textContent).toBe(
+			"Preview: nothing is counted. Hidden for a real visitor: it does not show on this page.",
+		);
+	});
+
+	it("opens a popup that opens by itself as a sheet on a phone, and one opened by a click centred", async () => {
+		await preview({ kind: "modal" }, { width: 390, visit: 2 });
+		expect(shadow().querySelector("dialog")!.classList.contains("sheet")).toBe(true);
+		expect(shadow().querySelector(".pv")!.textContent).toBe(
+			"Preview: nothing is counted. A real visitor sees it after they have read a while, from their second page.",
+		);
+		host()!.remove();
+		// A click opens it even in a browser that closed it yesterday.
+		localStorage.setItem(
+			MEMORY_KEY,
+			JSON.stringify({ p: { pop00000: { c: Date.now() - DAY } }, f: {} }),
+		);
+		await preview({ kind: "modal", trigger: "click" }, { width: 390 });
+		expect(shadow().querySelector("dialog")!.classList.contains("sheet")).toBe(false);
+		// A click skips the first-page rule.
+		expect(shadow().querySelector(".pv")!.textContent).toBe(
+			"Preview: nothing is counted. A real visitor sees it when they click its button or link.",
+		);
+	});
+
+	it("tells a phone that a popup for leaving never shows there", async () => {
+		await preview({ kind: "slide", trigger: "exit" }, { width: 390 });
+		expect(shadow().querySelector(".pv")!.textContent).toBe(
+			"Preview: nothing is counted. Hidden for a real visitor: phones never see one that opens when they are about to leave.",
+		);
+	});
+
+	it("draws a box in a page at the top of the content, in the flow, with no close button", async () => {
+		document.body.innerHTML = "<main><h1>Home</h1></main>";
+		await preview({ kind: "inline", heading: "Get the Journal" });
+		const box = document.querySelector("main > [data-popups-preview-box]")!;
+		expect(box).not.toBeNull();
+		expect((box as HTMLElement).style.position).toBe("");
+		expect(box.shadowRoot!.querySelector(".box [data-pp-close]")).toBeNull();
+		expect(box.shadowRoot!.querySelector(".pv")!.textContent).toBe(
+			'Preview: nothing is counted. A real visitor sees it where an editor places the "Popups box" block; this preview puts it at the top of the content.',
+		);
 	});
 });

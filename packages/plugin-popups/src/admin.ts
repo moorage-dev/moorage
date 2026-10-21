@@ -927,17 +927,21 @@ function clickInstructions(popup: Popup): Block[] {
 
 function previewLinks(popup: Popup, state: PageState): Block[] {
 	if (!state.origin) return [];
-	if (popup.kind === "inline") {
-		return [
-			{
-				type: "context",
-				text: 'To see it, add the "Popups box" block to a page or post in the editor, choose this box, and preview that page.',
-			},
-		];
-	}
-	const page = popup.where === "prefix" && popup.prefixes[0] ? popup.prefixes[0] : "/";
+	const inline = popup.kind === "inline";
+	const page = !inline && popup.where === "prefix" && popup.prefixes[0] ? popup.prefixes[0] : "/";
 	const url = (scheme: string) =>
 		`${state.origin}${page}?popups_preview=${popup.id}&scheme=${scheme}`;
+	const notes: Block[] = [];
+	if (inline)
+		notes.push({
+			type: "context",
+			text: 'On your site it shows where an editor adds the "Popups box" block to a page or post and chooses this box. The preview cannot know that place, so it puts the box at the top of your home page\'s content.',
+		});
+	else if (popup.where === "collections")
+		notes.push({
+			type: "context",
+			text: `It is set for a collection, so the preview opens your home page, where it may say it does not show. To see it where visitors do, open a page of that collection and add ?popups_preview=${popup.id} to its address.`,
+		});
 	return [
 		{
 			type: "actions",
@@ -960,6 +964,7 @@ function previewLinks(popup: Popup, state: PageState): Block[] {
 			type: "context",
 			text: "The preview opens a page of your site with it already showing, and says whether a real visitor would see it now and why not. Nothing is counted and the form does not send. Narrow the window to see the phone layout. Save your changes first.",
 		},
+		...notes,
 	];
 }
 
