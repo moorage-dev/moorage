@@ -20,6 +20,7 @@ import {
 	type AnalyticsConfig,
 	type Audience,
 } from "./config.js";
+import { clientConfig } from "./fragment.js";
 import { checkId, TOOL_EXAMPLES, TOOL_NAMES, type ToolId } from "./ids.js";
 import type { ConsentCounts } from "./record.js";
 
@@ -573,7 +574,21 @@ const REFUSED: BlockResponse["toast"] = {
 	type: "error",
 	message: "Nothing was saved. See the message at the top.",
 };
-const SAVED = "Saved. It can take a few minutes to reach visitors.";
+/**
+ * Cached pages keep the old settings for a few minutes. A plugin cannot clear
+ * EmDash's page cache, so a save says so only when it changes what visitors get.
+ */
+const LATER = "It can take a few minutes to reach visitors.";
+const SAVED = `Saved. ${LATER}`;
+
+/**
+ * What every public page gets from these settings: nothing while no tool is on
+ * (see `pageFragments`), else the browser settings and the pages left out.
+ */
+function visitorView(config: AnalyticsConfig): string {
+	if (enabledTools(config).length === 0) return "";
+	return JSON.stringify([clientConfig(config, ""), config.exclude]);
+}
 
 /**
  * Work out what an interaction on the page means. Forms send only the fields
@@ -596,11 +611,16 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		typeof input?.values === "object" && input.values !== null
 			? (input.values as Record<string, unknown>)
 			: {};
-	const done = (next: AnalyticsConfig, tab: number, message = SAVED): Outcome => {
+	const done = (next: AnalyticsConfig, tab: number, message = "Saved."): Outcome => {
 		const save = normalizeConfig(next);
+		const seen = visitorView(normalizeConfig(config)) !== visitorView(save);
+		const said = !seen ? message : message === "Saved." ? SAVED : `${message} ${LATER}`;
 		return {
 			save,
-			response: renderPage({ ...state, config: save, toast: { type: "success", message } }, tab),
+			response: renderPage(
+				{ ...state, config: save, toast: { type: "success", message: said } },
+				tab,
+			),
 		};
 	};
 	const refuse = (errors: string[], tab: number): Outcome => ({
