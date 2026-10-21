@@ -30,7 +30,13 @@ export async function runChecklist(
 	const rows: Record<string, Row> = {};
 	const site = parseUrl(ctx.site.url);
 	const origin = publicOrigin(ctx.site.url);
-	const couldNot: Row = { status: "unknown", text: "We could not open your site to find out." };
+	const couldNot: Row = {
+		status: "unknown",
+		text:
+			scan.live === "updating"
+				? "Your site was showing visitors an error while an update finished, so we could not find out."
+				: "We could not open your site to find out.",
+	};
 	rows.caching =
 		scan.caching === "ok"
 			? {

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { MISSING_PATH } from "../src/checklist.js";
 import type { LinkRow } from "../src/model.js";
-import type { Queue, ScanState, Summary } from "../src/state.js";
+import type { Alerts, Queue, ScanState, Summary } from "../src/state.js";
 import { idFor } from "../src/url.js";
 
 const PAGE = "/health";
@@ -300,6 +300,13 @@ describe("a full check of a public site", () => {
 		expect(String(mail[0]?.text)).toContain("/menu-2024 goes to a page that does not exist.");
 		expect(String(mail[0]?.text)).toContain(`${SITE}/_emdash/admin/plugins/site-health/health`);
 
+		// The Checklist's Email row: worked out on load, who gets them, the test button with it.
+		const checklist = await runtime.admin.loadPage(PAGE, { user: admin });
+		const row = JSON.stringify(checklist.blocks).match(/"text":"Email: [^"]*"[^}]*}/)?.[0] ?? "";
+		expect(row).toContain("Email: Working. Last checked just now: an alert was sent.");
+		expect(row).toContain("Goes to ellen@acme.test and studio@web.example.");
+		expect(row).toContain('"action_id":"send_test"');
+
 		// A second check the same day sends nothing more.
 		await runtime.admin.act(PAGE, "check_all");
 		await ownSite(runtime);
@@ -522,6 +529,76 @@ describe("a site that cannot open its own pages", () => {
 		expect(text(await runtime.admin.loadPage(PAGE))).toContain(
 			"We cannot open your pages to check them",
 		);
+	});
+});
+
+describe("a site in the middle of an update", () => {
+	const midUpdate = () =>
+		new Response(
+			"Database migrations are required. Apply the deployment migration manifest and retry.",
+			{ status: 503, headers: { "retry-after": "60" } },
+		);
+	const isUpdateMail = (m: Record<string, unknown>) =>
+		String(m.subject).includes("your site is showing visitors an error");
+
+	it("says the site is down until its update finishes, and emails at once, not 'blocked'", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.admin.submit(PAGE, "save_options", {
+			recipients: "ellen@acme.test",
+			outbound: false,
+		});
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		// The first check's urgent email (the broken menu link) goes out; a day passes.
+		await cron(runtime);
+		expect(await runtime.inspect.email()).toHaveLength(1);
+		const alerts = await runtime.inspect.kv.get<Alerts>("alerts");
+		await runtime.fixtures.plugin.kv("alerts", {
+			...alerts,
+			urgentAt: new Date(Date.now() - 25 * 3_600_000).toISOString(),
+		});
+		// Then the site answers every visitor with EmDash's "update not finished" page.
+		await runtime.admin.act(PAGE, "check_all");
+		for (let i = 0; i < 4; i += 1) await runtime.http.respond(`${SITE}/`, midUpdate());
+		await finish(runtime);
+		await cron(runtime);
+		await cron(runtime);
+
+		const result = await summary(runtime);
+		expect(result.live).toBe("updating");
+		const update = (await runtime.inspect.email()).filter(isUpdateMail);
+		expect(update).toHaveLength(1);
+		expect(String(update[0]?.text)).toContain("an update to its database has not finished");
+
+		const page = text(await runtime.admin.loadPage(PAGE));
+		expect(page).toContain("Your site is in the middle of an update");
+		expect(page).not.toContain("bot protection");
+		expect(page).toContain("Site up");
+
+		// The same check again the same day sends nothing more.
+		await runtime.admin.act(PAGE, "check_all");
+		for (let i = 0; i < 4; i += 1) await runtime.http.respond(`${SITE}/`, midUpdate());
+		await finish(runtime);
+		await cron(runtime);
+		expect((await runtime.inspect.email()).filter(isUpdateMail)).toHaveLength(1);
+	});
+
+	it("still calls a bot-protection page with the same error number 'blocked'", async () => {
+		const runtime = await start();
+		await runtime.http.respond(
+			`${SITE}/`,
+			new Response(
+				"<html><title>Just a moment...</title><body>Checking your browser</body></html>",
+				{ status: 503, headers: { "content-type": "text/html", "retry-after": "60" } },
+			),
+		);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect((await summary(runtime)).live).toBe("blocked");
+		const page = text(await runtime.admin.loadPage(PAGE));
+		expect(page).toContain("We cannot open your pages to check them");
+		expect(page).not.toContain("middle of an update");
 	});
 });
 

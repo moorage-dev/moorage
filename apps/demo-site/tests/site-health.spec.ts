@@ -135,7 +135,12 @@ test("on a phone, every row keeps its status and its Fix menu on screen", async 
 		const box = await cell.boundingBox();
 		if (box) expect(box.x + box.width).toBeLessThanOrEqual(width);
 	}
-	await expect(page.getByRole("button", { name: "Send a test email" })).toBeVisible();
+	// The Email row says how email stands, with its own test button, on screen.
+	await expect(page.getByText(/^Email: (Working|Needs attention|Not tested yet)\./)).toBeVisible();
+	const test = page.getByRole("button", { name: "Send a test email" });
+	await expect(test).toBeVisible();
+	const box = await test.boundingBox();
+	if (box) expect(box.x + box.width).toBeLessThanOrEqual(width);
 	await expect(page.getByText("Scheduled tasks.").first()).toBeVisible();
 });
 
