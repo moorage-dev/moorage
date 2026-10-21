@@ -202,8 +202,19 @@ test("going back to just before a change: enquiries first, lost text, tick, red 
 	d2.close();
 	await undo.click();
 	await page.getByRole("dialog").getByRole("button", { name: "Undo the restore" }).click();
-	await expect(page.getByText(/^Done\. Your site is back to /)).toBeVisible({ timeout: 30_000 });
-	await expect(page.getByRole("row", { name: /Undo done/ })).toBeVisible();
+	// A quiet site goes straight back. If anything changed since the restore (background work by
+	// other plugins counts, as on a slower CI runner), the same review as a restore comes first.
+	const undoReview = page.getByRole("heading", { name: /^Undo the restore and go back to/ });
+	const undone = page.getByRole("row", { name: /Undo done/ });
+	await expect(undoReview.or(undone)).toBeVisible({ timeout: 30_000 });
+	if (await undoReview.isVisible()) {
+		const carryOn = page.getByRole("button", { name: /reached us, continue$|^Continue$/ });
+		if (await carryOn.isVisible()) await carryOn.click();
+		await page.getByRole("checkbox", { name: /I understand the \d+ changes? made since/ }).check();
+		await page.getByRole("button", { name: /^Put the site back to \d\d:\d\d$/ }).click();
+		await page.getByRole("dialog").getByRole("button", { name: "Put the site back" }).click();
+	}
+	await expect(undone).toBeVisible({ timeout: 30_000 });
 });
 
 test("on a phone, every row keeps its button on screen", async ({ page }) => {
