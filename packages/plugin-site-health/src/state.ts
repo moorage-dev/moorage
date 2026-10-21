@@ -14,8 +14,11 @@ export const KEY = {
 	checklist: "checklist",
 } as const;
 
-/** Can the site open its own pages? Decided by the first page of each full check. */
-export type LiveMode = "ok" | "not-public" | "blocked" | "failed";
+/**
+ * Can the site open its own pages? Decided by the first page of each full check.
+ * "updating": the site answered with EmDash's "database update not finished" page.
+ */
+export type LiveMode = "ok" | "not-public" | "blocked" | "failed" | "updating";
 
 export type Phase =
 	| "redirects"
@@ -127,7 +130,19 @@ export interface Alerts {
 	pending: AlertItem[];
 	/** Rows already mailed as urgent, so they are not mailed twice. */
 	sent: string[];
-	email?: { state: "working" | "not-set-up"; at: string; to: number; error?: string };
+	/**
+	 * The last email actually sent (a test or an alert). "not-set-up": it failed
+	 * because no email service was chosen; "failed": any other failure.
+	 */
+	email?: {
+		state: "working" | "not-set-up" | "failed";
+		at: string;
+		to: number;
+		/** Who it went to, to tell when the list changed since. */
+		list?: string[];
+		kind?: "test" | "alert";
+		error?: string;
+	};
 }
 
 export type CheckStatus = "working" | "attention" | "untested" | "unknown";

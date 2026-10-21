@@ -411,6 +411,23 @@ export function isOwnPage(outcome: { status?: number; headers?: Headers; body?: 
 	return true;
 }
 
+/**
+ * EmDash's own answer while a site's database update has not finished: 503 with
+ * "Database migrations are required…" (text) or "This site's database has not
+ * been migrated yet" (HTML). Every visitor gets it. A bot-protection page can be a
+ * 503 too, so only these words count.
+ */
+export function isMidUpdate(outcome: {
+	status?: number;
+	headers?: Headers;
+	body?: string;
+}): boolean {
+	if (outcome.status !== 503) return false;
+	return /Database migrations are required|database has not been migrated/i.test(
+		(outcome.body ?? "").slice(0, 2000),
+	);
+}
+
 async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): Promise<void> {
 	const origin = publicOrigin(ctx.site.url);
 	if (!origin) {
@@ -422,6 +439,11 @@ async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): P
 	const status = outcome.status ?? 0;
 	if (outcome.status === undefined) {
 		scan.live = isRefusedHost(outcome) ? "not-public" : "failed";
+		scan.phase = "live-paths";
+		return;
+	}
+	if (isMidUpdate(outcome)) {
+		scan.live = "updating";
 		scan.phase = "live-paths";
 		return;
 	}

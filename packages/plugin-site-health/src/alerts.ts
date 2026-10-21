@@ -39,6 +39,35 @@ export function parseRecipients(text: string): { list: string[] } | { wrong: str
 
 export type SendResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * The words EmDash uses when no email service is chosen: in the site's process
+ * ("No email provider is configured…") and in the sandbox ("Email is not configured…").
+ */
+export const NO_EMAIL_SERVICE = /no email provider|not configured/i;
+
+/** What to remember about an email just sent, for the Checklist's Email row. */
+function noteEmail(
+	result: SendResult,
+	recipients: string[],
+	at: string,
+	kind: "test" | "alert",
+): NonNullable<Alerts["email"]> {
+	if (result.ok) return { state: "working", at, to: recipients.length, list: recipients, kind };
+	return {
+		state: NO_EMAIL_SERVICE.test(result.error) ? "not-set-up" : "failed",
+		at,
+		to: 0,
+		list: recipients,
+		kind,
+		error: result.error.slice(0, 200),
+	};
+}
+
+/** Id of the urgent alert for a check that found the site mid-update. */
+export const UPDATING_ID = "updating|";
+const UPDATING_TEXT =
+	"Your site showed visitors an error page instead of your pages: an update to its database has not finished. Whoever looks after your site should finish the update.";
+
 /** One message, To the first address and Cc the rest. Never throws. */
 export async function send(
 	ctx: PluginContext,
@@ -73,14 +102,19 @@ export async function queueUrgent(
 	summary: Summary,
 	_now: number,
 ): Promise<void> {
-	const rows = [...summary.rows.site, ...summary.rows.page].filter(isUrgent);
+	const rows: Array<{ id: string; text: string }> = [...summary.rows.site, ...summary.rows.page]
+		.filter(isUrgent)
+		.map((row) => ({ id: row.id, text: problemLine(row) }));
+	// One alert per check that found the site down mid-update; at most one urgent email a day.
+	if (summary.live === "updating")
+		rows.unshift({ id: `${UPDATING_ID}${summary.pass}`, text: UPDATING_TEXT });
 	const fresh = rows.filter((row) => !data.alerts.sent.includes(row.id));
 	if (fresh.length === 0) return;
 	const alerts: Alerts = {
 		...data.alerts,
 		pending: [
 			...data.alerts.pending,
-			...fresh.map((row) => ({ id: row.id, text: problemLine(row) })),
+			...fresh.map((row) => ({ id: row.id, text: row.text })),
 		].slice(-20),
 		sent: [...data.alerts.sent, ...fresh.map((row) => row.id)].slice(-200),
 	};
@@ -107,8 +141,9 @@ export async function mailStep(ctx: PluginContext, data: Loaded, now: number): P
 	const link = adminLink(ctx);
 	const stamp = new Date(now).toISOString();
 	if (alerts.pending.length > 0 && (!alerts.urgentAt || now - Date.parse(alerts.urgentAt) >= DAY)) {
+		const updating = alerts.pending.some((item) => item.id.startsWith(UPDATING_ID));
 		const errors = alerts.pending.some((item) => /visitors see an error/.test(item.text));
-		const subject = `${name}: ${errors ? "a page on your site shows an error" : "a link in your site menu is broken"}`;
+		const subject = `${name}: ${updating ? "your site is showing visitors an error" : errors ? "a page on your site shows an error" : "a link in your site menu is broken"}`;
 		const text = [
 			"Site Health found something visitors will hit:",
 			"",
@@ -121,9 +156,7 @@ export async function mailStep(ctx: PluginContext, data: Loaded, now: number): P
 		const result = await send(ctx, recipients, subject, text);
 		alerts.urgentAt = stamp;
 		alerts.pending = [];
-		alerts.email = result.ok
-			? { state: "working", at: stamp, to: recipients.length }
-			: { state: "not-set-up", at: stamp, to: 0, error: result.error };
+		alerts.email = noteEmail(result, recipients, stamp, "alert");
 	} else if (!alerts.weeklyAt) {
 		// The first week starts with the first finished check.
 		alerts.weeklyAt = stamp;
@@ -145,9 +178,7 @@ export async function mailStep(ctx: PluginContext, data: Loaded, now: number): P
 				"Sent once a week, only when something is new.",
 			].join("\n");
 			const result = await send(ctx, recipients, subject, text);
-			alerts.email = result.ok
-				? { state: "working", at: stamp, to: recipients.length }
-				: { state: "not-set-up", at: stamp, to: 0, error: result.error };
+			alerts.email = noteEmail(result, recipients, stamp, "alert");
 		}
 	}
 	data.alerts = alerts;
@@ -166,9 +197,7 @@ export async function sendTest(ctx: PluginContext, data: Loaded, now: number): P
 	const stamp = new Date(now).toISOString();
 	data.alerts = {
 		...data.alerts,
-		email: result.ok
-			? { state: "working", at: stamp, to: recipients.length }
-			: { state: "not-set-up", at: stamp, to: 0, error: result.error },
+		email: noteEmail(result, recipients, stamp, "test"),
 	};
 	await ctx.kv.set(KEY.alerts, data.alerts);
 	return result;

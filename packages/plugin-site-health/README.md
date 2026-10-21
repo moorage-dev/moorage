@@ -34,7 +34,7 @@ Tells you what is broken on your [EmDash](https://emdashcms.com) site before a c
   - search engines are allowed in;
   - pages can be kept ready for visitors;
   - scheduled tasks are running;
-  - email works (with a test button).
+  - email works: who gets it, whether an email service is chosen, and when it last worked, with the test button beside it.
 - **Dashboard widget** with the count.
 
 Editors see the links they can fix. Page errors, the Checklist and Options are for Admins.
@@ -92,7 +92,7 @@ The numbers on the page are always a finished check. A check that is still runni
 
 Each run stays within the EmDash sandbox's limits of about 10 calls and 50 ms of CPU. The scheduled task runs every minute.
 
-**If the site cannot open its own pages** (not public yet, bot protection, or a host that blocks a site from fetching itself), it says so in one banner. Links inside your content are still checked, and anything that needed the live page is listed as "could not check", never as broken.
+**If the site cannot open its own pages** (not public yet, bot protection, or a host that blocks a site from fetching itself), it says so in one banner. If your site is in the middle of an update and shows every visitor an error page, it says that instead, and emails at once. Links inside your content are still checked, and anything that needed the live page is listed as "could not check", never as broken.
 
 ## FAQ
 
@@ -100,7 +100,7 @@ Each run stays within the EmDash sandbox's limits of about 10 calls and 50 ms of
 
 **Why do links to other sites take a day?** A site that is down for an hour should not send you an alert, so a broken answer is confirmed a day later.
 
-**Who gets the emails?** The first Admin who opens Site Health, plus anyone added under Checklist, Options. An empty list means no email. Your site needs an email service configured in EmDash; "Send a test email" tells you whether it has one.
+**Who gets the emails?** The first Admin who opens Site Health, plus anyone added under Checklist, Options. An empty list means no email. Your site needs an email service chosen in EmDash (Settings, Email); the Email row on the Checklist says whether it has one, and "Send a test email" checks it now.
 
 **Does it send anything anywhere?** Only to the websites your pages link to (to check them) and the email addresses you list.
 

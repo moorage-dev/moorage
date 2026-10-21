@@ -2,12 +2,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import { rowText, when } from "../src/admin.js";
+import { emailStatus, rowText, when } from "../src/admin.js";
 import { parseRecipients } from "../src/alerts.js";
 import { afterExternal, afterOwnPage, verdict, type Outcome } from "../src/check.js";
 import { entryPath, linksInData, scanHtml } from "../src/extract.js";
 import { describe as words, foundOn, type LinkRow } from "../src/model.js";
-import { applyChange, type Summary } from "../src/state.js";
+import { isMidUpdate } from "../src/scan.js";
+import { applyChange, type Alerts, type Loaded, type Summary } from "../src/state.js";
 import { idFor, normalizePath, publicOrigin, shorten, toTarget } from "../src/url.js";
 
 const SITE = "https://www.harbour.example";
@@ -367,5 +368,126 @@ describe("the frozen summary", () => {
 			editorFix: 0,
 		});
 		expect(applyChange(empty, "a", before, before)).toBeNull();
+	});
+});
+
+describe("the Email row, worked out on every load", () => {
+	const ago = (hours: number) => new Date(NOW - hours * HOUR).toISOString();
+	function data(recipients: string[] | undefined, email?: Alerts["email"]): Loaded {
+		return {
+			scan: null,
+			summary: null,
+			queue: { hosts: {} },
+			options: { outbound: true, ...(recipients ? { recipients } : {}) },
+			alerts: { pending: [], sent: [], ...(email ? { email } : {}) },
+			checklist: { rows: {} },
+		};
+	}
+	const list = ["ellen@acme.test", "studio@web.example"];
+
+	it("says there is no email service when the site has none, even after a test that worked", () => {
+		const row = emailStatus(data(list, { state: "working", at: ago(2), to: 2, list }), false, NOW);
+		expect(row.status).toBe("attention");
+		expect(row.text).toContain("no email service");
+		expect(row.text).toContain("Settings, Email");
+	});
+
+	it("needs attention when nobody is on the list, even after a test that worked", () => {
+		for (const recipients of [[], undefined]) {
+			const row = emailStatus(
+				data(recipients, { state: "working", at: ago(2), to: 2, list }),
+				true,
+				NOW,
+			);
+			expect(row.status).toBe("attention");
+			expect(row.text).toContain("Nobody is on the list");
+		}
+	});
+
+	it("is not tested yet before any email, and names who gets them", () => {
+		const row = emailStatus(data(list), true, NOW);
+		expect(row.status).toBe("untested");
+		expect(row.text).toContain("Goes to ellen@acme.test and studio@web.example.");
+		expect(row.text).toContain("press Send a test email to check now");
+	});
+
+	it("works after a test to the same list, and says when", () => {
+		const row = emailStatus(data(list, { state: "working", at: ago(3), to: 2, list }), true, NOW);
+		expect(row.status).toBe("working");
+		expect(row.text).toContain("3 hours ago");
+		expect(row.text).toContain("Goes to ellen@acme.test and studio@web.example.");
+	});
+
+	it("is not tested again after the list changed", () => {
+		const row = emailStatus(
+			data(["ellen@acme.test"], { state: "working", at: ago(3), to: 2, list }),
+			true,
+			NOW,
+		);
+		expect(row.status).toBe("untested");
+		expect(row.text).toContain("changed since");
+	});
+
+	it("tells a failure without a service from the past, never as a fact about now", () => {
+		const row = emailStatus(
+			data(list, {
+				state: "not-set-up",
+				at: ago(26),
+				to: 0,
+				error:
+					"No email provider is configured. Install and activate an email provider plugin, then select it in Settings > Email.",
+			}),
+			true,
+			NOW,
+		);
+		expect(row.status).toBe("attention");
+		expect(row.text).not.toContain("Your site has no way to send email yet");
+		expect(row.text).toContain("yesterday");
+		expect(row.text).toContain("press Send a test email to check now");
+	});
+
+	it("tells an email service that turned the email down apart from a missing one", () => {
+		const row = emailStatus(
+			data(list, { state: "failed", at: ago(1), to: 0, error: "Sender not verified" }),
+			true,
+			NOW,
+		);
+		expect(row.status).toBe("attention");
+		expect(row.text).toContain("could not be sent");
+		expect(row.text).not.toContain("no email service");
+	});
+
+	it("keeps long lists short", () => {
+		const row = emailStatus(data([...list, "a@b.example", "c@d.example"]), true, NOW);
+		expect(row.text).toContain("Goes to ellen@acme.test, studio@web.example and 2 more.");
+	});
+});
+
+describe("a site in the middle of an update", () => {
+	it("knows EmDash's two 'database update not finished' answers", () => {
+		expect(
+			isMidUpdate({
+				status: 503,
+				headers: new Headers({ "retry-after": "60" }),
+				body: "Database migrations are required. Apply the deployment migration manifest and retry.",
+			}),
+		).toBe(true);
+		expect(
+			isMidUpdate({
+				status: 503,
+				body: '<!doctype html><html><body><p>This site\'s database has not been migrated yet. <a href="/_emdash/admin/setup">Set up EmDash</a></p></body></html>',
+			}),
+		).toBe(true);
+	});
+
+	it("leaves bot protection and other errors alone", () => {
+		expect(
+			isMidUpdate({
+				status: 503,
+				headers: new Headers({ "retry-after": "60" }),
+				body: "<html><title>Just a moment...</title><body>Checking your browser</body></html>",
+			}),
+		).toBe(false);
+		expect(isMidUpdate({ status: 500, body: "Database migrations are required." })).toBe(false);
 	});
 });

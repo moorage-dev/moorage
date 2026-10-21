@@ -3,7 +3,7 @@
 import type { ActionElement, Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { parseRecipients, problemLine, sendTest } from "./alerts.js";
+import { NO_EMAIL_SERVICE, parseRecipients, problemLine, sendTest } from "./alerts.js";
 import { afterExternal, afterOwnPage, afterOwnPath, request, verdict } from "./check.js";
 import { linksInData, scanHtml } from "./extract.js";
 import {
@@ -191,6 +191,16 @@ function liveBanner(summary: Summary, siteUrl: string): Block[] {
 				type: "banner",
 				title: "This site is not public yet",
 				description: `${address} Links inside your pages are checked now; the rest starts once the site has a public address.`,
+			},
+		];
+	}
+	if (summary.live === "updating") {
+		return [
+			{
+				type: "banner",
+				variant: "alert",
+				title: "Your site is in the middle of an update",
+				description: `During the check that finished ${when(summary.finishedAt)}, your site showed visitors an error page instead of your pages: an update to its database had not finished. Whoever looks after your site should finish the update. Links inside your pages are still checked; menus and page errors are checked again once your site is back.`,
 			},
 		];
 	}
@@ -432,24 +442,71 @@ function cronStatus(data: Loaded, now: number): { status: CheckStatus; text: str
 	};
 }
 
-function emailStatus(data: Loaded): { status: CheckStatus; text: string } {
-	const email = data.alerts.email;
-	const count = data.options.recipients?.length ?? 0;
-	if (!email) {
+/** "Goes to a and b." / "Goes to a, b and 2 more." */
+function goesTo(list: string[]): string {
+	if (list.length <= 2) return `Goes to ${list.join(" and ")}.`;
+	return `Goes to ${list.slice(0, 2).join(", ")} and ${list.length - 2} more.`;
+}
+
+/**
+ * The Email row, worked out on every load from what is true now: is there an
+ * email service (`ready`: EmDash gives a plugin in the site's process `ctx.email`
+ * only when one is chosen; a sandboxed plugin always has it, so there the last
+ * email sent is all we know), is anyone on the list, and how did the last email go.
+ */
+export function emailStatus(
+	data: Loaded,
+	ready: boolean,
+	now = Date.now(),
+): { status: CheckStatus; text: string } {
+	const list = data.options.recipients ?? [];
+	const last = data.alerts.email;
+	if (!ready) {
 		return {
-			status: "untested",
-			text: `Alerts, form messages and password resets need it. Send a test to find out.${count === 0 ? " Add an address under Options first." : ""}`,
+			status: "attention",
+			text: "Not set up. Your site has no email service chosen, so alerts, form messages and password resets are not sent. Whoever set up your site can choose one in Settings, Email.",
 		};
 	}
-	if (email.state === "working") {
+	if (list.length === 0) {
+		return {
+			status: "attention",
+			text: "Nobody is on the list, so no alerts are sent. Add an address under Options below.",
+		};
+	}
+	const goes = goesTo(list);
+	if (!last) {
+		return {
+			status: "untested",
+			text: `Not checked yet. ${goes} To find out whether email works, press Send a test email to check now.`,
+		};
+	}
+	const ago = when(last.at, now);
+	const what = last.kind === "alert" ? "an alert" : "a test email";
+	if (last.state === "working") {
+		const same = last.list
+			? last.list.length === list.length && last.list.every((a) => list.includes(a))
+			: last.to === list.length;
+		if (!same) {
+			return {
+				status: "untested",
+				text: `The list has changed since the last email, ${ago}. ${goes} To find out whether it reaches them, press Send a test email to check now.`,
+			};
+		}
 		return {
 			status: "working",
-			text: `Test sent to ${plural(email.to, "address", "addresses")} ${when(email.at)}.`,
+			text: `Last checked ${ago}: ${what} was sent. ${goes} To check again, press Send a test email.`,
+		};
+	}
+	// The error's words, not the stored state: before 0.1.x every failure was stored as "not-set-up".
+	if (NO_EMAIL_SERVICE.test(last.error ?? "")) {
+		return {
+			status: "attention",
+			text: `Last checked ${ago}: your site had no email service chosen, so nothing was sent. If one has been chosen in Settings, Email since, press Send a test email to check now.`,
 		};
 	}
 	return {
 		status: "attention",
-		text: "Not set up. Your site has no way to send email yet, so alerts, form messages and password resets are not sent.",
+		text: `Last checked ${ago}: ${what} could not be sent; the email service turned it down. ${goes} Press Send a test email to try again; if it fails, whoever set up your site can look at Settings, Email.`,
 	};
 }
 
@@ -457,6 +514,7 @@ function emailStatus(data: Loaded): { status: CheckStatus; text: string } {
 export function setupRows(
 	data: Loaded,
 	siteUrl: string,
+	emailReady: boolean,
 	now = Date.now(),
 ): Array<{ name: string; status: CheckStatus; text: string }> {
 	const site = siteUrl ? parseUrl(siteUrl) : null;
@@ -475,9 +533,18 @@ export function setupRows(
 			: { status: "working", text: "Set, secure, and the address visitors use." };
 	const stored = data.checklist.rows;
 	const rows = [
+		...(data.summary?.live === "updating"
+			? [
+					{
+						name: "Site up",
+						status: "attention" as const,
+						text: `During the check that finished ${when(data.summary.finishedAt, now)}, your site showed visitors an error page: an update to its database had not finished. Whoever looks after your site should finish the update.`,
+					},
+				]
+			: []),
 		{ name: "Site address", ...address },
 		{ name: "Scheduled tasks", ...cronStatus(data, now) },
-		{ name: "Email", ...emailStatus(data) },
+		{ name: "Email", ...emailStatus(data, emailReady, now) },
 		{
 			name: "Secure connection",
 			...(stored.secure ?? {
@@ -514,8 +581,14 @@ export function setupRows(
 	return rows;
 }
 
-function checklistTab(data: Loaded, siteUrl: string, state: PageState, now: number): Block[] {
-	const rows = setupRows(data, siteUrl, now);
+function checklistTab(
+	data: Loaded,
+	siteUrl: string,
+	emailReady: boolean,
+	state: PageState,
+	now: number,
+): Block[] {
+	const rows = setupRows(data, siteUrl, emailReady, now);
 	// Quick repeat visits only slows a site down; it is never counted as a problem.
 	const attention = rows.filter(
 		(row) => row.status === "attention" && row.name !== "Quick repeat visits",
@@ -537,7 +610,13 @@ function checklistTab(data: Loaded, siteUrl: string, state: PageState, now: numb
 			{
 				type: "accordion",
 				label: "Copy the instructions for your web person",
-				blocks: [{ type: "code", code: CRON_STEPS, language: "bash" }],
+				blocks: [
+					{
+						type: "context",
+						text: "Send the steps below to whoever set up your site: they switch on the scheduled tasks your site needs.",
+					},
+					{ type: "code", code: CRON_STEPS, language: "bash" },
+				],
 			},
 		);
 	} else if (attention.length > 0) {
@@ -548,6 +627,10 @@ function checklistTab(data: Loaded, siteUrl: string, state: PageState, now: numb
 			description: attention[0]?.text ?? "",
 		});
 	}
+	// The Email row stands on its own under the table, with its status, who gets
+	// the emails and the test button together: a third table column for one button
+	// pushes the status badges off a 390 px phone screen.
+	const email = rows.find((row) => row.name === "Email");
 	blocks.push(
 		{
 			type: "table",
@@ -556,16 +639,22 @@ function checklistTab(data: Loaded, siteUrl: string, state: PageState, now: numb
 				{ key: "check", label: "Check" },
 				{ key: "status", label: "Status", format: "badge" },
 			],
-			rows: sorted.map((row) => ({
-				check: `${row.name}. ${row.text}`,
-				status: STATUS_WORD[row.status],
-			})),
+			rows: sorted
+				.filter((row) => row !== email)
+				.map((row) => ({
+					check: `${row.name}. ${row.text}`,
+					status: STATUS_WORD[row.status],
+				})),
 		},
-		{
-			type: "section",
-			text: "Send a test email to the people on your alert list.",
-			accessory: { type: "button", action_id: "send_test", label: "Send a test email" },
-		},
+		...(email
+			? [
+					{
+						type: "section",
+						text: `Email: ${STATUS_WORD[email.status]}. ${email.text}`,
+						accessory: { type: "button", action_id: "send_test", label: "Send a test email" },
+					} as Block,
+				]
+			: []),
 		{
 			type: "context",
 			text: data.checklist.checkedAt
@@ -578,7 +667,8 @@ function checklistTab(data: Loaded, siteUrl: string, state: PageState, now: numb
 	blocks.push({
 		type: "accordion",
 		label: "Options",
-		default_open: state.toast?.message?.startsWith("Saved") ?? false,
+		// Open when nobody gets emails, so the list is right there to fill in.
+		default_open: recipients.length === 0 || (state.toast?.message?.startsWith("Saved") ?? false),
 		blocks: [
 			{
 				type: "form",
@@ -647,7 +737,10 @@ function render(ctx: PluginContext, data: Loaded, admin: boolean, state: PageSta
 					default_tab: state.tab,
 					panels: [
 						{ label: "Problems", blocks: problems },
-						{ label: "Checklist", blocks: checklistTab(data, ctx.site.url, state, Date.now()) },
+						{
+							label: "Checklist",
+							blocks: checklistTab(data, ctx.site.url, !!ctx.email, state, Date.now()),
+						},
 					],
 				},
 			]
@@ -656,7 +749,12 @@ function render(ctx: PluginContext, data: Loaded, admin: boolean, state: PageSta
 }
 
 /** The dashboard widget. */
-export function widget(data: Loaded, admin: boolean, siteUrl: string): BlockResponse {
+export function widget(
+	data: Loaded,
+	admin: boolean,
+	siteUrl: string,
+	emailReady: boolean,
+): BlockResponse {
 	const open: Block = {
 		type: "actions",
 		elements: [
@@ -687,7 +785,7 @@ export function widget(data: Loaded, admin: boolean, siteUrl: string): BlockResp
 			],
 		};
 	}
-	const setup = setupRows(data, siteUrl).filter(
+	const setup = setupRows(data, siteUrl, emailReady).filter(
 		(row) => row.status === "attention" && row.name !== "Quick repeat visits",
 	).length;
 	if (fix === 0 && setup === 0) {
@@ -882,7 +980,7 @@ export async function handleAdmin(
 		interaction.page.startsWith("widget:")
 	) {
 		await nudge(ctx, data, counter, now);
-		return widget(data, admin, ctx.site.url);
+		return widget(data, admin, ctx.site.url, !!ctx.email);
 	}
 
 	// The alert list starts with the first Admin who opens the page.
@@ -1016,8 +1114,9 @@ export async function handleAdmin(
 							}
 						: {
 								type: "info",
-								message:
-									"Your site cannot send email yet. Whoever set it up can add an email service.",
+								message: NO_EMAIL_SERVICE.test(result.error)
+									? "Your site has no email service chosen. Whoever set it up can choose one in Settings, Email."
+									: "The test email could not be sent. The Email row says what to do.",
 							},
 				}),
 			);
