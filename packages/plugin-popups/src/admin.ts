@@ -194,12 +194,12 @@ const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; descr
 		missing: (p) => ({
 			title: `"${p.name}" cannot open: there is no form called "${p.form}" any more`,
 			description:
-				"Open Forms, copy the short name of the form you want, then paste it in this popup under Change ▸ What it says. Visitors see nothing broken in the meantime; the popup simply stays closed.",
+				"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit ▸ What it says. Visitors see nothing broken in the meantime; the popup simply stays closed.",
 		}),
 		unsupported: (p) => ({
 			title: `"${p.name}" cannot open: its form uses Turnstile or a file upload`,
 			description:
-				"Those only work in a box in a page for now. Choose another form under Change ▸ What it says, or make a box in a page with this form.",
+				"Those only work in a box in a page for now. Choose another form under Edit ▸ What it says, or make a box in a page with this form.",
 		}),
 		paused: (p) => ({
 			title: `"${p.name}" is waiting: its form "${p.form}" is paused under Forms`,
@@ -207,19 +207,38 @@ const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; descr
 		}),
 	};
 
-function menuFor(popup: Popup, admin: boolean): Record<string, unknown> {
-	const items = [
-		{ label: "Change", value: `change:${popup.id}` },
-		{ label: "Preview", value: `preview:${popup.id}` },
-		{ label: popup.on ? "Turn off" : "Turn on", value: `toggle:${popup.id}` },
-	];
-	if (admin) {
-		items.push(
-			{ label: "Duplicate", value: `duplicate:${popup.id}` },
-			{ label: "Delete", value: `delete:${popup.id}` },
-		);
-	}
-	return { type: "menu", action_id: "row", label: "Edit", items, style: "secondary" };
+/**
+ * A row's own buttons, as SEO's Redirects list has them: Edit, Preview and Turn
+ * on or off in plain sight, and only Duplicate and Delete in a menu (for an
+ * Admin). A table cell holds a button, link or menu, so on/off is a button,
+ * not a switch. An unfinished popup has no on/off: Edit finishes it.
+ */
+function rowActions(popup: Popup, admin: boolean): Record<string, unknown> {
+	const button = (label: string, verb: string) => ({
+		type: "button",
+		action_id: "row",
+		label,
+		value: `${verb}:${popup.id}`,
+	});
+	return {
+		edit: button("Edit", "change"),
+		preview: button("Preview", "preview"),
+		onoff: popup.step < 4 ? null : button(popup.on ? "Turn off" : "Turn on", "toggle"),
+		...(admin
+			? {
+					more: {
+						type: "menu",
+						action_id: "row",
+						label: "More",
+						items: [
+							{ label: "Duplicate", value: `duplicate:${popup.id}` },
+							{ label: "Delete", value: `delete:${popup.id}` },
+						],
+						style: "secondary",
+					},
+				}
+			: {}),
+	};
 }
 
 function listBlocks(state: PageState): Block[] {
@@ -266,6 +285,9 @@ function listBlocks(state: PageState): Block[] {
 			{ key: "name", label: "Name" },
 			{ key: "status", label: "Status", format: "badge" },
 			{ key: "edit", label: "", format: "element" },
+			{ key: "preview", label: "", format: "element" },
+			{ key: "onoff", label: "", format: "element" },
+			...(state.admin ? [{ key: "more", label: "", format: "element" as const }] : []),
 			{ key: "where", label: "Shows on" },
 			{ key: "seen", label: "Seen" },
 			{ key: "responses", label: "Responses" },
@@ -273,7 +295,7 @@ function listBlocks(state: PageState): Block[] {
 		rows: store.popups.map((popup) => ({
 			name: `${popup.name} (${kindLine(popup)})`,
 			status: statusOf(popup, state),
-			edit: menuFor(popup, state.admin),
+			...rowActions(popup, state.admin),
 			where: showsOnText(popup, state),
 			seen: num(state.totals.get(popup.id)?.seen),
 			responses: responsesText(popup, state.totals.get(popup.id)),
@@ -282,7 +304,7 @@ function listBlocks(state: PageState): Block[] {
 	blocks.push(
 		{
 			type: "context",
-			text: `Edit ▾ opens: Change, Preview, ${state.admin ? "Turn off, Duplicate, Delete" : "Turn off"}. "Seen" counts since each popup started: at least half of it was on screen for a second. Counts are approximate: some browsers block them, and your own visits while signed in are not counted.`,
+			text: `"Seen" counts since each popup started: at least half of it was on screen for a second. Counts are approximate: some browsers block them, and your own visits while signed in are not counted.`,
 		},
 		{
 			type: "context",

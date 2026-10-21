@@ -94,6 +94,43 @@ describe("the list", () => {
 		});
 	});
 
+	it("puts Edit, Preview and Turn off on each row, and only Duplicate and Delete in a menu", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const page = await load(fake);
+		const table = all(page).find((b) => b.type === "table" && b.block_id === "list") as Extract<
+			Block,
+			{ type: "table" }
+		>;
+		expect(table.columns.map((c) => [c.key, c.format ?? "text"]).slice(0, 6)).toEqual([
+			["name", "text"],
+			["status", "badge"],
+			["edit", "element"],
+			["preview", "element"],
+			["onoff", "element"],
+			["more", "element"],
+		]);
+		expect(table.rows[0]).toMatchObject({
+			edit: { type: "button", action_id: "row", label: "Edit", value: "change:abcd1234" },
+			preview: { type: "button", action_id: "row", label: "Preview", value: "preview:abcd1234" },
+			onoff: { type: "button", action_id: "row", label: "Turn off", value: "toggle:abcd1234" },
+			more: {
+				type: "menu",
+				action_id: "row",
+				items: [
+					{ label: "Duplicate", value: "duplicate:abcd1234" },
+					{ label: "Delete", value: "delete:abcd1234" },
+				],
+			},
+		});
+		// No sentence is needed to explain a menu any more.
+		expect(words(page)).not.toContain("▾");
+		const editor = all(await load(fake, EDITOR)).find(
+			(b) => b.type === "table" && b.block_id === "list",
+		) as Extract<Block, { type: "table" }>;
+		expect(editor.columns.map((c) => c.key)).not.toContain("more");
+		expect(editor.rows[0]).toMatchObject({ onoff: { label: "Turn off" } });
+	});
+
 	it("shows red only when a popup really cannot open", async () => {
 		forms({ cakes: { status: 410 } });
 		const fake = fakeContext({
@@ -306,7 +343,7 @@ describe("finished popups", () => {
 		expect(stored(fake).popups).toHaveLength(1);
 	});
 
-	it("shows the preview links from the Edit menu", async () => {
+	it("shows the preview links from the row's Preview button", async () => {
 		const fake = fakeContext({
 			popups: { popups: [popup({ where: "prefix", prefixes: ["/journal/"] })] },
 		});
