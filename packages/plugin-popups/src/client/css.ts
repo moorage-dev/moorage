@@ -42,7 +42,9 @@ export const CSS =
 	".pic{display:block;width:calc(100% + 56px);max-width:none;margin:-28px -28px 18px;height:180px;object-fit:cover;border-radius:calc(var(--r) - 1px) calc(var(--r) - 1px) 0 0}" +
 	".thumb{float:left;width:72px;height:72px;object-fit:cover;border-radius:8px;margin:0 14px 6px 0}" +
 	// Top bar: in the page flow, above the header.
-	".bar{position:relative;border-width:0 0 1px;min-height:44px;padding:10px 60px 10px 16px;font-size:15px}.bar .i{max-width:1200px;margin:0 auto;text-align:center}.bar .i a{font-weight:600;text-decoration:underline;text-underline-offset:3px;margin-left:6px}.bar .x{top:0;right:4px}" +
+	".bar{position:relative;border-width:0 0 1px;min-height:44px;padding:10px 60px 10px 16px;font-size:15px}.bar .i{max-width:1200px;margin:0 auto;text-align:center}.bar .i a{font-weight:600;text-decoration:underline;text-underline-offset:3px;margin-left:6px}.bar .x{top:0;right:4px}.bar .pv{margin:0 8px 0 0}" +
+	// A box in a page, as its preview draws it: in the content, the size of the server's box.
+	".box{position:relative;max-width:640px;margin:28px auto;padding:24px;border-radius:10px}.box .pic{width:calc(100% + 48px);margin:-24px -24px 18px}" +
 	// Slide-in: a bottom corner.
 	".slide{position:fixed;right:16px;bottom:16px;width:360px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:20px;border-radius:10px;box-shadow:var(--sw)}.slide.l{right:auto;left:16px}.slide h2{font-size:19px;padding-right:36px}.slide .x{top:4px;right:4px}.slide .r{clear:both}" +
 	// Popup: a centred dialog that dims the page.

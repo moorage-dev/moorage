@@ -565,6 +565,281 @@ test.describe("preview", () => {
 	});
 });
 
+/**
+ * Where each kind lands on screen, in the preview and for a real visitor: the
+ * preview must show exactly what a visitor gets. Measured in CSS pixels
+ * against the page's own width (without a scroll bar).
+ */
+const BAR: Make = {
+	name: "Plugins news",
+	kind: "bar",
+	s2: { heading: "Checkout our new plugins!", text: "", button_label: "", button_url: "" },
+	s3: { exclude: "/pricing" },
+};
+const SLIDE: Make = {
+	name: "Cake offer",
+	kind: "slide",
+	s2: {
+		heading: "Christmas cakes: order by 1 December",
+		text: "Rich fruit or chocolate.",
+		picture: "none",
+		contains: "button",
+		button_label: "Order a cake",
+		button_url: "/pricing",
+		decline: "no-thanks",
+	},
+};
+const MODAL: Make = {
+	name: "Letter popup",
+	kind: "modal",
+	s2: {
+		heading: "Fresh from the oven",
+		text: "One email a month.",
+		picture: "none",
+		contains: "button",
+		button_label: "Sign me up",
+		button_url: "/contact",
+		decline: "no-thanks",
+	},
+};
+
+/** An editor's preview tab, at a computer's or a phone's width. */
+async function previewTab(id: string, path = "/popups-test", phone = false): Promise<Page> {
+	const page = await adminContext.newPage();
+	await page.setViewportSize(phone ? { width: 390, height: 844 } : { width: 1280, height: 800 });
+	await page.goto(`${path}${path.includes("?") ? "&" : "?"}popups_preview=${id}&scheme=light`);
+	return page;
+}
+
+/** Where an element inside a shadow root sits, against the page's own width and height. */
+async function place(page: Page, hostSelector: string, selector: string) {
+	const el = page.locator(hostSelector).first();
+	await el.waitFor({ state: "attached" });
+	await page.waitForTimeout(400);
+	return page.evaluate(
+		([h, sel]) => {
+			const root = document.querySelector(h!)!.shadowRoot!;
+			const r = root.querySelector(sel!)!.getBoundingClientRect();
+			const vw = document.documentElement.clientWidth;
+			const vh = window.innerHeight;
+			return {
+				top: Math.round(r.top),
+				left: Math.round(r.left),
+				right: Math.round(vw - r.right),
+				bottom: Math.round(vh - r.bottom),
+				width: Math.round(r.width),
+				vw,
+				classes: root.querySelector(sel!)!.className,
+			};
+		},
+		[hostSelector, selector],
+	);
+}
+
+const tag = (page: Page, hostSelector = "#popups") => page.locator(hostSelector).locator(".pv");
+
+/** A slide-in 16 px from its bottom corner, 360 px wide. */
+async function slideInCorner(page: Page, side: "right" | "left") {
+	const r = await place(page, "#popups", ".slide");
+	expect(r[side]).toBe(16);
+	expect(r.bottom).toBe(16);
+	expect(r.width).toBe(360);
+}
+
+/** A slide-in on a phone: a sheet across the bottom. */
+async function slideInSheet(page: Page) {
+	const r = await place(page, "#popups", ".slide");
+	expect([r.left, r.right, r.bottom]).toEqual([0, 0, 0]);
+}
+
+/** A popup in the middle of a computer's screen, 480 px wide. */
+async function modalCentred(page: Page) {
+	const r = await place(page, "#popups", "dialog");
+	expect(r.width).toBe(480);
+	expect(Math.abs(r.left - r.right)).toBeLessThanOrEqual(16);
+	expect(Math.abs(r.top - r.bottom)).toBeLessThanOrEqual(2);
+}
+
+/** A popup on a phone: a sheet across the bottom of a 390 px screen. */
+async function modalSheet(page: Page) {
+	const r = await place(page, "#popups", "dialog");
+	expect(r.classes).toContain("sheet");
+	expect([r.left, r.bottom]).toEqual([0, 0]);
+	expect(r.width).toBe(390);
+}
+
+test.describe("each kind where a visitor sees it", () => {
+	test.afterEach(async () => {
+		await adminPost(`${API}/admin`, {
+			type: "form_submit",
+			action_id: "save_look",
+			block_id: "look:new:x",
+			values: { scheme: "auto", custom: false, corner: "right" },
+		});
+	});
+
+	test("preview: a top bar is across the top of the page, not a slide-in", async () => {
+		const id = await make({ ...BAR, s4: { on: false } });
+		for (const phone of [false, true]) {
+			const page = await previewTab(id, "/", phone);
+			const region = page.getByRole("region", { name: "Announcement" });
+			await expect(region).toContainText("Checkout our new plugins!");
+			await expect(host(page)).toHaveCount(0);
+			const r = await place(page, "[data-popups-bar]", ".bar");
+			expect(r.top).toBe(0);
+			expect(r.left).toBe(0);
+			expect(r.width).toBe(r.vw);
+			await expect(tag(page, "[data-popups-bar]")).toHaveText(
+				"Preview: nothing is counted. Hidden for a real visitor: it is turned off.",
+			);
+			await page.close();
+		}
+	});
+
+	test("visitor: a turned-on top bar is at the top at once, and not on a page it is kept off", async ({
+		browser,
+	}) => {
+		await make(BAR);
+		for (const phone of [false, true]) {
+			const page = await visitor(browser, { phone });
+			await page.goto("/");
+			// No scrolling, no waiting: in the page as it opens.
+			const r = await place(page, "[data-popups-bar]", ".bar");
+			expect(r.top).toBe(0);
+			expect(r.width).toBe(r.vw);
+			await expect(page.getByRole("region", { name: "Announcement" })).toBeVisible();
+			await page.goto("/pricing");
+			await expect(page.locator("[data-popups-bar]")).toHaveCount(0);
+			await page.context().close();
+		}
+		// The preview on a page it is kept off says so.
+		const id = made[made.length - 1]!;
+		const preview = await previewTab(id, "/pricing");
+		await expect(tag(preview, "[data-popups-bar]")).toHaveText(
+			"Preview: nothing is counted. Hidden for a real visitor: it does not show on this page.",
+		);
+		await preview.close();
+		const home = await previewTab(id, "/");
+		await expect(tag(home, "[data-popups-bar]")).toHaveText(
+			"Preview: nothing is counted. A real visitor sees it as the page opens.",
+		);
+		await home.close();
+	});
+
+	test("preview and visitor: a slide-in sits in its corner, and is a sheet on a phone", async ({
+		browser,
+	}) => {
+		const id = await make(SLIDE);
+		const corner = slideInCorner;
+		const sheet = slideInSheet;
+		let page = await previewTab(id);
+		await corner(page, "right");
+		await page.close();
+		page = await previewTab(id, "/popups-test", true);
+		await sheet(page);
+		await page.close();
+		const desk = await visitor(browser);
+		await desk.goto("/popups-test");
+		await read(desk);
+		await corner(desk, "right");
+		await desk.context().close();
+		const phone = await visitor(browser, { phone: true });
+		await phone.goto("/popups-test");
+		await read(phone);
+		await sheet(phone);
+		await phone.context().close();
+		// Settings ▸ Slide-in corner: bottom left, in the preview and for a visitor.
+		await adminPost(`${API}/admin`, {
+			type: "form_submit",
+			action_id: "save_look",
+			block_id: "look:new:x",
+			values: { scheme: "auto", custom: false, corner: "left" },
+		});
+		page = await previewTab(id);
+		await corner(page, "left");
+		await page.close();
+		const left = await visitor(browser);
+		await left.goto("/popups-test");
+		await read(left);
+		await corner(left, "left");
+		await left.context().close();
+	});
+
+	test("preview and visitor: a popup is centred on a computer and a sheet on a phone", async ({
+		browser,
+	}) => {
+		const id = await make({ ...MODAL, s3: { first_page: true } });
+		const centred = modalCentred;
+		const sheet = modalSheet;
+		let page = await previewTab(id);
+		await centred(page);
+		await page.close();
+		page = await previewTab(id, "/popups-test", true);
+		await sheet(page);
+		await expect(tag(page)).toHaveText(
+			"Preview: nothing is counted. Hidden for a real visitor: this is the first page of the visit.",
+		);
+		await page.close();
+		const desk = await visitor(browser);
+		await desk.goto("/popups-test");
+		await read(desk);
+		await centred(desk);
+		await desk.context().close();
+		const phone = await visitor(browser, { phone: true });
+		await phone.goto("/popups-test");
+		await phone.goto("/popups-test");
+		await read(phone);
+		await sheet(phone);
+		await phone.context().close();
+	});
+
+	test("preview: a popup opened by a click is centred on a phone too, and the tag says a click opens it", async () => {
+		const id = await make({ ...MODAL, s3: { trigger: "click" } });
+		const page = await previewTab(id, "/popups-test", true);
+		const r = await place(page, "#popups", "dialog");
+		expect(r.classes).not.toContain("sheet");
+		expect(r.bottom).toBeGreaterThan(8);
+		await expect(tag(page)).toHaveText(
+			"Preview: nothing is counted. A real visitor sees it when they click its button or link.",
+		);
+		await page.close();
+	});
+
+	test("preview: a popup set for a collection says it does not show on another page", async () => {
+		const id = await make({ ...SLIDE, s3: { where: "collections", collections: ["pages"] } });
+		const page = await previewTab(id);
+		await expect(tag(page)).toHaveText(
+			"Preview: nothing is counted. Hidden for a real visitor: it does not show on this page.",
+		);
+		await page.close();
+	});
+
+	test("preview: a box in a page shows in the page's content with a label", async () => {
+		const id = await make({
+			name: "Letter box",
+			kind: "inline",
+			s2: {
+				heading: "Get the Journal by email",
+				text: "One letter a month.",
+				picture: "none",
+				contains: "button",
+				button_label: "Read the Journal",
+				button_url: "/pricing",
+			},
+			s4: { on: false },
+		});
+		const page = await previewTab(id);
+		const region = page.getByRole("region", { name: "Get the Journal by email" });
+		await expect(region).toBeVisible();
+		// Inside the page's main content, in the flow (not fixed over the page).
+		expect(await page.locator("main [data-popups-preview-box]").count()).toBe(1);
+		await expect(tag(page, "[data-popups-preview-box]")).toHaveText(
+			'Preview: nothing is counted. Hidden for a real visitor: it is turned off. On a page it shows where an editor places the "Popups box" block; this preview puts it at the top of the content.',
+		);
+		await page.close();
+	});
+});
+
 test.describe("with the cookie banner", () => {
 	test.afterEach(async () => {
 		await admin.post("/_emdash/api/plugins/analytics-consent/admin", {

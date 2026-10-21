@@ -208,6 +208,35 @@ describe("the page hook", () => {
 		expect(out[0]!.kind).toBe("inline-script");
 	});
 
+	it("tells a preview whether the popup is set for this page, and nothing of a draft's words", () => {
+		const drafts = normalizeStore({
+			popups: [
+				popup({
+					id: "bar00002",
+					kind: "bar",
+					on: false,
+					heading: "Secret news",
+					exclude: ["/plugins"],
+				}),
+				popup({ id: "box00002", kind: "inline", on: false }),
+			],
+		});
+		const code = (path: string, id: string) =>
+			(
+				pageFragments(
+					drafts,
+					"popups",
+					page(path, { url: `https://hartleys.test${path}?popups_preview=${id}` }),
+					NOW,
+				)[0] as { code: string }
+			).code;
+		expect(code("/", "bar00002")).toContain('"here":1');
+		expect(code("/", "bar00002")).not.toContain("Secret news");
+		expect(code("/plugins", "bar00002")).not.toContain('"here"');
+		expect(code("/plugins", "box00002")).toContain('"here":1');
+		expect(code("/", "zzzz9999")).not.toContain('"here"');
+	});
+
 	it("writes settings as script-safe JSON", () => {
 		expect(scriptJson({ h: "</script><script>alert(1)</script>" })).not.toContain("<");
 		const evil = normalizeStore({ popups: [popup({ heading: "</script><b>" })] });
@@ -541,5 +570,27 @@ describe("routes", () => {
 		};
 		expect(answer.off).toBe(true);
 		expect(answer.item.i).toBe("abcd1234");
+		expect(answer).not.toHaveProperty("unfinished");
+		const draft = fakeContext({ popups: { popups: [popup({ on: false, step: 3 })] } });
+		expect(await call(draft, "preview", { id: "abcd1234" })).toMatchObject({
+			off: true,
+			unfinished: true,
+		});
+	});
+
+	it("gives a box in a page to preview too, without a way out or campaign tags", async () => {
+		const fake = fakeContext({
+			popups: {
+				popups: [
+					popup({ kind: "inline", buttonLabel: "Read", buttonUrl: "https://shop.example/x" }),
+				],
+			},
+		});
+		const answer = (await call(fake, "preview", { id: "abcd1234" })) as {
+			item: { k: string; c: { no: string; b?: { u: string } } };
+		};
+		expect(answer.item.k).toBe("inline");
+		expect(answer.item.c.no).toBe("");
+		expect(answer.item.c.b?.u).toBe("https://shop.example/x");
 	});
 });

@@ -31,7 +31,7 @@ import {
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, type FormCheck } from "./forms.js";
-import { clientItem, isPopupPreview, pageFragments } from "./fragment.js";
+import { isPopupPreview, pageFragments, previewItem } from "./fragment.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import {
 	addCount,
@@ -420,14 +420,14 @@ export function createPlugin() {
 					const id = (ctx.input as { id?: unknown } | null)?.id;
 					const store = await readStore(ctx);
 					const popup = store.popups.find((p) => p.id === id);
-					if (!popup || popup.kind === "inline") throw PluginRouteError.notFound("No such popup");
-					const item = clientItem(popup, originOf(ctx) ?? "");
-					if (!item) throw PluginRouteError.notFound("No such popup");
+					if (!popup) throw PluginRouteError.notFound("No such popup");
+					const item = previewItem(popup, originOf(ctx) ?? "");
 					const zone = await siteZone();
 					const now = Date.now();
 					return {
 						item,
 						off: !popup.on || popup.step < 4,
+						...(popup.step < 4 ? { unfinished: true } : {}),
 						...(popup.start ? { startText: describeMoment(popup.start, zone, now) } : {}),
 						...(popup.end ? { endText: describeMoment(popup.end, zone, now) } : {}),
 					};

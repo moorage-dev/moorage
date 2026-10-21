@@ -24,7 +24,8 @@ export interface ClientItem {
 	/** Id, handle (for `#popup-<handle>` and `data-popup`), kind, trigger. */
 	i: string;
 	n: string;
-	k: "bar" | "slide" | "modal";
+	/** "inline" (a box in a page) only in a preview: on a page the server draws those. */
+	k: "bar" | "slide" | "modal" | "inline";
 	t: "read" | "click" | "exit" | "load";
 	/** Devices: 0 phones and computers, 1 computers only, 2 phones only. */
 	d: 0 | 1 | 2;
@@ -47,6 +48,8 @@ export interface ClientConfig {
 	col?: { g: string; f: string; x: string; y: string };
 	/** Slide-ins in the bottom left corner. */
 	left?: 1;
+	/** On a preview link: the previewed popup is set to show on this page. */
+	here?: 1;
 	items: ClientItem[];
 	/** Fixed words the visitor can see. */
 	t: {
@@ -63,6 +66,8 @@ export interface PreviewAnswer {
 	item: ClientItem;
 	/** The popup is turned off or not finished: a real visitor never sees it. */
 	off: boolean;
+	/** Off because its four steps were never finished with "Save and finish". */
+	unfinished?: boolean;
 	/** When it ends or starts, in the site's words ("31 Dec, 18:00"). */
 	endText?: string;
 	startText?: string;

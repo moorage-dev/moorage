@@ -3,8 +3,8 @@
 import type { PageFragmentContribution } from "emdash";
 import clientCode from "virtual:client-script";
 
+import { barInner } from "./client/bar.js";
 import { styles } from "./client/css.js";
-import { CLOSE } from "./client/icons.js";
 import type { ClientConfig, ClientItem } from "./client/types.js";
 import {
 	AGAIN_DAYS,
@@ -60,13 +60,19 @@ export function tagLink(
 	}
 }
 
-/** What the browser needs to know about one popup, and nothing else. */
+/** What the browser needs to know about one popup, and nothing else. Boxes in a page are drawn by the server. */
 export function clientItem(popup: Popup, siteOrigin: string): ClientItem | null {
-	if (popup.kind === "inline") return null;
+	return popup.kind === "inline" ? null : previewItem(popup, siteOrigin);
+}
+
+/** The same for any kind, a box in a page included: what "Preview on your site" draws. */
+export function previewItem(popup: Popup, siteOrigin: string): ClientItem {
+	const inline = popup.kind === "inline";
 	const c: ClientItem["c"] = {
 		h: popup.heading,
 		x: popup.text,
-		no: popup.decline === "none" ? "" : DECLINE_LABEL[popup.decline],
+		// A box in a page is part of the page: no way out to offer.
+		no: popup.decline === "none" || inline ? "" : DECLINE_LABEL[popup.decline],
 	};
 	if (popup.picture) {
 		c.img = { u: popup.picture.url, a: popup.picture.alt };
@@ -77,14 +83,19 @@ export function clientItem(popup: Popup, siteOrigin: string): ClientItem | null 
 		c.form = popup.form;
 		c.ty = popup.thanks || "Thank you";
 	} else if (popup.buttonLabel && popup.buttonUrl) {
-		c.b = { l: popup.buttonLabel, u: tagLink(popup.buttonUrl, popup, siteOrigin) };
+		// A box in a page links as written (its component adds no campaign tags).
+		c.b = {
+			l: popup.buttonLabel,
+			u: inline ? popup.buttonUrl : tagLink(popup.buttonUrl, popup, siteOrigin),
+		};
 	}
 	const item: ClientItem = {
 		i: popup.id,
 		n: popup.handle,
 		k: popup.kind,
-		t: popup.kind === "bar" ? "load" : popup.trigger === "load" ? "read" : popup.trigger,
-		d: popup.devices === "desktop" ? 1 : popup.devices === "phone" ? 2 : 0,
+		t: popup.kind === "bar" || inline ? "load" : popup.trigger === "load" ? "read" : popup.trigger,
+		// A box in a page shows on every device: it has no "On" choice.
+		d: inline ? 0 : popup.devices === "desktop" ? 1 : popup.devices === "phone" ? 2 : 0,
 		a: AGAIN_DAYS[popup.again],
 		c,
 	};
@@ -130,8 +141,6 @@ export function clientScriptFor(config: ClientConfig): string {
 	return clientCode.replace(PLACEHOLDER, () => scriptJson(config));
 }
 
-const esc = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-
 /**
  * A top bar as server HTML, in a declarative shadow root, so it is on screen
  * at first paint and reserves its height: nothing moves. The head script
@@ -139,13 +148,10 @@ const esc = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeA
  * its dates or on the wrong device.
  */
 export function barHtml(item: ClientItem, config: ClientConfig): string {
-	const link = item.c.b ? ` <a href="${esc(item.c.b.u)}" data-pp-go>${esc(item.c.b.l)}</a>` : "";
-	const words = esc(item.c.h) + (item.c.x ? ` ${esc(item.c.x)}` : "");
 	return (
 		`<div id="popups-bar-${item.i}" data-popups-bar="${item.i}" style="display:block">` +
 		`<template shadowrootmode="open"><style>${styles(config.sc, config.col)}</style>` +
-		`<div class="pp bar" role="region" aria-label="Announcement"><div class="i">${words}${link}</div>` +
-		`<button type="button" class="x" data-pp-close aria-label="${esc(config.t.close)}">${CLOSE}</button></div>` +
+		barInner(item, config.t.close) +
 		`</template></div>`
 	);
 }
@@ -164,9 +170,14 @@ export function isQuiet(page: PageFacts): boolean {
 	return /[?&]_preview=/.test(page.url);
 }
 
+/** The popup a link from the admin's "Preview on your site" shows, or undefined. */
+export function previewIdOf(url: string): string | undefined {
+	return /[?&]popups_preview=([a-z0-9]{4,40})(&|#|$)/.exec(url)?.[1];
+}
+
 /** True for a link from the admin's "Preview on your site". */
 export function isPopupPreview(url: string): boolean {
-	return /[?&]popups_preview=[a-z0-9]{4,40}(&|#|$)/.test(url);
+	return previewIdOf(url) !== undefined;
 }
 
 function originOf(url: string): string {
@@ -196,9 +207,18 @@ export function pageFragments(
 		)
 		.map((popup) => clientItem(popup, origin))
 		.filter((item): item is ClientItem => item !== null);
-	const preview = isPopupPreview(page.url);
+	const previewId = previewIdOf(page.url);
+	const preview = previewId !== undefined;
 	if (items.length === 0 && !preview) return [];
 	const config = clientConfig(store.settings, items, pluginId);
+	// Only whether the previewed popup is set for this page; its words come from the private route.
+	const previewed = store.popups.find((popup) => popup.id === previewId);
+	if (
+		previewed &&
+		(previewed.kind === "inline" ||
+			showsOn(previewed, { path: page.path, collection: page.collection }))
+	)
+		config.here = 1;
 	const out: PageFragmentContribution[] = [
 		{
 			kind: "inline-script",

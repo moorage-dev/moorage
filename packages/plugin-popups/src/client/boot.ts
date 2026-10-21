@@ -1,5 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import { barInner } from "./bar.js";
 import { styles } from "./css.js";
 import { CLOSE } from "./icons.js";
 import type { ClientConfig, ClientItem, PreviewAnswer } from "./types.js";
@@ -413,17 +414,20 @@ export function boot(c: ClientConfig): void {
 		const before = d.activeElement as HTMLElement | null;
 		const host = d.createElement("div");
 		host.id = "popups";
+		const modal = item.k === "modal";
+		// A box in a page (only ever drawn here by a preview) sits in the page's content.
+		const inline = item.k === "inline";
+		if (inline) host.setAttribute("data-popups-preview-box", "");
 		// Out of the page flow and one layer below the cookie banner, so the banner always wins.
-		host.style.cssText = "position:fixed;z-index:2147483645";
+		else host.style.cssText = "position:fixed;z-index:2147483645";
 		const root = host.attachShadow({ mode: "open" });
 		const look = previewScheme || c.sc;
-		const modal = item.k === "modal";
 		const sheet = modal && phone() && !clicked;
 		const hid = "ph" + item.i;
 		const content = item.c;
 		const picture = content.img
 			? '<img class="' +
-				(modal ? "pic" : "thumb") +
+				(modal || inline ? "pic" : "thumb") +
 				'" src="' +
 				esc(content.img.u) +
 				'" alt="' +
@@ -457,16 +461,18 @@ export function boot(c: ClientConfig): void {
 				no +
 				"</div>";
 		const inner =
-			'<button type="button" class="x' +
-			(modal && content.img && !sheet ? " on-pic" : "") +
-			'" data-pp-close aria-label="' +
-			esc(c.t.close) +
-			'">' +
-			CLOSE +
-			"</button>" +
-			(modal ? picture : "") +
+			(inline
+				? ""
+				: '<button type="button" class="x' +
+					(modal && content.img && !sheet ? " on-pic" : "") +
+					'" data-pp-close aria-label="' +
+					esc(c.t.close) +
+					'">' +
+					CLOSE +
+					"</button>") +
+			(modal || inline ? picture : "") +
 			(tag ? '<p class="pv">' + esc(tag) + "</p>" : "") +
-			(modal ? "" : picture) +
+			(modal || inline ? "" : picture) +
 			'<h2 id="' +
 			hid +
 			'" tabindex="-1">' +
@@ -489,8 +495,8 @@ export function boot(c: ClientConfig): void {
 		} else {
 			root.innerHTML =
 				theme +
-				'<div class="pp slide' +
-				(c.left ? " l" : "") +
+				'<div class="pp ' +
+				(inline ? "box" : "slide" + (c.left ? " l" : "")) +
 				'" role="region" aria-labelledby="' +
 				hid +
 				'">' +
@@ -498,7 +504,8 @@ export function boot(c: ClientConfig): void {
 				'</div><p class="sr" role="status"></p>';
 		}
 		const box = root.querySelector<HTMLElement>(".pp")!;
-		d.body.appendChild(host);
+		if (inline) (d.querySelector("main") || d.body).prepend(host);
+		else d.body.appendChild(host);
 
 		let gone = false;
 		const close = (reasonClosed: "closed" | "done") => {
@@ -532,7 +539,7 @@ export function boot(c: ClientConfig): void {
 			}
 		});
 		root.addEventListener("keydown", (event) => {
-			if ((event as KeyboardEvent).key === "Escape") {
+			if ((event as KeyboardEvent).key === "Escape" && !inline) {
 				event.preventDefault();
 				close(finished ? "done" : "closed");
 			}
@@ -548,7 +555,7 @@ export function boot(c: ClientConfig): void {
 				? null
 				: box.querySelector<HTMLElement>(".in,.f input:not([type=hidden])");
 			(first || box.querySelector<HTMLElement>("h2"))?.focus();
-		} else {
+		} else if (!inline) {
 			// A slide-in leaves the page usable: it does not take focus. Its heading is announced once,
 			// and the page keeps whatever has focus clear of it.
 			root.querySelector(".sr")!.textContent = content.h;
@@ -729,28 +736,11 @@ export function boot(c: ClientConfig): void {
 					// No session: a visitor who copied the link sees nothing.
 					if (!answer) return;
 					if (previewScheme) html.style.colorScheme = previewScheme;
-					const item = {
-						...answer.item,
-						k: answer.item.k === "bar" ? ("slide" as const) : answer.item.k,
-					};
-					let why = answer.off ? "it is turned off" : reason(answer.item, true);
-					if (!why && bannerWaits()) why = "the cookie banner is still waiting for an answer";
-					if (why === "it has not started yet" && answer.startText)
-						why = "it starts on " + answer.startText;
-					if (why === "it has ended" && answer.endText) why = "it ended on " + answer.endText;
-					const when =
-						answer.item.t === "click"
-							? "when they click its button or link"
-							: answer.item.t === "exit"
-								? "when they are about to leave (computers only)"
-								: answer.item.t === "load"
-									? "as the page opens"
-									: "after they have read a while";
-					const tag =
-						"Preview: nothing is counted. " +
-						(why
-							? "Hidden for a real visitor: " + why + "."
-							: "A real visitor sees it " + when + ".");
+					const item = { ...answer.item };
+					const kind = item.k;
+					const inline = kind === "inline";
+					// Opened by a click: no first-page or one-per-visit rule, and centred on a phone too.
+					const auto = item.t !== "click";
 					let form: Definition | undefined;
 					if (item.c.form) {
 						const result = await loadForm(item.c.form);
@@ -761,16 +751,116 @@ export function boot(c: ClientConfig): void {
 								form: undefined,
 								x:
 									item.c.x +
-									" [The form cannot be shown: " +
-									(result.problem === "paused"
-										? "it is paused under Forms"
-										: result.problem === "unsupported"
-											? "it uses Turnstile or a file upload"
-											: "it was not found") +
-									".]",
+									(inline && result.problem === "unsupported"
+										? " [In the page the form shows in full; this preview cannot draw a form with Turnstile or a file upload.]"
+										: " [The form cannot be shown: " +
+											(result.problem === "paused"
+												? "it is paused under Forms"
+												: result.problem === "unsupported"
+													? "it uses Turnstile or a file upload"
+													: "it was not found") +
+											".]"),
 							};
 					}
-					show(item, form, true, tag);
+					/** Why a real visitor would not see it here and now, in plain words; "" when they would. */
+					const hidden = (): string => {
+						if (answer.unfinished)
+							return 'it is not finished yet (press "Save and finish" in step 4)';
+						if (answer.off) return "it is turned off";
+						if (!c.here) return "it does not show on this page";
+						// A box in a page shows to everyone inside its dates: nothing else applies.
+						let why =
+							item.s && now < item.s
+								? "it has not started yet"
+								: item.e && now >= item.e
+									? "it has ended"
+									: inline
+										? ""
+										: reason(item, auto);
+						// A click opens it even after a close or a sign-up: only its dates and devices hold it back.
+						if (!auto && !why.startsWith("it ")) why = "";
+						if (why === "it has not started yet" && answer.startText)
+							return "it starts on " + answer.startText;
+						if (why === "it has ended" && answer.endText) return "it ended on " + answer.endText;
+						if (why || inline) return why;
+						if (item.t === "exit" && phone())
+							return "phones never see one that opens when they are about to leave";
+						if (kind === "bar") {
+							// Only the first top bar a visitor may see is shown.
+							const first = bars.find((bar) => !reason(bar, true));
+							return first && first.i !== item.i ? "another top bar shows first on this page" : "";
+						}
+						if (!auto) return "";
+						if (bannerWaits()) return "the cookie banner is still waiting for an answer";
+						const first = c.items.find(
+							(each) =>
+								each.k !== "bar" &&
+								(each.t === "read" || (each.t === "exit" && !phone())) &&
+								!reason(each, true),
+						);
+						return first && first.i !== item.i ? "another popup opens first on this page" : "";
+					};
+					const when = () =>
+						item.t === "click"
+							? "when they click its button or link"
+							: item.t === "exit"
+								? "when they are about to leave (computers only)"
+								: item.t === "load"
+									? "as the page opens"
+									: kind === "modal" && !(item.f && !phone())
+										? "after they have read a while, from their second page"
+										: "after they have read a while";
+					const tag = () => {
+						const why = hidden();
+						const place =
+							'where an editor places the "Popups box" block; this preview puts it at the top of the content.';
+						return (
+							"Preview: nothing is counted. " +
+							(why ? "Hidden for a real visitor: " + why + ". " : "") +
+							(inline
+								? (why ? "On a page it shows " : "A real visitor sees it ") + place
+								: why
+									? ""
+									: "A real visitor sees it " + when() + ".")
+						).trim();
+					};
+					const draw = () => {
+						d.getElementById("popups")?.remove();
+						d.getElementById("popups-bar-" + item.i)?.remove();
+						html.style.scrollPaddingBottom = "";
+						open = undefined;
+						if (kind !== "bar") return show(item, form, !auto, tag());
+						// A top bar as a visitor gets it: the server's own markup, at the start of the page.
+						const bar = d.createElement("div");
+						bar.id = "popups-bar-" + item.i;
+						bar.setAttribute("data-popups-bar", item.i);
+						bar.style.display = "block";
+						const root = bar.attachShadow({ mode: "open" });
+						root.innerHTML =
+							"<style>" +
+							styles(previewScheme || c.sc, c.col) +
+							"</style>" +
+							barInner(item, c.t.close, tag());
+						root.addEventListener("click", (event) => {
+							const target = event.target as Element;
+							if (target.closest("[data-pp-close]")) bar.remove();
+							else if (target.closest("[data-pp-go]")) event.preventDefault();
+						});
+						d.body.prepend(bar);
+					};
+					draw();
+					// Narrowing the window past a phone's width changes the layout and maybe the answer.
+					let small = phone();
+					w.addEventListener("resize", () => {
+						// Once closed, it stays closed.
+						if (
+							phone() === small ||
+							!d.getElementById(kind === "bar" ? "popups-bar-" + item.i : "popups")
+						)
+							return;
+						small = phone();
+						draw();
+					});
 				})
 				.catch(() => {});
 			return;
