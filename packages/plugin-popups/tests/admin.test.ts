@@ -153,11 +153,12 @@ describe("New popup, four steps", () => {
 		const picture = formOf(s2, "save_s2").fields.find((f) => f.action_id === "picture");
 		expect(picture).toMatchObject({
 			type: "combobox",
-			options: [
-				{ value: "none" },
-				{ value: "m1", label: "Three sourdough loaves (loaves-1600.jpg)" },
-			],
+			options: [{ value: "none" }, { value: "m1", label: "loaves-1600.jpg" }],
 		});
+		// A short label: never the full alt text or an id; and one line of help under the form.
+		expect(JSON.stringify(picture)).not.toContain("Three sourdough loaves");
+		const help = all(s2).filter((b) => b.type === "context").map((b) => (b as { text: string }).text);
+		expect(help.at(-1)).toBe("Pictures come from Media; forms and their thank-you message from Forms.");
 		const s3 = await submit(fake, "save_s2", formOf(s2, "save_s2").block_id!, {
 			heading: "Fresh from the oven, once a month",
 			text: "One email a month.",

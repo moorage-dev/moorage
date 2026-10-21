@@ -629,16 +629,12 @@ function step1Form(state: PageState, popup: Popup | undefined, wizard: boolean):
 }
 
 function pictureOptions(state: PageState, popup: Popup | undefined) {
+	// A short label, the file name: alt text is a sentence, and media has no title of its own.
 	const options = [{ value: "none", label: "No picture" }];
-	for (const item of state.media) {
-		options.push({
-			value: item.id,
-			label: item.alt ? `${item.alt} (${item.filename})` : item.filename,
-		});
-	}
+	for (const item of state.media) options.push({ value: item.id, label: item.filename });
 	// A picture since removed from the list still shows as chosen.
 	if (popup?.picture && !state.media.some((m) => m.id === popup.picture!.id)) {
-		options.push({ value: popup.picture.id, label: popup.picture.alt || "The current picture" });
+		options.push({ value: popup.picture.id, label: "The current picture" });
 	}
 	return options;
 }
@@ -743,12 +739,6 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 		});
 	}
 	const blocks: Block[] = [];
-	if (popup.picture) {
-		blocks.push({
-			type: "context",
-			text: `Picture now: ${popup.picture.alt || "a picture from your media library"}.`,
-		});
-	}
 	blocks.push({
 		type: "form",
 		block_id: formId("s2", popup),
@@ -762,7 +752,7 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 		blocks.push({
 			type: "context",
 			text: state.admin
-				? "Pictures come from Media; add new ones there. With a form: the short name is checked when you save. The thank-you text under the heading is the form's own confirmation message, set under Forms; if the form sends visitors to another page instead, that wins. Forms with file uploads or Cloudflare Turnstile cannot be used in a popup or slide-in yet; put them in a box in a page."
+				? "Pictures come from Media; forms and their thank-you message from Forms."
 				: popup.contains === "form"
 					? `It contains the form "${popup.form}". Only an administrator can change the form.`
 					: "Pictures come from Media; add new ones there.",
