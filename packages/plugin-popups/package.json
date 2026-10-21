@@ -1,6 +1,6 @@
 {
 	"name": "@moorage/plugin-popups",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"description": "Top bars, slide-ins, popups and in-page boxes for EmDash, with a form from Forms, built-in respect for visitors and the cookie banner, and daily results. Installed once by a developer (native plugin).",
 	"keywords": [
 		"emdash",
