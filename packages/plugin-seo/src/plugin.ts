@@ -71,8 +71,9 @@ const plugin: SandboxedPlugin = {
 					if ("error" in found) throw found.error;
 					const { stored } = found;
 					const store = entryStore(ctx);
-					// First render of an entry saved before the plugin was installed.
-					record = stored ?? (await buildEntryRecord(ctx, collection, id, config));
+					// First render of an entry saved before the plugin was installed. The
+					// record is kept, so it is built from a fresh read, not the copy in memory.
+					record = stored ?? (await buildEntryRecord(ctx, collection, id, await loadConfig(ctx)));
 					// The picture this render shares (what becomes og:image) is something
 					// the saved-entry check cannot see. Written only when it is news, and
 					// not in the request that just built the record.
