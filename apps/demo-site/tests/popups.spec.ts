@@ -692,6 +692,20 @@ test.describe("each kind where a visitor sees it", () => {
 			await expect(tag(page, "[data-popups-bar]")).toHaveText(
 				"Preview: nothing is counted. Hidden for a real visitor: it is turned off.",
 			);
+			// The label sits on its own row above the bar's words, never on the same line.
+			const rows = await page.evaluate(() => {
+				const root = document.querySelector("[data-popups-bar]")!.shadowRoot!;
+				const box = (sel: string) => root.querySelector(sel)!.getBoundingClientRect();
+				const label = box(".pv");
+				// Where the bar's own words are drawn, whatever element holds them.
+				const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+				let text: Node | null = null;
+				while ((text = walker.nextNode()) && !text.textContent?.includes("Checkout"));
+				const range = document.createRange();
+				range.selectNodeContents(text!);
+				return { labelBottom: label.bottom, wordsTop: range.getBoundingClientRect().top };
+			});
+			expect(rows.wordsTop).toBeGreaterThanOrEqual(rows.labelBottom);
 			await page.close();
 		}
 	});
