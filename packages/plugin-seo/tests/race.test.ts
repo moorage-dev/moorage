@@ -66,6 +66,13 @@ class World {
 		entry.updatedAt = this.stamp();
 	}
 
+	/** An editor sets a search title in the SEO panel; EmDash leaves updatedAt as it was. */
+	searchTitle(id: string, title: string): void {
+		const entry = this.entries.get(id);
+		if (!entry) throw new Error(`no entry ${id}`);
+		entry.seo = { ...entry.seo, title };
+	}
+
 	private stamp(): string {
 		this.minute += 1;
 		return `2026-10-22T10:${String(this.minute).padStart(2, "0")}:00.000Z`;
@@ -243,6 +250,29 @@ describe("the same-title flag when a save and a check overlap", () => {
 		expect(world.flagged("b")).toBe(false);
 		expect(world.flagged("a")).toBe(false);
 		expect(world.record("a")?.status).toBe("ready");
+	});
+
+	it("does not write back the old title when the SEO panel renames a page during a check", async () => {
+		const world = new World();
+		world.page("a", "Our services");
+		world.page("b", "Our services");
+		await save(world, "a");
+		await save(world, "b");
+
+		await check(world, [
+			{
+				when: "after",
+				op: "content.list",
+				run: async () => {
+					world.searchTitle("b", "Catering in Springfield");
+					await save(world, "b");
+				},
+			},
+		]);
+
+		expect(world.record("b")?.title).toBe("Catering in Springfield");
+		expect(world.flagged("a")).toBe(false);
+		expect(world.flagged("b")).toBe(false);
 	});
 
 	it("does not flag a page whose twin was renamed after the title pass read them", async () => {

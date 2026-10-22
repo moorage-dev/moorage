@@ -91,6 +91,8 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 		state.phase = "titles";
 		return;
 	}
+	// Saves that write after this moment may have read a newer entry than the list below.
+	const listedAt = new Date().toISOString();
 	const page = await ctx.content?.list(collection, {
 		limit: BATCH,
 		cursor: state.cursor,
@@ -105,13 +107,18 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 			store.getMany(ids.map((id) => entryKey(collection, id))),
 		]);
 		const authors = new Map(credits.map((credit) => [credit.entryId, credit.bylines]));
-		// Records a save wrote after this check read its entries stay as they are: the save read
-		// a newer version of the entry. Only the flag may still change on them, below.
+		// Records a save wrote after this check listed its entries stay as they are: the save may
+		// have read a newer version of the entry. The entry's updatedAt says so for most edits,
+		// but not for SEO panel fields, so the time the record was written counts too. Only the
+		// flag may still change on them, below.
 		const kept = new Set<string>();
 		const records = entries.map((entry) => {
 			const id = entryKey(collection, entry.id);
 			const before = previous.get(id) ?? null;
-			if (before && isOlder(entry.updatedAt, before.updatedAt)) {
+			if (
+				before &&
+				(isOlder(entry.updatedAt, before.updatedAt) || (before.checkedAt ?? "") >= listedAt)
+			) {
 				kept.add(id);
 				return { id, data: before };
 			}
