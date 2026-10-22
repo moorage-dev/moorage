@@ -1,9 +1,21 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import type { PluginContext } from "emdash";
+
+import { readSettings, type SettingsKeys } from "./settings-store.js";
 import { parseUrl } from "./url.js";
 
-/** KV key holding the site-wide configuration. */
-export const CONFIG_KEY = "config";
+/**
+ * Where the site-wide configuration is kept: `ctx.settings` "config" (KV key
+ * `settings:config`), the same in-process and sandboxed. Up to 0.1.7 it was the
+ * plain KV key `config`, still written for rollback (see settings-store.ts).
+ */
+export const CONFIG: SettingsKeys = { name: "config", legacy: "config" };
+
+/** Always a fresh read. Page views use `memoSettings` around it; saves and record builds do not. */
+export async function loadConfig(ctx: Pick<PluginContext, "kv" | "settings" | "log">) {
+	return normalizeConfig(await readSettings(ctx, CONFIG));
+}
 
 /** Page-level schema types a collection can map to. */
 export const WEB_PAGE_TYPES = [
