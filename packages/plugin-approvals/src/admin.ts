@@ -594,12 +594,14 @@ async function listPage(
 		);
 	}
 
+	// Short labels, no counts: four tabs with counts ran off a 390 px phone's screen.
+	// The numbers at the top of Waiting carry the counts.
 	const panels = [
 		{
-			label: `Waiting (${waiting.length})`,
+			label: "Waiting",
 			blocks: [...waitingBlocks, ...(await draftRows(ctx, config, user, lists.all))],
 		},
-		{ label: `Sent back (${sentBack.length})`, blocks: sentBackRows(sentBack, names) },
+		{ label: "Sent back", blocks: sentBackRows(sentBack, names) },
 		{ label: "History", blocks: await historyRows(ctx, done) },
 		...(admin
 			? [{ label: "Settings", blocks: await settingsBlocks(ctx, config, user, lists.all) }]

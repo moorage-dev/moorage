@@ -504,8 +504,35 @@ export function boot(c: ClientConfig): void {
 				'</div><p class="sr" role="status"></p>';
 		}
 		const box = root.querySelector<HTMLElement>(".pp")!;
-		if (inline) (d.querySelector("main") || d.body).prepend(host);
-		else d.body.appendChild(host);
+		if (inline) {
+			// At the top of the page's content, lined up with the page's text as a visitor sees
+			// the block in a text column: the left edge and width of the first paragraph wide
+			// enough to be body text (else the main heading). Measured, so it never has to go
+			// inside a hero or a card; measured again when the window changes size.
+			const main = d.querySelector("main") || d.body;
+			main.prepend(host);
+			const align = () => {
+				if (!host.isConnected) {
+					removeEventListener("resize", align);
+					return;
+				}
+				const text =
+					Array.from(main.querySelectorAll("p")).find(
+						(p) => p.getBoundingClientRect().width >= 240,
+					) || main.querySelector("h1");
+				box.style.marginLeft = "";
+				box.style.maxWidth = "";
+				if (!text) {
+					box.classList.add("c");
+					return;
+				}
+				const at = text.getBoundingClientRect();
+				box.style.marginLeft = Math.max(0, at.left - box.getBoundingClientRect().left) + "px";
+				box.style.maxWidth = Math.min(640, at.width) + "px";
+			};
+			align();
+			addEventListener("resize", align);
+		} else d.body.appendChild(host);
 
 		let gone = false;
 		const close = (reasonClosed: "closed" | "done") => {

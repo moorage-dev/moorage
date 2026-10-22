@@ -12,7 +12,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
   - **Top bar:** a thin strip above the header, in the page itself. It is part of the page when it loads, so it never moves the page or covers a sticky header.
   - **Slide-in:** a small box in a bottom corner that leaves the page usable. On phones it is a sheet at the bottom, at most 45% of the screen.
   - **Popup:** a box in the middle of the screen that dims the page. On phones it opens as a sheet at the bottom, unless the visitor opened it by clicking.
-  - **Box in a page:** a box an editor places in a post or page with the "Popups box" block.
+  - **Box in a page:** a box an editor places in a post or page with the "Popups box" block. If your site styles its forms (the `.ec-form` classes of the Forms plugin), a form in the box keeps that look.
 - **What it says:** a heading, a short text, a picture from your media library, and either one button or a form from the official Forms plugin. Sign-ups land in the Forms inbox, with all of its emails and notifications.
 - **When it opens:** "after they have read a while" (40% down the page or 30 seconds), "when they click" a link or button your web person sets up, or "when they are about to leave" (computers only). Top bars show as soon as the page opens. There are no raw seconds or percentages to set.
 - **Where and when:** every page, pages under an address, or a whole collection; "never on these pages"; phones, computers or both; a start and an end, with a date and a time in your site's time zone.
@@ -24,7 +24,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
   - Never again for someone who signed up or clicked. After a close it shows again after a week, after a month, or never.
   - Always a 44 px close button, and Esc closes it. Nothing closes by itself, and the "No thanks" words come from a fixed list.
 - **Results:** the views (at least half of it on screen for a second), sign-ups, clicks and closes since each popup started, or for dates you choose, with a spreadsheet download (daily counts per popup; the download link works for ten minutes, so open the page again for a fresh one). Rates appear from 100 views. It stores no cookies and nothing about any visitor. Button links to other websites get campaign tags (`utm_source=popups`), so Google Analytics shows those visits as coming from the popup.
-- **Preview:** "Preview on your site" (light or dark) shows the popup at once, for you only, exactly where a visitor sees it: a top bar at the top, a slide-in in its corner, a popup centred (a sheet on phones). A box in a page shows at the top of the page's content, since its place is where an editor puts the block. It says whether a real visitor would see it now and, if not, why ("this browser closed it 3 days ago; it shows again after a month"). Nothing is counted and the form does not send.
+- **Preview:** "Preview on your site" (light or dark) shows the popup at once, for you only, exactly where a visitor sees it: a top bar at the top, a slide-in in its corner, a popup centred (a sheet on phones). A box in a page shows at the top of the page's content, lined up with the page's text as visitors see it in a post, since its place is where an editor puts the block. It says whether a real visitor would see it now and, if not, why ("this browser closed it 3 days ago; it shows again after a month"). Nothing is counted and the form does not send.
 - **Checks:** the form's short name is checked when you save. Colours that are hard to read are refused, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
 
 | Popup, computer                            | Popup, phone                            | Slide-in                                     | Box in a page                                    |
@@ -103,6 +103,8 @@ Popups take your theme's colours from these CSS variables. All of them are optio
 |              | Emails when a popup cannot open                            | None                                             |
 
 A new popup is off while you make it. Its last step has "Turn it on" already switched on, so "Save and finish" starts it at its start time; switch it off first to keep it off.
+
+Each row of the list has Edit and Preview. Turn on or off, Duplicate and Delete are at the top of a popup's own page (open it with Edit).
 
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
 

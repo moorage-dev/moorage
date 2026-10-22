@@ -248,6 +248,65 @@ test.describe("admin", () => {
 		await page.close();
 	});
 
+	test("on a phone the status and the buttons of every row stay on screen", async ({ browser }) => {
+		test.setTimeout(240_000);
+		await make({ ...FORM_POPUP, name: "Monthly letter for the bakery" });
+		await make({ ...FORM_POPUP, name: "Letter, turned off", s4: { on: false } });
+		// The longest statuses: "On until …" and "Starts …".
+		await make({
+			...FORM_POPUP,
+			name: "Christmas letter",
+			s4: { end_date: "2099-12-27", end_time: "14:00" },
+		});
+		await make({
+			...FORM_POPUP,
+			name: "Spring letter",
+			s4: { start_date: "2099-03-01", start_time: "09:00" },
+		});
+		// An unfinished popup: only its first step saved.
+		const first = await adminPost(`${API}/admin`, {
+			type: "form_submit",
+			action_id: "save_s1",
+			block_id: "s1:new:x",
+			values: { name: "Half made", kind: "slide" },
+		});
+		made.push(/"block_id":"s2:([a-z0-9]+):/.exec(JSON.stringify(first.data.blocks))![1]!);
+		const phone = await browser.newContext({
+			storageState: await adminContext.storageState(),
+			viewport: { width: 390, height: 844 },
+			isMobile: true,
+			hasTouch: true,
+		});
+		const page = await phone.newPage();
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await page.locator("text=New popup").first().waitFor({ timeout: 150_000 });
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		if (await welcome.isVisible().catch(() => false))
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		const table = page.locator("table").first();
+		await expect(table.getByText("Half made", { exact: false })).toBeVisible();
+		// Every status and button sits inside the table's visible box (it clips), with room to
+		// spare: Linux fonts (CI) are wider than macOS ones.
+		const outside = await table.evaluate((t) => {
+			const box = (t.parentElement ?? t).getBoundingClientRect();
+			const right = Math.min(box.right, window.innerWidth) - 12;
+			return [...t.querySelectorAll("tbody tr")].flatMap((tr) =>
+				[...tr.querySelectorAll("td:nth-child(2), td:nth-child(2) > *, td button")]
+					.filter((el) => el.getBoundingClientRect().right > right)
+					.map(
+						(el) =>
+							`${el.textContent} (${Math.round(el.getBoundingClientRect().right)} > ${right})`,
+					),
+			);
+		});
+		expect(outside).toEqual([]);
+		// Edit and Preview are one tap away on every finished row.
+		const row = table.locator("tbody tr").filter({ hasText: "Monthly letter for the bakery" });
+		await expect(row.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+		await expect(row.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
+		await phone.close();
+	});
+
 	test("the Numbers tab downloads a spreadsheet", async () => {
 		test.setTimeout(240_000);
 		const page = await adminContext.newPage();
@@ -539,6 +598,66 @@ test.describe("box in a page", () => {
 		await region.getByRole("button", { name: "Join the list" }).click();
 		await expect(region.locator(".ec-form-status--success")).toBeVisible();
 		expect((await inbox()).length).toBe(before + 1);
+		await page.context().close();
+	});
+});
+
+test.describe("box in a page, styled by the site", () => {
+	test("a site's own .ec-form styles win, and without them the box keeps its look", async ({
+		browser,
+	}) => {
+		const id = await make({
+			name: "Letter box",
+			kind: "inline",
+			s2: {
+				heading: "Get the Journal by email",
+				text: "One letter a month.",
+				picture: "none",
+				contains: "form",
+				form: "newsletter",
+				thanks: "Thanks",
+			},
+		});
+		const page = await visitor(browser);
+		await page.goto(`/popups-test?box=${id}`);
+		const region = page.getByRole("region", { name: "Get the Journal by email" });
+		await expect(region.locator("form.ec-form")).toHaveCount(1);
+		const look = () =>
+			region.evaluate((box) => {
+				const css = (sel: string) => getComputedStyle(box.querySelector(sel)!);
+				const input = css(".ec-form-input");
+				const submit = css(".ec-form-submit");
+				const label = css(".ec-form-label");
+				return {
+					input: [input.borderTopLeftRadius, input.minHeight, input.paddingLeft],
+					submit: [submit.borderTopLeftRadius, submit.minHeight],
+					label: label.fontWeight,
+				};
+			});
+		const headStyle = (text: string) =>
+			page.evaluate((content) => {
+				const style = document.createElement("style");
+				style.textContent = content;
+				document.head.prepend(style);
+			}, text);
+		// No form styles on this site, only a theme's bare element rules: the box's own look.
+		await headStyle(
+			"input,textarea,button{border-radius:3px;min-height:0;padding-left:1px}label{font-weight:300}",
+		);
+		expect(await look()).toEqual({
+			input: ["6px", "44px", "12px"],
+			submit: ["6px", "44px"],
+			label: "600",
+		});
+		// A site's plain one-class rules, in the page head (before the box's own): they win.
+		await headStyle(
+			".ec-form-input{border-radius:0;min-height:50px;padding-left:4px}.ec-form-submit{border-radius:20px;min-height:48px}.ec-form-label{font-weight:400}",
+		);
+		expect(await look()).toEqual({
+			input: ["0px", "50px", "4px"],
+			submit: ["20px", "48px"],
+			label: "400",
+		});
 		await page.context().close();
 	});
 });
@@ -849,6 +968,68 @@ test.describe("each kind where a visitor sees it", () => {
 			'Preview: nothing is counted. Hidden for a real visitor: it is turned off. On a page it shows where an editor places the "Popups box" block; this preview puts it at the top of the content.',
 		);
 		await page.close();
+	});
+
+	test("preview and visitor: a box in a page sits in the text column, left-aligned with the text", async ({
+		browser,
+	}) => {
+		const id = await make({
+			name: "Letter box",
+			kind: "inline",
+			s2: {
+				heading: "Get the Journal by email",
+				text: "One letter a month.",
+				picture: "none",
+				contains: "form",
+				form: "newsletter",
+				thanks: "Thanks",
+			},
+		});
+		for (const phone of [false, true]) {
+			const seen = await visitor(browser, { phone });
+			await seen.goto(`/popups-test?box=${id}`);
+			const box = await seen.locator(".popups-box").evaluate((el) => {
+				const r = el.getBoundingClientRect();
+				return { left: Math.round(r.left), width: Math.round(r.width) };
+			});
+			// A visitor's box starts where the text starts.
+			expect(box.left).toBe(
+				await seen.evaluate(() =>
+					Math.round(document.querySelector("main h1")!.getBoundingClientRect().left),
+				),
+			);
+			await seen.context().close();
+			// The preview draws it at the top of the content, lined up with the text and as wide.
+			const page = await previewTab(id, "/popups-test", phone);
+			const preview = await place(page, "[data-popups-preview-box]", ".box");
+			expect({ left: preview.left, width: preview.width }).toEqual(box);
+			// Narrowing the window keeps it lined up.
+			if (!phone) {
+				await page.setViewportSize({ width: 900, height: 800 });
+				const narrow = await place(page, "[data-popups-preview-box]", ".box");
+				expect(narrow.left).toBe(
+					await page.evaluate(() =>
+						Math.round(document.querySelector("main h1")!.getBoundingClientRect().left),
+					),
+				);
+			}
+			await page.close();
+			// The admin's Preview opens the home page (a hero, then cards): the box is at the top,
+			// lined up with the hero's text, not centred on the page.
+			const home = await previewTab(id, "/", phone);
+			const top = await place(home, "[data-popups-preview-box]", ".box");
+			const hero = await home.evaluate(() => {
+				const p = Array.from(document.querySelectorAll("main p")).find(
+					(el) => el.getBoundingClientRect().width >= 240,
+				)!;
+				const r = p.getBoundingClientRect();
+				return { left: Math.round(r.left), width: Math.round(r.width) };
+			});
+			expect(top.left).toBe(hero.left);
+			expect(top.width).toBe(Math.min(640, hero.width));
+			expect(top.top).toBeLessThan(200);
+			await home.close();
+		}
 	});
 });
 

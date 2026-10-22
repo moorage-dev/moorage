@@ -43,8 +43,10 @@ export const CSS =
 	".thumb{float:left;width:72px;height:72px;object-fit:cover;border-radius:8px;margin:0 14px 6px 0}" +
 	// Top bar: in the page flow, above the header.
 	".bar{position:relative;border-width:0 0 1px;min-height:44px;padding:10px 60px 10px 16px;font-size:15px}.bar .i{max-width:1200px;margin:0 auto;text-align:center}.bar .i a{font-weight:600;text-decoration:underline;text-underline-offset:3px;margin-left:6px}.bar .x{top:0;right:4px}.bar .pv{display:block;width:fit-content;max-width:100%;margin:0 auto 6px}" +
-	// A box in a page, as its preview draws it: in the content, the size of the server's box.
-	".box{position:relative;max-width:640px;margin:28px auto;padding:24px;border-radius:10px}.box .pic{width:calc(100% + 48px);margin:-24px -24px 18px}" +
+	// A box in a page, as its preview draws it: lined up with the page's text (the script sets
+	// its left margin and width) and the size of the server's box; centred (.c) only on a page
+	// with no text to line up with.
+	".box{position:relative;max-width:640px;margin:28px 0;padding:24px;border-radius:10px}.box.c{margin:28px auto}.box .pic{width:calc(100% + 48px);margin:-24px -24px 18px}" +
 	// Slide-in: a bottom corner.
 	".slide{position:fixed;right:16px;bottom:16px;width:360px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:20px;border-radius:10px;box-shadow:var(--sw)}.slide.l{right:auto;left:16px}.slide h2{font-size:19px;padding-right:36px}.slide .x{top:4px;right:4px}.slide .r{clear:both}" +
 	// Popup: a centred dialog that dims the page.
@@ -61,6 +63,7 @@ export const CSS =
 	".slide{inset:auto 0 0;margin:0;width:100%;max-width:100%;max-height:45vh;border-width:1px 0 0;border-radius:12px 12px 0 0;padding:18px 16px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -12px 32px -16px rgb(0 0 0/.35)}.slide.l{left:0}" +
 	"dialog.modal:not(.sheet){padding:20px}dialog.modal:not(.sheet) .pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}" +
 	".r{flex-direction:column;align-items:stretch}.r .q{justify-content:center}" +
+	".box{padding:20px}.box .pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}" +
 	".bar{font-size:14px}.bar .i{text-align:left}.bar .pv{margin-left:0}}";
 
 /** The owner's own colours (already checked for contrast), used exactly as chosen. */
