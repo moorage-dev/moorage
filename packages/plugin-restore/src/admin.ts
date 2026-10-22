@@ -999,7 +999,7 @@ export async function handleAdmin(
 		case "web_person":
 			return webPersonScreen(ctx);
 		case "disconnect": {
-			await ctx.kv.delete("connection");
+			await ctx.settings.delete("connection");
 			await ctx.settings.delete(KEY_SETTING);
 			const screen = setupScreen();
 			return { ...screen, toast: { type: "success", message: "Disconnected" } };
@@ -1018,7 +1018,7 @@ export async function handleAdmin(
 				return mainScreen(ctx, connection, me, now, {
 					toast: { type: "error", message: "One of those isn't an email address" },
 				});
-			await ctx.kv.set("emails", list);
+			await ctx.settings.set("emails", list);
 			return mainScreen(ctx, connection, me, now, {
 				toast: { type: "success", message: "Emails saved" },
 			});

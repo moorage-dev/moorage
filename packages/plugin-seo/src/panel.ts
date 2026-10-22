@@ -4,12 +4,7 @@ import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
 import { excerptOf, truncateTitle } from "./checks.js";
-import {
-	CONFIG_KEY,
-	defaultTypeForCollection,
-	normalizeConfig,
-	type PageSchemaType,
-} from "./config.js";
+import { defaultTypeForCollection, loadConfig, type PageSchemaType } from "./config.js";
 import { buildGraph } from "./graph.js";
 import { PAGE_TYPES, typeLabel } from "./page-types.js";
 import { entryKey, entryStore, rebuildEntry } from "./record.js";
@@ -51,7 +46,7 @@ export async function handlePanel(
 	if (!entry) return { blocks: [] };
 	const admin = (role ?? 0) >= ADMIN_ROLE;
 	const interaction = isRecord(input) ? input : {};
-	const config = normalizeConfig(await ctx.kv.get(CONFIG_KEY));
+	const config = await loadConfig(ctx);
 	const store = entryStore(ctx);
 	const key = entryKey(entry.collection, entry.id);
 	let toast: BlockResponse["toast"];

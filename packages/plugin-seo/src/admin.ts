@@ -4,7 +4,7 @@ import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { CollectionSchemaInfo, PluginContext } from "emdash";
 
 import {
-	CONFIG_KEY,
+	CONFIG,
 	defaultTypeForCollection,
 	normalizeConfig,
 	type PageSchemaType,
@@ -40,6 +40,7 @@ import {
 	type Stats,
 } from "./scan.js";
 import { forgetSettings } from "./settings-memo.js";
+import { pickSettings, writeSettings } from "./settings-store.js";
 import { parseUrl } from "./url.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
@@ -231,7 +232,7 @@ async function loadData(ctx: PluginContext): Promise<AdminData> {
 	const kv = new Map(stored.map((item) => [item.key, item.value]));
 	const redirects = kv.get(IMPORT_KEY) as ImportState | undefined;
 	return {
-		config: normalizeConfig(kv.get(CONFIG_KEY)),
+		config: normalizeConfig(await pickSettings(ctx, kv, CONFIG)),
 		// Only collections with public pages have anything to describe to search engines.
 		collections: collections.filter((collection) => collection.routable && !collection.hidden),
 		redirects: redirects && Array.isArray(redirects.rows) ? redirects : null,
@@ -1289,7 +1290,7 @@ export async function handleAdmin(
 		}
 		// Normalising before the write keeps stored data in the shape the page hook reads.
 		const config = normalizeConfig(outcome.config);
-		await ctx.kv.set(CONFIG_KEY, config);
+		await writeSettings(ctx, CONFIG, config);
 		// After the write, so a page view in between cannot keep the old settings.
 		forgetSettings(ctx.plugin.id);
 		return render({ ...data, config }, ctx, admin, {

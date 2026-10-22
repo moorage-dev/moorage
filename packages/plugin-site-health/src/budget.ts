@@ -14,7 +14,16 @@ export interface Counter {
 	ops: number;
 }
 
-const SERVICES = ["kv", "content", "schema", "redirects", "http", "email", "cron"] as const;
+const SERVICES = [
+	"kv",
+	"settings",
+	"content",
+	"schema",
+	"redirects",
+	"http",
+	"email",
+	"cron",
+] as const;
 
 function countMethods<T extends object>(target: T, counter: Counter): T {
 	return new Proxy(target, {

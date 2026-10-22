@@ -141,7 +141,8 @@ test("going back to just before a change: enquiries first, lost text, tick, red 
 		ago(20 * 60_000),
 	);
 	d.close();
-	editEntry("connection", (connection) => ({ ...connection, setupAt: ago(2 * HOUR) }));
+	// A setting: `options` row `plugin:restore:settings:connection` in both modes.
+	editEntry("settings:connection", (connection) => ({ ...connection, setupAt: ago(2 * HOUR) }));
 
 	await open(page);
 	const row = page.getByRole("row", { name: /Pricing \(page\) edited · You/ });

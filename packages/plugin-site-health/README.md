@@ -62,7 +62,7 @@ import siteHealth from "@moorage/plugin-site-health";
 emdash({ sandboxed: [siteHealth] });
 ```
 
-On a site without a sandbox runner (the Workers free plan), list it under `plugins: [siteHealth]` instead. It works the same.
+On a site without a sandbox runner (the Workers free plan), list it under `plugins: [siteHealth]` instead. It works the same. Since 0.1.3 the email list and the outside-link choice survive moving the plugin from one list to the other (the check results are rebuilt by the next check); when updating from an earlier version, update first, open the Site Health page once, then move it.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 

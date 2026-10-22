@@ -4,7 +4,7 @@ import type { PageMetadataContribution, PluginContext } from "emdash";
 import type { SandboxedPlugin } from "emdash/plugin";
 
 import { handleAdmin } from "./admin.js";
-import { CONFIG_KEY, normalizeConfig } from "./config.js";
+import { loadConfig } from "./config.js";
 import { buildGraph } from "./graph.js";
 import { handlePanel } from "./panel.js";
 import {
@@ -19,11 +19,6 @@ import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
 import { isNoindex, mergeRobots } from "./robots.js";
 import { loadScan, SCAN_KEY, SCAN_TASK, scanStep, startScan } from "./scan.js";
 import { memoSettings } from "./settings-memo.js";
-
-/** Always a fresh read. Page views use `memoSettings` around it; saves and record builds do not. */
-async function loadConfig(ctx: PluginContext) {
-	return normalizeConfig(await ctx.kv.get(CONFIG_KEY));
-}
 
 /**
  * An EmDash preview link, which its owner opens to check their work: settings

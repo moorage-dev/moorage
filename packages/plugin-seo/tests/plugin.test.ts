@@ -176,7 +176,7 @@ describe("page:metadata", () => {
 
 		// Written straight to the database, the way a save in another isolate looks
 		// from here: this isolate keeps the copy it read (for up to 30 seconds).
-		await runtime.fixtures.plugin.kv("config", { site: { name: "Written elsewhere" } });
+		await runtime.fixtures.plugin.setting("config", { site: { name: "Written elsewhere" } });
 		expect(await orgName()).toBe("Acme Dental");
 
 		// A save on the SEO page shows on the very next page view.

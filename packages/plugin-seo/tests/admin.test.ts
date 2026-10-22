@@ -50,7 +50,7 @@ function texts(response: BlockResponse): string {
 }
 
 async function config(runtime: PluginRuntimeTestHost): Promise<SeoConfig | null> {
-	return runtime.inspect.kv.get<SeoConfig>("config");
+	return runtime.inspect.setting<SeoConfig>("config");
 }
 
 describe("SEO page", () => {
