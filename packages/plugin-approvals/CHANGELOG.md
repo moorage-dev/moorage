@@ -1,5 +1,11 @@
 # @moorage/plugin-approvals
 
+## 0.1.4
+
+### Patch Changes
+
+- 969d4c5: On a phone, all the tabs (Waiting, Sent back, History and, for admins, Settings) now fit on the screen. Before, Settings was cut off at the right edge. The tabs no longer show counts; the numbers at the top of Waiting still do.
+
 ## 0.1.3
 
 ### Patch Changes
