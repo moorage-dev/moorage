@@ -30,7 +30,7 @@ export default defineConfig({
 });
 ```
 
-`sandboxed` needs a sandbox runner: on Cloudflare it is the Worker Loader binding from `@emdash-cms/cloudflare`; on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, let the site serve a page, then move it.
+`sandboxed` needs a sandbox runner: on Cloudflare it is the Worker Loader binding from `@emdash-cms/cloudflare`; on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the SEO page once, then move it.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
