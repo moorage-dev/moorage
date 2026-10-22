@@ -8,6 +8,8 @@
   
   Nothing to do on your side: the first page view or visit to the SEO page after updating copies your settings to the new place. Update first, open the SEO page once, and only then switch modes. Each save also keeps a copy where earlier versions look, so going back to 0.1.7 still shows your latest settings. If you go back, change settings there and then update again, the update shows the settings from before you went back; save them again.
 
+- a9004ee: The warning that two pages share a title no longer disappears by itself. When a page was saved while "Check my pages" was running, or two pages with the same title were saved at the same moment, one of them could lose the warning (or keep it after a rename) until the next check. A save now reads the pages with its title after writing, and a check no longer writes over a page saved after it read that page, so the warning ends up on exactly the pages that share a title.
+
 ## 0.1.7
 
 ### Patch Changes
