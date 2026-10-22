@@ -505,19 +505,33 @@ export function boot(c: ClientConfig): void {
 		}
 		const box = root.querySelector<HTMLElement>(".pp")!;
 		if (inline) {
-			// Where a visitor sees the block: in the text column, left-aligned with the text. The
-			// column is the first parent holding two or more paragraphs (a hero's single line is
-			// not one); the box goes before its first paragraph. With no such column, the top of
-			// the content, centred.
+			// At the top of the page's content, lined up with the page's text as a visitor sees
+			// the block in a text column: the left edge and width of the first paragraph wide
+			// enough to be body text (else the main heading). Measured, so it never has to go
+			// inside a hero or a card; measured again when the window changes size.
 			const main = d.querySelector("main") || d.body;
-			const first = Array.from(main.querySelectorAll("p")).find(
-				(p) => !!p.parentElement && p.parentElement.querySelectorAll(":scope>p").length > 1,
-			);
-			if (first) first.before(host);
-			else {
-				box.classList.add("c");
-				main.prepend(host);
-			}
+			main.prepend(host);
+			const align = () => {
+				if (!host.isConnected) {
+					removeEventListener("resize", align);
+					return;
+				}
+				const text =
+					Array.from(main.querySelectorAll("p")).find(
+						(p) => p.getBoundingClientRect().width >= 240,
+					) || main.querySelector("h1");
+				box.style.marginLeft = "";
+				box.style.maxWidth = "";
+				if (!text) {
+					box.classList.add("c");
+					return;
+				}
+				const at = text.getBoundingClientRect();
+				box.style.marginLeft = Math.max(0, at.left - box.getBoundingClientRect().left) + "px";
+				box.style.maxWidth = Math.min(640, at.width) + "px";
+			};
+			align();
+			addEventListener("resize", align);
 		} else d.body.appendChild(host);
 
 		let gone = false;

@@ -999,17 +999,36 @@ test.describe("each kind where a visitor sees it", () => {
 				),
 			);
 			await seen.context().close();
-			// The preview draws it in the same place and at the same width, below the page's heading.
+			// The preview draws it at the top of the content, lined up with the text and as wide.
 			const page = await previewTab(id, "/popups-test", phone);
 			const preview = await place(page, "[data-popups-preview-box]", ".box");
 			expect({ left: preview.left, width: preview.width }).toEqual(box);
-			const below = await page.evaluate(
-				() =>
-					document.querySelector("[data-popups-preview-box]")!.getBoundingClientRect().top >=
-					document.querySelector("main h1")!.getBoundingClientRect().bottom,
-			);
-			expect(below).toBe(true);
+			// Narrowing the window keeps it lined up.
+			if (!phone) {
+				await page.setViewportSize({ width: 900, height: 800 });
+				const narrow = await place(page, "[data-popups-preview-box]", ".box");
+				expect(narrow.left).toBe(
+					await page.evaluate(() =>
+						Math.round(document.querySelector("main h1")!.getBoundingClientRect().left),
+					),
+				);
+			}
 			await page.close();
+			// The admin's Preview opens the home page (a hero, then cards): the box is at the top,
+			// lined up with the hero's text, not centred on the page.
+			const home = await previewTab(id, "/", phone);
+			const top = await place(home, "[data-popups-preview-box]", ".box");
+			const hero = await home.evaluate(() => {
+				const p = Array.from(document.querySelectorAll("main p")).find(
+					(el) => el.getBoundingClientRect().width >= 240,
+				)!;
+				const r = p.getBoundingClientRect();
+				return { left: Math.round(r.left), width: Math.round(r.width) };
+			});
+			expect(top.left).toBe(hero.left);
+			expect(top.width).toBe(Math.min(640, hero.width));
+			expect(top.top).toBeLessThan(200);
+			await home.close();
 		}
 	});
 });
