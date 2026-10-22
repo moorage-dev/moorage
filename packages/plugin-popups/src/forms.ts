@@ -6,6 +6,8 @@
  * `definition` route on its own address, as any visitor's browser would.
  */
 
+import { fetchOwnSite } from "./self-fetch.js";
+
 export const FORMS_API = "/_emdash/api/plugins/emdash-forms/";
 
 export type FormCheck =
@@ -43,12 +45,17 @@ export async function checkForm(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), 3000);
 	try {
-		const response = await fetchImpl(`${origin}${FORMS_API}definition`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ id: form }),
-			signal: controller.signal,
-		});
+		const response = await fetchOwnSite(
+			origin,
+			`${FORMS_API}definition`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ id: form }),
+				signal: controller.signal,
+			},
+			fetchImpl,
+		);
 		if (response.status === 404) {
 			// A 404 without the plugin's error envelope means Forms is not installed at all.
 			return { result: "missing" };
@@ -87,16 +94,21 @@ export async function listForms(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), 2000);
 	try {
-		const response = await fetchImpl(`${origin}${FORMS_API}forms/list`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-EmDash-Request": "1",
-				cookie,
+		const response = await fetchOwnSite(
+			origin,
+			`${FORMS_API}forms/list`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-EmDash-Request": "1",
+					cookie,
+				},
+				body: "{}",
+				signal: controller.signal,
 			},
-			body: "{}",
-			signal: controller.signal,
-		});
+			fetchImpl,
+		);
 		if (!response.ok) return null;
 		const body = (await response.json()) as { data?: { items?: unknown } };
 		const items = body.data?.items;
