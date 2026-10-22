@@ -30,7 +30,7 @@ import {
 	NO_DELIVERY,
 	type Send,
 } from "./types.js";
-import { appRequest, classifyApp } from "./webhook.js";
+import { appLabel, appRequest, classifyApp } from "./webhook.js";
 
 export const DELIVER_TASK = "deliver";
 export const MAINTENANCE_TASK = "maintenance";
@@ -375,6 +375,15 @@ export async function attempt(
 				...(outcome.plain ? { plain: outcome.plain } : {}),
 				...(outcome.raw ? { raw: outcome.raw } : {}),
 				...(outcome.field ? { field: outcome.field } : {}),
+			};
+		} else if (row.test) {
+			// A test is answered now or not at all: it is never tried again.
+			next = {
+				...base,
+				status: "gaveup",
+				nextAt: "",
+				plain: `${delivery.kind === "hubspot" ? "HubSpot" : delivery.kind === "app" ? appLabel(delivery.app) : "The email service"} did not answer.`,
+				...(outcome.raw ? { raw: outcome.raw } : {}),
 			};
 		} else if (attempts >= MAX_ATTEMPTS) {
 			next = {

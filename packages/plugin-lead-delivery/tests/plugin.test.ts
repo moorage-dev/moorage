@@ -998,6 +998,21 @@ describe("a delivery's page", () => {
 		expect(text(off)).toContain("Turned off: nothing is sent until you turn it on");
 	});
 
+	it("does not keep trying a test that got no answer", async () => {
+		const { runtime, admin } = await start();
+		const d = delivery({ name: "Contact us → Zapier" });
+		await setDeliveries(runtime, [d]);
+		await runtime.http.respond(HOOK, new Response("", { status: 503 }));
+		const page = await runtime.admin.act(PAGE, "test", { user: admin, value: d.id });
+		expect(page.toast?.type).toBe("error");
+		const [test] = (await runtime.inspect.storage.list<Send>("deliveries")).map((r) => r.data);
+		expect(test).toMatchObject({ test: true, status: "gaveup", nextAt: "" });
+		expect(text(page)).toContain("Did not arrive: Zapier did not answer.");
+		const home = await runtime.admin.loadPage(PAGE, { user: admin });
+		const stats = home.blocks.find((b) => b.type === "stats");
+		expect(stats?.type === "stats" && stats.items[2]?.value).toBe(0);
+	});
+
 	it("deletes after a warning, and keeps what was on its way in the log as Not sent", async () => {
 		const { runtime, admin } = await start();
 		const d = delivery({ name: "Contact us → Zapier" });
