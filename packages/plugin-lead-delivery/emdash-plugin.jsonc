@@ -18,9 +18,9 @@
 		"requires": { "env:emdash": ">=1.3.0" },
 		"artifacts": {
 			"screenshots": [
-				{ "file": "./images/enquiries.png", "lang": "en" },
-				{ "file": "./images/where-enquiries-go.png", "lang": "en" },
-				{ "file": "./images/connect-forms.png", "lang": "en" },
+				{ "file": "./images/home.png", "lang": "en" },
+				{ "file": "./images/delivery.png", "lang": "en" },
+				{ "file": "./images/new-delivery.png", "lang": "en" },
 			],
 		},
 	},
@@ -32,7 +32,7 @@
 
 	// Trust contract — what runtime APIs the plugin asks for.
 	// network:request:unrestricted: the HubSpot form and app addresses are typed by the site owner.
-	// email:send: the Email place and the alerts.
+	// email:send: Email deliveries and the alerts.
 	// hooks.email-events:register: takes a form's enquiry from its notification email when the
 	// site cannot call its own address (the email way), and cancels that one email.
 	"capabilities": ["network:request:unrestricted", "email:send", "hooks.email-events:register"],
@@ -44,9 +44,9 @@
 		"widgets": [{ "id": "enquiries", "title": "Enquiries this week", "size": "third" }],
 	},
 	"storage": {
-		// One row per enquiry and place: the log, the retry queue.
+		// One row per enquiry and delivery: the log, the retry queue (name kept from 0.1 so the log survives).
 		"deliveries": { "indexes": ["status", "destination", "formId", "createdAt", "nextAt"] },
-		// What was sent, kept until every place has it.
+		// What was sent, kept until all its deliveries are done.
 		"enquiries": { "indexes": ["formId", "receivedAt"] },
 	},
 }

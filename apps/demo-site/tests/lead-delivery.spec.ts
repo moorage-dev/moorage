@@ -492,9 +492,17 @@ test("screenshots", async ({ browser }) => {
 			colorScheme: "light",
 		});
 		const page = await context.newPage();
+		const base = { width, height: width > 400 ? 900 : 844 };
 		const shot = async (name: string) => {
 			await page.waitForTimeout(500);
+			// The admin scrolls inside its own panel, so a full-page shot needs a viewport as tall as it.
+			const tallest = await page.evaluate(() =>
+				Math.max(...[...document.querySelectorAll("body *")].map((el) => el.scrollHeight)),
+			);
+			await page.setViewportSize({ width, height: Math.min(Math.max(tallest, base.height), 5000) });
+			await page.waitForTimeout(300);
 			await page.screenshot({ path: `${dir}/${name}${suffix}.png`, fullPage: true });
+			await page.setViewportSize(base);
 		};
 		await open(page);
 		await shot("home");
