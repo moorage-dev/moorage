@@ -50,20 +50,23 @@ const own = box?.colors
 	: "";
 // Inline, once per box: a block loaded through EmDash's plugin components is not part of the
 // page's own style graph, so a component stylesheet would not always reach the page.
+// The form rules count as one element (`:where()` drops the classes): they still beat a theme's
+// bare `input {}` or `button {}` (they come later in the page), and a site's own `.ec-form-*`
+// rules beat them, so a site that styles its forms keeps that look inside the box.
 const css = `
 .popups-box{--pb-text:var(--popups-text,var(--cookie-consent-text,currentColor));position:relative;max-width:640px;margin:28px 0;padding:24px;color:var(--pb-text);background:var(--popups-surface,var(--cookie-consent-surface,color-mix(in srgb,currentColor 6%,transparent)));border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:10px;font-family:var(--popups-font,var(--cookie-consent-font))}
 .popups-box h2{margin:0;font-weight:600;font-size:22px;line-height:1.25;font-family:var(--popups-heading-font,var(--cookie-consent-heading-font))}
 .popups-box>p{margin:6px 0 0}
 .popups-box .popups-box-pic{display:block;width:calc(100% + 48px);max-width:none;height:180px;margin:-24px -24px 18px;object-fit:cover;border-radius:9px 9px 0 0}
-.popups-box .ec-form{margin-top:16px}
-.popups-box .ec-form-page{border:0;margin:0;padding:0;min-width:0;display:grid;gap:12px}
-.popups-box .ec-form-label{display:block;font-weight:600;font-size:15px;margin-bottom:4px}
-.popups-box .ec-form-required{margin-left:2px}
-.popups-box .ec-form-input:not([type=checkbox]):not([type=radio]){display:block;box-sizing:border-box;width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:6px;background:var(--popups-background,var(--cookie-consent-background,Canvas));color:inherit;font-size:16px;font-family:inherit}
-.popups-box .ec-form-nav{margin-top:14px}
-.popups-box .ec-form-submit,.popups-box .popups-box-button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 20px;border-radius:6px;border:2px solid var(--popups-accent,var(--cookie-consent-accent,#141414));background:var(--popups-accent,var(--cookie-consent-accent,#141414));color:var(--popups-accent-text,var(--cookie-consent-accent-text,#fff));font-weight:600;font-size:16px;line-height:1.2;font-family:inherit;text-decoration:none;cursor:pointer}
-.popups-box .ec-form-status:not(:empty){margin-top:10px;font-weight:600}
-.popups-box .ec-form-error:empty{display:none}
+:where(.popups-box) form:where(.ec-form){margin-top:16px}
+:where(.popups-box .ec-form) fieldset:where(.ec-form-page){border:0;margin:0;padding:0;min-width:0;display:grid;gap:12px}
+:where(.popups-box .ec-form) label:where(.ec-form-label){display:block;font-weight:600;font-size:15px;margin-bottom:4px}
+:where(.popups-box .ec-form) span:where(.ec-form-required){margin-left:2px}
+:where(.popups-box .ec-form) :is(input,textarea,select):where(.ec-form-input:not([type=checkbox]):not([type=radio])){display:block;box-sizing:border-box;width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:6px;background:var(--popups-background,var(--cookie-consent-background,Canvas));color:inherit;font-size:16px;font-family:inherit}
+:where(.popups-box .ec-form) div:where(.ec-form-nav){margin-top:14px}
+:where(.popups-box .ec-form) button:where(.ec-form-submit),.popups-box .popups-box-button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 20px;border-radius:6px;border:2px solid var(--popups-accent,var(--cookie-consent-accent,#141414));background:var(--popups-accent,var(--cookie-consent-accent,#141414));color:var(--popups-accent-text,var(--cookie-consent-accent-text,#fff));font-weight:600;font-size:16px;line-height:1.2;font-family:inherit;text-decoration:none;cursor:pointer}
+:where(.popups-box .ec-form) div:where(.ec-form-status:not(:empty)){margin-top:10px;font-weight:600}
+:where(.popups-box .ec-form) span:where(.ec-form-error:empty){display:none}
 .popups-box .popups-box-go{margin-top:18px}
 .popups-box :focus-visible{outline:3px solid var(--pb-text);outline-offset:2px}
 @media (max-width:600px){.popups-box{padding:20px}.popups-box .popups-box-pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}}

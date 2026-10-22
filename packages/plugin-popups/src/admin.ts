@@ -209,38 +209,46 @@ const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; descr
 		}),
 	};
 
+const rowButton = (popup: Popup, label: string, verb: string) => ({
+	type: "button",
+	action_id: "row",
+	label,
+	value: `${verb}:${popup.id}`,
+});
+
 /**
- * A row's own buttons, as SEO's Redirects list has them: Edit, Preview and Turn
- * on or off in plain sight, and only Duplicate and Delete in a menu (for an
- * Admin). A table cell holds a button, link or menu, so on/off is a button,
- * not a switch. An unfinished popup has no on/off: Edit finishes it.
+ * A row's own buttons: Edit and Preview, each one tap away. Only two fit next to
+ * the name and status on a 390 px phone (a table scrolls sideways and clips
+ * whatever is past the edge), so Turn on or off, Duplicate and Delete are on the
+ * popup's own page, one tap behind Edit (see pageActions).
  */
-function rowActions(popup: Popup, admin: boolean): Record<string, unknown> {
-	const button = (label: string, verb: string) => ({
-		type: "button",
-		action_id: "row",
-		label,
-		value: `${verb}:${popup.id}`,
-	});
+function rowActions(popup: Popup): Record<string, unknown> {
 	return {
-		edit: button("Edit", "change"),
-		preview: button("Preview", "preview"),
-		onoff: popup.step < 4 ? null : button(popup.on ? "Turn off" : "Turn on", "toggle"),
-		...(admin
-			? {
-					more: {
-						type: "menu",
-						action_id: "row",
-						label: "More",
-						items: [
-							{ label: "Duplicate", value: `duplicate:${popup.id}` },
-							{ label: "Delete", value: `delete:${popup.id}` },
-						],
-						style: "secondary",
-					},
-				}
-			: {}),
+		edit: rowButton(popup, "Edit", "change"),
+		preview: rowButton(popup, "Preview", "preview"),
 	};
+}
+
+/**
+ * On a popup's own page: Turn on or off (a finished popup; anyone who can edit
+ * it) and, for an Admin, Duplicate and Delete in a menu. Same actions as the
+ * list's rows had, so each lands back on the list with its message.
+ */
+function pageActions(popup: Popup, admin: boolean): Block | null {
+	const elements: unknown[] = [];
+	if (popup.step >= 4) elements.push(rowButton(popup, popup.on ? "Turn off" : "Turn on", "toggle"));
+	if (admin)
+		elements.push({
+			type: "menu",
+			action_id: "row",
+			label: "More",
+			items: [
+				{ label: "Duplicate", value: `duplicate:${popup.id}` },
+				{ label: "Delete", value: `delete:${popup.id}` },
+			],
+			style: "secondary",
+		});
+	return elements.length ? ({ type: "actions", elements } as Block) : null;
 }
 
 function listBlocks(state: PageState): Block[] {
@@ -285,11 +293,11 @@ function listBlocks(state: PageState): Block[] {
 		page_action_id: "list_page",
 		columns: [
 			{ key: "name", label: "Name" },
-			{ key: "status", label: "Status", format: "badge" },
+			// Plain text, not a badge: a badge never wraps, and "On until 27 Dec, 14:00" would
+			// push the buttons off a phone's screen.
+			{ key: "status", label: "Status" },
 			{ key: "edit", label: "", format: "element" },
 			{ key: "preview", label: "", format: "element" },
-			{ key: "onoff", label: "", format: "element" },
-			...(state.admin ? [{ key: "more", label: "", format: "element" as const }] : []),
 			{ key: "where", label: "Shows on" },
 			{ key: "seen", label: "Seen" },
 			{ key: "responses", label: "Responses" },
@@ -297,7 +305,7 @@ function listBlocks(state: PageState): Block[] {
 		rows: store.popups.map((popup) => ({
 			name: `${popup.name} (${kindLine(popup)})`,
 			status: statusOf(popup, state),
-			...rowActions(popup, state.admin),
+			...rowActions(popup),
 			where: showsOnText(popup, state),
 			seen: num(state.totals.get(popup.id)?.seen),
 			responses: responsesText(popup, state.totals.get(popup.id)),
@@ -1093,8 +1101,13 @@ function popupPage(state: PageState, popup: Popup | undefined, step: number): Bl
 				},
 			],
 		});
+		// A half-made popup can still be duplicated or deleted (Admin).
+		const own = popup ? pageActions(popup, state.admin) : null;
+		if (own) blocks.push(own);
 	} else if (popup) {
 		blocks.push({ type: "context", text: `${kindLine(popup)} · ${statusOf(popup, state)}` });
+		const own = pageActions(popup, state.admin);
+		if (own) blocks.push(own);
 		if (state.admin) {
 			blocks.push({ type: "header", text: "1 What kind" }, step1Form(state, popup, false));
 		}

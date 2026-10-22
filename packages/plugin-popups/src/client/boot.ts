@@ -504,8 +504,21 @@ export function boot(c: ClientConfig): void {
 				'</div><p class="sr" role="status"></p>';
 		}
 		const box = root.querySelector<HTMLElement>(".pp")!;
-		if (inline) (d.querySelector("main") || d.body).prepend(host);
-		else d.body.appendChild(host);
+		if (inline) {
+			// Where a visitor sees the block: in the text column, left-aligned with the text. The
+			// column is the first parent holding two or more paragraphs (a hero's single line is
+			// not one); the box goes before its first paragraph. With no such column, the top of
+			// the content, centred.
+			const main = d.querySelector("main") || d.body;
+			const first = Array.from(main.querySelectorAll("p")).find(
+				(p) => !!p.parentElement && p.parentElement.querySelectorAll(":scope>p").length > 1,
+			);
+			if (first) first.before(host);
+			else {
+				box.classList.add("c");
+				main.prepend(host);
+			}
+		} else d.body.appendChild(host);
 
 		let gone = false;
 		const close = (reasonClosed: "closed" | "done") => {
