@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # Full history only where the changeset check compares against the base branch.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -64,6 +64,11 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
       options: --ipc=host
+    env:
+      # The container's localhost is ::1 first, so the dev server would listen on IPv6 only while
+      # server-side fetches to localhost (Popups asking Forms for its list, EmDash typegen) go to
+      # 127.0.0.1 and are refused. IPv4 first matches the plain Ubuntu runner.
+      NODE_OPTIONS: --dns-result-order=ipv4first
     strategy:
       fail-fast: false
       matrix:
