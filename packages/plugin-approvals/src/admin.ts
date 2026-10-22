@@ -6,7 +6,7 @@ import type { PluginContext } from "emdash";
 import { approve, ask, sendBack, type Outcome } from "./actions.js";
 import {
 	approverRole,
-	CONFIG_KEY,
+	CONFIG,
 	DEFAULT_CONFIG,
 	isHeldRole,
 	loadConfig,
@@ -27,6 +27,7 @@ import {
 	when,
 	type ApprovalRequest,
 } from "./requests.js";
+import { writeSettings } from "./settings-store.js";
 import { nameList, readableDates } from "./text.js";
 import {
 	ACTION,
@@ -754,7 +755,7 @@ export async function handleAdmin(
 			...values,
 			remind: ctx.email ? values.remind : (config ?? DEFAULT_CONFIG).remind,
 		});
-		await ctx.kv.set(CONFIG_KEY, next);
+		await writeSettings(ctx, CONFIG, next);
 		const message =
 			next.collections.length === 0 && !next.ai
 				? "Saved. Nothing needs approval."

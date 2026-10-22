@@ -2,7 +2,14 @@
 
 import type { PluginContext } from "emdash";
 
-export const CONFIG_KEY = "config";
+import { readSettings, type SettingsKeys } from "./settings-store.js";
+
+/**
+ * Where the settings are kept: `ctx.settings` "config" (KV key `settings:config`),
+ * the same in-process and sandboxed. Up to 0.1.5 it was the plain KV key `config`,
+ * still written for rollback (see settings-store.ts).
+ */
+export const CONFIG: SettingsKeys = { name: "config", legacy: "config" };
 
 export const ROLE = { contributor: 20, author: 30, editor: 40, admin: 50 } as const;
 
@@ -52,7 +59,7 @@ export function normalizeConfig(value: unknown): Config {
  * Throws when the store cannot be read; the publish hook refuses in that case.
  */
 export async function loadConfig(ctx: PluginContext): Promise<Config | null> {
-	const stored = await ctx.kv.get(CONFIG_KEY);
+	const stored = await readSettings(ctx, CONFIG);
 	return stored === null || stored === undefined ? null : normalizeConfig(stored);
 }
 
