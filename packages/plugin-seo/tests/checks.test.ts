@@ -193,13 +193,6 @@ describe("checks on a real site", () => {
 			await runtime.actions.content.update("pages", entry.id, {
 				seo: { description, image: "/hero.jpg" },
 			});
-			// EmDash runs the save hook after answering; wait for the record it writes, so it
-			// cannot land in the middle of a check started next.
-			for (let tries = 0; tries < 50; tries += 1) {
-				const stored = await runtime.inspect.storage.get("entries", `pages:${entry.id}`);
-				if (stored) break;
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			}
 		}
 		return entry;
 	}
