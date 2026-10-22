@@ -292,10 +292,10 @@ function listBlocks(state: PageState): Block[] {
 		block_id: "list",
 		page_action_id: "list_page",
 		columns: [
-			{ key: "name", label: "Name" },
-			// Plain text, not a badge: a badge never wraps, and "On until 27 Dec, 14:00" would
-			// push the buttons off a phone's screen.
-			{ key: "status", label: "Status" },
+			// Name and status share one cell: a column of its own costs its padding, and with
+			// Linux or Android fonts that pushed Preview off a 390 px phone. Plain text, not a
+			// badge: a badge never wraps.
+			{ key: "name", label: "Popup" },
 			{ key: "edit", label: "", format: "element" },
 			{ key: "preview", label: "", format: "element" },
 			{ key: "where", label: "Shows on" },
@@ -303,8 +303,7 @@ function listBlocks(state: PageState): Block[] {
 			{ key: "responses", label: "Responses" },
 		],
 		rows: store.popups.map((popup) => ({
-			name: `${popup.name} (${kindLine(popup)})`,
-			status: statusOf(popup, state),
+			name: `${popup.name} (${kindLine(popup)}) · ${statusOf(popup, state)}`,
 			...rowActions(popup),
 			where: showsOnText(popup, state),
 			seen: num(state.totals.get(popup.id)?.seen),

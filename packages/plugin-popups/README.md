@@ -104,7 +104,7 @@ Popups take your theme's colours from these CSS variables. All of them are optio
 
 A new popup is off while you make it. Its last step has "Turn it on" already switched on, so "Save and finish" starts it at its start time; switch it off first to keep it off.
 
-Each row of the list has Edit and Preview. Turn on or off, Duplicate and Delete are at the top of a popup's own page (open it with Edit).
+Each row of the list shows the popup's name and status, with Edit and Preview. Turn on or off, Duplicate and Delete are at the top of a popup's own page (open it with Edit).
 
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
 

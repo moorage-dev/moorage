@@ -82,15 +82,14 @@ describe("the list", () => {
 		expect(words(page)).not.toMatch(/Moorage|slug|webhook|KV|404/);
 	});
 
-	it("puts Name, Status and Edit first, so phones keep them in view", async () => {
+	it("puts the name with its status, then Edit, first, so phones keep them in view", async () => {
 		const fake = fakeContext({ popups: { popups: [popup({ end: Date.UTC(2099, 11, 27, 14) })] } });
 		const table = all(await load(fake)).find(
 			(b) => b.type === "table" && b.block_id === "list",
 		) as Extract<Block, { type: "table" }>;
-		expect(table.columns.slice(0, 3).map((c) => c.key)).toEqual(["name", "status", "edit"]);
+		expect(table.columns.slice(0, 3).map((c) => c.key)).toEqual(["name", "edit", "preview"]);
 		expect(table.rows[0]).toMatchObject({
-			name: "Monthly letter (Popup)",
-			status: "On until 27 Dec 2099, 14:00",
+			name: "Monthly letter (Popup) · On until 27 Dec 2099, 14:00",
 		});
 	});
 
@@ -101,10 +100,9 @@ describe("the list", () => {
 			Block,
 			{ type: "table" }
 		>;
-		// Plain text, not a badge: a badge never wraps, and "On until 27 Dec 2099, 14:00" is long.
-		expect(table.columns.map((c) => [c.key, c.format ?? "text"]).slice(0, 5)).toEqual([
+		// Plain text with the name, not a badge or a column of its own: "On until 27 Dec 2099, 14:00" is long.
+		expect(table.columns.map((c) => [c.key, c.format ?? "text"]).slice(0, 4)).toEqual([
 			["name", "text"],
-			["status", "text"],
 			["edit", "element"],
 			["preview", "element"],
 			["where", "text"],

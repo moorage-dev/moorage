@@ -291,7 +291,7 @@ test.describe("admin", () => {
 			const box = (t.parentElement ?? t).getBoundingClientRect();
 			const right = Math.min(box.right, window.innerWidth) - 12;
 			return [...t.querySelectorAll("tbody tr")].flatMap((tr) =>
-				[...tr.querySelectorAll("td:nth-child(2), td:nth-child(2) > *, td button")]
+				[...tr.querySelectorAll("td:nth-child(1), td button")]
 					.filter((el) => el.getBoundingClientRect().right > right)
 					.map(
 						(el) =>
@@ -566,7 +566,7 @@ test.describe("slide-in", () => {
 		const numbers = JSON.stringify(
 			await adminPost(`${API}/admin`, { type: "page_load", page: "/" }),
 		);
-		expect(numbers).toContain('"name":"Christmas cakes (Slide-in)"');
+		expect(numbers).toContain('"name":"Christmas cakes (Slide-in) · On"');
 		expect(id).toBeTruthy();
 		await page.context().close();
 	});
