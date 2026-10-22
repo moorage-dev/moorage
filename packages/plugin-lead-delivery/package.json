@@ -1,6 +1,6 @@
 {
 	"name": "@moorage/plugin-lead-delivery",
-	"version": "0.1.2",
+	"version": "0.2.0",
 	"description": "Send EmDash form enquiries to HubSpot, Zapier, Make, n8n or email, with a delivery log, retries and an alert when one fails.",
 	"keywords": [
 		"emdash",
