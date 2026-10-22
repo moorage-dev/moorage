@@ -16,9 +16,11 @@ import {
 	type PageRow,
 } from "./model.js";
 import { estimate, links, pages, passStep, resolveLocal, startPass } from "./scan.js";
+import { writeSettings } from "./settings-store.js";
 import {
 	applyChange,
 	KEY,
+	OPTIONS,
 	load,
 	totalFix,
 	view,
@@ -986,7 +988,7 @@ export async function handleAdmin(
 	// The alert list starts with the first Admin who opens the page.
 	if (admin && data.options.recipients === undefined && user?.email) {
 		data.options = { ...data.options, recipients: [user.email.toLowerCase()] };
-		await ctx.kv.set(KEY.options, data.options);
+		await writeSettings(ctx, OPTIONS, data.options);
 	} else if (interaction.type === "page_load" || action === "refresh") {
 		await nudge(ctx, data, counter, now, action === "refresh");
 	}
@@ -1175,7 +1177,7 @@ export async function handleAdmin(
 				recipients: parsed.list,
 				outbound: typeof values.outbound === "boolean" ? values.outbound : data.options.outbound,
 			};
-			await ctx.kv.set(KEY.options, data.options);
+			await writeSettings(ctx, OPTIONS, data.options);
 			return render(
 				ctx,
 				data,
