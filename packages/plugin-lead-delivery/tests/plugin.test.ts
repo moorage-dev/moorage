@@ -641,7 +641,7 @@ describe("updating from 0.1", () => {
 			["appplace01", "Contact us → Zapier", "My Zap", "24h"],
 		]);
 		expect(after.deliveries[1]!.secret).toBe(places[1]!.secret);
-		expect("places" in after).toBe(false);
+		expect(after.places).toEqual(places); // kept for a rollback to 0.1.2
 	});
 
 	it("keeps the email way working with the old private address", async () => {

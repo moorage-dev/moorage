@@ -82,6 +82,12 @@ export interface Config {
 	reach?: { result: ReachResult; at: string };
 	/** Show the one-time note that the setup is now a list of deliveries. */
 	notice?: boolean;
+	/**
+	 * The 0.1 setup, kept untouched next to `deliveries` so going back to 0.1.2 still works.
+	 * 0.2 never reads or changes them. Kept for rollback until 0.3.
+	 */
+	places?: unknown[];
+	testedAt?: string;
 }
 
 /** One enquiry as this plugin received it. Contents are deleted once all its deliveries are done. */

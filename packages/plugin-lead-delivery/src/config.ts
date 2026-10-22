@@ -51,6 +51,10 @@ function siteParts(value: Record<string, unknown>) {
 		key: typeof value.key === "string" && value.key.length >= 32 ? value.key : "",
 		...(typeof value.keySetAt === "string" ? { keySetAt: value.keySetAt } : {}),
 		...(isRecord(value.reach) ? { reach: value.reach as Config["reach"] } : {}),
+		// The 0.1 setup, passed through untouched so 0.1.2 can still read it after a rollback.
+		// Kept until 0.3.
+		...(Array.isArray(value.places) ? { places: value.places as unknown[] } : {}),
+		...(typeof value.testedAt === "string" ? { testedAt: value.testedAt } : {}),
 	};
 }
 

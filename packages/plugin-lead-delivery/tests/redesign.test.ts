@@ -81,8 +81,8 @@ describe("moving a 0.1 setup to deliveries", () => {
 		expect(config.alertTo).toEqual(OLD.alertTo);
 		expect(config.reach).toEqual(OLD.reach);
 		expect(config.notice).toBe(true);
-		expect("testedAt" in config).toBe(false);
-		expect("places" in config).toBe(false);
+		expect(config.testedAt).toBe(OLD.testedAt); // kept for a rollback to 0.1.2
+		expect(config.places).toEqual(OLD.places);
 		expect(config.deliveries.map((d) => d.id)).toEqual(["mail1abcde", "hubs2abcde", "app3abcdef"]);
 
 		const [mail, hub, app] = config.deliveries as [Delivery, Delivery, Delivery];
