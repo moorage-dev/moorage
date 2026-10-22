@@ -2,24 +2,25 @@ Every enquiry sent through your EmDash forms goes where you work: your inbox, Hu
 
 ## What it does
 
-- **Email** each enquiry to one or more addresses, with the form's own field labels. Pressing Reply answers the person.
-- **HubSpot**: each enquiry becomes a HubSpot form submission, so your HubSpot workflows and notifications run. Paste the HubSpot form's share link or embed code; no HubSpot key is stored.
-- **Another app (Zapier, Make, n8n or your own)**: each enquiry is sent as flat JSON, signed with Standard Webhooks headers.
-- **A delivery log** your clients can read: who, which form, where it went, and whether it arrived. Send again with one press.
-- **Retries**: 8 tries over about two days when a service does not answer.
-- **Alerts** by email to everyone who looks after the site, at most once a day for each kind: an enquiry that could not be delivered, a form that usually gets enquiries and has gone quiet for 3 days, retries that are not running.
-- **Flags**: possibly fake email addresses and the same person sending again are marked, never dropped. Optionally, don't send the same person twice within 24 hours.
+- **Deliveries**: a form and where its enquiries go, named for you ("Contact form → Shop inbox"). A form can have several.
+- **Email** to one or more addresses, with the form's own field labels. Reply answers the person.
+- **HubSpot**: each enquiry becomes a HubSpot form submission. Paste the form's share link or embed code; no key is stored.
+- **Another app (Zapier, Make, n8n or your own)**: flat JSON, signed with Standard Webhooks headers.
+- **A delivery log** your clients can read, with Send again.
+- **Retries**: 8 tries over about two days.
+- **Alerts** by email, at most once a day for each kind: an enquiry that could not be delivered, a form gone quiet for 3 days, retries not running.
+- **Marks, not filters**: possibly fake addresses, the same address again and possibly spam are marked at the top of each email and still sent. Each delivery can hold repeats (24 hours or 7 days) and possibly spam.
 
 ## What it does not do
 
-- No Mailchimp yet (next release).
-- File attachments are not sent; the log says so and they stay in Forms → Submissions.
+- No Mailchimp yet.
+- File attachments are not sent; they stay in Forms → Submissions.
 - It does not replace the Forms inbox; every enquiry stays there.
 
 ## Connecting a form
 
-EmDash's form editor cannot yet be pointed at another plugin, so someone who looks after the site's code connects each form once. The plugin writes the instructions and can email them.
+EmDash's form editor cannot yet be pointed at another plugin, so someone who looks after the site's code connects each form once. New delivery shows the instructions and can email them.
 
 ## Permissions
 
-Send web requests to the addresses you enter (HubSpot and your apps). Send email (the Email place and alerts). Read the forms' notification emails to its private address, and cancel those, so nothing is sent there.
+Send web requests to the addresses you enter. Send email (Email deliveries and alerts). Read the forms' notification emails to its private address, and cancel those.

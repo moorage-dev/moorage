@@ -1,7 +1,8 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { inboundUrl, plural, privateEmail } from "./config.js";
-import type { Delivery, Enquiry, KnownForm, ReachResult } from "./types.js";
+import { formWords } from "./names.js";
+import type { Enquiry, KnownForm, ReachResult, Send } from "./types.js";
 
 const UTM_LABELS: Record<string, string> = {
 	utm_source: "UTM source",
@@ -11,11 +12,19 @@ const UTM_LABELS: Record<string, string> = {
 	utm_content: "UTM content",
 };
 
-/** The Email place's message: labels, not keys; Reply-To the person. */
+/** The email an Email delivery sends: marks first, labels not keys; Reply-To the person. */
 export function enquiryEmail(site: string, enquiry: Enquiry, test: boolean) {
 	const who = enquiry.name ?? enquiry.email ?? "Someone";
+	const marks = markWords(enquiry);
 	const lines = [
-		`${who}${enquiry.name && enquiry.email ? ` (${enquiry.email})` : ""} sent the ${enquiry.formName} form on your website.${test ? " This is a test from Lead delivery." : ""}`,
+		...(marks.length
+			? [
+					`Marked: ${marks.join(" · ")}`,
+					"These marks are a guess. Lead delivery still sends marked enquiries.",
+					"",
+				]
+			: []),
+		`${who}${enquiry.name && enquiry.email ? ` (${enquiry.email})` : ""} sent the ${formWords(enquiry.formName)} on your website.${test ? " This is a test from Lead delivery." : ""}`,
 		"",
 		...enquiry.fields
 			.filter((f) => !(f.key in UTM_LABELS) && f.key !== "page_url")
@@ -39,6 +48,16 @@ export function enquiryEmail(site: string, enquiry: Enquiry, test: boolean) {
 	};
 }
 
+/** An enquiry's marks in words, as the top of a delivered email lists them. */
+export function markWords(enquiry: Enquiry): string[] {
+	const marks: string[] = [];
+	if (enquiry.throwaway) marks.push("possibly fake address");
+	if (enquiry.repeatAfterMs !== undefined)
+		marks.push(repeatNote(enquiry.repeatAfterMs).toLowerCase());
+	if (enquiry.spam) marks.push("possibly spam");
+	return marks;
+}
+
 /** The service's own words as one plain line: no markup, no runs of spaces, not too long. */
 export function ownWords(raw: string, max = 300): string {
 	const flat = raw
@@ -59,12 +78,12 @@ export function repeatNote(elapsedMs: number): string {
 	return `Same address ${plural(Math.floor(hours / 24), "day")} earlier`;
 }
 
-export function failureAlert(site: string, rows: Array<{ delivery: Delivery; place: string }>) {
-	const parts = rows.map(({ delivery, place }) => {
-		const words = delivery.raw ? ownWords(delivery.raw) : "";
-		const reason = delivery.plain ?? "Its service refused it.";
+export function failureAlert(site: string, rows: Array<{ send: Send; name: string }>) {
+	const parts = rows.map(({ send, name }) => {
+		const words = send.raw ? ownWords(send.raw) : "";
+		const reason = send.plain ?? "Its service refused it.";
 		return [
-			`${delivery.who}'s enquiry from the ${delivery.formName} form could not be sent to "${place}".`,
+			`${send.who}'s enquiry from the ${formWords(send.formName)} could not be delivered by "${name}".`,
 			"",
 			// Never point at words that are not there.
 			words ? reason : reason.replace(" Its own words are below.", ""),
@@ -72,7 +91,7 @@ export function failureAlert(site: string, rows: Array<{ delivery: Delivery; pla
 		].join("\n");
 	});
 	// Most reasons already end "press Send again"; say where it is only when none does.
-	const saysSendAgain = rows.some(({ delivery }) => delivery.plain?.includes("Send again"));
+	const saysSendAgain = rows.some(({ send }) => send.plain?.includes("Send again"));
 	return {
 		subject:
 			rows.length === 1
@@ -83,7 +102,7 @@ export function failureAlert(site: string, rows: Array<{ delivery: Delivery; pla
 			...(saysSendAgain
 				? []
 				: ["When it is fixed, press Send again in Lead delivery → Enquiries.", ""]),
-			"The enquiry is safe: it is waiting in Lead delivery and in Forms → Submissions.",
+			"The enquiry is safe: it is kept in Lead delivery and in Forms → Submissions.",
 			"You get this email at most once a day.",
 		].join("\n"),
 	};
@@ -102,7 +121,7 @@ export function quietAlert(site: string, lines: string[]) {
 		text: [
 			...lines.map((line) => `${line} It usually gets some every few days.`),
 			"",
-			"Check the form still sends: send yourself a test through it on your site, then look for it in Lead delivery → Enquiries.",
+			"Check the form still sends: send yourself an enquiry through it on your site, then look for it in Lead delivery.",
 			"",
 			"You get this email at most once a day.",
 		].join("\n"),
@@ -111,11 +130,11 @@ export function quietAlert(site: string, lines: string[]) {
 
 export function schedulerAlert(site: string) {
 	return {
-		subject: `${site}: enquiries are waiting to be sent again`,
+		subject: `${site}: retries are not running`,
 		text: [
-			"Some enquiries could not be delivered at the first try and are waiting to be tried again, but scheduled tasks are not running on this site, so they are not being retried.",
+			"Some enquiries did not get through at the first try. Lead delivery tries them again, but scheduled tasks are not running on this site, so it cannot.",
 			"",
-			"Ask your web person to check the site's scheduled tasks (on Cloudflare: a Cron Trigger every minute). Until then you can press Send now in Lead delivery → Enquiries.",
+			"Ask your web person to check the site's scheduled tasks (on Cloudflare: a Cron Trigger every minute). Until then you can press Send now in Lead delivery.",
 			"",
 			"You get this email at most once a day.",
 		].join("\n"),
@@ -127,7 +146,7 @@ export function instructions(opts: {
 	site: string;
 	origin: string;
 	key: string;
-	forms: string[];
+	form: { slug: string; name: string };
 	reach: ReachResult | undefined;
 }): string {
 	const { origin, key } = opts;
@@ -138,19 +157,19 @@ export function instructions(opts: {
 	const update = `${origin}/_emdash/api/plugins/emdash-forms/forms/update`;
 	const viaEmail = opts.reach === "email" || opts.reach === "none";
 	const lines = [
-		`Connecting the forms on ${opts.site} (${host}) to Lead Delivery`,
+		`Connecting the ${formWords(opts.form.name)} on ${opts.site} (${host}) to Lead Delivery`,
 		"",
-		`Forms to connect: ${opts.forms.length ? opts.forms.join(", ") : "every form on the site"}`,
+		`Its short name in Forms: ${opts.form.slug}`,
 		"",
 	];
 	if (viaEmail) {
 		lines.push(
-			"This site cannot call its own address, so each form hands its enquiries",
+			"This site cannot call its own address, so the form hands its enquiries",
 			"over through a private email address. Nobody receives that email.",
 			"",
-			"For each form, once:",
+			"For the form, once:",
 			"1. Make an API token with Admin scope: Settings → API tokens.",
-			"2. Find the form's ID:",
+			"2. Find the form's ID (look for its short name in the list):",
 			`   GET ${list}`,
 			"3. Add this address to the form's notifyEmails, keeping the addresses",
 			"   already there (the update replaces the whole list), digest off:",
@@ -158,7 +177,7 @@ export function instructions(opts: {
 			`   POST ${update}`,
 			`   {"id":"FORM_ID","settings":{"notifyEmails":["${mail}"],"digestEnabled":false}}`,
 			"   Headers: Authorization: Bearer TOKEN, X-EmDash-Request: 1",
-			"4. Send one test through each form, then open Lead delivery to see it arrive.",
+			"4. Send one enquiry through the form, then open Lead delivery to see it arrive.",
 			"",
 			"If Lead Delivery is ever removed, take the private address out of notifyEmails too:",
 			"the .invalid domain can never receive mail, so your email provider would only",
@@ -170,18 +189,18 @@ export function instructions(opts: {
 		);
 	} else {
 		lines.push(
-			"Each form sends its enquiries straight to Lead Delivery.",
+			"The form sends its enquiries straight to Lead Delivery.",
 			"",
-			"For each form, once:",
+			"For the form, once:",
 			"1. Make an API token with Admin scope: Settings → API tokens.",
-			"2. Find the form's ID:",
+			"2. Find the form's ID (look for its short name in the list):",
 			`   GET ${list}`,
 			"3. Set the form's webhookUrl to this address:",
 			`   ${address}`,
 			`   POST ${update}`,
 			`   {"id":"FORM_ID","settings":{"webhookUrl":"${address}"}}`,
 			"   Headers: Authorization: Bearer TOKEN, X-EmDash-Request: 1",
-			"4. Send one test through each form, then open Lead delivery to see it arrive.",
+			"4. Send one enquiry through the form, then open Lead delivery to see it arrive.",
 			"",
 			"On Cloudflare the Worker needs the compatibility flag",
 			"global_fetch_strictly_public to call its own address. If enquiries do not",

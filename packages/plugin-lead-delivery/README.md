@@ -2,33 +2,51 @@
 
 Lead Delivery for [EmDash](https://emdashcms.com) sends every enquiry from your forms where you work: your inbox, HubSpot, or another app such as Zapier, Make or n8n. Each enquiry is logged and tried again if it does not get through. If one cannot be delivered, everyone who looks after the site hears about it. It works with the official forms plugin, on any EmDash site, with no account and no key.
 
-![The Enquiries log](images/enquiries.png)
+![Lead delivery: counters, deliveries and the latest enquiries](images/home.png)
+
+## How it works
+
+A **delivery** is one form and where its enquiries go: an inbox (or several), a HubSpot form, or another app. Lead Delivery names it for you, for example "Contact form → Shop inbox", and you can rename it. One form can have several deliveries, for example "Contact form → Shop inbox" and "Contact form → HubSpot".
+
+Everything is on one page, **Lead delivery** under Marketing:
+
+- **Home**: this week's counters (received, delivered, trying again, needs fixing), a red notice for each delivery that needs fixing, the list of deliveries with **Open** and **Enquiries** on each row, the latest enquiries, and the **Settings for the whole site** (folded away).
+- **New delivery**: choose the form and where to send, then the details. A test is sent when you save (for HubSpot only when you ask, because a test adds a contact). If the form has never been connected, the instructions to connect it come next.
+- **A delivery's page**: its two checks (did the test arrive; are real enquiries arriving), Send a test, Edit, Turn off, the repeat and spam choices, its own enquiries, and Delete.
+- **Edit**: the name, the address or HubSpot form, which forms it takes (one form usually; several, or all forms including new ones, for an inbox that gets everything), on or off, and HubSpot field matching.
+- **Enquiries**: the whole log, or one delivery's, with Send again.
+
+![A delivery's page](images/delivery.png)
 
 ## What it does
 
 - **Email.** Sends each enquiry to one or more addresses, using the form's own field labels. Pressing Reply answers the person who sent it.
 - **HubSpot.** Each enquiry becomes a HubSpot form submission, so your HubSpot workflows and notifications run.
   - Paste the HubSpot form's share link or embed code. No HubSpot key is stored.
-  - Each form field is matched to a HubSpot field from a list. This happens automatically where the names make it obvious, and works before the first enquiry when the site can look the form up.
+  - Each form field is matched to a HubSpot field from a list. This happens automatically where the names make it obvious. A form's fields are known once it has sent an enquiry, or when the site can look the form up.
   - Consent goes to HubSpot only when someone ticked a consent box, or when you say your HubSpot account has its privacy (GDPR) settings on.
-  - Possibly fake email addresses (from services that hand out short-lived inboxes) can be marked in a HubSpot field you choose.
-- **Another app (Zapier, Make, n8n or your own).** Each enquiry is sent as flat JSON, signed with the [Standard Webhooks](https://www.standardwebhooks.com/) headers, with one secret for each app.
-- **A delivery log** that Editors (usually your client) can read. It shows who sent the enquiry, from which form, where it went and whether it arrived, with a Send again button.
-- **Retries.** An enquiry that gets no answer is tried 8 times over about two days. When a service refuses an enquiry for a reason that would fail the same way again, it is not retried. Instead, the admin says in plain words what to fix, with the service's own words beneath.
+  - Possibly fake email addresses can be marked in a HubSpot field you choose.
+- **Another app (Zapier, Make, n8n or your own).** Each enquiry is sent as flat JSON, signed with the [Standard Webhooks](https://www.standardwebhooks.com/) headers, with one secret for each delivery. The JSON has a `marks` list (`throwaway`, `repeat`, `spam`) and, for a repeat, `repeatAfterMinutes`.
+- **A delivery log** that Editors (usually your client) can read. It shows who sent the enquiry, through which delivery, and whether it arrived, with a Send again button.
+- **Retries.** An enquiry that gets no answer is tried 8 times over about two days. When a service refuses an enquiry for a reason that would fail the same way again, it is not retried. Instead, the page says in plain words what to fix, with the service's own words beneath. A test is never retried.
 - **Alerts by email** to several addresses. The subject starts with the site's name, and each kind of alert is sent at most once a day. There are three kinds:
   - an enquiry could not be delivered;
   - a form that usually gets enquiries has had none for 3 days;
-  - retries are waiting because scheduled tasks are not running.
-- **Flags, not filters.** Possibly fake email addresses (from about 150 services that hand out short-lived inboxes) and the same person sending again are marked in the log, and are still delivered. If you want, turn on "Don't send the same person twice within 24 hours" for a place.
+  - retries are not running, because scheduled tasks are not running on the site.
+- **Marks, not filters.** Three things are marked in the log and at the top of each delivered email, and the enquiry is still sent:
+  - a possibly fake address (from about 150 services that hand out short-lived inboxes);
+  - the same address again ("same address 3 hours earlier");
+  - possibly spam: three or more links, a known sales-pitch phrase (such as "SEO services" or "guest post"), a message that is only a link, or a link in the name.
+- **Repeats and spam, for each delivery.** "Same email address again": send every enquiry (the default, recommended for email), or don't send the same address twice within 24 hours, or within 7 days. "Don't send possibly spam" holds those enquiries. Either way, a held enquiry is listed as **Not sent** with the reason, and Send again sends it.
 - **The page and UTM values** are sent with each enquiry when the form provides them: form fields named `page_url`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term` or `utm_content`.
-- **Send a test** to each place. For HubSpot it asks first, because a test adds a contact.
 - **A dashboard widget**, "Enquiries this week".
 
 ## What it does not do
 
-- No Mailchimp yet. It is the next release.
+- No Mailchimp yet.
 - File attachments are not sent. The log says the enquiry has one, and the file stays in Forms → Submissions.
 - It does not replace the Forms inbox: every enquiry is kept there whatever happens here.
+- It does not block spam at the form. See "Stop spam" below.
 - No reports or charts, no routing rules, no syncing back from HubSpot, no HubSpot tracking cookie.
 
 ## Install
@@ -54,7 +72,13 @@ It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin
 
 ## Connecting a form
 
-EmDash's form editor cannot yet be pointed at another plugin. Until it can, someone who looks after the site's code connects each form once. Open **Lead delivery → Connect forms**, add your forms by their short name (the Slug column under Forms), and press **Check this site**. The plugin then writes the instructions for your web person and can email them. There are two ways to connect, and the check says which one works on your site:
+EmDash's form editor cannot yet be pointed at another plugin. Until it can, someone who looks after the site's code connects each form once. When you make a form's first delivery, **Connect this form** shows the instructions for that form and can email them to your web person. Press **I have done this** once they have, or **Skip for now**: the delivery's page says "Not sending yet: … is not connected" with a **Connect this form** button until the form is connected.
+
+In **New delivery**, "Which form?" lists the forms Lead Delivery already knows (from enquiries, and from forms named before). For another form, choose **Another form** and type its short name: Forms lists it under each form's name.
+
+When enquiries arrive from a form no delivery takes (for example because the form's email names it differently from the short name you typed), they are kept and listed as Not sent, and the page says so: "2 enquiries from Contact us were not sent: no delivery takes this form". One press adds that form to your delivery (or lets you choose which, starting with the one that has received nothing) and sends them. A delivery that has received nothing also asks "Enquiries arrived from Contact us instead: is that the one?".
+
+Lead Delivery checks once which of two ways works on your site:
 
 - **Straight from the form.** The form's `webhookUrl` is set to the plugin's private address. This needs the site to be able to call its own address. On Cloudflare that needs the compatibility flag `global_fetch_strictly_public`.
 - **Through the form's email.** The form's notification list gets one private address ending in `@lead-delivery.invalid`. When the forms plugin sends that email, Lead Delivery takes the enquiry from it and cancels the email, so nobody receives it and nothing leaves the site. This needs email to be set up on the site and the form's daily digest to be off. It has some limits:
@@ -62,42 +86,49 @@ EmDash's form editor cannot yet be pointed at another plugin. Until it can, some
   - hidden fields, such as UTM values, are left out of it;
   - a message that itself contains lines like "Label: value" can be split wrongly.
 
-"Reset the private address" changes both addresses. Every connected form stops sending until it is connected again.
+"Reset the private address" (under Settings for the whole site) changes both addresses. Every connected form stops sending until it is connected again, and each delivery's page offers Connect this form again.
+
+## Stop spam
+
+Lead Delivery marks possibly spam; it does not stop it reaching the form. To stop bots at the form, turn on Turnstile in the form's settings under Forms. Forms with Turnstile cannot go in a popup yet.
 
 ## Settings
 
-All settings are on one page, **Lead delivery** under Marketing:
+All on the one page:
 
-- **Enquiries:** the log, Send again, and Send all failed again.
-- **Where enquiries go** (admins):
-  - the places, each with its forms (all forms, including new ones, by default);
-  - an on/off switch for each place;
-  - "Don't send the same person twice within 24 hours";
-  - HubSpot field matching;
-  - who hears when something needs fixing (prefilled with your own address).
-- **Connect forms** (admins): your forms, the site check, the instructions, and resetting the private address.
+- **Each delivery** (admins): its name, the address, HubSpot form or app, which forms it takes, on or off, "Same email address again" (off, 24 hours or 7 days), "Don't send possibly spam", HubSpot field matching, and for an app a new signing secret.
+- **Settings for the whole site** (admins), folded at the bottom of the page. It opens by itself when nobody gets alerts or the forms have no way to hand enquiries over:
+  - who hears when something needs fixing (prefilled with your own address);
+  - this site's check, with Check again;
+  - the private address, with Reset.
 
-These are fixed, not settings: the retry schedule, keeping log rows for 30 days, and deleting an enquiry's contents once every place has it.
+These are fixed, not settings: the retry schedule, keeping log rows for 30 days, and deleting an enquiry's contents once all its deliveries are done.
+
+## Updating from 0.1
+
+Nothing to do. On the first run after the update, each inbox, HubSpot form or app you set up becomes a delivery with the same id, so the log, retries, HubSpot matching and app secrets stay as they were, and connected forms keep sending to the same private address. Each delivery gets a new name from its forms and where it sends (for example "All forms → Shop inbox"); the page says so once. "Don't send the same person twice within 24 hours" becomes "Don't send the same address twice within 24 hours".
 
 ## FAQ
 
-**Does it lose enquiries?** Not from the moment one reaches it. Each enquiry is stored once and kept until every place has it, and every enquiry is also in Forms → Submissions. If a form stops reaching the plugin altogether, the quiet-form alert tells you after 3 days.
+**Does it lose enquiries?** Not from the moment one reaches it. Each enquiry is stored once and kept until all its deliveries are done, and every enquiry is also in Forms → Submissions. An enquiry from a form with no delivery is listed as Not sent. If a form stops reaching the plugin altogether, the quiet-form alert tells you after 3 days.
 
-**Why does HubSpot say a field is not on the form?** HubSpot accepts only the fields on that HubSpot form. Add the field there, or choose another one under the form's matching. Then press Send again.
+**Why was a marked enquiry still sent?** Marks are a guess, so they never block on their own. Turn on "Don't send possibly spam" or a repeat choice on the delivery's page to hold those.
+
+**Why does HubSpot say a field is not on the form?** HubSpot accepts only the fields on that HubSpot form. Add the field there, or choose another one in the delivery's Edit. Then press Send again.
 
 **Why does HubSpot refuse every enquiry?** CAPTCHA may be on for that HubSpot form. HubSpot refuses enquiries sent from a website to a form that has CAPTCHA on.
 
 **Does Zapier cost money?** "Webhooks by Zapier" needs a paid Zapier plan. Make's Custom webhook and n8n's Webhook node do not.
 
-**How does my app check an enquiry came from my site?** Check the `webhook-signature` header with the secret shown when you saved the app. Any Standard Webhooks library does it.
+**How does my app check an enquiry came from my site?** Check the `webhook-signature` header with the secret shown when you saved the delivery. Any Standard Webhooks library does it.
 
-**Can my clients change it?** No. Editors see the log and can press Send again; only admins change where enquiries go.
+**Can my clients change it?** No. Editors see the counters, the deliveries and the log, and can press Send again; only admins add or change deliveries.
 
 **Is it free?** Yes, on any number of sites, your own or your clients', with no account and no key. It is open source under the MIT License.
 
 ## Changelog
 
-0.1.0: the first version. Later changes are listed in CHANGELOG.md.
+0.2.0: deliveries, one page, repeats for 24 hours or 7 days, the possibly spam mark, marks at the top of each email. 0.1.0: the first version. Every change is listed in CHANGELOG.md.
 
 ## Develop
 

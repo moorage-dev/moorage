@@ -4,7 +4,7 @@ import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Config, Delivery } from "../src/types.js";
+import type { Config, Delivery, Send } from "../src/types.js";
 
 // What the coordinator review asked for: a site with no name, and proof that the email way never sends anything to the private address.
 
@@ -32,13 +32,22 @@ async function key(runtime: PluginRuntimeTestHost) {
 	return (await runtime.inspect.kv.get<Config>("config"))!.key;
 }
 
-async function addApp(runtime: PluginRuntimeTestHost, admin: Admin, url: string, name: string) {
-	return runtime.admin.submit(
-		PAGE,
-		"save_place",
-		{ kind: "app", app: "zapier", url, name, forms: ["all"], on: true, no_duplicates: false },
-		{ user: admin, blockId: "place:new" },
-	);
+async function addApp(runtime: PluginRuntimeTestHost, _admin: Admin, url: string, name: string) {
+	const config = (await runtime.inspect.kv.get<Config>("config"))!;
+	const app: Delivery = {
+		id: "app0000001",
+		kind: "app",
+		name,
+		forms: "all",
+		on: true,
+		repeat: "off",
+		holdSpam: false,
+		createdAt: new Date().toISOString(),
+		app: "zapier",
+		url,
+		secret: "whsec_c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0",
+	};
+	await runtime.fixtures.plugin.kv("config", { ...config, deliveries: [app] });
 }
 
 async function inbound(runtime: PluginRuntimeTestHost, id: string) {
@@ -127,12 +136,12 @@ describe("the email way never sends to the private address", () => {
 			},
 		});
 		expect(result).toBe(false);
-		const [row] = (await runtime.inspect.storage.list<Delivery>("deliveries")).map((r) => r.data);
+		const [row] = (await runtime.inspect.storage.list<Send>("deliveries")).map((r) => r.data);
 		expect(row).toMatchObject({ email: "tom@example.com", status: "retrying" });
 		expect(row?.notes).toContain("Sent as text: its fields could not be read");
 		const page = await runtime.admin.loadPage(PAGE, { user: admin });
 		expect(text(page)).toContain(
-			"An enquiry from Contact us got a new entry was sent as plain text",
+			"An enquiry from Contact us got a new entry was read as plain text",
 		);
 
 		await runtime.http.respond(HOOK, new Response("ok"));

@@ -20,7 +20,7 @@ import {
 	repeatNote,
 } from "../src/messages.js";
 import { isThrowaway, THROWAWAY_COUNT } from "../src/throwaway.js";
-import type { Delivery, Enquiry, KnownForm, Place } from "../src/types.js";
+import type { Delivery, Enquiry, KnownForm, Send } from "../src/types.js";
 import { appPayload, classifyApp, sign } from "../src/webhook.js";
 
 const CAKES: KnownForm = {
@@ -57,14 +57,15 @@ const PAYLOAD = {
 	submittedAt: "2026-10-16T09:00:00.000Z",
 };
 
-function hubspot(overrides: Partial<Place> = {}): Place {
+function hubspot(overrides: Partial<Delivery> = {}): Delivery {
 	return {
 		id: "hs",
 		kind: "hubspot",
 		name: "HubSpot",
 		forms: "all",
 		on: true,
-		noDuplicates: false,
+		repeat: "off",
+		holdSpam: false,
 		createdAt: "2026-10-01T00:00:00.000Z",
 		portalId: "4410287",
 		formGuid: "9f1c2b3a-1111-2222-3333-444455556666",
@@ -305,7 +306,7 @@ describe("another app", () => {
 	});
 
 	it("treats a deleted Zap and a sign-in redirect as needing a fix", () => {
-		const place: Place = {
+		const place: Delivery = {
 			...hubspot(),
 			kind: "app",
 			app: "zapier",
@@ -341,9 +342,9 @@ describe("emails and words", () => {
 	});
 
 	it("puts the service's own words in the failure alert and says Send again once", () => {
-		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Place;
+		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Delivery;
 		const refused = classifyApp(zap, 400, "", "Invalid payload");
-		const row = (who: string, plain?: string, raw?: string): Delivery => ({
+		const row = (who: string, plain?: string, raw?: string): Send => ({
 			enquiryId: who,
 			destination: "p1",
 			formId: "wedding-cakes",
@@ -361,12 +362,12 @@ describe("emails and words", () => {
 
 		const one = failureAlert("Crumb & Co.", [
 			{
-				delivery: row(
+				send: row(
 					"Tom Reyes",
 					refused.plain,
 					"Zapier answered 400:   Invalid payload:\n  missing   email  ",
 				),
-				place: "Zapier",
+				name: "Zapier",
 			},
 		]).text;
 		expect(one).toContain(
@@ -377,7 +378,7 @@ describe("emails and words", () => {
 		// An HTML error page arrives as plain words, cut short.
 		const html = `Zapier answered 400: <!DOCTYPE html><html><head><style>p{color:red}</style></head><body><p>Bad   request</p>${"x".repeat(400)}</body></html>`;
 		const page = failureAlert("Crumb & Co.", [
-			{ delivery: row("Tom", refused.plain, html), place: "Zapier" },
+			{ send: row("Tom", refused.plain, html), name: "Zapier" },
 		]).text;
 		expect(page).toContain("Zapier answered 400: Bad request xxx");
 		expect(page).not.toMatch(/<|color:red/);
@@ -386,22 +387,22 @@ describe("emails and words", () => {
 		// A reason that does not say Send again: the email says it once, with where it is.
 		const gone = classifyApp(zap, 404, "", "").plain!;
 		const missing = failureAlert("Crumb & Co.", [
-			{ delivery: row("Ann", gone, "Zapier answered 404"), place: "Zapier" },
+			{ send: row("Ann", gone, "Zapier answered 404"), name: "Zapier" },
 		]).text;
 		expect(sendAgain(missing)).toBe(1);
 		expect(missing).toContain("press Send again in Lead delivery → Enquiries.");
 
 		// Two rows that each say it: once per row, no extra footer.
 		const two = failureAlert("Crumb & Co.", [
-			{ delivery: row("Tom", refused.plain), place: "Zapier" },
-			{ delivery: row("Ann", refused.plain), place: "Zapier" },
+			{ send: row("Tom", refused.plain), name: "Zapier" },
+			{ send: row("Ann", refused.plain), name: "Zapier" },
 		]).text;
 		expect(sendAgain(two)).toBe(2);
 		expect(two).not.toContain("in Lead delivery → Enquiries.");
 	});
 
 	it("never says the service's own words are below when it gave none", () => {
-		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Place;
+		const zap = { id: "p1", name: "Zapier", app: "zapier", url: "https://x.test" } as Delivery;
 		for (const body of ["", "  \n "]) {
 			const app = classifyApp(zap, 400, "", body);
 			expect(app.plain).toBe(
@@ -418,7 +419,7 @@ describe("emails and words", () => {
 		// A timeout, a network error or an empty 500 is tried again, never refused for good.
 		expect(classifyApp(zap, 500, "", "").kind).toBe("retry");
 
-		const row = (plain: string, raw?: string): Delivery => ({
+		const row = (plain: string, raw?: string): Send => ({
 			enquiryId: "01A",
 			destination: "p1",
 			formId: "wedding-cakes",
@@ -436,7 +437,7 @@ describe("emails and words", () => {
 			"Zapier refused the enquiry. Its own words are below. Check the address and the app, then press Send again.";
 		// A row stored before this fix, with the claim but no words (none, or only markup).
 		for (const raw of [undefined, "  ", "<html><body></body></html>"]) {
-			const { text } = failureAlert("Crumb", [{ delivery: row(said, raw), place: "Zapier" }]);
+			const { text } = failureAlert("Crumb", [{ send: row(said, raw), name: "Zapier" }]);
 			expect(text).not.toContain("own words");
 			expect(text).toContain(
 				"Zapier refused the enquiry. Check the address and the app, then press Send again.",
@@ -445,11 +446,11 @@ describe("emails and words", () => {
 		// Gave up after no answer: the reason does not claim words, the error is shown as it is.
 		const gaveUp = failureAlert("Crumb", [
 			{
-				delivery: row(
+				send: row(
 					"Zapier did not answer after 8 tries over two days. Check it is working, then press Send again.",
 					"No answer: TimeoutError: The operation timed out.",
 				),
-				place: "Zapier",
+				name: "Zapier",
 			},
 		]).text;
 		expect(gaveUp).not.toContain("own words");
@@ -459,7 +460,7 @@ describe("emails and words", () => {
 	it("sends the failure alert as plain text only, with the service's words as text", () => {
 		const alert = failureAlert("Crumb", [
 			{
-				delivery: {
+				send: {
 					enquiryId: "01A",
 					destination: "p1",
 					formId: "f",
@@ -473,7 +474,7 @@ describe("emails and words", () => {
 					plain: "Zapier refused the enquiry. Its own words are below.",
 					raw: `Zapier answered 400: <script>alert("x")</script>Tom & "Jerry's" <b>cakes</b>`,
 				},
-				place: "Zapier",
+				name: "Zapier",
 			},
 		]);
 		// No HTML body exists, so there is nothing to escape; the text body has no markup.
@@ -505,7 +506,7 @@ describe("emails and words", () => {
 			site: "Crumb",
 			origin: "https://crumb.test",
 			key,
-			forms: ["contact"],
+			form: { slug: "contact", name: "Contact us" },
 			reach: "email",
 		});
 		expect(byEmail).toContain(privateEmail(key));
@@ -514,7 +515,7 @@ describe("emails and words", () => {
 			site: "Crumb",
 			origin: "https://crumb.test",
 			key,
-			forms: [],
+			form: { slug: "contact", name: "Contact us" },
 			reach: "self",
 		});
 		expect(direct).toContain(

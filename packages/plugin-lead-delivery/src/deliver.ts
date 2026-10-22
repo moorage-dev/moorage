@@ -22,8 +22,15 @@ import {
 	repeatNote,
 	schedulerAlert,
 } from "./messages.js";
-import type { Config, Delivery, Enquiry, KnownForm, Place } from "./types.js";
-import { appRequest, classifyApp } from "./webhook.js";
+import {
+	type Config,
+	type Delivery,
+	type Enquiry,
+	type KnownForm,
+	NO_DELIVERY,
+	type Send,
+} from "./types.js";
+import { appLabel, appRequest, classifyApp } from "./webhook.js";
 
 export const DELIVER_TASK = "deliver";
 export const MAINTENANCE_TASK = "maintenance";
@@ -33,30 +40,47 @@ const DAILY_KEY = "daily";
 /** Waits after each failed try: 8 tries over about 45 hours. */
 export const DELAYS_MIN = [1, 5, 30, 120, 360, 720, 1440];
 export const MAX_ATTEMPTS = DELAYS_MIN.length + 1;
-/** Deliveries per scheduled run and per arriving enquiry. */
+/** Sends per scheduled run and per arriving enquiry. */
 export const PER_RUN = 3;
 const DAY_MS = 86_400_000;
 export const KEEP_DAYS = 30;
 
-export function deliveries(ctx: PluginContext): StorageCollection<Delivery> {
-	return ctx.storage.deliveries as StorageCollection<Delivery>;
+/** The log and retry queue. The storage keeps its 0.1 name, so the log survives the update. */
+export function sends(ctx: PluginContext): StorageCollection<Send> {
+	return ctx.storage.deliveries as StorageCollection<Send>;
 }
 
 export function enquiries(ctx: PluginContext): StorageCollection<Enquiry> {
 	return ctx.storage.enquiries as StorageCollection<Enquiry>;
 }
 
-export function deliveryId(enquiryId: string, placeId: string): string {
-	return `${enquiryId}~${placeId}`;
+export function sendId(enquiryId: string, deliveryId: string): string {
+	return `${enquiryId}~${deliveryId}`;
 }
 
-export function servesForm(place: Place, formId: string): boolean {
-	return place.forms === "all" || place.forms.includes(formId);
+export function servesForm(delivery: Delivery, formId: string): boolean {
+	return delivery.forms === "all" || delivery.forms.includes(formId);
 }
 
-export function placeName(config: Config, id: string): string {
-	return config.places.find((p) => p.id === id)?.name ?? "a place that was deleted";
+export function deliveryName(config: Config, id: string): string {
+	if (id === NO_DELIVERY) return "no delivery";
+	return config.deliveries.find((d) => d.id === id)?.name ?? "a delivery that was deleted";
 }
+
+/**
+ * A form is connected once it was marked so, or once an enquiry came from it, after the private
+ * address was last reset (`keySetAt`): a reset disconnects every form.
+ */
+export function isConnected(form: KnownForm | undefined, keySetAt?: string): boolean {
+	const at = [form?.connectedAt, form?.lastAt]
+		.filter((x): x is string => Boolean(x))
+		.sort()
+		.at(-1);
+	return Boolean(at) && (!keySetAt || at! > keySetAt);
+}
+
+const REPEAT_MS = { off: 0, "24h": DAY_MS, "7d": 7 * DAY_MS } as const;
+const REPEAT_WORDS = { off: "", "24h": "24 hours", "7d": "7 days" } as const;
 
 /** Daily counts for the stats: received and delivered enquiries (tests excluded). */
 async function count(ctx: PluginContext, what: "r" | "d") {
@@ -84,7 +108,7 @@ export async function weekCounts(
 	return { received, delivered };
 }
 
-/** Remember the form: its name, its fields (when not known from its definition), when it last sent. */
+/** Remember the form: its name, its fields (when not known from its definition), when it last sent, how it is connected. */
 async function noteForm(ctx: PluginContext, enquiry: Enquiry) {
 	if (enquiry.via === "test") return;
 	const forms = await loadForms(ctx);
@@ -92,6 +116,7 @@ async function noteForm(ctx: PluginContext, enquiry: Enquiry) {
 	const known = forms[enquiry.formId];
 	const fields = fieldsOf(enquiry);
 	const days = [...new Set([...(known?.days ?? []), day(now)])].slice(-30);
+	const way = enquiry.via === "email" ? "email" : "straight";
 	forms[enquiry.formId] = known
 		? {
 				...known,
@@ -99,6 +124,9 @@ async function noteForm(ctx: PluginContext, enquiry: Enquiry) {
 				...(known.source === "enquiry" || known.fields.length === 0 ? { fields } : {}),
 				lastAt: now,
 				days,
+				connectedAt: known.connectedAt ?? now,
+				// What actually arrives wins over a connection marked by hand.
+				connectedWay: way,
 			}
 		: {
 				slug: enquiry.formId,
@@ -108,13 +136,15 @@ async function noteForm(ctx: PluginContext, enquiry: Enquiry) {
 				addedAt: now,
 				lastAt: now,
 				days,
+				connectedAt: now,
+				connectedWay: way,
 			};
 	await saveForms(ctx, forms);
 }
 
 /** Recent log rows for one form, newest first, to spot the same person sending again. */
 async function recentForForm(ctx: PluginContext, formId: string, sinceMs: number) {
-	const result = await deliveries(ctx).query({
+	const result = await sends(ctx).query({
 		where: { formId, createdAt: { gte: new Date(sinceMs).toISOString() } },
 		orderBy: { createdAt: "desc" },
 		limit: 100,
@@ -129,14 +159,17 @@ export interface ReceiveResult {
 }
 
 /**
- * Store an enquiry once and start delivering it. `inline` tries up to three places at once
+ * Store an enquiry once and start delivering it. `inline` tries up to three deliveries at once
  * (the forms plugin calls after the visitor has their answer); otherwise a scheduled run does.
+ * Every delivery of the form gets a log row: one that is turned off, or holds a repeat or
+ * possibly spam, gets "Not sent" with the reason, and Send again. An enquiry no delivery takes
+ * is logged too, so the owner sees it arrived.
  */
 export async function receive(
 	ctx: PluginContext,
 	id: string,
 	enquiry: Enquiry,
-	opts: { inline: boolean; only?: Place; schedule?: boolean },
+	opts: { inline: boolean; only?: Delivery; schedule?: boolean },
 ): Promise<ReceiveResult> {
 	const now = Date.now();
 	const config = await loadConfig(ctx);
@@ -149,55 +182,89 @@ export async function receive(
 	const created = await enquiries(ctx).compareAndSet(id, null, enquiry);
 	if (!created.applied) return { duplicate: true, queued: 0, delivered: 0 };
 	await noteForm(ctx, enquiry);
-	if (enquiry.via !== "test") await count(ctx, "r");
+	const test = enquiry.via === "test";
+	if (!test) await count(ctx, "r");
 
 	const createdAt = new Date(now).toISOString();
 	const who = enquiry.name ?? enquiry.email ?? "Someone";
+	const repeat = enquiry.repeatAfterMs !== undefined ? repeatNote(enquiry.repeatAfterMs) : "";
 	const notes: string[] = [];
-	if (enquiry.throwaway) notes.push("Possibly fake email address");
-	if (enquiry.repeatAfterMs !== undefined) notes.push(repeatNote(enquiry.repeatAfterMs));
-	if (enquiry.via === "test") notes.push("Test");
+	if (enquiry.throwaway) notes.push("Possibly fake address");
+	if (repeat) notes.push(repeat);
+	if (enquiry.spam) notes.push("Possibly spam");
+	if (test) notes.push("Test");
 	if (enquiry.unreadable) notes.push("Sent as text: its fields could not be read");
 	if (enquiry.hasFiles) notes.push("Has an attachment, see Forms → Submissions");
 
-	const rows: Array<{ id: string; data: Delivery }> = [];
+	const base = {
+		enquiryId: id,
+		formId: enquiry.formId,
+		formName: enquiry.formName,
+		who,
+		...(enquiry.email ? { email: enquiry.email } : {}),
+		attempts: 0,
+		createdAt,
+		...(test ? { test: true } : {}),
+	};
+	const rows: Array<{ id: string; data: Send }> = [];
 	const targets = opts.only
 		? [opts.only]
-		: config.places.filter((place) => place.on && servesForm(place, enquiry.formId));
-	for (const place of targets) {
-		const row: Delivery = {
-			enquiryId: id,
-			destination: place.id,
-			formId: enquiry.formId,
-			formName: enquiry.formName,
-			who,
-			...(enquiry.email ? { email: enquiry.email } : {}),
+		: config.deliveries.filter((delivery) => servesForm(delivery, enquiry.formId));
+	for (const delivery of targets) {
+		const row: Send = {
+			...base,
+			destination: delivery.id,
 			status: "retrying",
-			attempts: 0,
 			nextAt: createdAt,
-			createdAt,
 			notes: [...notes],
-			...(enquiry.via === "test" ? { test: true } : {}),
 		};
-		const twice =
-			place.noDuplicates &&
-			enquiry.email &&
-			enquiry.via !== "test" &&
-			recent.some(
-				(r) =>
-					r.data.destination === place.id &&
-					r.data.email === enquiry.email &&
-					Date.parse(r.data.createdAt) > now - DAY_MS &&
-					!r.data.test,
-			);
-		if (twice) {
+		const hold = (replace: string, note: string) => {
 			row.status = "skipped";
 			row.nextAt = "";
-			row.notes.push("Same person within 24 hours");
+			row.held = true;
+			const at = replace ? row.notes.indexOf(replace) : -1;
+			if (at >= 0) row.notes[at] = note;
+			else row.notes.push(note);
+		};
+		const window = REPEAT_MS[delivery.repeat];
+		const twice =
+			!test &&
+			window > 0 &&
+			enquiry.email &&
+			recent.some(
+				(r) =>
+					r.data.destination === delivery.id &&
+					r.data.email === enquiry.email &&
+					Date.parse(r.data.createdAt) > now - window &&
+					!r.data.test,
+			);
+		if (!opts.only && !delivery.on) hold("", "Turned off; not sent");
+		else if (twice) {
+			const earlier = recent.find(
+				(r) => r.data.destination === delivery.id && r.data.email === enquiry.email && !r.data.test,
+			);
+			const note = earlier ? repeatNote(now - Date.parse(earlier.data.createdAt)) : repeat;
+			hold(repeat, `${note}; not sent: repeats are off for ${REPEAT_WORDS[delivery.repeat]}`);
+		} else if (!test && enquiry.spam && delivery.holdSpam) {
+			hold("Possibly spam", "Possibly spam; not sent");
 		}
-		rows.push({ id: deliveryId(id, place.id), data: row });
+		rows.push({ id: sendId(id, delivery.id), data: row });
 	}
-	if (rows.length > 0) await deliveries(ctx).putMany(rows);
+	if (rows.length === 0 && !test) {
+		rows.push({
+			id: sendId(id, NO_DELIVERY),
+			data: {
+				...base,
+				destination: NO_DELIVERY,
+				status: "skipped",
+				nextAt: "",
+				// Held, so its contents stay until the form is added to a delivery (adoptForm).
+				held: true,
+				notes: [...notes, "No delivery for this form; not sent"],
+			},
+		});
+	}
+	if (rows.length > 0) await sends(ctx).putMany(rows);
 
 	const due = rows.filter((r) => r.data.status === "retrying");
 	let delivered = 0;
@@ -212,17 +279,17 @@ export async function receive(
 	return { duplicate: false, queued: due.length, delivered };
 }
 
-/** Send one enquiry to one place, without touching the log. */
+/** Send one enquiry through one delivery, without touching the log. */
 export async function sendTo(
 	ctx: PluginContext,
-	place: Place,
+	delivery: Delivery,
 	id: string,
 	enquiry: Enquiry,
 	test: boolean,
 ): Promise<Outcome & { ms: number }> {
 	const started = Date.now();
 	const done = (outcome: Outcome) => ({ ...outcome, ms: Date.now() - started });
-	if (place.kind === "email") {
+	if (delivery.kind === "email") {
 		if (!ctx.email) {
 			return done({
 				kind: "fixing",
@@ -230,8 +297,8 @@ export async function sendTo(
 					"This site has no way to send email yet. Ask your web person to set up email for the site, then press Send again.",
 			});
 		}
-		const [first, ...copies] = place.to ?? [];
-		if (!first) return done({ kind: "fixing", plain: "This place has no email address." });
+		const [first, ...copies] = delivery.to ?? [];
+		if (!first) return done({ kind: "fixing", plain: "This delivery has no email address." });
 		const message = enquiryEmail(await siteLabel(ctx), enquiry, test);
 		try {
 			await ctx.email.send({
@@ -247,23 +314,23 @@ export async function sendTo(
 	}
 	if (!ctx.http) return done({ kind: "retry", raw: "Web requests are not available." });
 	const request =
-		place.kind === "hubspot"
+		delivery.kind === "hubspot"
 			? {
-					url: submitUrl(place),
+					url: submitUrl(delivery),
 					init: {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify(hubspotBody(place, enquiry)),
+						body: JSON.stringify(hubspotBody(delivery, enquiry)),
 					},
 				}
-			: await appRequest(place, id, enquiry, test);
+			: await appRequest(delivery, id, enquiry, test);
 	try {
 		const response = await ctx.http.fetch(request.url, request.init);
 		const text = await response.text().catch(() => "");
 		const outcome =
-			place.kind === "hubspot"
-				? classifyHubSpot(response.status, text)
-				: classifyApp(place, response.status, response.url, text);
+			delivery.kind === "hubspot"
+				? classifyHubSpot(response.status, text, delivery.name)
+				: classifyApp(delivery, response.status, response.url, text);
 		const retryAfter = Number(response.headers.get("retry-after"));
 		if (outcome.kind === "retry" && Number.isFinite(retryAfter) && retryAfter > 0) {
 			outcome.retryAfter = Math.min(retryAfter, 86_400);
@@ -279,30 +346,29 @@ export async function attempt(
 	ctx: PluginContext,
 	config: Config,
 	id: string,
-	row: Delivery,
-): Promise<Delivery> {
-	const place = config.places.find((p) => p.id === row.destination);
+	row: Send,
+): Promise<Send> {
+	const delivery = config.deliveries.find((d) => d.id === row.destination);
 	const stored = await enquiries(ctx).get(row.enquiryId);
 	const enquiry = stored?.cleared ? null : stored;
 	const now = Date.now();
-	let next: Delivery;
-	if (!place || !enquiry) {
+	let next: Send;
+	if (!delivery || !enquiry) {
 		next = {
 			...row,
 			status: "gaveup",
 			nextAt: "",
-			plain: place
+			plain: delivery
 				? "The enquiry's contents are no longer here. It is still in Forms → Submissions."
-				: "This place was deleted.",
+				: "This delivery was deleted.",
 		};
 	} else {
-		const outcome = await sendTo(ctx, place, row.enquiryId, enquiry, row.test === true);
+		const outcome = await sendTo(ctx, delivery, row.enquiryId, enquiry, row.test === true);
 		const attempts = row.attempts + 1;
-		const { plain: _plain, raw: _raw, field: _field, ...rest } = row;
+		const { plain: _plain, raw: _raw, field: _field, held: _held, ...rest } = row;
 		const base = { ...rest, attempts, ms: outcome.ms };
 		if (outcome.kind === "delivered") {
 			next = { ...base, status: "delivered", nextAt: "", deliveredAt: new Date(now).toISOString() };
-			if (row.test) await saveTested(ctx);
 		} else if (outcome.kind === "fixing") {
 			next = {
 				...base,
@@ -312,12 +378,21 @@ export async function attempt(
 				...(outcome.raw ? { raw: outcome.raw } : {}),
 				...(outcome.field ? { field: outcome.field } : {}),
 			};
+		} else if (row.test) {
+			// A test is answered now or not at all: it is never tried again.
+			next = {
+				...base,
+				status: "gaveup",
+				nextAt: "",
+				plain: `${delivery.kind === "hubspot" ? "HubSpot" : delivery.kind === "app" ? appLabel(delivery.app) : "The email service"} did not answer.`,
+				...(outcome.raw ? { raw: outcome.raw } : {}),
+			};
 		} else if (attempts >= MAX_ATTEMPTS) {
 			next = {
 				...base,
 				status: "gaveup",
 				nextAt: "",
-				plain: `${place.name} did not answer after ${MAX_ATTEMPTS} tries over two days. Check it is working, then press Send again.`,
+				plain: `"${delivery.name}" did not answer after ${MAX_ATTEMPTS} tries over two days. Check it is working, then press Send again.`,
 				...(outcome.raw ? { raw: outcome.raw } : {}),
 			};
 		} else {
@@ -331,7 +406,7 @@ export async function attempt(
 			};
 		}
 	}
-	await deliveries(ctx).put(id, next);
+	await sends(ctx).put(id, next);
 	if (next.status === "delivered" && !row.test) await finishEnquiry(ctx, row.enquiryId);
 	if ((next.status === "fixing" || next.status === "gaveup") && !row.test) {
 		await alertFailures(ctx, config);
@@ -339,24 +414,31 @@ export async function attempt(
 	return next;
 }
 
-async function saveTested(ctx: PluginContext) {
-	const config = await loadConfig(ctx);
-	if (config.testedAt) return;
-	await ctx.kv.set("config", { ...config, testedAt: new Date().toISOString() });
-}
-
-/** Once every place has an enquiry, its contents go; the Forms inbox keeps the original. */
+/**
+ * Once every delivery is done with an enquiry, it counts as delivered and its contents go; the
+ * Forms inbox keeps the original. A held row ("Not sent", with Send again) keeps the contents
+ * until it is sent or the log row is cleaned up after 30 days.
+ */
 export async function finishEnquiry(ctx: PluginContext, enquiryId: string) {
 	const enquiry = await enquiries(ctx).get(enquiryId);
 	if (!enquiry || enquiry.cleared) return;
 	const config = await loadConfig(ctx);
-	const ids = config.places.map((p) => deliveryId(enquiryId, p.id));
-	const mine = [...(await deliveries(ctx).getMany(ids)).values()];
+	const ids = [
+		...config.deliveries.map((d) => sendId(enquiryId, d.id)),
+		sendId(enquiryId, NO_DELIVERY),
+	];
+	const mine = [...(await sends(ctx).getMany(ids)).values()];
 	if (mine.some((d) => d.status === "retrying")) return;
-	const allThere = mine.every((d) => d.status === "delivered" || d.status === "skipped");
-	if (allThere && mine.length > 0 && enquiry.via !== "test") await count(ctx, "d");
+	const sent = mine.filter((d) => d.status === "delivered").length;
+	const settled = mine.every((d) => d.status === "delivered" || d.status === "skipped");
+	let counted = enquiry.counted === true;
+	if (!counted && settled && sent > 0 && enquiry.via !== "test") {
+		await count(ctx, "d");
+		counted = true;
+	}
+	const done = mine.every((d) => d.status === "delivered" || (d.status === "skipped" && !d.held));
 	// The contents go; a bare record stays until cleanup so a repeat is still a no-op.
-	if (allThere) {
+	if (done) {
 		await enquiries(ctx).put(enquiryId, {
 			formId: enquiry.formId,
 			formName: enquiry.formName,
@@ -366,14 +448,17 @@ export async function finishEnquiry(ctx: PluginContext, enquiryId: string) {
 			throwaway: false,
 			hasFiles: false,
 			cleared: true,
+			...(counted ? { counted: true } : {}),
 		});
+	} else if (counted && !enquiry.counted) {
+		await enquiries(ctx).put(enquiryId, { ...enquiry, counted: true });
 	}
 }
 
 /** Due tries, three at a time, then the next one-shot run. */
 export async function runDue(ctx: PluginContext): Promise<number> {
 	const config = await loadConfig(ctx);
-	const due = await deliveries(ctx).query({
+	const due = await sends(ctx).query({
 		where: { status: "retrying", nextAt: { lte: new Date().toISOString() } },
 		orderBy: { nextAt: "asc" },
 		limit: PER_RUN,
@@ -386,7 +471,7 @@ export async function runDue(ctx: PluginContext): Promise<number> {
 /** A one-shot run at the earliest due try (at once if one is overdue). */
 export async function scheduleNext(ctx: PluginContext) {
 	if (!ctx.cron) return;
-	const next = await deliveries(ctx).query({
+	const next = await sends(ctx).query({
 		where: { status: "retrying" },
 		orderBy: { nextAt: "asc" },
 		limit: 1,
@@ -419,12 +504,16 @@ export async function alertOnce(
 	}
 }
 
-export async function needsFixing(ctx: PluginContext, limit = 10) {
+/** Real (not test) sends that need the owner: refused, or given up on. */
+export async function needsFixing(ctx: PluginContext, limit = 10, destination?: string) {
+	const where = (status: string) => ({ status, ...(destination ? { destination } : {}) });
 	const [fixing, gaveup] = await Promise.all([
-		deliveries(ctx).query({ where: { status: "fixing" }, orderBy: { createdAt: "desc" }, limit }),
-		deliveries(ctx).query({ where: { status: "gaveup" }, orderBy: { createdAt: "desc" }, limit }),
+		sends(ctx).query({ where: where("fixing"), orderBy: { createdAt: "desc" }, limit }),
+		sends(ctx).query({ where: where("gaveup"), orderBy: { createdAt: "desc" }, limit }),
 	]);
-	return [...fixing.items, ...gaveup.items].filter((item) => !item.data.test);
+	return [...fixing.items, ...gaveup.items]
+		.filter((item) => !item.data.test)
+		.sort((a, b) => b.data.createdAt.localeCompare(a.data.createdAt));
 }
 
 async function alertFailures(ctx: PluginContext, config: Config) {
@@ -436,7 +525,7 @@ async function alertFailures(ctx: PluginContext, config: Config) {
 		"failure",
 		failureAlert(
 			await siteLabel(ctx),
-			rows.map((r) => ({ delivery: r.data, place: placeName(config, r.data.destination) })),
+			rows.map((r) => ({ send: r.data, name: deliveryName(config, r.data.destination) })),
 		),
 	);
 }
@@ -474,7 +563,7 @@ export async function checkQuiet(ctx: PluginContext, config: Config) {
 
 /** Retries are due but nothing has run them for 20 minutes. */
 export async function schedulerStuck(ctx: PluginContext): Promise<boolean> {
-	const overdue = await deliveries(ctx).count({
+	const overdue = await sends(ctx).count({
 		status: "retrying",
 		nextAt: { lte: new Date(Date.now() - 20 * 60_000).toISOString() },
 	});
@@ -517,19 +606,91 @@ export async function maintenance(ctx: PluginContext) {
 /** Log rows and leftover enquiries older than 30 days go. */
 export async function cleanup(ctx: PluginContext) {
 	const before = new Date(Date.now() - KEEP_DAYS * DAY_MS).toISOString();
-	const old = await deliveries(ctx).query({ where: { createdAt: { lt: before } }, limit: 100 });
-	if (old.items.length) await deliveries(ctx).deleteMany(old.items.map((i) => i.id));
+	const old = await sends(ctx).query({ where: { createdAt: { lt: before } }, limit: 100 });
+	if (old.items.length) await sends(ctx).deleteMany(old.items.map((i) => i.id));
 	const stale = await enquiries(ctx).query({ where: { receivedAt: { lt: before } }, limit: 100 });
 	if (stale.items.length) await enquiries(ctx).deleteMany(stale.items.map((i) => i.id));
 }
 
-/** Try one log row again now (Send again / Send now). */
-export async function sendAgain(ctx: PluginContext, id: string): Promise<Delivery | null> {
-	const row = await deliveries(ctx).get(id);
-	if (!row || row.status === "delivered" || row.status === "skipped") return row;
+const NO_DELIVERY_NOTE = "No delivery for this form; not sent";
+
+/** Enquiries no delivery took, by form: the forms the owner may have meant. */
+export async function notSentForms(
+	ctx: PluginContext,
+): Promise<Array<{ formId: string; formName: string; count: number }>> {
+	const held = await sends(ctx).query({
+		where: { destination: NO_DELIVERY, status: "skipped" },
+		orderBy: { createdAt: "desc" },
+		limit: 200,
+	});
+	const byForm = new Map<string, { formId: string; formName: string; count: number }>();
+	for (const item of held.items) {
+		const entry = byForm.get(item.data.formId) ?? {
+			formId: item.data.formId,
+			formName: item.data.formName,
+			count: 0,
+		};
+		entry.count += 1;
+		byForm.set(item.data.formId, entry);
+	}
+	return [...byForm.values()];
+}
+
+/**
+ * Add a form to a delivery and send the enquiries that arrived from it while no delivery took
+ * it. Returns how many are on their way.
+ */
+export async function adoptForm(
+	ctx: PluginContext,
+	formId: string,
+	deliveryId: string,
+): Promise<{ delivery: Delivery; count: number } | null> {
+	const config = await loadConfig(ctx);
+	const delivery = config.deliveries.find((d) => d.id === deliveryId);
+	if (!delivery || !formId) return null;
+	if (delivery.forms !== "all" && !delivery.forms.includes(formId)) {
+		delivery.forms = [...delivery.forms, formId];
+		await ctx.kv.set("config", config);
+	}
+	const held = await sends(ctx).query({
+		where: { destination: NO_DELIVERY, formId },
+		limit: 100,
+	});
+	const now = new Date().toISOString();
+	const moved = held.items.map((item) => {
+		const { held: _held, ...rest } = item.data;
+		return {
+			id: sendId(item.data.enquiryId, delivery.id),
+			data: {
+				...rest,
+				destination: delivery.id,
+				status: "retrying" as const,
+				nextAt: now,
+				notes: rest.notes.filter((note) => note !== NO_DELIVERY_NOTE),
+			},
+		};
+	});
+	if (moved.length > 0) {
+		await sends(ctx).putMany(moved);
+		await sends(ctx).deleteMany(held.items.map((item) => item.id));
+		for (const row of moved.slice(0, PER_RUN)) await attempt(ctx, config, row.id, row.data);
+		await scheduleNext(ctx);
+	}
+	return { delivery, count: moved.length };
+}
+
+/** Try one log row again now (Send again / Send now). A held "Not sent" row is sent now too. */
+export async function sendAgain(ctx: PluginContext, id: string): Promise<Send | null> {
+	const row = await sends(ctx).get(id);
+	if (!row || row.status === "delivered" || row.destination === NO_DELIVERY) return row;
+	if (row.status === "skipped" && !row.held) return row;
 	const config = await loadConfig(ctx);
 	return attempt(ctx, config, id, {
 		...row,
+		// A held row is sent after all: its "not sent" reason no longer applies.
+		notes: row.notes
+			.filter((note) => note !== "Turned off; not sent")
+			.map((note) => note.split("; not sent")[0]!),
 		attempts: row.status === "retrying" ? row.attempts : 0,
 	});
 }

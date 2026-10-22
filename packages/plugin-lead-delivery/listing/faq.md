@@ -1,14 +1,14 @@
 ## How do I send EmDash form submissions to HubSpot?
 
-Install this plugin, open Lead delivery → Where enquiries go, choose HubSpot and paste the HubSpot form's share link or embed code. Each enquiry becomes a HubSpot form submission. The HubSpot form must have the fields you send, at least Email, and CAPTCHA must be off on it.
+Install this plugin, open Lead delivery, press New delivery, choose your form and HubSpot, and paste the HubSpot form's share link or embed code. Each enquiry becomes a HubSpot form submission. The HubSpot form must have the fields you send, at least Email, and CAPTCHA must be off on it.
 
 ## How do I connect EmDash forms to Zapier, Make or n8n?
 
-Choose "Another app" and paste the address the app gave you: in Zapier "Webhooks by Zapier" (a paid Zapier plan), in Make a Custom webhook, in n8n a Webhook node. Each request is signed, so the app can check it came from your site.
+In New delivery choose "Another app" and paste the address the app gave you: in Zapier "Webhooks by Zapier" (a paid Zapier plan), in Make a Custom webhook, in n8n a Webhook node. Each request is signed, so the app can check it came from your site.
 
 ## Why does connecting a form need a web person?
 
-EmDash's form editor has no box for it yet. Until it does, someone who can call the site's API sets it once per form; the plugin writes the instructions and can email them. When EmDash adds the box, this becomes a paste.
+EmDash's form editor has no box for it yet. Until it does, someone who can call the site's API sets it once per form; New delivery shows the instructions for that form and can email them.
 
 ## What if HubSpot or Zapier is down?
 
@@ -16,11 +16,11 @@ The enquiry is tried again 8 times over about two days. If it still does not arr
 
 ## Does it lose enquiries?
 
-Not from the moment an enquiry reaches it: each is stored once and kept until every place has it. Every enquiry is also in Forms → Submissions. If a form stops sending altogether, the quiet-form alert tells you after 3 days.
+Not from the moment an enquiry reaches it: each is stored once and kept until all its deliveries are done. Every enquiry is also in Forms → Submissions. If a form stops sending altogether, the quiet-form alert tells you after 3 days.
 
 ## Can my clients see it?
 
-Editors see the log and can press Send again. Only admins change where enquiries go or connect forms.
+Editors see the log and can press Send again. Only admins add or change deliveries.
 
 ## Is it free?
 

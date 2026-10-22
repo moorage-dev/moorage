@@ -2,7 +2,8 @@
 
 import type { PluginContext } from "emdash";
 
-import type { Config, KnownForm, Place } from "./types.js";
+import { generatedName } from "./names.js";
+import type { Config, Delivery, DeliveryKind, KnownForm, Repeat } from "./types.js";
 
 export const CONFIG_KEY = "config";
 export const FORMS_KEY = "forms";
@@ -37,26 +38,132 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function normalizeConfig(raw: unknown): Config {
-	const value = isRecord(raw) ? raw : {};
+const KINDS: DeliveryKind[] = ["email", "hubspot", "app"];
+const REPEATS: Repeat[] = ["off", "24h", "7d"];
+
+function strings(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function siteParts(value: Record<string, unknown>) {
 	return {
-		places: Array.isArray(value.places) ? (value.places as Place[]) : [],
-		alertTo: Array.isArray(value.alertTo)
-			? value.alertTo.filter((a): a is string => typeof a === "string")
-			: [],
+		alertTo: strings(value.alertTo),
 		key: typeof value.key === "string" && value.key.length >= 32 ? value.key : "",
+		...(typeof value.keySetAt === "string" ? { keySetAt: value.keySetAt } : {}),
 		...(isRecord(value.reach) ? { reach: value.reach as Config["reach"] } : {}),
+		// The 0.1 setup, passed through untouched so 0.1.2 can still read it after a rollback.
+		// Kept until 0.3.
+		...(Array.isArray(value.places) ? { places: value.places as unknown[] } : {}),
 		...(typeof value.testedAt === "string" ? { testedAt: value.testedAt } : {}),
 	};
 }
 
-/** The config, with a private key made on first use. */
+/** The settings a 0.1 place and a delivery share, copied as they are. */
+function copied(value: Record<string, unknown>): Partial<Delivery> {
+	const out: Record<string, unknown> = {};
+	for (const key of [
+		"to",
+		"portalId",
+		"formGuid",
+		"mapping",
+		"otherNames",
+		"gdpr",
+		"throwawayField",
+		"app",
+		"url",
+		"secret",
+		"testedAt",
+		"testResult",
+		"oldName",
+	]) {
+		if (value[key] !== undefined) out[key] = value[key];
+	}
+	return out as Partial<Delivery>;
+}
+
+function deliveryOf(value: unknown): Delivery | null {
+	if (!isRecord(value) || typeof value.id !== "string" || !value.id) return null;
+	if (!KINDS.includes(value.kind as DeliveryKind)) return null;
+	const forms = value.forms === "all" ? "all" : strings(value.forms);
+	return {
+		id: value.id,
+		kind: value.kind as DeliveryKind,
+		name: typeof value.name === "string" ? value.name : "",
+		forms,
+		on: value.on !== false,
+		repeat: REPEATS.includes(value.repeat as Repeat) ? (value.repeat as Repeat) : "off",
+		holdSpam: value.holdSpam === true,
+		createdAt: typeof value.createdAt === "string" ? value.createdAt : "",
+		...copied(value),
+	};
+}
+
+/** A saved config of this version, cleaned of anything unexpected. */
+export function normalizeConfig(raw: unknown): Config {
+	const value = isRecord(raw) ? raw : {};
+	if (value.version !== 2) return migrate(raw, {});
+	return {
+		version: 2,
+		deliveries: (Array.isArray(value.deliveries) ? value.deliveries : [])
+			.map(deliveryOf)
+			.filter((d): d is Delivery => d !== null),
+		...siteParts(value),
+		...(value.notice === true ? { notice: true } : {}),
+	};
+}
+
+/**
+ * A 0.1 config ("places") as deliveries. Each place becomes one delivery with the same id, so
+ * log rows, retries and HubSpot matching stay attached; it is named after its forms and where
+ * it sends, and its old name is kept. Pure and deterministic, so two runs at once write the
+ * same thing; it never throws, so an arriving enquiry is never lost to a damaged setup.
+ */
+export function migrate(raw: unknown, forms: Record<string, KnownForm>): Config {
+	const value = isRecord(raw) ? raw : {};
+	if (value.version === 2) return normalizeConfig(value);
+	const deliveries: Delivery[] = [];
+	for (const place of Array.isArray(value.places) ? value.places : []) {
+		const base = deliveryOf({ ...(isRecord(place) ? place : {}), repeat: undefined });
+		if (!base || !isRecord(place)) continue;
+		const { name: oldName, ...rest } = base;
+		deliveries.push({
+			...rest,
+			name: generatedName(base.forms, base, forms),
+			...(oldName ? { oldName } : {}),
+			repeat: place.noDuplicates === true ? "24h" : "off",
+			holdSpam: false,
+		});
+	}
+	return {
+		version: 2,
+		deliveries,
+		...siteParts(value),
+		...(deliveries.length > 0 ? { notice: true } : {}),
+	};
+}
+
+/** The config, moved to deliveries on first read after the update, with a private key made on first use. */
 export async function loadConfig(ctx: PluginContext): Promise<Config> {
-	const config = normalizeConfig(await ctx.kv.get(CONFIG_KEY));
+	const raw = await ctx.kv.get(CONFIG_KEY);
+	let config: Config;
+	let changed = false;
+	if (isRecord(raw) && raw.version === 2) {
+		config = normalizeConfig(raw);
+	} else {
+		let forms: Record<string, KnownForm> = {};
+		try {
+			forms = await loadForms(ctx);
+		} catch {
+			// Names fall back to short names.
+		}
+		config = migrate(raw, forms);
+		changed = raw !== null && raw !== undefined;
+	}
 	if (!config.key) {
 		config.key = newKey();
-		await ctx.kv.set(CONFIG_KEY, config);
+		changed = true;
 	}
+	if (changed) await ctx.kv.set(CONFIG_KEY, config);
 	return config;
 }
 

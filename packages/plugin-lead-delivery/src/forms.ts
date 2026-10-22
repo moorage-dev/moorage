@@ -61,58 +61,69 @@ export async function lookUpForm(ctx: PluginContext, origin: string, id: string)
 	}
 }
 
-/** Add a form by its short name. The message is what the owner sees. */
-export async function addForm(
+export type FoundForm =
+	| { error: string }
+	| { slug: string; name: string; fields: FieldInfo[]; checked: boolean };
+
+/**
+ * A form named by its short name in New delivery ("Another form"), or one already known.
+ * A form the site cannot look up (it cannot call its own address) is accepted unchecked.
+ */
+export async function findForm(
 	ctx: PluginContext,
 	origin: string,
 	input: string,
-): Promise<{ ok: boolean; message: string }> {
+	known: Record<string, KnownForm>,
+): Promise<FoundForm> {
 	const slug = input.trim().toLowerCase();
+	const have = known[slug] ?? known[input];
+	if (have) return { slug: have.slug, name: have.name, fields: have.fields, checked: true };
 	if (!isShortName(slug)) {
 		return {
-			ok: false,
-			message:
-				"A short name has only small letters, numbers and dashes, like contact or wedding-cakes. Check the Slug column under Forms.",
+			error:
+				"A short name has only small letters, numbers and dashes, like contact or wedding-cakes. Forms lists it under each form's name.",
 		};
 	}
-	const forms = await loadForms(ctx);
 	const found = await lookUpForm(ctx, origin, slug);
 	if (found.kind === "missing") {
-		return {
-			ok: false,
-			message: `There is no form with the short name "${slug}". Check the Slug column under Forms.`,
-		};
+		return { error: `There is no form called "${slug}". Copy its short name from Forms.` };
 	}
-	const now = new Date().toISOString();
-	const known = forms[slug];
 	if (found.kind === "found") {
-		forms[slug] = {
-			...(known ?? { addedAt: now, days: [] }),
-			slug: found.slug,
-			name: found.name,
-			fields: found.fields,
-			source: "definition",
-		} as KnownForm;
-		await saveForms(ctx, forms);
-		return {
-			ok: true,
-			message: `Added ${found.name}. Found ${found.fields.length === 1 ? "1 field" : `${found.fields.length} fields`}.`,
-		};
+		return { slug: found.slug, name: found.name, fields: found.fields, checked: true };
 	}
-	forms[slug] = known ?? {
-		slug,
-		name: slug,
-		fields: [],
-		source: "enquiry",
-		addedAt: now,
+	return { slug, name: slug, fields: [], checked: false };
+}
+
+/** Remember a form named in New delivery, so "Which form?" lists it from then on. */
+export async function rememberForm(
+	ctx: PluginContext,
+	form: { slug: string; name: string; fields: FieldInfo[] },
+) {
+	const forms = await loadForms(ctx);
+	if (forms[form.slug]) return;
+	forms[form.slug] = {
+		slug: form.slug,
+		name: form.name,
+		fields: form.fields,
+		source: form.fields.length ? "definition" : "enquiry",
+		addedAt: new Date().toISOString(),
 		days: [],
 	};
 	await saveForms(ctx, forms);
-	return {
-		ok: true,
-		message:
-			"Saved. This site could not look the form up, so its fields will be learned from its first enquiry.",
-	};
+}
+
+/** Mark a form connected (by hand, from the Connect step). */
+export async function markConnected(ctx: PluginContext, slug: string, keySetAt?: string) {
+	const forms = await loadForms(ctx);
+	const form = forms[slug];
+	if (!form) return;
+	const at = [form.connectedAt, form.lastAt]
+		.filter((x): x is string => Boolean(x))
+		.sort()
+		.at(-1);
+	if (at && (!keySetAt || at > keySetAt)) return;
+	forms[slug] = { ...form, connectedAt: new Date().toISOString(), connectedWay: "by hand" };
+	await saveForms(ctx, forms);
 }
 
 /** Refresh every form's fields from its definition, when the site can look them up. */
