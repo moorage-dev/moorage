@@ -15,7 +15,7 @@ import {
 	simplify,
 	uniqueHandle,
 } from "../src/config.js";
-import { checkForm, describeCheck, judgeDefinition } from "../src/forms.js";
+import { checkForm, describeCheck, judgeDefinition, listForms } from "../src/forms.js";
 import { clientItem, isPopupPreview, pageFragments, scriptJson, tagLink } from "../src/fragment.js";
 import { alertEmail, createPlugin, publicMediaUrl } from "../src/index.js";
 import { addCount, parseCount, rate, readRows, toCsv, totals } from "../src/stats.js";
@@ -312,6 +312,101 @@ describe("the form check", () => {
 		expect(describeCheck({ result: "paused" }, "x")?.refuse).toBe(false);
 		expect(describeCheck({ result: "unchecked" }, "x")?.refuse).toBe(false);
 		expect(describeCheck({ result: "ok", name: "" }, "x")).toBeNull();
+	});
+});
+
+describe("asking its own site when localhost means two addresses", () => {
+	// A Node server started on "localhost" listens on one address (::1 or 127.0.0.1), and the
+	// browser finds it, but the server's own fetch of "localhost" may only try the other one.
+	type Call = { url: string; cookie: string | null };
+	function server(listening: "127.0.0.1" | "[::1]", body: unknown) {
+		const calls: Call[] = [];
+		const fetchImpl = async (url: string, init: { headers?: Record<string, string> }) => {
+			calls.push({ url, cookie: init.headers?.cookie ?? null });
+			if (new URL(url).host !== `${listening}:4399`) {
+				throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+			}
+			return new Response(JSON.stringify(body));
+		};
+		return { calls, fetchImpl: fetchImpl as never };
+	}
+	const list = { success: true, data: { items: [{ slug: "newsletter", name: "Newsletter" }] } };
+	const forms = [{ slug: "newsletter", name: "Newsletter", paused: false }];
+
+	for (const listening of ["127.0.0.1", "[::1]"] as const) {
+		it(`finds the forms when the server listens on ${listening} only, the cookie staying on this server`, async () => {
+			const { calls, fetchImpl } = server(listening, list);
+			expect(await listForms("http://localhost:4399", "session=abc", fetchImpl)).toEqual(forms);
+			for (const call of calls) {
+				expect(["localhost:4399", "127.0.0.1:4399", "[::1]:4399"]).toContain(
+					new URL(call.url).host,
+				);
+				expect(new URL(call.url).pathname).toBe("/_emdash/api/plugins/emdash-forms/forms/list");
+			}
+			expect(calls.at(-1)).toEqual({
+				url: `http://${listening}:4399/_emdash/api/plugins/emdash-forms/forms/list`,
+				cookie: "session=abc",
+			});
+		});
+
+		it(`checks a form and finds a picture when the server listens on ${listening} only`, async () => {
+			const definition = server(listening, { success: true, data: { name: "Newsletter" } });
+			expect(
+				await checkForm("http://localhost:4399", "newsletter", true, definition.fetchImpl),
+			).toEqual({ result: "ok", name: "Newsletter" });
+			const media = server(listening, { success: true, data: { item: { storageKey: "a.jpg" } } });
+			const ctx = {
+				request: new Request("http://localhost:4399/x", { headers: { cookie: "session=abc" } }),
+			};
+			expect(
+				await publicMediaUrl(
+					ctx,
+					"http://localhost:4399",
+					"01M51QJACT77N6PC8DYEM64AAZ",
+					media.fetchImpl,
+				),
+			).toBe("/_emdash/api/media/file/a.jpg");
+			for (const call of media.calls) {
+				expect(["localhost:4399", "127.0.0.1:4399", "[::1]:4399"]).toContain(
+					new URL(call.url).host,
+				);
+			}
+			expect(media.calls.at(-1)).toEqual({
+				url: `http://${listening}:4399/_emdash/api/media/01M51QJACT77N6PC8DYEM64AAZ`,
+				cookie: "session=abc",
+			});
+		});
+	}
+
+	it("asks any other address once, and never sends the cookie anywhere else", async () => {
+		const calls: Call[] = [];
+		const refused = (async (url: string, init: { headers?: Record<string, string> }) => {
+			calls.push({ url, cookie: init.headers?.cookie ?? null });
+			throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+		}) as never;
+		expect(await listForms("https://hartleys.test", "session=abc", refused)).toBeNull();
+		expect(await listForms("http://127.0.0.1:4399", "session=abc", refused)).toBeNull();
+		expect(calls.map((c) => c.url)).toEqual([
+			"https://hartleys.test/_emdash/api/plugins/emdash-forms/forms/list",
+			"http://127.0.0.1:4399/_emdash/api/plugins/emdash-forms/forms/list",
+		]);
+	});
+
+	it("takes the server's answer as it is: an error page or a timeout is not retried elsewhere", async () => {
+		const urls: string[] = [];
+		const notAllowed = (async (url: string) => {
+			urls.push(url);
+			return new Response("{}", { status: 403 });
+		}) as never;
+		expect(await listForms("http://localhost:4399", "session=abc", notAllowed)).toBeNull();
+		expect(urls).toEqual(["http://localhost:4399/_emdash/api/plugins/emdash-forms/forms/list"]);
+		urls.length = 0;
+		const slow = (async (url: string) => {
+			urls.push(url);
+			throw new DOMException("The operation was aborted.", "AbortError");
+		}) as never;
+		expect(await listForms("http://localhost:4399", "session=abc", slow)).toBeNull();
+		expect(urls).toHaveLength(1);
 	});
 });
 

@@ -33,6 +33,7 @@ import {
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, listForms, type FormCheck } from "./forms.js";
 import { isPopupPreview, pageFragments, previewItem } from "./fragment.js";
+import { fetchOwnSite } from "./self-fetch.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import {
 	addCount,
@@ -147,10 +148,15 @@ export async function publicMediaUrl(
 ): Promise<string | null> {
 	if (!origin || !/^[A-Za-z0-9_-]{1,60}$/.test(mediaId)) return null;
 	try {
-		const response = await fetchImpl(`${origin}/_emdash/api/media/${mediaId}`, {
-			headers: { cookie: ctx.request?.headers.get("cookie") ?? "", accept: "application/json" },
-			signal: AbortSignal.timeout(8000),
-		});
+		const response = await fetchOwnSite(
+			origin,
+			`/_emdash/api/media/${mediaId}`,
+			{
+				headers: { cookie: ctx.request?.headers.get("cookie") ?? "", accept: "application/json" },
+				signal: AbortSignal.timeout(8000),
+			},
+			fetchImpl,
+		);
 		if (!response.ok) return null;
 		const body = (await response.json()) as {
 			data?: { item?: { url?: unknown; storageKey?: unknown } };
