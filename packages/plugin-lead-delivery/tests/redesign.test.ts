@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { migrate, normalizeConfig } from "../src/config.js";
 import { finish } from "../src/enquiry.js";
-import { enquiryEmail } from "../src/messages.js";
+import { enquiryEmail, failureAlert, instructions } from "../src/messages.js";
 import { destinationLabel, formsLabel, generatedName, rowLabel } from "../src/names.js";
 import { isPossiblySpam, SPAM_PHRASES } from "../src/spam.js";
 import type { Delivery, Enquiry, KnownForm } from "../src/types.js";
@@ -223,6 +223,53 @@ describe("possibly spam", () => {
 			hasFiles: false,
 		});
 		expect(enquiry.spam).toBe(true);
+	});
+});
+
+describe("form names in sentences", () => {
+	it("never says 'form form' for a form whose name ends in form", () => {
+		const enquiry: Enquiry = {
+			formId: "contact",
+			formName: "Contact form",
+			receivedAt: "2026-10-22T09:00:00.000Z",
+			fields: [{ key: "name", label: "Your name", value: "Tom" }],
+			name: "Tom",
+			via: "web",
+			throwaway: false,
+			hasFiles: false,
+		};
+		expect(enquiryEmail("Crumb", enquiry, false).text).toContain(
+			"Tom sent the Contact form on your website.",
+		);
+		expect(enquiryEmail("Crumb", { ...enquiry, formName: "Quote" }, false).text).toContain(
+			"sent the Quote form",
+		);
+		const text = instructions({
+			site: "Crumb",
+			origin: "https://crumb.test",
+			key: "k".repeat(32),
+			form: { slug: "contact", name: "Contact form" },
+			reach: "self",
+		});
+		expect(text).toContain("Connecting the Contact form on Crumb");
+		const alert = failureAlert("Crumb", [
+			{
+				send: {
+					enquiryId: "1",
+					destination: "d",
+					formId: "contact",
+					formName: "Contact form",
+					who: "Tom",
+					status: "fixing",
+					attempts: 1,
+					nextAt: "",
+					createdAt: "2026-10-22T09:00:00.000Z",
+					notes: [],
+				},
+				name: "Contact form → HubSpot",
+			},
+		]);
+		for (const t of [text, alert.text]) expect(t).not.toMatch(/form form/i);
 	});
 });
 

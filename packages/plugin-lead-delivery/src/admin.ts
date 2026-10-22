@@ -38,6 +38,7 @@ import {
 	APPS,
 	appLabel,
 	formName,
+	formWords,
 	formsLabel,
 	generatedName,
 	kindWord,
@@ -745,8 +746,8 @@ function newStep2(data: Data, view: Extract<View, { screen: "new2" }>): Block[] 
 		fields.push({
 			type: "toggle",
 			action_id: "test_now",
-			label: "Send a test to HubSpot now",
-			description: `This adds a contact called ${data.user?.name || "Test Enquiry"} with your email${data.user?.email ? ` (${data.user.email})` : ""} to HubSpot. You can delete it there afterwards.`,
+			// The warning is in the label: EmDash's admin does not show a switch's description.
+			label: `Send a test to HubSpot now. It adds a contact called ${data.user?.name || "Test Enquiry"} with your email${data.user?.email ? ` (${data.user.email})` : ""} to HubSpot; you can delete it there afterwards.`,
 			initial_value: draft.test_now === true,
 		});
 	}
@@ -1097,7 +1098,9 @@ function editPage(data: Data, d: Delivery, view: Extract<View, { screen: "edit" 
 			fields,
 			submit: { label: "Save", action_id: "save_edit" },
 		},
-		context("Usually one form. Several forms suit an inbox that gets everything."),
+		context(
+			"Usually one form. Several forms suit an inbox that gets everything. Off keeps the delivery but sends nothing.",
+		),
 	];
 	if (d.kind === "hubspot") {
 		blocks.splice(3, 0, context(`HubSpot account ${d.portalId}, form ${d.formGuid}.`));
@@ -1797,7 +1800,7 @@ export async function handleAdmin(
 			to: to!,
 			...(cc.length ? { cc } : {}),
 			...(user?.email ? { replyTo: user.email } : {}),
-			subject: `${siteName(ctx, data.origin)}: how to connect the ${name} form to Lead Delivery`,
+			subject: `${siteName(ctx, data.origin)}: how to connect the ${formWords(name)} to Lead Delivery`,
 			text: instructions({
 				site: siteName(ctx, data.origin),
 				origin: data.origin,

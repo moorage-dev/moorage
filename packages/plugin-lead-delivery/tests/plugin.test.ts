@@ -510,6 +510,36 @@ describe("the email way", () => {
 		expect(forms?.["contact-us"]?.connectedWay).toBe("email");
 	});
 
+	it("known limit: a short name typed on a site that cannot look it up may not match the form's email", async () => {
+		const { runtime } = await start();
+		// "Another form" with short name "contact", saved unchecked, so its name is only "contact".
+		await setForms(runtime, [known("contact", "contact")]);
+		await setDeliveries(runtime, [
+			delivery({
+				kind: "email",
+				name: "contact → Shop inbox",
+				forms: ["contact"],
+				to: ["shop@crumb.test"],
+			}),
+		]);
+		const key = (await config(runtime)).key;
+		await runtime.transport.invokeHook("email:beforeSend", {
+			source: "emdash-forms",
+			message: {
+				to: `enquiries-${key}@lead-delivery.invalid`,
+				subject: "New submission: Contact us",
+				text: "Your name: Tom Reyes\nEmail: tom@example.com\n\nSubmitted at: 2026-10-16T09:00:00.000Z",
+			},
+		});
+		// The email names the form "Contact us", so it arrives as contact-us: listed, not lost.
+		expect((await rows(runtime)).map((r) => [r.formId, r.destination, r.notes.at(-1)])).toEqual([
+			["contact-us", "none", "No delivery for this form; not sent"],
+		]);
+		// The way out: the form is now known by that name, so Edit can tick it.
+		const forms = await runtime.inspect.kv.get<Record<string, KnownForm>>("forms");
+		expect(forms?.["contact-us"]?.name).toBe("Contact us");
+	});
+
 	it("leaves every other email alone and never delivers to the private domain", async () => {
 		const { runtime } = await start();
 		const message = { to: "anna@crumb.test", subject: "Hi", text: "Hello" };
@@ -831,7 +861,7 @@ describe("New delivery", () => {
 			"Mark possibly fake email addresses in HubSpot",
 			"HubSpot field to mark (a checkbox field on your HubSpot form)",
 			"Name (only admins see it)",
-			"Send a test to HubSpot now",
+			"Send a test to HubSpot now. It adds a contact called Anna Baker with your email (anna@crumb.test) to HubSpot; you can delete it there afterwards.",
 		]);
 
 		const bad = await saveNew(runtime, admin, "hubspot", "contact", {
@@ -929,7 +959,7 @@ describe("Connect this form", () => {
 			message: "Instructions sent to sam@pixel.dev.",
 		});
 		expect(JSON.stringify(await runtime.inspect.email())).toContain(
-			"how to connect the Contact form form to Lead Delivery",
+			"how to connect the Contact form to Lead Delivery",
 		);
 
 		const done = await runtime.admin.act(PAGE, "connected", {

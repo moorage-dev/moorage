@@ -1,6 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { inboundUrl, plural, privateEmail } from "./config.js";
+import { formWords } from "./names.js";
 import type { Enquiry, KnownForm, ReachResult, Send } from "./types.js";
 
 const UTM_LABELS: Record<string, string> = {
@@ -23,7 +24,7 @@ export function enquiryEmail(site: string, enquiry: Enquiry, test: boolean) {
 					"",
 				]
 			: []),
-		`${who}${enquiry.name && enquiry.email ? ` (${enquiry.email})` : ""} sent the ${enquiry.formName} form on your website.${test ? " This is a test from Lead delivery." : ""}`,
+		`${who}${enquiry.name && enquiry.email ? ` (${enquiry.email})` : ""} sent the ${formWords(enquiry.formName)} on your website.${test ? " This is a test from Lead delivery." : ""}`,
 		"",
 		...enquiry.fields
 			.filter((f) => !(f.key in UTM_LABELS) && f.key !== "page_url")
@@ -82,7 +83,7 @@ export function failureAlert(site: string, rows: Array<{ send: Send; name: strin
 		const words = send.raw ? ownWords(send.raw) : "";
 		const reason = send.plain ?? "Its service refused it.";
 		return [
-			`${send.who}'s enquiry from the ${send.formName} form could not be delivered by "${name}".`,
+			`${send.who}'s enquiry from the ${formWords(send.formName)} could not be delivered by "${name}".`,
 			"",
 			// Never point at words that are not there.
 			words ? reason : reason.replace(" Its own words are below.", ""),
@@ -156,7 +157,7 @@ export function instructions(opts: {
 	const update = `${origin}/_emdash/api/plugins/emdash-forms/forms/update`;
 	const viaEmail = opts.reach === "email" || opts.reach === "none";
 	const lines = [
-		`Connecting the ${opts.form.name} form on ${opts.site} (${host}) to Lead Delivery`,
+		`Connecting the ${formWords(opts.form.name)} on ${opts.site} (${host}) to Lead Delivery`,
 		"",
 		`Its short name in Forms: ${opts.form.slug}`,
 		"",

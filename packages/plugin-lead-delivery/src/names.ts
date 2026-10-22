@@ -14,6 +14,11 @@ export function appLabel(app: AppKind | undefined): string {
 	return APPS.find((a) => a.value === app)?.label ?? "Another app";
 }
 
+/** "Quote form", but "Contact form" rather than "Contact form form". */
+export function formWords(name: string): string {
+	return /\bform$/i.test(name.trim()) ? name.trim() : `${name.trim()} form`;
+}
+
 export function formName(slug: string, known: Record<string, KnownForm>): string {
 	return known[slug]?.name || slug;
 }
