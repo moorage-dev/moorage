@@ -84,7 +84,7 @@ export interface Config {
 	notice?: boolean;
 	/**
 	 * The 0.1 setup, kept untouched next to `deliveries` so going back to 0.1.2 still works.
-	 * 0.2 never reads or changes them. Kept for rollback until 0.3.
+	 * 0.2 and later never read or change them. Kept for rollback to 0.1.x until a later release.
 	 */
 	places?: unknown[];
 	testedAt?: string;
