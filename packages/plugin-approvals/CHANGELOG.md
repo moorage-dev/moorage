@@ -1,5 +1,11 @@
 # @moorage/plugin-approvals
 
+## 0.1.5
+
+### Patch Changes
+
+- f8dd491: README and listing pictures retaken on the current versions: the Popups list with Edit and Preview on each row, and Content Approval's Waiting and Settings tabs without counts. No code change.
+
 ## 0.1.4
 
 ### Patch Changes

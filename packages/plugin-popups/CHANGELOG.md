@@ -1,5 +1,12 @@
 # @moorage/plugin-popups
 
+## 0.1.7
+
+### Patch Changes
+
+- 26b26ce: Admins see the list of forms to choose from again on a site that runs on Node, where `localhost` points to both an IPv6 and an IPv4 address and the server listens on only one. Before, the lookup could miss the server and show a box to type the form's short name instead. The same goes for the form check on save and for finding a picture's public address. The signed-in session still only goes to the site's own server.
+- f8dd491: README and listing pictures retaken on the current versions: the Popups list with Edit and Preview on each row, and Content Approval's Waiting and Settings tabs without counts. No code change.
+
 ## 0.1.6
 
 ### Patch Changes
