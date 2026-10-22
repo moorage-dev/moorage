@@ -29,6 +29,8 @@ import {
 	sends,
 	servesForm,
 	weekCounts,
+	adoptForm,
+	notSentForms,
 } from "./deliver.js";
 import { UNREADABLE_KEY } from "./enquiry.js";
 import { checkReach, findForm, markConnected, refreshDefinitions, rememberForm } from "./forms.js";
@@ -86,6 +88,7 @@ type View = (
 	| { screen: "edit"; id: string; draft?: Record<string, unknown> }
 	| { screen: "log"; filter: string; cursor?: string }
 	| { screen: "connect"; id: string; form: string; secret?: string }
+	| { screen: "adopt"; form: string }
 ) & { toast?: BlockResponse["toast"] };
 
 interface Data {
@@ -234,6 +237,7 @@ type From =
 	| { screen: "log"; filter: string };
 
 function rowAction(id: string, s: Send, from: From) {
+	if (s.destination === NO_DELIVERY) return null;
 	const value = { row: id, from };
 	if (s.status === "fixing" || s.status === "gaveup" || (s.status === "skipped" && s.held)) {
 		return button("send_again", "Send again", { value });
@@ -476,6 +480,29 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 			description:
 				"Lead delivery could not read its fields one by one, usually because EmDash's forms changed how they write their emails. Nothing was lost. Check for an update to Lead delivery, or reconnect the form from its delivery's page.",
 		});
+	}
+	for (const group of await notSentForms(ctx)) {
+		blocks.push({
+			type: "banner",
+			variant: "alert",
+			title: `${plural(group.count, "enquiry", "enquiries")} from ${group.formName} ${group.count === 1 ? "was" : "were"} not sent: no delivery takes this form`,
+			description: admin
+				? "Add the form to a delivery to send them. They are also in Forms → Submissions."
+				: "Ask the person who set up this site to add this form to a delivery. They are also in Forms → Submissions.",
+		});
+		if (!admin) continue;
+		const only = config.deliveries.length === 1 ? config.deliveries[0]! : undefined;
+		blocks.push(
+			actions([
+				only
+					? button("adopt", `Add ${group.formName} to ${only.name} and send them`, {
+							value: { form: group.formId, delivery: only.id },
+						})
+					: button("adopt_choose", `Add ${group.formName} to a delivery`, {
+							value: group.formId,
+						}),
+			]),
+		);
 	}
 	if (admin && config.alertTo.length === 0) {
 		blocks.push({
@@ -931,6 +958,23 @@ async function deliveryPage(
 			button("toggle", d.on ? "Turn off" : "Turn on", { value: d.id }),
 		]),
 	);
+	// A typed short name that never received anything, while another form's enquiries went nowhere.
+	const silent = silentForms(data, d)[0];
+	const arrived = silent
+		? (await notSentForms(data.ctx)).find((g) => !servesForm(d, g.formId))
+		: undefined;
+	if (silent && arrived) {
+		blocks.push(
+			context(
+				`Nothing has arrived from ${formName(silent, data.forms)}. Enquiries arrived from ${arrived.formName} instead: is that the one?`,
+			),
+			actions([
+				button("adopt", `Yes, use ${arrived.formName}`, {
+					value: { form: arrived.formId, delivery: d.id },
+				}),
+			]),
+		);
+	}
 	if (d.kind === "hubspot") {
 		const forms = servedForms(data, d).filter((f) => f.fields.length > 0);
 		const unmatched = forms.some((f) => matchedCount(d, f.slug, f.fields) < f.fields.length);
@@ -1014,6 +1058,50 @@ async function deliveryPage(
 		]),
 	);
 	return blocks;
+}
+
+/** A delivery's forms that were named but never sent anything (usually a typed short name). */
+function silentForms(data: Data, d: Delivery): string[] {
+	if (d.forms === "all") return [];
+	return d.forms.filter((slug) => !data.forms[slug]?.lastAt);
+}
+
+/** Pick the delivery that takes a form no delivery took; the silent ones first. */
+async function adoptPage(data: Data, form: string): Promise<Block[]> {
+	const group = (await notSentForms(data.ctx)).find((g) => g.formId === form);
+	const name = group?.formName ?? formName(form, data.forms);
+	const ordered = [...data.config.deliveries].sort(
+		(a, b) => Number(silentForms(data, b).length > 0) - Number(silentForms(data, a).length > 0),
+	);
+	return [
+		back(),
+		header(`Send the enquiries from ${name}`),
+		section(
+			`${group ? plural(group.count, "enquiry", "enquiries") : "Enquiries"} from ${name} arrived, but no delivery takes this form. Choose the delivery that should: the form is added to it and the enquiries are sent.`,
+		),
+		{
+			type: "form",
+			block_id: `adopt:${form}`,
+			fields: [
+				{
+					type: "radio",
+					action_id: "delivery",
+					label: "Which delivery should take them?",
+					options: ordered.map((d) => {
+						const silent = silentForms(data, d);
+						return {
+							value: d.id,
+							label: silent.length
+								? `${d.name} (nothing has arrived from ${silent.map((s) => formName(s, data.forms)).join(" or ")} yet)`
+								: d.name,
+						};
+					}),
+					...(ordered[0] ? { initial_value: ordered[0].id } : {}),
+				},
+			],
+			submit: { label: "Add and send", action_id: "adopt" },
+		},
+	];
 }
 
 // ─── Edit ───────────────────────────────────────────────────────────
@@ -1218,6 +1306,7 @@ async function render(data: Data, view: View = { screen: "home" }): Promise<Bloc
 	else if (view.screen === "connect" && delivery && data.admin)
 		blocks = connectPage(data, delivery, view);
 	else if (view.screen === "log") blocks = await allEnquiries(data, view);
+	else if (view.screen === "adopt" && data.admin) blocks = await adoptPage(data, view.form);
 	else blocks = await home(data, view.screen === "home" ? view : { screen: "home" });
 	return { blocks, ...(view.toast ? { toast: view.toast } : {}) };
 }
@@ -1756,6 +1845,30 @@ export async function handleAdmin(
 			deliveries: data.config.deliveries.map((x) => (x.id === d.id ? updated : x)),
 		});
 		return render(await fresh(), { screen: "edit", id: d.id, toast: ok("Matching saved.") });
+	}
+
+	// Enquiries from a form no delivery took
+	if (action === "adopt_choose") return render(data, { screen: "adopt", form: str(value) });
+	if (action === "adopt") {
+		const v = valueOf(value);
+		const form = blockId.startsWith("adopt:") ? blockId.slice("adopt:".length) : str(v.form);
+		const deliveryId = blockId.startsWith("adopt:") ? str(values.delivery) : str(v.delivery);
+		const group = (await notSentForms(ctx)).find((g) => g.formId === form);
+		const result = await adoptForm(ctx, form, deliveryId);
+		if (!result) return render(data, { screen: "home", toast: fail("Choose a delivery.") });
+		const name = group?.formName ?? formName(form, data.forms);
+		return render(await fresh(), {
+			screen: "home",
+			toast: ok(
+				`"${result.delivery.name}" now takes ${name}. ${
+					result.count === 0
+						? ""
+						: result.count === 1
+							? "Sending its enquiry."
+							: `Sending its ${result.count} enquiries.`
+				}`.trim(),
+			),
+		});
 	}
 
 	// Connect this form

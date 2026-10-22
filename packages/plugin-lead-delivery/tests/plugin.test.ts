@@ -559,6 +559,140 @@ describe("the email way", () => {
 	});
 });
 
+describe("enquiries from a form no delivery takes", () => {
+	/** Two enquiries through the email way from a form called "Contact us" (arrives as contact-us). */
+	async function arriveFromContactUs(runtime: PluginRuntimeTestHost) {
+		const key = (await config(runtime)).key;
+		for (const who of ["Tom Reyes", "Priya Shah"]) {
+			await runtime.transport.invokeHook("email:beforeSend", {
+				source: "emdash-forms",
+				message: {
+					to: `enquiries-${key}@lead-delivery.invalid`,
+					subject: "New submission: Contact us",
+					text: `Your name: ${who}\nEmail: ${who.split(" ")[0]!.toLowerCase()}@example.com\n\nSubmitted at: 2026-10-16T09:00:00.000Z`,
+				},
+			});
+		}
+	}
+	// A delivery for the typed short name "contact", which never receives anything.
+	const typed = () =>
+		delivery({
+			kind: "email",
+			name: "contact → Shop inbox",
+			forms: ["contact"],
+			to: ["shop@crumb.test"],
+		});
+
+	it("says so on home, and with one delivery adds the form to it and sends what was held", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [known("contact", "contact")]);
+		const d = typed();
+		await setDeliveries(runtime, [d]);
+		await arriveFromContactUs(runtime);
+		const page = await runtime.admin.loadPage(PAGE, { user: admin });
+		expect(
+			flatten(page.blocks).find((b) => b.type === "banner" && b.title?.includes("were not sent")),
+		).toMatchObject({
+			variant: "alert",
+			title: "2 enquiries from Contact us were not sent: no delivery takes this form",
+		});
+		// The held enquiries have no Send again of their own: there is nowhere to send them yet.
+		const add = buttons(page).find((b) => b.action_id === "adopt");
+		expect(add?.label).toBe("Add Contact us to contact → Shop inbox and send them");
+		expect(buttons(page).filter((b) => b.label === "Send again")).toHaveLength(0);
+
+		const done = await runtime.admin.act(PAGE, "adopt", { user: admin, value: add!.value });
+		expect(done.toast?.message).toBe(
+			'"contact → Shop inbox" now takes Contact us. Sending its 2 enquiries.',
+		);
+		expect((await config(runtime)).deliveries[0]!.forms).toEqual(["contact", "contact-us"]);
+		await runtime.transport.invokeHook("cron", { name: "deliver", data: null });
+		const list = await rows(runtime);
+		expect(list.map((r) => [r.destination, r.status])).toEqual([
+			[d.id, "delivered"],
+			[d.id, "delivered"],
+		]);
+		const emails = JSON.stringify(await runtime.inspect.email());
+		expect(emails).toContain("new enquiry from Tom Reyes (Contact us)");
+		expect(emails).toContain("new enquiry from Priya Shah (Contact us)");
+		const after = await runtime.admin.loadPage(PAGE, { user: admin });
+		expect(text(after)).not.toContain("were not sent");
+	});
+
+	it("with several deliveries asks which, the one that never received anything first", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [
+			known("contact", "contact"),
+			known("quote", "Quote", { lastAt: new Date().toISOString() }),
+		]);
+		const quote = delivery({
+			kind: "email",
+			name: "Quote → Shop inbox",
+			forms: ["quote"],
+			to: ["shop@crumb.test"],
+		});
+		const d = typed();
+		await setDeliveries(runtime, [quote, d]);
+		await arriveFromContactUs(runtime);
+		const page = await runtime.admin.loadPage(PAGE, { user: admin });
+		const choose = buttons(page).find((b) => b.action_id === "adopt_choose");
+		expect(choose?.label).toBe("Add Contact us to a delivery");
+		const view = await runtime.admin.act(PAGE, "adopt_choose", {
+			user: admin,
+			value: choose!.value,
+		});
+		const form = flatten(view.blocks).find((b) => b.type === "form");
+		const radio = form?.type === "form" ? form.fields[0] : undefined;
+		expect(radio?.type === "radio" && radio.options.map((o) => o.label)).toEqual([
+			"contact → Shop inbox (nothing has arrived from contact yet)",
+			"Quote → Shop inbox",
+		]);
+		expect(radio?.type === "radio" && radio.initial_value).toBe(d.id);
+		const done = await runtime.admin.submit(
+			PAGE,
+			"adopt",
+			{ delivery: d.id },
+			{ user: admin, blockId: form?.type === "form" ? form.block_id : "" },
+		);
+		expect(done.toast?.message).toMatch(/now takes Contact us/);
+		expect((await config(runtime)).deliveries.find((x) => x.id === d.id)!.forms).toEqual([
+			"contact",
+			"contact-us",
+		]);
+	});
+
+	it("asks on the delivery's page whether the form that did arrive is the one", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [known("contact", "contact")]);
+		const d = typed();
+		await setDeliveries(runtime, [d]);
+		await arriveFromContactUs(runtime);
+		const page = await runtime.admin.act(PAGE, "open", { user: admin, value: d.id });
+		expect(text(page)).toContain(
+			"Nothing has arrived from contact. Enquiries arrived from Contact us instead: is that the one?",
+		);
+		expect(buttons(page).find((b) => b.action_id === "adopt")?.label).toBe("Yes, use Contact us");
+	});
+
+	it("shows Editors the banner without a button", async () => {
+		const { runtime } = await start();
+		await setForms(runtime, [known("contact", "contact")]);
+		await setDeliveries(runtime, [typed()]);
+		await arriveFromContactUs(runtime);
+		const editor = await runtime.fixtures.user({ email: "client@crumb.test", role: "editor" });
+		const page = await runtime.admin.loadPage(PAGE, { user: editor });
+		expect(text(page)).toContain(
+			"2 enquiries from Contact us were not sent: no delivery takes this form",
+		);
+		expect(buttons(page).some((b) => b.action_id.startsWith("adopt"))).toBe(false);
+		const refused = await runtime.admin.act(PAGE, "adopt", {
+			user: editor,
+			value: { form: "contact-us", delivery: "x" },
+		});
+		expect(refused.toast?.message).toBe("Only an admin can change this.");
+	});
+});
+
 describe("updating from 0.1", () => {
 	const OLD_KEY = "K".repeat(32);
 	const places = [
@@ -1310,6 +1444,7 @@ describe("what EmDash will accept", () => {
 			await runtime.admin.act(PAGE, "see_all", { user: admin }),
 			await runtime.admin.act(PAGE, "open_log", { user: editor, value: hub.id }),
 			await runtime.admin.act(PAGE, "check_reach", { user: admin }),
+			await runtime.admin.act(PAGE, "adopt_choose", { user: admin, value: "contact" }),
 		];
 		for (const screen of screens) {
 			expect(validateBlockResponse(screen, { pluginPagePaths: [PAGE] })).toEqual({

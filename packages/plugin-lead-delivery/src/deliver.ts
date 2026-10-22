@@ -258,6 +258,8 @@ export async function receive(
 				destination: NO_DELIVERY,
 				status: "skipped",
 				nextAt: "",
+				// Held, so its contents stay until the form is added to a delivery (adoptForm).
+				held: true,
 				notes: [...notes, "No delivery for this form; not sent"],
 			},
 		});
@@ -610,10 +612,77 @@ export async function cleanup(ctx: PluginContext) {
 	if (stale.items.length) await enquiries(ctx).deleteMany(stale.items.map((i) => i.id));
 }
 
+const NO_DELIVERY_NOTE = "No delivery for this form; not sent";
+
+/** Enquiries no delivery took, by form: the forms the owner may have meant. */
+export async function notSentForms(
+	ctx: PluginContext,
+): Promise<Array<{ formId: string; formName: string; count: number }>> {
+	const held = await sends(ctx).query({
+		where: { destination: NO_DELIVERY, status: "skipped" },
+		orderBy: { createdAt: "desc" },
+		limit: 200,
+	});
+	const byForm = new Map<string, { formId: string; formName: string; count: number }>();
+	for (const item of held.items) {
+		const entry = byForm.get(item.data.formId) ?? {
+			formId: item.data.formId,
+			formName: item.data.formName,
+			count: 0,
+		};
+		entry.count += 1;
+		byForm.set(item.data.formId, entry);
+	}
+	return [...byForm.values()];
+}
+
+/**
+ * Add a form to a delivery and send the enquiries that arrived from it while no delivery took
+ * it. Returns how many are on their way.
+ */
+export async function adoptForm(
+	ctx: PluginContext,
+	formId: string,
+	deliveryId: string,
+): Promise<{ delivery: Delivery; count: number } | null> {
+	const config = await loadConfig(ctx);
+	const delivery = config.deliveries.find((d) => d.id === deliveryId);
+	if (!delivery || !formId) return null;
+	if (delivery.forms !== "all" && !delivery.forms.includes(formId)) {
+		delivery.forms = [...delivery.forms, formId];
+		await ctx.kv.set("config", config);
+	}
+	const held = await sends(ctx).query({
+		where: { destination: NO_DELIVERY, formId },
+		limit: 100,
+	});
+	const now = new Date().toISOString();
+	const moved = held.items.map((item) => {
+		const { held: _held, ...rest } = item.data;
+		return {
+			id: sendId(item.data.enquiryId, delivery.id),
+			data: {
+				...rest,
+				destination: delivery.id,
+				status: "retrying" as const,
+				nextAt: now,
+				notes: rest.notes.filter((note) => note !== NO_DELIVERY_NOTE),
+			},
+		};
+	});
+	if (moved.length > 0) {
+		await sends(ctx).putMany(moved);
+		await sends(ctx).deleteMany(held.items.map((item) => item.id));
+		for (const row of moved.slice(0, PER_RUN)) await attempt(ctx, config, row.id, row.data);
+		await scheduleNext(ctx);
+	}
+	return { delivery, count: moved.length };
+}
+
 /** Try one log row again now (Send again / Send now). A held "Not sent" row is sent now too. */
 export async function sendAgain(ctx: PluginContext, id: string): Promise<Send | null> {
 	const row = await sends(ctx).get(id);
-	if (!row || row.status === "delivered") return row;
+	if (!row || row.status === "delivered" || row.destination === NO_DELIVERY) return row;
 	if (row.status === "skipped" && !row.held) return row;
 	const config = await loadConfig(ctx);
 	return attempt(ctx, config, id, {
