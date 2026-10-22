@@ -1285,7 +1285,7 @@ describe("home and who sees what", () => {
 		expect(page.blocks.some((b) => b.type === "tab")).toBe(false);
 	});
 
-	it("lists deliveries in the approved order, with Open and Enquiries on each row", async () => {
+	it("lists deliveries in the approved order, with one Open button on each row", async () => {
 		const { runtime, admin } = await start();
 		await setForms(runtime, [known("contact", "Contact us", { lastAt: new Date().toISOString() })]);
 		const working = delivery({
@@ -1321,7 +1321,6 @@ describe("home and who sees what", () => {
 			"Delivery",
 			"Status",
 			"",
-			"",
 		]);
 		expect(table?.type === "table" && table.rows.map((r) => [r.delivery, r.status])).toEqual([
 			["Contact us → Zapier", "Needs fixing"],
@@ -1329,12 +1328,8 @@ describe("home and who sees what", () => {
 			["Contact us → Shop inbox · Email", "Working, last just now"],
 		]);
 		expect(
-			table?.type === "table" &&
-				table.rows.map((r) => [
-					(r.open as { label: string }).label,
-					(r.enquiries as { label: string }).label,
-				])[0],
-		).toEqual(["Open", "Enquiries"]);
+			table?.type === "table" && table.rows.map((r) => (r.go as { label: string }).label)[0],
+		).toEqual("Open");
 	});
 
 	it("shows an Editor the same page without the admin's buttons, and refuses their changes", async () => {

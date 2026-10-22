@@ -526,14 +526,17 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 		columns: [
 			{ key: "delivery", label: "Delivery" },
 			{ key: "status", label: "Status" },
-			...(admin ? [{ key: "open", label: "", format: "element" as const }] : []),
-			{ key: "enquiries", label: "", format: "element" },
+			// One button per row: a second one runs off a 390 px phone with wider
+			// fonts. Admins reach a delivery's enquiries from its page; Editors,
+			// who have no page, open its enquiries directly.
+			{ key: "go", label: "", format: "element" },
 		],
 		rows: sorted.map((d) => ({
 			delivery: breakable(rowLabel(d)),
 			status: statuses.get(d.id)!.label,
-			...(admin ? { open: button("open", "Open", { value: d.id }) } : {}),
-			enquiries: button("open_log", "Enquiries", { value: d.id }),
+			go: admin
+				? button("open", "Open", { value: d.id })
+				: button("open_log", "Enquiries", { value: d.id }),
 		})),
 	});
 

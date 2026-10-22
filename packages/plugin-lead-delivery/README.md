@@ -10,7 +10,7 @@ A **delivery** is one form and where its enquiries go: an inbox (or several), a 
 
 Everything is on one page, **Lead delivery** under Marketing:
 
-- **Home**: this week's counters (received, delivered, trying again, needs fixing), a red notice for each delivery that needs fixing, the list of deliveries with **Open** and **Enquiries** on each row, the latest enquiries, and the **Settings for the whole site** (folded away).
+- **Home**: this week's counters (received, delivered, trying again, needs fixing), a red notice for each delivery that needs fixing, the list of deliveries with **Open** on each row (Editors get **Enquiries**), the latest enquiries, and the **Settings for the whole site** (folded away).
 - **New delivery**: choose the form and where to send, then the details. A test is sent when you save (for HubSpot only when you ask, because a test adds a contact). If the form has never been connected, the instructions to connect it come next.
 - **A delivery's page**: its two checks (did the test arrive; are real enquiries arriving), Send a test, Edit, Turn off, the repeat and spam choices, its own enquiries, and Delete.
 - **Edit**: the name, the address or HubSpot form, which forms it takes (one form usually; several, or all forms including new ones, for an inbox that gets everything), on or off, and HubSpot field matching.

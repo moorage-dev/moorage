@@ -411,7 +411,7 @@ test("home matches the approved mockup: order, columns, labels", async () => {
 	await expect(page.getByText("Delivered", { exact: true }).first()).toBeVisible();
 	await expect(page.getByText("Needs fixing", { exact: true }).first()).toBeVisible();
 	const deliveries = page.getByRole("table").first();
-	await expect(deliveries.getByRole("columnheader")).toHaveText(["Delivery", "Status", "", ""]);
+	await expect(deliveries.getByRole("columnheader")).toHaveText(["Delivery", "Status", ""]);
 	const zap = deliveries.getByRole("row", { name: /^Lead test → Zapier/ });
 	await expect(
 		deliveries
@@ -419,14 +419,16 @@ test("home matches the approved mockup: order, columns, labels", async () => {
 			.getByRole("cell", { name: "Turned off" }),
 	).toBeVisible();
 	await expect(zap.getByRole("cell", { name: "Trying again" })).toBeVisible();
-	await expect(zap.getByRole("button")).toHaveText(["Open", "Enquiries"]);
+	await expect(zap.getByRole("button")).toHaveText(["Open"]);
 	await expect(page.getByRole("button", { name: "See all enquiries" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Settings for the whole site" })).toBeVisible();
 
-	// Enquiries on a row opens the log for that delivery only.
-	await zap.getByRole("button", { name: "Enquiries" }).click();
-	await expect(page.getByRole("heading", { name: "Enquiries", exact: true })).toBeVisible();
-	await expect(row(page, /Ben Ode · Lead test → Zapier/)).toBeVisible();
+	// Open on a row shows that delivery's own enquiries only.
+	await zap.getByRole("button", { name: "Open" }).click();
+	await expect(
+		page.getByRole("heading", { name: "Enquiries through this delivery" }),
+	).toBeVisible();
+	await expect(row(page, /Ben Ode/)).toBeVisible();
 	await expect(row(page, /2 inboxes/)).toHaveCount(0);
 	await page.close();
 });
