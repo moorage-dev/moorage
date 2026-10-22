@@ -369,6 +369,15 @@ test.describe.serial("Content Approval", () => {
 		expect(box).not.toBeNull();
 		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 		expect(box?.height ?? 0).toBeGreaterThanOrEqual(32);
+		// Every tab is on screen, with room to spare: Linux fonts (CI) are wider than macOS ones.
+		const tabs = page.getByRole("tab");
+		await expect(tabs).toHaveCount(4);
+		const offScreen = await tabs.evaluateAll((list) =>
+			list
+				.filter((tab) => tab.getBoundingClientRect().right > window.innerWidth - 16)
+				.map((tab) => `${tab.textContent} (${Math.round(tab.getBoundingClientRect().right)})`),
+		);
+		expect(offScreen).toEqual([]);
 		await shot(page, "waiting-phone", 390);
 		await shot(page, "waiting");
 		await page.setViewportSize({ width: 1280, height: 900 });

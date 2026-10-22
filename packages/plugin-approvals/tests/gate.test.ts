@@ -486,7 +486,10 @@ describe("the Approvals page", () => {
 		await s.host.actions.content.publish("pages", id, actor(s.editor));
 		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
 		const body = text(list);
-		expect(body).toContain("Waiting (1)");
+		// Short tab labels, so all four fit a 390 px phone; the counts are in the numbers above.
+		const tabs = [...body.matchAll(/"label":"([^"]+)","blocks"/g)].map((m) => m[1]);
+		expect(tabs).toEqual(["Waiting", "Sent back", "History", "Settings"]);
+		expect(body).toContain('"label":"Waiting for you","value":1');
 		expect(body).toContain("Pages · asked by Sam Reyes");
 		expect(body).not.toContain('"type":"table"');
 		const review = await s.host.admin.act("/overview", "review", {
