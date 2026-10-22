@@ -277,6 +277,57 @@ describe("saving the banner and advanced settings", () => {
 	});
 });
 
+describe("what a save says about visitors", () => {
+	const LATER = "Saved. It can take a few minutes to reach visitors.";
+	const withGa = { tools: { ga4: "G-AB12CD34EF" } };
+
+	it("says only Saved when no tool is on, so visitors see nothing either way", async () => {
+		const fake = fakeContext();
+		const response = await submit(fake, "save_banner", { title: "Cookies?" });
+		expect(response.toast).toEqual({ type: "success", message: "Saved." });
+		expect(saved(fake).banner.title).toBe("Cookies?");
+		const advanced = await submit(fake, "save_advanced", { exclude: "/thank-you" });
+		expect(advanced.toast).toEqual({ type: "success", message: "Saved." });
+	});
+
+	it("says only Saved when a change has no effect on the page, such as an option for a tool that is off", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: withGa });
+		const response = await submit(fake, "save_tools", { hubspot_eu: true });
+		expect(response.toast).toEqual({ type: "success", message: "Saved." });
+		expect(saved(fake).hubspotEu).toBe(true);
+	});
+
+	it("says it can take a few minutes when visitors see the change", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: withGa });
+		const banner = await submit(fake, "save_banner", { title: "Cookies?" });
+		expect(banner.toast).toEqual({ type: "success", message: LATER });
+		const added = await submit(fakeContext(), "save_tools", { ga4: "G-AB12CD34EF" });
+		expect(added.toast).toEqual({ type: "success", message: LATER });
+	});
+
+	it("says it can take a few minutes when the last tool is turned off", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: withGa });
+		const response = await submit(fake, "save_tools", { ga4: "" });
+		expect(response.toast).toEqual({ type: "success", message: LATER });
+	});
+
+	it("adds the few minutes to putting the original text back only when visitors see it", async () => {
+		const quiet = fakeContext({ [CONFIG_KEY]: { banner: { title: "Mine" } } });
+		const none = await call(quiet, { type: "block_action", action_id: "reset_text" });
+		expect(none.toast).toEqual({
+			type: "success",
+			message: "The original heading and text are back.",
+		});
+		const live = fakeContext({ [CONFIG_KEY]: { ...withGa, banner: { title: "Mine" } } });
+		const seen = await call(live, { type: "block_action", action_id: "reset_text" });
+		expect(seen.toast).toEqual({
+			type: "success",
+			message:
+				"The original heading and text are back. It can take a few minutes to reach visitors.",
+		});
+	});
+});
+
 describe("status wording", () => {
 	const config = (raw: unknown) => normalizeConfig(raw);
 
