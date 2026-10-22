@@ -17,7 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Full history only where the changeset check compares against the base branch.
+          fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -31,31 +32,107 @@ jobs:
           echo "EMDASH_SITE_URL=http://localhost:4321" >> apps/demo-site/.env
       - run: pnpm lint
       - run: pnpm format:check
+      # The e2e matrix below lists spec files by hand; a new spec must be added there too.
+      - name: Every browser spec is in the e2e matrix
+        run: |
+          missing=0
+          for f in apps/demo-site/tests/*.spec.ts; do
+            name="tests/$(basename "$f")"
+            if ! grep -q "$name" .github/workflows/ci.yml; then
+              echo "::error file=.github/workflows/ci.yml::$name is not run by any e2e leg"
+              missing=1
+            fi
+          done
+          exit $missing
+      # Turbo hashes every task's inputs; the cache only skips work whose inputs are unchanged.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-check-${{ runner.os }}-${{ github.sha }}
+          restore-keys: turbo-check-${{ runner.os }}-
       - run: pnpm turbo run build typecheck test validate
-      - name: Install Playwright browser
-        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
-        run: pnpm --filter demo-site exec playwright install --with-deps chromium
-      - name: Playwright (demo site)
-        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
-        run: pnpm --filter demo-site exec playwright test
-      # One run with every sandbox-format plugin moved into the site's process, as on the Workers free plan.
-      - name: Playwright (sandbox-format plugins in-process)
-        if: hashFiles('apps/demo-site/playwright.config.ts') != ''
+      - name: Changeset present on PRs
+        if: github.event_name == 'pull_request'
+        run: pnpm changeset status --since=origin/${{ github.base_ref }}
+
+  # Browser tests, one dev server per leg, legs balanced by measured duration.
+  # Runs alongside `check`, not after it. Files keep running serially inside each leg.
+  e2e:
+    name: e2e (${{ matrix.mode }} ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    # Browsers and their system packages come preinstalled; the tag must match @playwright/test in pnpm-lock.yaml.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    env:
+      # The container's localhost is ::1 first, so the dev server would listen on IPv6 only while
+      # server-side fetches to localhost (Popups asking Forms for its list, EmDash typegen) go to
+      # 127.0.0.1 and are refused. IPv4 first matches the plain Ubuntu runner.
+      NODE_OPTIONS: --dns-result-order=ipv4first
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: sandboxed
+            shard: 1/4
+            in_process: ""
+            specs: tests/approvals.spec.ts
+          - mode: sandboxed
+            shard: 2/4
+            in_process: ""
+            specs: tests/lead-delivery.spec.ts tests/restore.spec.ts tests/smoke.spec.ts
+          - mode: sandboxed
+            shard: 3/4
+            in_process: ""
+            specs: tests/seo.spec.ts tests/analytics.spec.ts
+          - mode: sandboxed
+            shard: 4/4
+            in_process: ""
+            specs: tests/popups.spec.ts tests/site-health.spec.ts
+          # Every sandbox-format plugin moved into the site's process, as on the Workers free plan.
+          - mode: in-process
+            shard: 1/3
+            in_process: "1"
+            specs: tests/approvals.spec.ts
+          - mode: in-process
+            shard: 2/3
+            in_process: "1"
+            specs: tests/lead-delivery.spec.ts tests/smoke.spec.ts
+          - mode: in-process
+            shard: 3/3
+            in_process: "1"
+            specs: tests/seo.spec.ts tests/site-health.spec.ts tests/restore.spec.ts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      # No pnpm store cache here: inside the container it never matches the runner's cache, a cold
+      # install takes ~15 s, and seven legs saving the store cost ~35 s each.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - name: Throwaway .env (demo site)
+        run: |
+          pnpm --filter demo-site exec emdash secrets generate --write .env
+          echo "EMDASH_SITE_URL=http://localhost:4321" >> apps/demo-site/.env
+      # The dev server needs only the plugins' dist/ builds (~15 s), not the demo site's own build.
+      - run: pnpm turbo run build --filter=demo-site^...
+      - name: Playwright (${{ matrix.mode }} ${{ matrix.shard }})
         env:
-          DEMO_SITE_IN_PROCESS: "1"
-        run: pnpm --filter demo-site exec playwright test tests/smoke.spec.ts tests/seo.spec.ts tests/site-health.spec.ts tests/restore.spec.ts tests/approvals.spec.ts tests/lead-delivery.spec.ts
+          DEMO_SITE_IN_PROCESS: ${{ matrix.in_process }}
+        run: pnpm --filter demo-site exec playwright test ${{ matrix.specs }}
+      - name: Name the report artifact
+        if: failure()
+        run: echo "ARTIFACT=playwright-report-${{ matrix.mode }}-$(echo '${{ matrix.shard }}' | tr / -)" >> "$GITHUB_ENV"
       - name: Upload Playwright report
         if: failure() && hashFiles('apps/demo-site/playwright-report/index.html') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: ${{ env.ARTIFACT }}
           path: |
             apps/demo-site/playwright-report/
             apps/demo-site/test-results/
           retention-days: 14
-      - name: Changeset present on PRs
-        if: github.event_name == 'pull_request'
-        run: pnpm changeset status --since=origin/${{ github.base_ref }}
 
   # Nightly: does the repo still build and test against the newest EmDash?
   emdash-latest:
@@ -73,3 +150,16 @@ jobs:
       # First run must confirm `pnpm up` rewrites `catalog:` entries; if not, switch to editing pnpm-workspace.yaml.
       - run: pnpm --config.minimum-release-age=0 -r up emdash@latest @emdash-cms/plugin-cli@latest @emdash-cms/plugin-test@latest @emdash-cms/plugin-types@latest @emdash-cms/sandbox-workerd@latest @emdash-cms/plugin-forms@latest
       - run: pnpm turbo run build typecheck test validate
+
+  # The one check branch protection needs: green only when every job above passed (or was skipped).
+  ci-ok:
+    if: always()
+    needs: [check, e2e, emdash-latest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo '${{ toJSON(needs) }}'
+          exit 1
+      - run: echo "All CI jobs passed."
