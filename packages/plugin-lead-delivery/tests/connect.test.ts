@@ -508,6 +508,48 @@ describe("one-click connect: Done, connect", () => {
 		expect(text(dismissed)).not.toContain("could not be thrown away");
 	});
 
+	it.each([
+		[
+			"the change was refused",
+			async (runtime: PluginRuntimeTestHost) => {
+				await runtime.http.respond(TOKEN, approved());
+				await runtime.http.respond(LIST, listAnswer());
+				await runtime.http.respond(UPDATE, Response.json({}, { status: 403 }));
+			},
+		],
+		[
+			"a token came in a changed shape",
+			async (runtime: PluginRuntimeTestHost) => {
+				await runtime.http.respond(TOKEN, Response.json({ data: { access_token: ACCESS } }));
+			},
+		],
+	])(
+		"tells the admin when a failed revoke follows %s, without saying it connected",
+		async (_name, answers) => {
+			const { runtime, admin } = await start();
+			await runtime.http.respond(CODE, codeAnswer());
+			await connect(runtime, admin);
+			await answers(runtime);
+			await runtime.http.respond(REVOKE, new Response("", { status: 500 }));
+			await runtime.http.respond(REVOKE, new Response("", { status: 500 }));
+			const screen = await finish(runtime, admin);
+			expect(requests(runtime, REVOKE)).toHaveLength(2);
+			const home = await runtime.admin.act(PAGE, "home", { user: admin });
+			expect(text(home)).toContain("A one-time access could not be thrown away");
+			expect(text(home)).toContain(
+				"Lead delivery used the access you approved in EmDash for Contact form",
+			);
+			const emails = (await runtime.inspect.email()) as Array<{ subject: string; text: string }>;
+			const alert = emails.find((e) => e.subject.includes("could not be thrown away"))!;
+			expect(alert.text).toContain("while connecting the Contact form");
+			expect(alert.text).not.toContain("Lead delivery connected");
+			expect(
+				(await runtime.inspect.kv.get<Record<string, KnownForm>>("forms"))!.contact!.connectedAt,
+			).toBeUndefined();
+			await expectNoSecrets(runtime, [screen, home]);
+		},
+	);
+
 	it("tells a screen left open with an old code which code is current, and exchanges nothing", async () => {
 		const { runtime, admin } = await start();
 		await runtime.http.respond(CODE, codeAnswer());

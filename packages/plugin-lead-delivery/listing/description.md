@@ -23,4 +23,4 @@ Where the site can call its own address, an admin connects a form in one step: t
 
 ## Permissions
 
-Send web requests to the addresses you enter. Send email (Email deliveries and alerts). Read the forms' notification emails to its private address, and cancel those.
+Send web requests to the addresses you enter, and to the site itself (to connect a form in one step, with the access you approve). Send email (Email deliveries and alerts). Read the forms' notification emails to its private address, and cancel those.

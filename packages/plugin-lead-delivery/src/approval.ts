@@ -69,8 +69,11 @@ export type FinishResult<T> =
 	| { kind: "expired" }
 	/** Nothing was started, or it was already used. */
 	| { kind: "missing" }
-	/** An answer this module does not know: use the written instructions. */
-	| { kind: "unavailable" }
+	/**
+	 * An answer this module does not know: use the written instructions. `revoked` is there when
+	 * a token came anyway (in a changed shape) and was thrown away again, or could not be.
+	 */
+	| { kind: "unavailable"; revoked?: boolean }
 	/** Access was given but the work failed; `revoked` says whether it was thrown away again. */
 	| { kind: "failed"; reason: string; revoked: boolean }
 	| { kind: "done"; value: T; revoked: boolean };
@@ -279,9 +282,14 @@ export async function withApproval<T>(
 	const refresh = data?.refresh_token;
 	if (typeof access !== "string" || !access || typeof refresh !== "string" || !refresh) {
 		// A token may have been made: throw away whichever one came.
-		if (typeof refresh === "string" && refresh) await revoke(ctx, origin, refresh);
-		else if (typeof access === "string" && access) await revoke(ctx, origin, access);
-		return { kind: "unavailable" };
+		const token =
+			typeof refresh === "string" && refresh
+				? refresh
+				: typeof access === "string" && access
+					? access
+					: "";
+		if (!token) return { kind: "unavailable" };
+		return { kind: "unavailable", revoked: await revoke(ctx, origin, token) };
 	}
 
 	const call: AdminCall = async (path, init) => {

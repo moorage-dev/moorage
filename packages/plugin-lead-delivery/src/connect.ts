@@ -59,7 +59,8 @@ export async function offerApproval(
 export { cancelApproval, peekApproval };
 
 export type ConnectOutcome =
-	| { kind: "pending" | "busy" | "denied" | "expired" | "missing" | "unavailable" }
+	| { kind: "pending" | "busy" | "denied" | "expired" | "missing" }
+	| { kind: "unavailable"; revoked?: boolean }
 	| { kind: "connected"; form: string; name: string; already: boolean; revoked: boolean }
 	/** The form already sends to another address: nothing was changed. */
 	| { kind: "conflict"; form: string; host: string; hash: string; revoked: boolean }

@@ -387,7 +387,7 @@ function accessLeftBanner(data: Data): Block[] {
 			type: "banner",
 			variant: "alert",
 			title: "A one-time access could not be thrown away",
-			description: `Lead delivery connected ${left.form} ${ago(left.at)} with the access you approved in EmDash, then could not throw it away. ${ACCESS_LEFT_WHAT_TO_DO}`,
+			description: `Lead delivery used the access you approved in EmDash for ${left.form} ${ago(left.at)}, then could not throw it away. ${ACCESS_LEFT_WHAT_TO_DO}`,
 		},
 		actions([button("dismiss_access", "OK")]),
 	];

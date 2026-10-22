@@ -265,7 +265,7 @@ describe("one-time approval: finish", () => {
 		const result = await withApproval(ctx, ORIGIN, "d1:u1", async () => {
 			used = true;
 		});
-		expect(result).toEqual({ kind: "unavailable" });
+		expect(result).toMatchObject({ kind: "unavailable" });
 		expect(used).toBe(false);
 		expect(kv.size).toBe(0);
 		expect(leaks(result)).toBe(false);
@@ -277,6 +277,17 @@ describe("one-time approval: finish", () => {
 		await withApproval(ctx, ORIGIN, "d1:u1", async () => 1);
 		const revoke = calls.find((c) => c.url.endsWith("/revoke"));
 		expect(JSON.parse(String(revoke!.init!.body))).toEqual({ token: ACCESS });
+	});
+
+	it("says when a token that came in a changed shape could not be thrown away", async () => {
+		const { ctx } = fakeSite(() => Response.json({ data: { access_token: ACCESS } }), {
+			revoke: () => new Response("", { status: 500 }),
+		});
+		await startApproval(ctx, ORIGIN, "d1:u1", INTENT);
+		expect(await withApproval(ctx, ORIGIN, "d1:u1", async () => 1)).toEqual({
+			kind: "unavailable",
+			revoked: false,
+		});
 	});
 
 	it("is unavailable when the site cannot reach itself, and forgets the code", async () => {

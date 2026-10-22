@@ -149,7 +149,7 @@ export function accessAlert(site: string, form: string) {
 	return {
 		subject: `${site}: a one-time access could not be thrown away`,
 		text: [
-			`Lead delivery connected the ${formWords(form)} with the one-time admin access you approved in EmDash. Afterwards it tried twice to throw that access away, and EmDash did not confirm it.`,
+			`Lead delivery used the one-time admin access you approved in EmDash while connecting the ${formWords(form)}. Afterwards it tried twice to throw that access away, and EmDash did not confirm it.`,
 			"",
 			ACCESS_LEFT_WHAT_TO_DO,
 			"",

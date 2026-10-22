@@ -31,7 +31,9 @@
 	"security": { "email": "security@moorage.dev" },
 
 	// Trust contract — what runtime APIs the plugin asks for.
-	// network:request:unrestricted: the HubSpot form and app addresses are typed by the site owner.
+	// network:request:unrestricted: the HubSpot form and app addresses are typed by the site owner;
+	// one-click connect also calls the site's own address (EmDash's approval endpoints and Forms),
+	// with the one-time access an admin approves in EmDash.
 	// email:send: Email deliveries and the alerts.
 	// hooks.email-events:register: takes a form's enquiry from its notification email when the
 	// site cannot call its own address (the email way), and cancels that one email.
