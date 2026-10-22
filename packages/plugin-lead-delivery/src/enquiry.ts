@@ -3,6 +3,7 @@
 import type { PluginContext } from "emdash";
 
 import { isEmail } from "./config.js";
+import { isPossiblySpam } from "./spam.js";
 import { isThrowaway } from "./throwaway.js";
 import type { Enquiry, FieldInfo, KnownForm } from "./types.js";
 
@@ -48,9 +49,9 @@ export interface Received {
 	enquiry: Enquiry;
 }
 
-/** Fill in who sent it, attribution and the throwaway flag from the fields. */
+/** Fill in who sent it, attribution and the marks (possibly fake address, possibly spam) from the fields. */
 export function finish(
-	base: Omit<Enquiry, "email" | "name" | "throwaway" | "pageUrl" | "utm"> & {
+	base: Omit<Enquiry, "email" | "name" | "throwaway" | "spam" | "pageUrl" | "utm"> & {
 		pageUrl?: string;
 	},
 ): Enquiry {
@@ -87,6 +88,7 @@ export function finish(
 		...(pageUrl ? { pageUrl } : {}),
 		...(Object.keys(utm).length > 0 ? { utm } : {}),
 		throwaway: isThrowaway(email),
+		...(isPossiblySpam(fields) ? { spam: true } : {}),
 	};
 }
 
@@ -179,7 +181,7 @@ export async function fromEmail(
 		const knownLabel = [...knownLabels.keys()].find((label) => line.startsWith(`${label}: `));
 		const match = knownLabel
 			? [line, knownLabel, line.slice(knownLabel.length + 2)]
-			: known
+			: knownLabels.size > 0
 				? null
 				: /^([^:]{1,120}): (.*)$/.exec(line);
 		if (match) {

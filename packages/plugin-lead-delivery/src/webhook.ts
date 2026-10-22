@@ -1,18 +1,10 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import type { Outcome } from "./hubspot.js";
-import type { AppKind, Enquiry, Place } from "./types.js";
+import { appLabel } from "./names.js";
+import type { Delivery, Enquiry } from "./types.js";
 
-export const APPS: Array<{ value: AppKind; label: string; hint: string }> = [
-	{ value: "zapier", label: "Zapier", hint: 'Zapier: use "Webhooks by Zapier", Catch Hook.' },
-	{ value: "make", label: "Make", hint: "Make: Custom webhook." },
-	{ value: "n8n", label: "n8n", hint: "n8n: Webhook node." },
-	{ value: "other", label: "Something else", hint: "Any service that accepts a web address." },
-];
-
-export function appLabel(app: AppKind | undefined): string {
-	return APPS.find((a) => a.value === app)?.label ?? "Another app";
-}
+export { APPS, appLabel } from "./names.js";
 
 function toBase64(bytes: Uint8Array): string {
 	let binary = "";
@@ -66,12 +58,26 @@ export function appPayload(id: string, enquiry: Enquiry, test: boolean): Record<
 		labels,
 		pageUrl: enquiry.pageUrl ?? null,
 		utm: enquiry.utm ?? {},
+		marks: marksOf(enquiry),
+		...(enquiry.repeatAfterMs !== undefined
+			? { repeatAfterMinutes: Math.floor(enquiry.repeatAfterMs / 60_000) }
+			: {}),
+		// Kept for apps built on 0.1; `marks` says the same and more.
 		throwaway: enquiry.throwaway,
 		test,
 	};
 }
 
-export async function appRequest(place: Place, id: string, enquiry: Enquiry, test: boolean) {
+/** The marks an enquiry carries, as apps receive them. */
+export function marksOf(enquiry: Enquiry): Array<"throwaway" | "repeat" | "spam"> {
+	const marks: Array<"throwaway" | "repeat" | "spam"> = [];
+	if (enquiry.throwaway) marks.push("throwaway");
+	if (enquiry.repeatAfterMs !== undefined) marks.push("repeat");
+	if (enquiry.spam) marks.push("spam");
+	return marks;
+}
+
+export async function appRequest(place: Delivery, id: string, enquiry: Enquiry, test: boolean) {
 	const body = JSON.stringify(appPayload(id, enquiry, test));
 	const timestamp = Math.floor(Date.now() / 1000);
 	const headers: Record<string, string> = {
@@ -97,7 +103,7 @@ function sameTarget(a: string, b: string): boolean {
 
 /** What another app's answer means. */
 export function classifyApp(
-	place: Place,
+	place: Delivery,
 	status: number,
 	finalUrl: string,
 	bodyText: string,
@@ -109,7 +115,7 @@ export function classifyApp(
 			return {
 				kind: "fixing",
 				raw: `Sent on to ${finalUrl}`,
-				plain: `${app} sent the enquiry on to a different address, usually a sign-in page, so it did not arrive. Check the address under Where enquiries go.`,
+				plain: `${app} sent the enquiry on to a different address, usually a sign-in page, so it did not arrive. Check the address in Lead delivery → ${place.name} → Edit.`,
 			};
 		}
 		return { kind: "delivered" };

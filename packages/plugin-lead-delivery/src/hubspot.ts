@@ -1,7 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { UTM_KEYS } from "./enquiry.js";
-import type { Enquiry, FieldInfo, Place } from "./types.js";
+import type { Delivery, Enquiry, FieldInfo } from "./types.js";
 
 /** The HubSpot fields offered in each dropdown, in the order shown. */
 export const CHOICES: Array<{ value: string; label: string; property?: string }> = [
@@ -54,11 +54,11 @@ export function autoChoice(field: FieldInfo): string {
 	return UNMATCHED;
 }
 
-export function choiceFor(place: Place, form: string, field: FieldInfo): string {
+export function choiceFor(place: Delivery, form: string, field: FieldInfo): string {
 	return place.mapping?.[form]?.[field.key] ?? autoChoice(field);
 }
 
-export function matchedCount(place: Place, form: string, fields: FieldInfo[]): number {
+export function matchedCount(place: Delivery, form: string, fields: FieldInfo[]): number {
 	return fields.filter((f) => choiceFor(place, form, f) !== UNMATCHED).length;
 }
 
@@ -107,7 +107,7 @@ export function parseHubSpot(pasted: string): HubSpotForm | { error: string } {
 	};
 }
 
-export function submitUrl(place: Place): string {
+export function submitUrl(place: Delivery): string {
 	return `https://api.hsforms.com/submissions/v3/integration/submit/${place.portalId}/${place.formGuid}`;
 }
 
@@ -132,7 +132,7 @@ export function pageWithUtm(enquiry: Enquiry): string | undefined {
 }
 
 /** The Forms API v3 body for one enquiry. */
-export function hubspotBody(place: Place, enquiry: Enquiry): Record<string, unknown> {
+export function hubspotBody(place: Delivery, enquiry: Enquiry): Record<string, unknown> {
 	const fields: Array<{ objectTypeId: string; name: string; value: string }> = [];
 	const add = (name: string, value: string) => {
 		if (name && value) fields.push({ objectTypeId: "0-1", name, value });
@@ -177,7 +177,7 @@ export interface Outcome {
 }
 
 /** What a HubSpot answer means. */
-export function classifyHubSpot(status: number, bodyText: string): Outcome {
+export function classifyHubSpot(status: number, bodyText: string, name = "HubSpot"): Outcome {
 	if (status >= 200 && status < 300) return { kind: "delivered" };
 	let errors: Array<{ errorType?: string; message?: string }> = [];
 	let message = "";
@@ -202,15 +202,14 @@ export function classifyHubSpot(status: number, bodyText: string): Outcome {
 			kind: "fixing",
 			raw,
 			...(field ? { field } : {}),
-			plain: `HubSpot says your HubSpot form does not have the field ${field ?? "it was sent"}. Add that field to the form in HubSpot, or choose another field under Where enquiries go. Then press Send again.`,
+			plain: `HubSpot says your HubSpot form does not have the field ${field ?? "it was sent"}. Add that field to the form in HubSpot, or choose another field in Lead delivery → ${name} → Edit. Then press Send again.`,
 		};
 	}
 	if (type === "INVALID_EMAIL") {
 		return {
 			kind: "fixing",
 			raw,
-			plain:
-				"HubSpot says the email address in this enquiry is not valid, so it was not added. Check the address with the person, or choose which field is the email under Where enquiries go.",
+			plain: `HubSpot says the email address in this enquiry is not valid, so it was not added. Check the address with the person, or choose which field is the email in Lead delivery → ${name} → Edit.`,
 		};
 	}
 	if (type === "FORM_HAS_RECAPTCHA_ENABLED") {
@@ -225,13 +224,12 @@ export function classifyHubSpot(status: number, bodyText: string): Outcome {
 		return {
 			kind: "fixing",
 			raw,
-			plain:
-				"HubSpot cannot find that form. It may have been deleted. Paste the form's share link again under Where enquiries go.",
+			plain: `HubSpot cannot find that form. It may have been deleted. Paste the form's share link again in Lead delivery → ${name} → Edit.`,
 		};
 	}
 	return {
 		kind: "fixing",
 		raw,
-		plain: `HubSpot refused this enquiry${(first?.message ?? message).trim() ? ". Its own words are below" : ` without saying why (it answered ${status})`}. Fix the HubSpot form or the matching under Where enquiries go, then press Send again.`,
+		plain: `HubSpot refused this enquiry${(first?.message ?? message).trim() ? ". Its own words are below" : ` without saying why (it answered ${status})`}. Fix the HubSpot form or the matching in Lead delivery → ${name} → Edit, then press Send again.`,
 	};
 }

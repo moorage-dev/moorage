@@ -111,7 +111,7 @@ const plugin: SandboxedPlugin = {
 				if (!sameKey(key, config.key)) {
 					return text(
 						401,
-						"This address's private key is wrong or was reset. Copy the address again from Lead delivery → Connect forms.",
+						"This address's private key is wrong or was reset. Copy the address again: in Lead delivery open the form's delivery and press Connect this form.",
 					);
 				}
 				const payload = routeCtx.input as { formId?: unknown } | null;
