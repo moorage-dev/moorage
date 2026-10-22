@@ -52,7 +52,7 @@ function siteParts(value: Record<string, unknown>) {
 		...(typeof value.keySetAt === "string" ? { keySetAt: value.keySetAt } : {}),
 		...(isRecord(value.reach) ? { reach: value.reach as Config["reach"] } : {}),
 		// The 0.1 setup, passed through untouched so 0.1.2 can still read it after a rollback.
-		// Kept until 0.3.
+		// Kept for rollback to 0.1.x until a later release.
 		...(Array.isArray(value.places) ? { places: value.places as unknown[] } : {}),
 		...(typeof value.testedAt === "string" ? { testedAt: value.testedAt } : {}),
 		...(isRecord(value.accessLeft) &&
@@ -202,6 +202,21 @@ export function siteOrigin(ctx: PluginContext, requestUrl?: string): string {
 		}
 	}
 	return "";
+}
+
+/**
+ * The site's address as configured in EmDash (its site URL setting), never the request's Host.
+ * One-click connect sends a full-admin token only here; with no configured address it is not
+ * offered at all.
+ */
+export function configuredOrigin(ctx: PluginContext): string {
+	if (!ctx.site.url) return "";
+	try {
+		const url = new URL(ctx.site.url);
+		return url.protocol === "http:" || url.protocol === "https:" ? url.origin : "";
+	} catch {
+		return "";
+	}
 }
 
 export function routeUrl(origin: string, route: string): string {

@@ -279,6 +279,24 @@ describe("one-time approval: finish", () => {
 		expect(JSON.parse(String(revoke!.init!.body))).toEqual({ token: ACCESS });
 	});
 
+	it("treats an answer that was redirected anyway as unavailable, and asks without following", async () => {
+		const followed = () => {
+			const response = approved();
+			Object.defineProperty(response, "redirected", { value: true });
+			return response;
+		};
+		const { ctx, kv, calls } = fakeSite(followed);
+		await startApproval(ctx, ORIGIN, "d1:u1", INTENT);
+		let used = false;
+		const result = await withApproval(ctx, ORIGIN, "d1:u1", async () => {
+			used = true;
+		});
+		expect(result).toEqual({ kind: "unavailable" });
+		expect(used).toBe(false);
+		expect(kv.size).toBe(0);
+		for (const call of calls) expect(call.init?.redirect).toBe("manual");
+	});
+
 	it("says when a token that came in a changed shape could not be thrown away", async () => {
 		const { ctx } = fakeSite(() => Response.json({ data: { access_token: ACCESS } }), {
 			revoke: () => new Response("", { status: 500 }),

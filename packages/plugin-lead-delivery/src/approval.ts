@@ -92,13 +92,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Every call here carries a device code or a token, so none may follow a redirect: a 307 would
+ * resend the body (and the token in it) to wherever it points. A redirect is answered like any
+ * other unexpected answer.
+ */
 async function post(ctx: PluginContext, url: string, body: unknown) {
 	if (!ctx.http) throw new Error("Web requests are not available.");
 	return ctx.http.fetch(url, {
 		method: "POST",
 		headers: { "content-type": "application/json", "X-EmDash-Request": "1" },
 		body: JSON.stringify(body),
+		redirect: "manual",
 	});
+}
+
+/** A redirect answer, or one that was followed anyway. */
+function isRedirect(response: Response): boolean {
+	return (response.status >= 300 && response.status < 400) || response.redirected;
 }
 
 /** The JSON body, or undefined when it is not JSON. */
@@ -141,6 +152,7 @@ export async function startApproval(
 	} catch {
 		return { kind: "unavailable" };
 	}
+	if (isRedirect(response)) return { kind: "unavailable" };
 	if (busy(response.status)) return { kind: "busy" };
 	if (!response.ok) return { kind: "unavailable" };
 	const body = await jsonOf(response);
@@ -223,7 +235,7 @@ export async function sweepApprovals(ctx: PluginContext, now = Date.now()): Prom
 async function revokeOnce(ctx: PluginContext, origin: string, token: string): Promise<boolean> {
 	try {
 		const response = await post(ctx, `${origin}/_emdash/api/oauth/token/revoke`, { token });
-		return response.ok;
+		return response.ok && !isRedirect(response);
 	} catch {
 		return false;
 	}
@@ -265,6 +277,10 @@ export async function withApproval<T>(
 		await cancelApproval(ctx, key);
 		return { kind: "unavailable" };
 	}
+	if (isRedirect(response)) {
+		await cancelApproval(ctx, key);
+		return { kind: "unavailable" };
+	}
 	const body = await jsonOf(response);
 	const answer = isRecord(body) && typeof body.error === "string" ? body.error : "";
 	if (!response.ok) {
@@ -295,14 +311,18 @@ export async function withApproval<T>(
 	const call: AdminCall = async (path, init) => {
 		if (!ctx.http) throw new Error("Web requests are not available.");
 		const method = init?.method ?? (init?.body === undefined ? "GET" : "POST");
-		return ctx.http.fetch(`${origin}${path}`, {
+		const response = await ctx.http.fetch(`${origin}${path}`, {
 			method,
 			headers: {
 				authorization: `Bearer ${access}`,
 				...(init?.body === undefined ? {} : { "content-type": "application/json" }),
 			},
 			...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+			redirect: "manual",
 		});
+		// Never follow the admin token anywhere: stop, and the access is revoked.
+		if (isRedirect(response)) throw new Error("This site answered with a redirect.");
+		return response;
 	};
 
 	try {

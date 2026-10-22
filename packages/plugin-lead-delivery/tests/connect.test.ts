@@ -65,9 +65,9 @@ const CONTACT: KnownForm = {
 };
 
 /** A site with one delivery whose form was never connected; "Check this site" said `reach`. */
-async function start(reach: "self" | "email" = "self") {
+async function start(reach: "self" | "email" = "self", url = ORIGIN) {
 	host = await createPluginRuntimeTestHost({
-		site: { name: "Crumb & Co.", url: ORIGIN, locale: "en" },
+		site: { name: "Crumb & Co.", url, locale: "en" },
 	});
 	const runtime = host;
 	const admin = await runtime.fixtures.user({
@@ -586,6 +586,119 @@ describe("one-click connect: Done, connect", () => {
 			value: { id: D.id, form: "contact" },
 		});
 		expect(await approvalEntries(runtime)).toHaveLength(0);
+	});
+});
+
+describe("one-click connect: the admin token stays on this site", () => {
+	const EVIL = "https://evil.example";
+
+	/** The admin page, asked for through a request whose address and Host name another site. */
+	async function spoofed(runtime: PluginRuntimeTestHost, user: User, action: string) {
+		const response = await runtime.actions.routes.request("admin", {
+			method: "POST",
+			url: `${EVIL}/_emdash/api/plugins/lead-delivery/admin`,
+			headers: { host: "evil.example", "X-EmDash-Request": "1" },
+			user,
+			body: { type: "block_action", action_id: action, value: { id: D.id, form: "contact" } },
+		});
+		expect(response.status).toBe(200);
+		return ((await response.json()) as { data: BlockResponse }).data;
+	}
+
+	const nothingLeftTheSite = (runtime: PluginRuntimeTestHost) =>
+		expect(runtime.http.requests().filter((r) => !r.url.startsWith(`${ORIGIN}/`))).toEqual([]);
+
+	it("sends every call to the configured site address, whatever the request's Host says", async () => {
+		const { runtime, admin, key } = await start();
+		await runtime.http.respond(CODE, codeAnswer());
+		const opened = await spoofed(runtime, admin, "connect");
+		expect(text(opened)).toContain("ABCD-EFGH");
+		expect(text(opened)).not.toContain("evil.example");
+		await runtime.http.respond(TOKEN, approved());
+		await runtime.http.respond(LIST, listAnswer());
+		await runtime.http.respond(UPDATE, Response.json({ data: {} }));
+		await runtime.http.respond(REVOKE, Response.json({ data: {} }));
+		const done = await spoofed(runtime, admin, "connect_finish");
+		expect(done.toast?.type).toBe("success");
+		expect(runtime.http.requests().map((r) => r.url)).toEqual([CODE, TOKEN, LIST, UPDATE, REVOKE]);
+		nothingLeftTheSite(runtime);
+		// The form is pointed at this site too, never at the Host the request named.
+		expect(bodyOf(requests(runtime, UPDATE)[0]!).settings.webhookUrl).toBe(
+			`${ORIGIN}/_emdash/api/plugins/lead-delivery/inbound?key=${key}`,
+		);
+	});
+
+	it("is not offered when the site has no configured address", async () => {
+		const { runtime, admin } = await start("self", "");
+		const screen = await connect(runtime, admin);
+		expect(text(screen)).not.toContain("Your code");
+		expect(text(screen)).not.toContain("Connect in one step");
+		expect(instructionsOpen(screen)).toBe(true);
+		expect(runtime.http.requests().filter((r) => r.url.includes("/oauth/"))).toEqual([]);
+	});
+
+	const away = (status: number) =>
+		new Response(null, { status, headers: { location: `${EVIL}/steal` } });
+
+	it.each([301, 302, 307, 308])("follows no %i when asking for a code", async (status) => {
+		const { runtime, admin } = await start();
+		await runtime.http.respond(CODE, away(status));
+		const screen = await connect(runtime, admin);
+		expect(text(screen)).toContain(OFF_NOTE);
+		expect(await approvalEntries(runtime)).toEqual([]);
+		nothingLeftTheSite(runtime);
+	});
+
+	it.each([302, 307])("follows no %i when exchanging the code, and forgets it", async (status) => {
+		const { runtime, admin } = await start();
+		await runtime.http.respond(CODE, codeAnswer());
+		await connect(runtime, admin);
+		await runtime.http.respond(TOKEN, away(status));
+		const screen = await finish(runtime, admin);
+		expect(text(screen)).toContain(OFF_NOTE);
+		expect(instructionsOpen(screen)).toBe(true);
+		expect(await approvalEntries(runtime)).toEqual([]);
+		nothingLeftTheSite(runtime);
+	});
+
+	it.each([
+		["listing the forms", LIST],
+		["changing the form", UPDATE],
+	])(
+		"stops at a redirect while %s, sends the token nowhere else, and throws the access away",
+		async (_name, url) => {
+			const { runtime, admin } = await start();
+			await runtime.http.respond(CODE, codeAnswer());
+			await connect(runtime, admin);
+			await runtime.http.respond(TOKEN, approved());
+			if (url === UPDATE) await runtime.http.respond(LIST, listAnswer());
+			await runtime.http.respond(url, away(307));
+			await runtime.http.respond(REVOKE, Response.json({ data: {} }));
+			const screen = await finish(runtime, admin);
+			expect(screen.toast).toEqual({
+				type: "error",
+				message: "Not connected: This site answered with a redirect.",
+			});
+			expect(instructionsOpen(screen)).toBe(true);
+			expect(requests(runtime, REVOKE)).toHaveLength(1);
+			nothingLeftTheSite(runtime);
+			await expectNoSecrets(runtime, [screen]);
+		},
+	);
+
+	it("counts a redirected revoke as failed, retries, then tells the admin", async () => {
+		const { runtime, admin } = await start();
+		await runtime.http.respond(CODE, codeAnswer());
+		await connect(runtime, admin);
+		await runtime.http.respond(TOKEN, approved());
+		await runtime.http.respond(LIST, listAnswer());
+		await runtime.http.respond(UPDATE, Response.json({ data: {} }));
+		await runtime.http.respond(REVOKE, away(307));
+		await runtime.http.respond(REVOKE, away(308));
+		const done = await finish(runtime, admin);
+		expect(requests(runtime, REVOKE)).toHaveLength(2);
+		expect(text(done)).toContain("A one-time access could not be thrown away");
+		nothingLeftTheSite(runtime);
 	});
 });
 

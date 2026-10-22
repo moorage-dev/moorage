@@ -5,6 +5,7 @@ import type { PluginContext } from "emdash";
 
 import {
 	ago,
+	configuredOrigin,
 	inboundUrl,
 	inTime,
 	loadConfig,
@@ -1287,6 +1288,8 @@ function editPage(data: Data, d: Delivery, view: Extract<View, { screen: "edit" 
  */
 function oneClick(data: Data): string | undefined {
 	if (!data.admin || !data.user?.id || data.config.reach?.result !== "self") return undefined;
+	// The admin token only ever goes to the configured site address, never the request's Host.
+	if (!configuredOrigin(data.ctx)) return undefined;
 	return data.user.id;
 }
 
@@ -1460,7 +1463,7 @@ async function openConnect(
 	if (!userId) return render(data, view);
 	const offer = await offerApproval(
 		data.ctx,
-		data.origin,
+		configuredOrigin(data.ctx),
 		approvalKey(view.id, userId),
 		{ form: view.form, ...(opts.replace ? { replace: opts.replace } : {}) },
 		opts.fresh,
@@ -2077,11 +2080,12 @@ export async function handleAdmin(
 				),
 			});
 		}
+		const self = configuredOrigin(ctx);
 		const outcome = await finishConnect(
 			ctx,
-			data.origin,
+			self,
 			approvalKey(view.id, userId),
-			inboundUrl(data.origin, data.config.key),
+			inboundUrl(self, data.config.key),
 			data.config.keySetAt,
 		);
 		if ("revoked" in outcome && !outcome.revoked) {
