@@ -67,8 +67,15 @@ export interface Lock {
 
 export const LOCK_MS = 5 * 60_000;
 
+/*
+ * What the Admin set up (the database and its time zone, who gets emails) is
+ * kept in `ctx.settings`, which EmDash stores in one place whether the plugin
+ * runs in-process or sandboxed. Plain KV keys live in a different table in each
+ * mode (emdash-cms/emdash#4269), so they would be lost on a switch; what stays
+ * in KV below is working state (lock, review, people lists, carry-over rows).
+ */
 export async function loadConnection(ctx: PluginContext): Promise<Connection | null> {
-	return ctx.kv.get<Connection>("connection");
+	return ctx.settings.get<Connection>("connection");
 }
 
 export async function loadKey(ctx: PluginContext): Promise<string | null> {
@@ -92,7 +99,7 @@ export function siteQuery(api: CloudflareClient, connection: Connection): Query 
 }
 
 export async function emails(ctx: PluginContext): Promise<string[]> {
-	return (await ctx.kv.get<string[]>("emails")) ?? [];
+	return (await ctx.settings.get<string[]>("emails")) ?? [];
 }
 
 export function parseEmails(text: string): string[] | null {

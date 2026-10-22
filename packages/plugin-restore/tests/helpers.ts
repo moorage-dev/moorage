@@ -74,7 +74,6 @@ export async function startSite(options: Options = {}): Promise<Site> {
 		otherDatabases: options.otherDatabases ?? [],
 	});
 	const emails: Site["emails"] = [];
-	const settings = new Map<string, unknown>();
 	const storage = new Map<string, Map<string, unknown>>();
 	const collection = (name: string) => {
 		if (!storage.has(name)) storage.set(name, new Map());
@@ -123,15 +122,24 @@ export async function startSite(options: Options = {}): Promise<Site> {
 				return true;
 			},
 		},
+		// Settings are `settings:<key>` in the same options table, in-process and sandboxed
+		// alike (emdash src/plugins/settings.ts:238), so a restore rewinds them as well.
 		settings: {
 			async get(key: string) {
-				return settings.get(key) ?? null;
+				const rows = await sql("SELECT value FROM options WHERE name = ?", [
+					option(`settings:${key}`),
+				]);
+				return rows[0] ? JSON.parse(String(rows[0].value)) : null;
 			},
 			async set(key: string, value: unknown) {
-				settings.set(key, value);
+				await sql(
+					"INSERT INTO options (name, value) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+					[option(`settings:${key}`), JSON.stringify(value)],
+				);
 			},
 			async delete(key: string) {
-				return settings.delete(key);
+				await sql("DELETE FROM options WHERE name = ?", [option(`settings:${key}`)]);
+				return true;
 			},
 		},
 		storage: { restores: collection("restores"), moments: collection("moments") },

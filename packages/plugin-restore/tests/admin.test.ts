@@ -149,7 +149,7 @@ describe("connecting", () => {
 			values: { key },
 		});
 		expect(find(response, "banner", (b) => b.title === title)?.variant).toBe(variant);
-		expect(await site.ctx.kv.get("connection")).toBeNull();
+		expect(await site.ctx.settings.get("connection")).toBeNull();
 		expect(await site.ctx.settings.get("token")).toBeNull();
 	});
 
@@ -163,7 +163,11 @@ describe("connecting", () => {
 		const reach = find(response, "banner", (b) => b.variant === "error");
 		expect(reach?.title).toBe("This key can change 3 sites, not only this one");
 		expect(reach?.description).toContain("rosies-bakery (this site), harbour-cafe, smith-joinery");
-		const connection = await site.ctx.kv.get<Connection>("connection");
+		// Kept as settings, which EmDash stores in one place whether the plugin runs
+		// in-process or sandboxed; plain KV keys would be lost on a switch.
+		expect(await site.ctx.kv.get("connection")).toBeNull();
+		expect(await site.ctx.kv.get("emails")).toBeNull();
+		const connection = await site.ctx.settings.get<Connection>("connection");
 		expect(connection).toMatchObject({
 			databaseName: "rosies-bakery",
 			windowDays: 30,
@@ -171,7 +175,7 @@ describe("connecting", () => {
 		});
 		expect(await site.ctx.settings.get("token")).toBe("good");
 		// Admins are emailed by default.
-		expect(await site.ctx.kv.get("emails")).toEqual(["rosie@rosiesbakery.test"]);
+		expect(await site.ctx.settings.get("emails")).toEqual(["rosie@rosiesbakery.test"]);
 	});
 
 	it("says it in one plain line when the key reaches only this site", async () => {
@@ -243,8 +247,8 @@ describe("picking a moment", () => {
 		await sql(
 			"INSERT INTO options (name, value) VALUES ('site:timezone', '\"Europe/London\"') ON CONFLICT (name) DO UPDATE SET value = excluded.value",
 		);
-		const connection = (await s.ctx.kv.get<Connection>("connection"))!;
-		await s.ctx.kv.set("connection", { ...connection, zone: "Europe/London" });
+		const connection = (await s.ctx.settings.get<Connection>("connection"))!;
+		await s.ctx.settings.set("connection", { ...connection, zone: "Europe/London" });
 		const target = new Date(Date.now() - 2 * HOUR);
 		const local = new Intl.DateTimeFormat("en-CA", {
 			timeZone: "Europe/London",
@@ -471,7 +475,7 @@ describe("keeping it working", () => {
 		);
 		const after = await act(s, { type: "page_load" });
 		expect(text(after)).toContain("Newest first. Times are in India Standard Time (IST).");
-		expect((await s.ctx.kv.get<Connection>("connection"))?.zone).toBe("Asia/Kolkata");
+		expect((await s.ctx.settings.get<Connection>("connection"))?.zone).toBe("Asia/Kolkata");
 	});
 
 	it("saves several email addresses and refuses a wrong one", async () => {
@@ -487,7 +491,7 @@ describe("keeping it working", () => {
 			action_id: "save_emails",
 			values: { emails: "rosie@x.test, sam@webfolk.test" },
 		});
-		expect(await s.ctx.kv.get("emails")).toEqual(["rosie@x.test", "sam@webfolk.test"]);
+		expect(await s.ctx.settings.get("emails")).toEqual(["rosie@x.test", "sam@webfolk.test"]);
 	});
 
 	it("emails once a day when the key stops working", async () => {
