@@ -105,28 +105,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+      # No pnpm store cache here: inside the container it never matches the runner's cache, a cold
+      # install takes ~15 s, and seven legs saving the store cost ~35 s each.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Throwaway .env (demo site)
         run: |
           pnpm --filter demo-site exec emdash secrets generate --write .env
           echo "EMDASH_SITE_URL=http://localhost:4321" >> apps/demo-site/.env
-      - uses: actions/cache/restore@v4
-        with:
-          path: .turbo/cache
-          key: turbo-e2e-${{ runner.os }}-${{ github.sha }}
-          restore-keys: turbo-e2e-${{ runner.os }}-
-      # The dev server needs only the plugins' dist/ builds, not the demo site's own build.
+      # The dev server needs only the plugins' dist/ builds (~15 s), not the demo site's own build.
       - run: pnpm turbo run build --filter=demo-site^...
-      - name: Save turbo cache (one leg)
-        if: matrix.mode == 'sandboxed' && matrix.shard == '1/4'
-        uses: actions/cache/save@v4
-        with:
-          path: .turbo/cache
-          key: turbo-e2e-${{ runner.os }}-${{ github.sha }}
       - name: Playwright (${{ matrix.mode }} ${{ matrix.shard }})
         env:
           DEMO_SITE_IN_PROCESS: ${{ matrix.in_process }}
