@@ -2,9 +2,16 @@
 
 import type { PluginContext } from "emdash";
 
-import type { Issue } from "./checks.js";
 import type { SeoConfig } from "./config.js";
-import { entryKey, entryStore, makeRecord, setDuplicate, type EntryRecord } from "./record.js";
+import {
+	entryKey,
+	entryStore,
+	isDuplicate,
+	isOlder,
+	makeRecord,
+	setDuplicate,
+	type EntryRecord,
+} from "./record.js";
 
 /** KV keys for the site-wide check and its cached results. */
 export const SCAN_KEY = "scan";
@@ -84,6 +91,8 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 		state.phase = "titles";
 		return;
 	}
+	// Saves that write after this moment may have read a newer entry than the list below.
+	const listedAt = new Date().toISOString();
 	const page = await ctx.content?.list(collection, {
 		limit: BATCH,
 		cursor: state.cursor,
@@ -98,10 +107,23 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 			store.getMany(ids.map((id) => entryKey(collection, id))),
 		]);
 		const authors = new Map(credits.map((credit) => [credit.entryId, credit.bylines]));
+		// Records a save wrote after this check listed its entries stay as they are: the save may
+		// have read a newer version of the entry. The entry's updatedAt says so for most edits,
+		// but not for SEO panel fields, so the time the record was written counts too. Only the
+		// flag may still change on them, below.
+		const kept = new Set<string>();
 		const records = entries.map((entry) => {
-			const before = previous.get(entryKey(collection, entry.id)) ?? null;
+			const id = entryKey(collection, entry.id);
+			const before = previous.get(id) ?? null;
+			if (
+				before &&
+				(isOlder(entry.updatedAt, before.updatedAt) || (before.checkedAt ?? "") >= listedAt)
+			) {
+				kept.add(id);
+				return { id, data: before };
+			}
 			return {
-				id: entryKey(collection, entry.id),
+				id,
 				data: makeRecord({
 					hasPages: true,
 					collection,
@@ -114,8 +136,7 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 					config,
 					siteUrl: ctx.site.url,
 					// Kept as it was; the title pass below settles it for the whole site.
-					duplicateTitle:
-						before?.issues?.some((issue: Issue) => issue.id === "duplicate-title") ?? false,
+					duplicateTitle: before ? isDuplicate(before) : false,
 				}),
 			};
 		});
@@ -128,12 +149,15 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 				if (data.titleKey) seen.set(data.titleKey, (seen.get(data.titleKey) ?? 0) + 1);
 			}
 			for (const item of records) {
-				item.data = setDuplicate(item.data, (seen.get(item.data.titleKey ?? "") ?? 0) > 1);
+				const duplicate = (seen.get(item.data.titleKey ?? "") ?? 0) > 1;
+				if (kept.has(item.id) && isDuplicate(item.data) !== duplicate) kept.delete(item.id);
+				item.data = setDuplicate(item.data, duplicate);
 			}
 			state.status = "done";
 			state.finishedAt = new Date().toISOString();
 		}
-		await store.putMany(records);
+		const writes = records.filter((item) => !kept.has(item.id));
+		if (writes.length > 0) await store.putMany(writes);
 		for (const { data } of records) count(state.tally, data, 1);
 		state.checked += entries.length;
 	}
@@ -156,14 +180,11 @@ async function titlesStep(ctx: PluginContext, state: ScanState) {
 		cursor: state.titleCursor,
 	});
 	const items = page.items.filter((item) => (item.data.titleKey ?? "") !== "");
-	const writes = new Map<string, EntryRecord>();
+	// What this pass read, by id, and the flags it would change.
+	const read = new Map(items.map((item) => [item.id, item.data]));
+	const flips = new Map<string, boolean>();
 	const flag = (id: string, data: EntryRecord, duplicate: boolean) => {
-		const has = data.issues?.some((issue) => issue.id === "duplicate-title") ?? false;
-		if (has === duplicate) return;
-		const changed = setDuplicate(data, duplicate);
-		writes.set(id, changed);
-		count(state.tally, data, -1);
-		count(state.tally, changed, 1);
+		if (isDuplicate(data) !== duplicate) flips.set(id, duplicate);
 	};
 
 	let last = state.lastTitle;
@@ -177,14 +198,41 @@ async function titlesStep(ctx: PluginContext, state: ScanState) {
 		// The last record of the previous page turns out to share this title.
 		if (sameAsLast && last && !last.flagged && index === 0) {
 			const earlier = await store.get(last.id);
-			if (earlier) flag(last.id, earlier, true);
+			if (earlier) {
+				read.set(last.id, earlier);
+				flag(last.id, earlier, true);
+			}
 		}
 		const duplicate = sameAsLast || sameAsNext;
 		flag(item.id, item.data, duplicate);
 		last = { key, id: item.id, flagged: duplicate };
 	}
-	if (writes.size > 0) {
-		await store.putMany([...writes].map(([id, data]) => ({ id, data })));
+
+	if (flips.size > 0) {
+		// A save may have changed one of these pages since they were read: renamed it, or
+		// flagged it itself. Read the titles with a change again just before writing, and
+		// leave any title with a page that changed to that save, which reads the pages with
+		// its old and new title after writing and settles both.
+		const titles = new Set([...flips.keys()].map((id) => read.get(id)?.titleKey ?? ""));
+		const ids = [...read].filter(([, data]) => titles.has(data.titleKey ?? "")).map(([id]) => id);
+		const current = await store.getMany(ids);
+		for (const id of ids) {
+			const was = read.get(id);
+			const now = current.get(id);
+			if (!was || now?.checkedAt !== was.checkedAt || now?.titleKey !== was.titleKey) {
+				titles.delete(was?.titleKey ?? "");
+			}
+		}
+		const writes: Array<{ id: string; data: EntryRecord }> = [];
+		for (const [id, duplicate] of flips) {
+			const data = read.get(id);
+			if (!data || !titles.has(data.titleKey ?? "")) continue;
+			const changed = setDuplicate(data, duplicate);
+			writes.push({ id, data: changed });
+			count(state.tally, data, -1);
+			count(state.tally, changed, 1);
+		}
+		if (writes.length > 0) await store.putMany(writes);
 	}
 
 	state.lastTitle = last;
