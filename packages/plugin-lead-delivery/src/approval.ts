@@ -311,7 +311,7 @@ export async function withApproval<T>(
 	const call: AdminCall = async (path, init) => {
 		if (!ctx.http) throw new Error("Web requests are not available.");
 		const method = init?.method ?? (init?.body === undefined ? "GET" : "POST");
-		const response = await ctx.http.fetch(`${origin}${path}`, {
+		const reply = await ctx.http.fetch(`${origin}${path}`, {
 			method,
 			headers: {
 				authorization: `Bearer ${access}`,
@@ -321,8 +321,8 @@ export async function withApproval<T>(
 			redirect: "manual",
 		});
 		// Never follow the admin token anywhere: stop, and the access is revoked.
-		if (isRedirect(response)) throw new Error("This site answered with a redirect.");
-		return response;
+		if (isRedirect(reply)) throw new Error("This site answered with a redirect.");
+		return reply;
 	};
 
 	try {
