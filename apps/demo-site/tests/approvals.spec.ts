@@ -231,8 +231,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByText(/MCP|slug|webhook|fingerprint/)).toHaveCount(0);
 
 		await page.getByRole("checkbox", { name: "Pages" }).check();
-		await shot(page, "settings");
-		await shot(page, "settings-phone", 390);
+		await shot(page, "settings-0-1-4");
+		await shot(page, "settings-0-1-4-phone", 390);
 		await page.getByRole("button", { name: "Save", exact: true }).click();
 		await expect(
 			page.getByText("Saved. Publishing now asks for approval where you chose."),
@@ -378,8 +378,8 @@ test.describe.serial("Content Approval", () => {
 				.map((tab) => `${tab.textContent} (${Math.round(tab.getBoundingClientRect().right)})`),
 		);
 		expect(offScreen).toEqual([]);
-		await shot(page, "waiting-phone", 390);
-		await shot(page, "waiting");
+		await shot(page, "waiting-0-1-4-phone", 390);
+		await shot(page, "waiting-0-1-4");
 		await page.setViewportSize({ width: 1280, height: 900 });
 
 		await review.click();

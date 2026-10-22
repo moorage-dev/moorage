@@ -19,8 +19,8 @@
 		"artifacts": {
 			"screenshots": [
 				{ "file": "./images/review-panel.png", "lang": "en" },
-				{ "file": "./images/waiting.png", "lang": "en" },
-				{ "file": "./images/settings.png", "lang": "en" },
+				{ "file": "./images/waiting-0-1-4.png", "lang": "en" },
+				{ "file": "./images/settings-0-1-4.png", "lang": "en" },
 				{ "file": "./images/held-publish.png", "lang": "en" },
 			],
 		},
