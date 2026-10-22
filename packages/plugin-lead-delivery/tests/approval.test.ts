@@ -35,7 +35,10 @@ function fakeSite(
 ) {
 	const kv = new Map<string, unknown>();
 	const calls: Call[] = [];
+	const logs: unknown[] = [];
+	const record = (...args: unknown[]) => void logs.push(args);
 	const ctx = {
+		log: { debug: record, info: record, warn: record, error: record },
 		kv: {
 			get: async (key: string) => kv.get(key) ?? null,
 			set: async (key: string, value: unknown) => void kv.set(key, value),
@@ -56,7 +59,7 @@ function fakeSite(
 			},
 		},
 	} as unknown as PluginContext;
-	return { ctx, kv, calls };
+	return { ctx, kv, calls, logs };
 }
 
 const approved = () =>
@@ -303,6 +306,26 @@ describe("one-time approval: finish", () => {
 		await startApproval(ctx, ORIGIN, "d1:u2", INTENT);
 		expect(await withApproval(ctx, ORIGIN, "d1:u1", async () => 1)).toMatchObject({ kind: "done" });
 		expect([...kv.keys()]).toEqual(["approval:d1:u2"]);
+	});
+});
+
+describe("one-time approval: logs", () => {
+	it("never writes a token or the device code to the log, whatever happens", async () => {
+		const answers = [
+			approved,
+			() => error("authorization_pending"),
+			() => error("something_new"),
+			() => new Response("<html></html>"),
+			() => Response.json({ error: { code: "BUSY" } }, { status: 503 }),
+		];
+		for (const token of answers) {
+			const { ctx, logs } = fakeSite(token, { revoke: () => new Response("", { status: 500 }) });
+			await startApproval(ctx, ORIGIN, "d1:u1", INTENT);
+			await withApproval(ctx, ORIGIN, "d1:u1", async () => {
+				throw new Error(`boom ${ACCESS}`);
+			});
+			expect(leaks(logs)).toBe(false);
+		}
 	});
 });
 

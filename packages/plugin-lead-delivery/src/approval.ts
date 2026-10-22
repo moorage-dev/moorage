@@ -263,14 +263,14 @@ export async function withApproval<T>(
 		return { kind: "unavailable" };
 	}
 	const body = await jsonOf(response);
-	const error = isRecord(body) && typeof body.error === "string" ? body.error : "";
+	const answer = isRecord(body) && typeof body.error === "string" ? body.error : "";
 	if (!response.ok) {
-		if (error === "authorization_pending" || error === "slow_down") return { kind: "pending" };
+		if (answer === "authorization_pending" || answer === "slow_down") return { kind: "pending" };
 		// Busy or a passing fault: keep the code, it may already be approved.
 		if (busy(response.status)) return { kind: "busy" };
 		await cancelApproval(ctx, key);
-		if (error === "access_denied") return { kind: "denied" };
-		if (error === "expired_token") return { kind: "expired" };
+		if (answer === "access_denied") return { kind: "denied" };
+		if (answer === "expired_token") return { kind: "expired" };
 		return { kind: "unavailable" };
 	}
 	await cancelApproval(ctx, key);

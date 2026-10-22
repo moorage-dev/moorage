@@ -16,7 +16,7 @@ export function isShortName(value: string): boolean {
 	return SHORT_NAME.test(value);
 }
 
-function fieldsFromPages(pages: unknown): FieldInfo[] {
+export function fieldsFromPages(pages: unknown): FieldInfo[] {
 	if (!Array.isArray(pages)) return [];
 	const fields: FieldInfo[] = [];
 	for (const page of pages) {
@@ -112,8 +112,39 @@ export async function rememberForm(
 	await saveForms(ctx, forms);
 }
 
-/** Mark a form connected (by hand, from the Connect step). */
-export async function markConnected(ctx: PluginContext, slug: string, keySetAt?: string) {
+/**
+ * Remember every form EmDash listed (one-click connect), so "Which form?" lists them from then
+ * on. Names and fields are refreshed; nothing else about a known form changes.
+ */
+export async function rememberListed(
+	ctx: PluginContext,
+	items: Array<{ slug: string; name: string; pages?: unknown }>,
+) {
+	const forms = await loadForms(ctx);
+	for (const item of items) {
+		const fields = fieldsFromPages(item.pages);
+		const have = forms[item.slug];
+		forms[item.slug] = have
+			? { ...have, name: item.name, ...(fields.length ? { fields, source: "definition" } : {}) }
+			: {
+					slug: item.slug,
+					name: item.name,
+					fields,
+					source: fields.length ? "definition" : "enquiry",
+					addedAt: new Date().toISOString(),
+					days: [],
+				};
+	}
+	await saveForms(ctx, forms);
+}
+
+/** Mark a form connected: by hand from the Connect step, or straight by one-click connect. */
+export async function markConnected(
+	ctx: PluginContext,
+	slug: string,
+	keySetAt?: string,
+	way: "by hand" | "straight" = "by hand",
+) {
 	const forms = await loadForms(ctx);
 	const form = forms[slug];
 	if (!form) return;
@@ -122,7 +153,7 @@ export async function markConnected(ctx: PluginContext, slug: string, keySetAt?:
 		.sort()
 		.at(-1);
 	if (at && (!keySetAt || at > keySetAt)) return;
-	forms[slug] = { ...form, connectedAt: new Date().toISOString(), connectedWay: "by hand" };
+	forms[slug] = { ...form, connectedAt: new Date().toISOString(), connectedWay: way };
 	await saveForms(ctx, forms);
 }
 

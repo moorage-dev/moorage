@@ -55,6 +55,11 @@ function siteParts(value: Record<string, unknown>) {
 		// Kept until 0.3.
 		...(Array.isArray(value.places) ? { places: value.places as unknown[] } : {}),
 		...(typeof value.testedAt === "string" ? { testedAt: value.testedAt } : {}),
+		...(isRecord(value.accessLeft) &&
+		typeof value.accessLeft.at === "string" &&
+		typeof value.accessLeft.form === "string"
+			? { accessLeft: { at: value.accessLeft.at, form: value.accessLeft.form } }
+			: {}),
 	};
 }
 

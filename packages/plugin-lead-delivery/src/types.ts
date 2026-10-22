@@ -88,6 +88,11 @@ export interface Config {
 	 */
 	places?: unknown[];
 	testedAt?: string;
+	/**
+	 * A one-time access (one-click connect) that could not be revoked: when, and for which form's
+	 * name. Nothing secret. The banner shows until dismissed or until EmDash has ended it (90 days).
+	 */
+	accessLeft?: { at: string; form: string };
 }
 
 /** One enquiry as this plugin received it. Contents are deleted once all its deliveries are done. */

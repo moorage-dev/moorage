@@ -5,6 +5,7 @@ import type { PluginContext } from "emdash";
 
 import {
 	ago,
+	inboundUrl,
 	inTime,
 	loadConfig,
 	loadForms,
@@ -17,6 +18,14 @@ import {
 	siteName,
 	siteOrigin,
 } from "./config.js";
+import {
+	approvalKey,
+	cancelApproval,
+	finishConnect,
+	offerApproval,
+	peekApproval,
+	reportAccessLeft,
+} from "./connect.js";
 import {
 	deliveryName,
 	isConnected,
@@ -35,7 +44,7 @@ import {
 import { UNREADABLE_KEY } from "./enquiry.js";
 import { checkReach, findForm, markConnected, refreshDefinitions, rememberForm } from "./forms.js";
 import { CHOICES, choiceFor, matchedCount, parseHubSpot, UNMATCHED } from "./hubspot.js";
-import { instructions } from "./messages.js";
+import { ACCESS_LEFT_WHAT_TO_DO, instructions } from "./messages.js";
 import {
 	APPS,
 	appLabel,
@@ -68,6 +77,7 @@ const HOME_ROWS = 10;
 const OTHER = "__other";
 
 interface User {
+	id?: string;
 	email: string;
 	name: string | null;
 	role: number;
@@ -87,7 +97,18 @@ type View = (
 	| { screen: "delivery"; id: string; cursor?: string; secret?: string }
 	| { screen: "edit"; id: string; draft?: Record<string, unknown> }
 	| { screen: "log"; filter: string; cursor?: string }
-	| { screen: "connect"; id: string; form: string; secret?: string }
+	| {
+			screen: "connect";
+			id: string;
+			form: string;
+			secret?: string;
+			/** One-click is not offered right now, and why: shown above the written instructions. */
+			note?: string;
+			/** One-click found another address on the form: ask before replacing it. */
+			conflict?: { host: string; hash: string };
+			/** The admin kept the form's other address (its host): written instructions that keep it. */
+			kept?: string;
+	  }
 	| { screen: "adopt"; form: string }
 ) & { toast?: BlockResponse["toast"] };
 
@@ -354,10 +375,29 @@ function settingsAccordion(data: Data, open: boolean): Block {
 	};
 }
 
+/** EmDash ends an access it did not revoke after 90 days; the banner goes then too. */
+const ACCESS_DAYS = 90;
+
+function accessLeftBanner(data: Data): Block[] {
+	const left = data.config.accessLeft;
+	if (!data.admin || !left) return [];
+	if (Date.now() - Date.parse(left.at) > ACCESS_DAYS * 24 * 60 * 60_000) return [];
+	return [
+		{
+			type: "banner",
+			variant: "alert",
+			title: "A one-time access could not be thrown away",
+			description: `Lead delivery connected ${left.form} ${ago(left.at)} with the access you approved in EmDash, then could not throw it away. ${ACCESS_LEFT_WHAT_TO_DO}`,
+		},
+		actions([button("dismiss_access", "OK")]),
+	];
+}
+
 async function home(data: Data, view: Extract<View, { screen: "home" }>): Promise<Block[]> {
 	const { ctx, config, admin } = data;
 	const blocks: Block[] = [header("Lead delivery")];
 	if (admin) blocks.push(actions([button("new", "+ New delivery", { style: "primary" })]));
+	blocks.push(...accessLeftBanner(data));
 	if (admin && config.notice) {
 		blocks.push({
 			type: "banner",
@@ -921,6 +961,7 @@ async function deliveryPage(
 	const blocks: Block[] = [back()];
 	if (view.secret && d.kind === "app") blocks.push(secretAccordion(view.secret, d));
 	blocks.push(header(d.name), context(`${sendsTo(data, d)} · ${d.on ? "On" : "Off"}`));
+	blocks.push(...accessLeftBanner(data));
 	const latest = status.fixing[0]?.data;
 	if (latest) {
 		blocks.push({
@@ -1240,10 +1281,34 @@ function editPage(data: Data, d: Delivery, view: Extract<View, { screen: "edit" 
 
 // ─── Connect this form ──────────────────────────────────────────────
 
-function connectPage(data: Data, d: Delivery, view: Extract<View, { screen: "connect" }>): Block[] {
+/**
+ * One-click connect is offered only to an admin, and only when "Check this site" found that the
+ * site can call its own address: every call it makes is the site calling itself.
+ */
+function oneClick(data: Data): string | undefined {
+	if (!data.admin || !data.user?.id || data.config.reach?.result !== "self") return undefined;
+	return data.user.id;
+}
+
+const ONE_CLICK_OFF =
+	"EmDash did not offer its one-step approval just now, so connect this form with the instructions below.";
+const ONE_CLICK_BUSY =
+	"EmDash is busy just now. Wait a minute and press Connect in one step again, or use the instructions below.";
+
+async function connectPage(
+	data: Data,
+	d: Delivery,
+	view: Extract<View, { screen: "connect" }>,
+): Promise<Block[]> {
 	const { config, ctx } = data;
 	const name = formName(view.form, data.forms);
 	const reach = config.reach?.result;
+	const userId = oneClick(data);
+	const live =
+		userId && !view.note && !view.conflict && !view.kept
+			? await peekApproval(ctx, approvalKey(d.id, userId))
+			: undefined;
+	const code = live?.intent.form === view.form ? live : undefined;
 	const blocks: Block[] = [back(`Back to ${d.name}`, "open", d.id)];
 	if (view.secret && d.kind === "app") blocks.push(secretAccordion(view.secret, d));
 	blocks.push(header(`Connect ${name}`));
@@ -1256,43 +1321,153 @@ function connectPage(data: Data, d: Delivery, view: Extract<View, { screen: "con
 				"This site cannot send to its own address, and it has no way to send email, so your forms have no way to hand enquiries over. Ask your web person to set up email for the site, then press Check again under Settings for the whole site.",
 		});
 	}
-	blocks.push(
-		section(
-			"Your form needs to be told to hand each enquiry to Lead delivery. EmDash's form editor cannot do that yet, so someone who looks after the site's code does it once. It takes about five minutes.",
-		),
-		{
-			type: "accordion",
-			label: "Instructions for your web person",
-			default_open: true,
-			blocks: [
-				context("Select the text and copy it, or email it."),
+	if (view.conflict) {
+		const text = `This form already sends each enquiry to ${view.conflict.host}. Lead delivery would replace it, and that address would stop getting enquiries.`;
+		blocks.push(
+			{
+				type: "banner",
+				variant: "alert",
+				title: "The form sends somewhere else",
+				description: text,
+			},
+			actions([
+				button("connect_replace", "Replace it", {
+					style: "danger",
+					value: { id: d.id, form: view.form, ...view.conflict },
+					confirm: {
+						title: "Replace the form's other address?",
+						text,
+						confirm: "Replace it",
+						deny: "Keep it",
+						style: "danger",
+					},
+				}),
+				button("connect_keep", "Keep it", {
+					value: { id: d.id, form: view.form, host: view.conflict.host },
+				}),
+			]),
+			context("Nothing was changed. Replacing it takes one more approval in EmDash."),
+		);
+	} else if (code) {
+		const replacing = code.intent.replace?.host;
+		blocks.push(
+			section(
+				replacing
+					? `Approve once more and Lead delivery replaces ${replacing} with its own address:`
+					: "Your form needs to be told to hand each enquiry to Lead delivery. EmDash can do this for you in one step:",
+			),
+			{ type: "fields", fields: [{ label: "Your code", value: code.userCode }] },
+			section("1. Open EmDash's approval page (it opens in a new tab)."),
+			section(`2. Type the code ${code.userCode} and press Continue.`),
+			section(
+				"3. Press Authorize only if you opened that page from Lead delivery just now. If someone sent you a link or a code, press Deny.",
+			),
+			section("4. Come back here and press Done, connect."),
+			context(
+				"EmDash's page says Authorize Device and asks for full admin access: that is Lead delivery asking. Lead delivery uses it once to connect this form, then throws it away. It keeps nothing. Only an admin can approve. The code works for 15 minutes.",
+			),
+			actions([
 				{
-					type: "code",
-					code: instructions({
-						site: siteName(ctx, data.origin),
-						origin: data.origin,
-						key: config.key,
-						form: { slug: view.form, name },
-						reach,
-					}),
+					type: "link",
+					label: "Open the approval page",
+					target: { kind: "external", url: code.approveUrl },
+					appearance: "secondary",
 				},
-				{
-					type: "form",
-					block_id: `instructions:${d.id}:${view.form}`,
-					fields: [{ type: "text_input", action_id: "to", label: "Email these instructions to" }],
-					submit: { label: "Email instructions", action_id: "email_instructions" },
-				},
-				actions([
-					button("connected", "I have done this", { value: { id: d.id, form: view.form } }),
-				]),
-				context(
-					"I have done this marks the form connected. The delivery says Working once its first real enquiry arrives.",
+				button("connect_finish", "Done, connect", {
+					style: "primary",
+					value: { id: d.id, form: view.form },
+				}),
+				button("open", "Skip for now", { value: d.id }),
+			]),
+		);
+	} else {
+		if (view.note) blocks.push(context(view.note));
+		if (view.kept) {
+			blocks.push(
+				section(
+					ctx.email
+						? `The form keeps sending to ${view.kept}. It can hand each enquiry to Lead delivery by email as well: someone who looks after the site's code sets that up once, with the instructions below.`
+						: `The form keeps sending to ${view.kept}. This site cannot send email, so the only way left would replace that address: someone who looks after the site's code can decide, with the instructions below.`,
 				),
-			],
-		},
-		actions([button("open", "Skip for now", { value: d.id })]),
-	);
+			);
+		} else if (userId && view.note !== ONE_CLICK_OFF) {
+			blocks.push(
+				section("EmDash can connect this form for you in one step, with a code you approve."),
+				actions([
+					button("connect", "Connect in one step", {
+						style: "primary",
+						value: { id: d.id, form: view.form },
+					}),
+				]),
+			);
+		} else {
+			blocks.push(
+				section(
+					"Your form needs to be told to hand each enquiry to Lead delivery. EmDash's form editor cannot do that yet, so someone who looks after the site's code does it once. It takes about five minutes.",
+				),
+			);
+		}
+	}
+	const byHand = !code && !view.conflict;
+	// Keeping the form's other address: the email way adds to it instead of replacing it.
+	const emailWay = Boolean(view.kept && ctx.email);
+	blocks.push({
+		type: "accordion",
+		label: byHand
+			? "Instructions for your web person"
+			: "Instructions for your web person (do it by hand instead)",
+		default_open: byHand,
+		blocks: [
+			context("Select the text and copy it, or email it."),
+			{
+				type: "code",
+				code: instructions({
+					site: siteName(ctx, data.origin),
+					origin: data.origin,
+					key: config.key,
+					form: { slug: view.form, name },
+					reach,
+					keepsWebhook: emailWay,
+				}),
+			},
+			{
+				type: "form",
+				block_id: `instructions:${d.id}:${view.form}${emailWay ? ":email" : ""}`,
+				fields: [{ type: "text_input", action_id: "to", label: "Email these instructions to" }],
+				submit: { label: "Email instructions", action_id: "email_instructions" },
+			},
+			actions([button("connected", "I have done this", { value: { id: d.id, form: view.form } })]),
+			context(
+				"I have done this marks the form connected. The delivery says Working once its first real enquiry arrives.",
+			),
+		],
+	});
+	if (!code) blocks.push(actions([button("open", "Skip for now", { value: d.id })]));
 	return blocks;
+}
+
+/**
+ * Open Connect this form: with a code to approve when one-click is offered (the live one, or a
+ * new one), otherwise the written instructions. Anything unexpected from EmDash falls back to the
+ * written instructions with a plain note.
+ */
+async function openConnect(
+	data: Data,
+	view: Extract<View, { screen: "connect" }>,
+	opts: { fresh?: boolean; replace?: { host: string; hash: string } } = {},
+): Promise<BlockResponse> {
+	const userId = oneClick(data);
+	if (!userId) return render(data, view);
+	const offer = await offerApproval(
+		data.ctx,
+		data.origin,
+		approvalKey(view.id, userId),
+		{ form: view.form, ...(opts.replace ? { replace: opts.replace } : {}) },
+		opts.fresh,
+	);
+	if (offer.kind === "busy") return render(data, { ...view, note: ONE_CLICK_BUSY });
+	if (offer.kind === "unavailable") return render(data, { ...view, note: ONE_CLICK_OFF });
+	return render(data, view);
 }
 
 // ─── Page ───────────────────────────────────────────────────────────
@@ -1307,7 +1482,7 @@ async function render(data: Data, view: View = { screen: "home" }): Promise<Bloc
 	else if (view.screen === "edit" && delivery && data.admin)
 		blocks = editPage(data, delivery, view);
 	else if (view.screen === "connect" && delivery && data.admin)
-		blocks = connectPage(data, delivery, view);
+		blocks = await connectPage(data, delivery, view);
 	else if (view.screen === "log") blocks = await allEnquiries(data, view);
 	else if (view.screen === "adopt" && data.admin) blocks = await adoptPage(data, view.form);
 	else blocks = await home(data, view.screen === "home" ? view : { screen: "home" });
@@ -1693,7 +1868,7 @@ export async function handleAdmin(
 				await saveConfig(ctx, { ...saved.config, reach: { result, at: new Date().toISOString() } });
 				saved = await fresh();
 			}
-			return render(saved, {
+			return openConnect(saved, {
 				screen: "connect",
 				id: delivery.id,
 				form: form.slug,
@@ -1704,8 +1879,11 @@ export async function handleAdmin(
 		return render(saved, { screen: "delivery", id: delivery.id, ...secret, toast });
 	}
 
-	// A delivery
-	if (action === "open") return render(data, { screen: "delivery", id: str(value) });
+	// A delivery. Leaving Connect this form throws its unused code away.
+	if (action === "open") {
+		if (data.user?.id) await cancelApproval(ctx, approvalKey(str(value), data.user.id));
+		return render(data, { screen: "delivery", id: str(value) });
+	}
 	if (action === "edit") return render(data, { screen: "edit", id: str(value) });
 	if (action === "test") {
 		const d = findDelivery(data, str(value));
@@ -1815,7 +1993,7 @@ export async function handleAdmin(
 				? undefined
 				: forms.find((slug) => !isConnected(saved.forms[slug], saved.config.keySetAt));
 		if (newForm && (d.forms === "all" || !d.forms.includes(newForm))) {
-			return render(saved, { screen: "connect", id, form: newForm, toast: ok(message) });
+			return openConnect(saved, { screen: "connect", id, form: newForm, toast: ok(message) });
 		}
 		return render(saved, { screen: "delivery", id, toast: ok(message) });
 	}
@@ -1882,10 +2060,88 @@ export async function handleAdmin(
 			const result = await checkReach(ctx, data.origin);
 			await saveConfig(ctx, { ...data.config, reach: { result, at: new Date().toISOString() } });
 		}
-		return render(await fresh(), { screen: "connect", id, form: str(v.form) });
+		return openConnect(await fresh(), { screen: "connect", id, form: str(v.form) });
+	}
+	if (action === "connect_finish") {
+		const v = valueOf(value);
+		const view = { screen: "connect", id: str(v.id), form: str(v.form) } as const;
+		const userId = oneClick(data);
+		if (!userId || !findDelivery(data, view.id)) return render(data, view);
+		const outcome = await finishConnect(
+			ctx,
+			data.origin,
+			approvalKey(view.id, userId),
+			inboundUrl(data.origin, data.config.key),
+			data.config.keySetAt,
+		);
+		if ("revoked" in outcome && !outcome.revoked) {
+			await reportAccessLeft(ctx, formName(view.form, await loadForms(ctx)));
+		}
+		const now = await fresh();
+		const again = (message: string) =>
+			openConnect(now, { ...view, toast: info(message) }, { fresh: true });
+		switch (outcome.kind) {
+			case "pending":
+				return render(now, {
+					...view,
+					toast: info(
+						"EmDash has not been approved yet. Type the code on EmDash's approval page and press Authorize, then press Done, connect again.",
+					),
+				});
+			case "busy":
+				return render(now, {
+					...view,
+					toast: info("EmDash is busy. Wait a minute, then press Done, connect again."),
+				});
+			case "denied":
+				return again(
+					"The approval was turned down, so nothing was changed. To try again, use the new code below.",
+				);
+			case "expired":
+				return again("That code ran out after 15 minutes. Here is a new one.");
+			case "missing":
+				return again("That code was already used or ran out. Here is a new one.");
+			case "unavailable":
+				return render(now, { ...view, note: ONE_CLICK_OFF });
+			case "conflict":
+				return render(now, { ...view, conflict: { host: outcome.host, hash: outcome.hash } });
+			case "failed":
+				return render(now, { ...view, toast: fail(`Not connected: ${outcome.reason}`) });
+			case "connected":
+				return render(now, {
+					screen: "delivery",
+					id: view.id,
+					toast: ok(
+						`${outcome.name} is connected. Send yourself an enquiry through it on your site to check.`,
+					),
+				});
+		}
+	}
+	if (action === "connect_replace") {
+		const v = valueOf(value);
+		const host = str(v.host);
+		const hash = str(v.hash);
+		const view = { screen: "connect", id: str(v.id), form: str(v.form) } as const;
+		if (!host || !/^[0-9a-f]{64}$/.test(hash)) return render(data, view);
+		return openConnect(data, view, { fresh: true, replace: { host, hash } });
+	}
+	if (action === "connect_keep") {
+		const v = valueOf(value);
+		return render(data, {
+			screen: "connect",
+			id: str(v.id),
+			form: str(v.form),
+			kept: str(v.host) || "its other address",
+		});
+	}
+	if (action === "dismiss_access") {
+		const { accessLeft: _left, ...rest } = data.config;
+		await saveConfig(ctx, rest);
+		return render(await fresh());
 	}
 	if (action === "connected") {
 		const v = valueOf(value);
+		if (data.user?.id) await cancelApproval(ctx, approvalKey(str(v.id), data.user.id));
 		await markConnected(ctx, str(v.form), data.config.keySetAt);
 		return render(await fresh(), {
 			screen: "delivery",
@@ -1896,8 +2152,14 @@ export async function handleAdmin(
 		});
 	}
 	if (action === "email_instructions") {
-		const [, id, form] = blockId.split(":");
-		const view: View = { screen: "connect", id: id ?? "", form: form ?? "" };
+		const [, id, form, way] = blockId.split(":");
+		const emailWay = way === "email";
+		const view: View = {
+			screen: "connect",
+			id: id ?? "",
+			form: form ?? "",
+			...(emailWay ? { kept: "its other address" } : {}),
+		};
 		const parsed = parseAddresses(str(values.to));
 		if ("bad" in parsed || parsed.list.length === 0) {
 			return render(data, { ...view, toast: fail("Type the email address of your web person.") });
@@ -1923,6 +2185,7 @@ export async function handleAdmin(
 				key: data.config.key,
 				form: { slug: form ?? "", name },
 				reach: data.config.reach?.result,
+				keepsWebhook: emailWay,
 			}),
 		});
 		return render(data, { ...view, toast: ok(`Instructions sent to ${parsed.list.join(", ")}.`) });
