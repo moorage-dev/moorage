@@ -1358,7 +1358,7 @@ async function connectPage(
 			),
 			{ type: "fields", fields: [{ label: "Your code", value: code.userCode }] },
 			section("1. Open EmDash's approval page (it opens in a new tab)."),
-			section(`2. Type the code ${code.userCode} and press Continue.`),
+			section(`2. Type ${code.userCode} in its Device code box.`),
 			section(
 				"3. Press Authorize only if you opened that page from Lead delivery just now. If someone sent you a link or a code, press Deny.",
 			),
@@ -1375,7 +1375,7 @@ async function connectPage(
 				},
 				button("connect_finish", "Done, connect", {
 					style: "primary",
-					value: { id: d.id, form: view.form },
+					value: { id: d.id, form: view.form, code: code.userCode },
 				}),
 				button("open", "Skip for now", { value: d.id }),
 			]),
@@ -2067,6 +2067,16 @@ export async function handleAdmin(
 		const view = { screen: "connect", id: str(v.id), form: str(v.form) } as const;
 		const userId = oneClick(data);
 		if (!userId || !findDelivery(data, view.id)) return render(data, view);
+		// A screen left open in another tab: its code was replaced by a newer one.
+		const live = await peekApproval(ctx, approvalKey(view.id, userId));
+		if (live && str(v.code) && live.userCode !== str(v.code)) {
+			return render(data, {
+				...view,
+				toast: info(
+					`That screen's code was replaced by a newer one: ${live.userCode}. Type this one on EmDash's approval page, then press Done, connect.`,
+				),
+			});
+		}
 		const outcome = await finishConnect(
 			ctx,
 			data.origin,

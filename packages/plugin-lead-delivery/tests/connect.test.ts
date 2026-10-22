@@ -219,7 +219,7 @@ describe("one-click connect: when it is offered", () => {
 			appearance: "secondary",
 		});
 		expect(text(screen)).not.toContain("?code=");
-		expect(text(screen)).toContain("2. Type the code ABCD-EFGH and press Continue.");
+		expect(text(screen)).toContain("2. Type ABCD-EFGH in its Device code box.");
 		expect(text(screen)).toContain(
 			"3. Press Authorize only if you opened that page from Lead delivery just now. If someone sent you a link or a code, press Deny.",
 		);
@@ -506,6 +506,28 @@ describe("one-click connect: Done, connect", () => {
 		await expectNoSecrets(runtime, [done, home]);
 		const dismissed = await runtime.admin.act(PAGE, "dismiss_access", { user: admin });
 		expect(text(dismissed)).not.toContain("could not be thrown away");
+	});
+
+	it("tells a screen left open with an old code which code is current, and exchanges nothing", async () => {
+		const { runtime, admin } = await start();
+		await runtime.http.respond(CODE, codeAnswer());
+		const old = await connect(runtime, admin);
+		await runtime.admin.act(PAGE, "open", { user: admin, value: D.id });
+		await runtime.http.respond(CODE, codeAnswer({ user_code: "NEWC-ODE2" }));
+		await connect(runtime, admin);
+		const stale = await runtime.admin.act(PAGE, "connect_finish", {
+			user: admin,
+			value: button(old, "Done, connect")!.value,
+		});
+		expect(button(old, "Done, connect")!.value).toEqual({
+			id: D.id,
+			form: "contact",
+			code: "ABCD-EFGH",
+		});
+		expect(stale.toast?.type).toBe("info");
+		expect(stale.toast?.message).toContain("replaced by a newer one: NEWC-ODE2");
+		expect(text(stale)).toContain("NEWC-ODE2");
+		expect(requests(runtime, TOKEN)).toHaveLength(0);
 	});
 
 	it("throws the code away on Skip for now and on I have done this", async () => {
