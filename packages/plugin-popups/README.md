@@ -4,7 +4,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 
 **A developer installs it once.** It is a native plugin: someone adds one line to the site's `astro.config.mjs` (below). After that, everything is done on the admin page under Marketing > Popups. It cannot be installed from the plugin registry.
 
-![The Popups list](images/admin-list-desktop-light.png)
+![The Popups list](images/admin-list-0-1-6-desktop-light.png)
 
 ## What it does
 
