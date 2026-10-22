@@ -19,7 +19,7 @@ Every enquiry sent through your EmDash forms goes where you work: your inbox, Hu
 
 ## Connecting a form
 
-EmDash's form editor cannot yet be pointed at another plugin, so someone who looks after the site's code connects each form once. New delivery shows the instructions and can email them.
+EmDash's form editor cannot yet be pointed at another plugin. Where the site can call its own address, an admin connects a form in one step: type the code Lead Delivery shows on EmDash's own approval page, press Authorize, then Done, connect. Lead Delivery uses that access once and throws it away. Everywhere else, someone who looks after the site's code connects each form once; New delivery shows the instructions and can email them.
 
 ## Permissions
 
