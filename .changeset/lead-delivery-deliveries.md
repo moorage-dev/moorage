@@ -8,6 +8,7 @@ Lead delivery is now one page built around deliveries. A delivery is one form an
 - Same email address again: send every enquiry, or not twice within 24 hours or 7 days, chosen for each delivery.
 - A new "Possibly spam" mark (many links, a known sales-pitch phrase, a message that is only a link). Marked enquiries are still sent unless you turn on "Don't send possibly spam" for that delivery.
 - Every mark (possibly fake address, same address again, possibly spam) is listed at the top of each delivered email. Apps get a `marks` list.
-- Held enquiries, and enquiries from a form with no delivery, are listed as Not sent; Send again sends a held one.
+- Held enquiries are listed as Not sent; Send again sends them. Enquiries from a form no delivery takes are kept, the page says so, and one press adds the form to a delivery and sends them.
+- Going back to 0.1.2 keeps working: the earlier setup is kept untouched next to the deliveries.
 - A test that gets no answer is not tried again for two days.
 - Updating needs nothing: your setup becomes deliveries with the same ids, so the log, matching, secrets and connected forms keep working. Each delivery gets a new name, and the page says so once.

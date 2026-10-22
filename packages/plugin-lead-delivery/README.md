@@ -76,6 +76,8 @@ EmDash's form editor cannot yet be pointed at another plugin. Until it can, some
 
 In **New delivery**, "Which form?" lists the forms Lead Delivery already knows (from enquiries, and from forms named before). For another form, choose **Another form** and type its short name: Forms lists it under each form's name.
 
+When enquiries arrive from a form no delivery takes (for example because the form's email names it differently from the short name you typed), they are kept and listed as Not sent, and the page says so: "2 enquiries from Contact us were not sent: no delivery takes this form". One press adds that form to your delivery (or lets you choose which, starting with the one that has received nothing) and sends them. A delivery that has received nothing also asks "Enquiries arrived from Contact us instead: is that the one?".
+
 Lead Delivery checks once which of two ways works on your site:
 
 - **Straight from the form.** The form's `webhookUrl` is set to the plugin's private address. This needs the site to be able to call its own address. On Cloudflare that needs the compatibility flag `global_fetch_strictly_public`.

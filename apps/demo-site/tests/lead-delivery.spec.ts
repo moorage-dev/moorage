@@ -474,6 +474,43 @@ test("the dashboard widget counts this week's enquiries", async () => {
 	expect(text).toContain("Open Lead delivery");
 });
 
+test("enquiries from a form no delivery takes: a banner, then one choice adds the form and sends them", async ({
+	request,
+}) => {
+	const key = await privateKey();
+	await request.post(`${API}/inbound?key=${key}`, {
+		data: {
+			event: "form.submission",
+			formId: "other-form",
+			formName: "Other form",
+			submissionId: "01WEBWAY000000000000000003",
+			data: { name: "Kim Lee", email: "kim@example.com", message: "Hello" },
+			submittedAt: new Date().toISOString(),
+		},
+	});
+	const page = await adminContext.newPage();
+	await open(page);
+	await expect(
+		page.getByText("1 enquiry from Other form was not sent: no delivery takes this form"),
+	).toBeVisible();
+	await expect(
+		row(page, /Kim Lee · Other form/).getByRole("cell", { name: "Not sent", exact: true }),
+	).toBeVisible();
+	await expect(row(page, /Kim Lee · Other form/).getByRole("button")).toHaveCount(0);
+	await page.getByRole("button", { name: "Add Other form to a delivery" }).click();
+	await expect(
+		page.getByRole("heading", { name: "Send the enquiries from Other form" }),
+	).toBeVisible();
+	await page.getByRole("radio", { name: "Lead test → Zapier" }).click();
+	await page.getByRole("button", { name: "Add and send" }).click();
+	await expect(
+		page.getByText('"Lead test → Zapier" now takes Other form. Sending its enquiry.'),
+	).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByText(/was not sent: no delivery takes this form/)).toHaveCount(0);
+	await expect(row(page, /Kim Lee · Lead test → Zapier \(Other form\)/)).toBeVisible();
+	await page.close();
+});
+
 // Screenshots for the README, the registry listing and the comparison with the mockup:
 // DEMO_SITE_SCREENSHOTS=1 (optionally DEMO_SITE_SHOTS_DIR=<folder> for the comparison set).
 test("screenshots", async ({ browser }) => {
