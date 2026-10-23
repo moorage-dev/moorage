@@ -309,6 +309,76 @@ test.describe("admin", () => {
 		await phone.close();
 	});
 
+	test("on a phone a finished popup's page fits the screen, and the console has no repeated-key warning", async ({
+		browser,
+	}) => {
+		test.setTimeout(240_000);
+		await make({
+			name: "Phone check",
+			kind: "slide",
+			s2: {
+				heading: "Open on Boxing Day",
+				text: "Ten till two.",
+				contains: "button",
+				button_label: "See the hours",
+				button_url: "/hours",
+				decline: "none",
+			},
+		});
+		const phone = await browser.newContext({
+			storageState: await adminContext.storageState(),
+			viewport: { width: 390, height: 844 },
+			isMobile: true,
+			hasTouch: true,
+		});
+		const page = await phone.newPage();
+		const warnings: string[] = [];
+		page.on("console", (message) => {
+			if (/same key/i.test(message.text())) warnings.push(message.text());
+		});
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await page.locator("text=New popup").first().waitFor({ timeout: 150_000 });
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		if (await welcome.isVisible().catch(() => false))
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		const row = page.locator("tbody tr").filter({ hasText: "Phone check" });
+		await row.getByRole("button", { name: "Edit", exact: true }).click();
+		await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "More" })).toBeVisible();
+		const width = 390;
+		const inside = async (locator: ReturnType<Page["locator"]>) => {
+			await locator.scrollIntoViewIfNeeded();
+			const r = (await locator.boundingBox())!;
+			const what = (await locator.textContent())?.slice(0, 80);
+			expect(r.x, what).toBeGreaterThanOrEqual(0);
+			expect(r.x + r.width, what).toBeLessThanOrEqual(width);
+		};
+		// "When it opens" and each of its long choices wrap inside the 390 px screen.
+		const opens = page.getByRole("group", { name: "When it opens" });
+		await expect(opens).toBeVisible();
+		await inside(opens);
+		const choices = opens.getByRole("radio");
+		await expect(choices).toHaveCount(3);
+		for (const choice of await choices.all()) await inside(choice.locator(".."));
+		await expect(opens.getByText(/^After they have read a while/)).toBeVisible();
+		await inside(opens.getByText(/^After they have read a while/));
+		// Every dropdown, closed and open, too.
+		const boxes = await page.getByRole("combobox").all();
+		expect(boxes.length).toBeGreaterThan(0);
+		for (const box of boxes) await inside(box);
+		await page.getByRole("combobox", { name: /show it to them again/ }).click();
+		const options = page.getByRole("option");
+		await expect(options.first()).toBeVisible();
+		for (const option of await options.all()) await inside(option);
+		await page.keyboard.press("Escape");
+		// Nothing on the page is wider than the screen.
+		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+			width,
+		);
+		expect(warnings).toEqual([]);
+		await phone.close();
+	});
+
 	test("a finished popup has its own numbers and one Save, and a refused save keeps what was typed", async () => {
 		test.setTimeout(240_000);
 		const id = await make({

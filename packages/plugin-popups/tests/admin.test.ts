@@ -128,7 +128,7 @@ describe("the list", () => {
 			{ type: "button", action_id: "row", label: "Turn off", value: "toggle:abcd1234" },
 			{
 				type: "menu",
-				action_id: "row",
+				action_id: "row_more",
 				label: "More",
 				items: [
 					{ label: "Duplicate", value: "duplicate:abcd1234" },
@@ -447,6 +447,12 @@ describe("finished popups", () => {
 		]);
 		await press(fake, "row", "delete:abcd1234");
 		expect(stored(fake).popups).toHaveLength(1);
+		// The same from the More menu, which has its own id.
+		const copy = stored(fake).popups[0]!.id;
+		await press(fake, "row_more", `duplicate:${copy}`);
+		expect(stored(fake).popups).toHaveLength(2);
+		await press(fake, "row_more", `delete:${copy}`);
+		expect(stored(fake).popups.map((p) => p.name)).toEqual(["Monthly letter (copy) (copy)"]);
 	});
 
 	it("shows the preview links from the row's Preview button", async () => {
@@ -910,5 +916,89 @@ describe("a finished popup's own numbers", () => {
 		const numbers = await press(fake, "nav", "numbers");
 		const tab = numbers.blocks.find((b) => b.type === "tab") as Extract<Block, { type: "tab" }>;
 		expect(tab.default_tab).toBe(1);
+	});
+});
+
+describe("fits a phone, and React can tell every control apart", () => {
+	// Every screen an Admin or Editor can reach, for each kind, finished or half made.
+	async function screens(): Promise<BlockResponse[]> {
+		const kinds = ["bar", "slide", "modal", "inline"] as const;
+		const popups = kinds.flatMap((kind, i) => [
+			popup({ id: `done000${i}`, handle: `done-${kind}`, kind }),
+			popup({ id: `half000${i}`, handle: `half-${kind}`, kind, step: 1, on: false }),
+		]);
+		const fake = fakeContext({ popups: { popups } });
+		const out: BlockResponse[] = [await press(fake, "new")];
+		for (const role of [ADMIN, EDITOR]) {
+			out.push(await load(fake, role), await press(fake, "nav", "numbers", role));
+			for (const p of popups) {
+				out.push(await press(fake, "row", `change:${p.id}`, role));
+				out.push(await press(fake, "row", `preview:${p.id}`, role));
+				for (const step of [1, 2, 3, 4])
+					out.push(await press(fake, "nav", `back:${p.id}:${step}`, role));
+			}
+		}
+		out.push(await press(fake, "nav", "kind:done0001"));
+		return out;
+	}
+
+	const ids = (elements: Array<Record<string, unknown>>) =>
+		elements.map((e) => e.action_id).filter((id): id is string => typeof id === "string");
+
+	it("gives each button, menu and field in one actions block or form its own id", async () => {
+		let checked = 0;
+		for (const response of await screens()) {
+			for (const block of all(response)) {
+				const elements =
+					block.type === "actions"
+						? (block.elements as unknown as Array<Record<string, unknown>>)
+						: block.type === "form"
+							? (block.fields as unknown as Array<Record<string, unknown>>)
+							: null;
+				if (!elements) continue;
+				const own = ids(elements);
+				expect(new Set(own).size, JSON.stringify(own)).toBe(own.length);
+				if (block.type === "actions" && own.length > 1) checked++;
+			}
+		}
+		// The popup pages' Turn off beside More, at least.
+		expect(checked).toBeGreaterThan(0);
+	});
+
+	it("keeps the popup page's Turn off and More apart, both going to the same place", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const own = all(await press(fake, "row", "change:abcd1234"));
+		const actions = own.find(
+			(b) => b.type === "actions" && JSON.stringify(b).includes("toggle:abcd1234"),
+		) as Extract<Block, { type: "actions" }>;
+		expect(ids(actions.elements as unknown as Array<Record<string, unknown>>)).toEqual([
+			"row",
+			"row_more",
+		]);
+	});
+
+	it("keeps every dropdown choice we word short enough for a 390 px phone", async () => {
+		// A dropdown is as wide as its chosen words (Block Kit 1.3.1), so a long choice runs
+		// past a phone's edge; long choices belong in radio buttons, which wrap. Forms are
+		// named by the site under Forms, so their dropdown is left out.
+		const MAX_OPTION = 40;
+		const labels = new Set<string>();
+		for (const response of await screens())
+			for (const block of all(response))
+				if (block.type === "form")
+					for (const field of block.fields)
+						if (field.type === "select" && field.action_id !== "form")
+							for (const o of field.options) labels.add(o.label);
+		expect([...labels]).toContain("Only the close button");
+		expect([...labels]).toContain("After a month (recommended)");
+		expect([...labels].filter((l) => l.length > MAX_OPTION)).toEqual([]);
+	});
+
+	it("asks when it opens with choices that wrap, not a dropdown as wide as its words", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const trigger = formOf(await press(fake, "row", "change:abcd1234"), "save_all").fields.find(
+			(f) => f.action_id === "trigger",
+		);
+		expect(trigger?.type).toBe("radio");
 	});
 });
