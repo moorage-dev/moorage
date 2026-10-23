@@ -10,6 +10,8 @@
   
   An arriving enquiry now makes a few fewer calls to the site's storage, because the plugin reuses what it has already read in the same run.
 
+- Run Lead Delivery in `plugins`, not `sandboxed`, for now. On Cloudflare a sandboxed plugin may make only 10 calls to the site per request; receiving, delivering and retrying an enquiry need more, so under `sandboxed` an enquiry can be stored but not delivered straight away, and the every-minute run can stop partway. The README and install text now show `plugins`. A later version will fit the limit.
+
 ## 0.3.0
 
 ### Minor Changes

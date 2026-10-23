@@ -61,12 +61,13 @@ import { formsPlugin } from "@emdash-cms/plugin-forms";
 import leadDelivery from "@moorage/plugin-lead-delivery";
 
 emdash({
-	plugins: [formsPlugin()],
-	sandboxed: [leadDelivery], // or plugins: [formsPlugin(), leadDelivery] on a site without a sandbox
+	plugins: [formsPlugin(), leadDelivery],
 });
 ```
 
-It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin 0.2.11 or later: earlier versions save a ticked single checkbox, such as a consent box, as unticked, so the enquiry arrives without consent. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one). Since 0.3.1 your deliveries, private address and forms survive moving the plugin between `sandboxed` and `plugins`; when updating from an earlier version, update first, open Lead delivery once, then move it.
+Run it in `plugins`, as above, for now. On Cloudflare a sandboxed plugin may make only 10 calls to the site per request, and receiving or retrying an enquiry needs more, so under `sandboxed` an enquiry can be stored but not delivered straight away. A later version will fit the limit.
+
+It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin 0.2.11 or later: earlier versions save a ticked single checkbox, such as a consent box, as unticked, so the enquiry arrives without consent. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one). Since 0.3.1 your deliveries, private address and forms are kept where both `plugins` and `sandboxed` find them; when updating from an earlier version, update first and open Lead delivery once.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
