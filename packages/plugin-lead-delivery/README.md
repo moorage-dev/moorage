@@ -66,7 +66,7 @@ emdash({
 });
 ```
 
-It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin 0.2.11 or later: earlier versions save a ticked single checkbox, such as a consent box, as unticked, so the enquiry arrives without consent. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one).
+It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin 0.2.11 or later: earlier versions save a ticked single checkbox, such as a consent box, as unticked, so the enquiry arrives without consent. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one). Since 0.3.1 your deliveries, private address and forms survive moving the plugin between `sandboxed` and `plugins`; when updating from an earlier version, update first, open Lead delivery once, then move it.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
@@ -135,6 +135,8 @@ Nothing to do. On the first run after the update, each inbox, HubSpot form or ap
 **Why does one-step connecting ask for full admin access?** EmDash has no narrower access for this yet. Lead Delivery uses it for two calls (list the forms, set one form's address) and throws it away straight after; it never stores it. You type the code yourself on EmDash's page, so a link someone sends you cannot approve anything on its own.
 
 **Why is there no one-step connecting on my site?** It needs the site to call its own address (on Cloudflare: the compatibility flag `global_fetch_strictly_public`). Press Check again under Settings for the whole site after changing that. Editors never see it: only an admin can approve.
+
+**Why do instructions and emails show the site's old address?** Plugins keep the site address EmDash had when the server started. After changing the site's address, restart the site.
 
 **Can my clients change it?** No. Editors see the counters, the deliveries and the log, and can press Send again; only admins add or change deliveries.
 

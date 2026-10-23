@@ -8,6 +8,7 @@ import {
 	day,
 	loadConfig,
 	loadForms,
+	saveConfig,
 	saveForms,
 	siteLabel,
 	since,
@@ -110,9 +111,9 @@ export async function weekCounts(
 }
 
 /** Remember the form: its name, its fields (when not known from its definition), when it last sent, how it is connected. */
-async function noteForm(ctx: PluginContext, enquiry: Enquiry) {
+async function noteForm(ctx: PluginContext, enquiry: Enquiry, loaded?: Record<string, KnownForm>) {
 	if (enquiry.via === "test") return;
-	const forms = await loadForms(ctx);
+	const forms = loaded ?? (await loadForms(ctx));
 	const now = enquiry.receivedAt;
 	const known = forms[enquiry.formId];
 	const fields = fieldsOf(enquiry);
@@ -170,10 +171,17 @@ export async function receive(
 	ctx: PluginContext,
 	id: string,
 	enquiry: Enquiry,
-	opts: { inline: boolean; only?: Delivery; schedule?: boolean },
+	opts: {
+		inline: boolean;
+		only?: Delivery;
+		schedule?: boolean;
+		/** The config and forms the caller already read in this run: each read is a call to the host. */
+		config?: Config;
+		forms?: Record<string, KnownForm>;
+	},
 ): Promise<ReceiveResult> {
 	const now = Date.now();
-	const config = await loadConfig(ctx);
+	const config = opts.config ?? (await loadConfig(ctx));
 	const recent = enquiry.email ? await recentForForm(ctx, enquiry.formId, now - 7 * DAY_MS) : [];
 	const previous = recent.find((r) => r.data.email === enquiry.email && !r.data.test);
 	if (previous) {
@@ -182,7 +190,7 @@ export async function receive(
 
 	const created = await enquiries(ctx).compareAndSet(id, null, enquiry);
 	if (!created.applied) return { duplicate: true, queued: 0, delivered: 0 };
-	await noteForm(ctx, enquiry);
+	await noteForm(ctx, enquiry, opts.forms);
 	const test = enquiry.via === "test";
 	if (!test) await count(ctx, "r");
 
@@ -275,7 +283,7 @@ export async function receive(
 			if (after.status === "delivered") delivered += 1;
 		}
 	}
-	await finishEnquiry(ctx, id);
+	await finishEnquiry(ctx, id, config);
 	if (opts.schedule !== false && (!opts.inline || due.length > PER_RUN)) await scheduleNext(ctx);
 	return { duplicate: false, queued: due.length, delivered };
 }
@@ -408,7 +416,7 @@ export async function attempt(
 		}
 	}
 	await sends(ctx).put(id, next);
-	if (next.status === "delivered" && !row.test) await finishEnquiry(ctx, row.enquiryId);
+	if (next.status === "delivered" && !row.test) await finishEnquiry(ctx, row.enquiryId, config);
 	if ((next.status === "fixing" || next.status === "gaveup") && !row.test) {
 		await alertFailures(ctx, config);
 	}
@@ -420,10 +428,10 @@ export async function attempt(
  * Forms inbox keeps the original. A held row ("Not sent", with Send again) keeps the contents
  * until it is sent or the log row is cleaned up after 30 days.
  */
-export async function finishEnquiry(ctx: PluginContext, enquiryId: string) {
+export async function finishEnquiry(ctx: PluginContext, enquiryId: string, loaded?: Config) {
 	const enquiry = await enquiries(ctx).get(enquiryId);
 	if (!enquiry || enquiry.cleared) return;
-	const config = await loadConfig(ctx);
+	const config = loaded ?? (await loadConfig(ctx));
 	const ids = [
 		...config.deliveries.map((d) => sendId(enquiryId, d.id)),
 		sendId(enquiryId, NO_DELIVERY),
@@ -655,7 +663,7 @@ export async function adoptForm(
 	if (!delivery || !formId) return null;
 	if (delivery.forms !== "all" && !delivery.forms.includes(formId)) {
 		delivery.forms = [...delivery.forms, formId];
-		await ctx.kv.set("config", config);
+		await saveConfig(ctx, config);
 	}
 	const held = await sends(ctx).query({
 		where: { destination: NO_DELIVERY, formId },

@@ -3,10 +3,22 @@
 import type { PluginContext } from "emdash";
 
 import { generatedName } from "./names.js";
+import { readSettings, type SettingsKeys, writeSettings } from "./settings-store.js";
 import type { Config, Delivery, DeliveryKind, KnownForm, Repeat } from "./types.js";
 
 export const CONFIG_KEY = "config";
 export const FORMS_KEY = "forms";
+/**
+ * The setup and the known forms live in `ctx.settings`, the one place EmDash keeps for a plugin
+ * both in-process and sandboxed (see settings-store.ts). 0.3.0 and earlier kept them under the
+ * plain KV keys `config` and `forms`; those are read when the settings are empty and written on
+ * every save, kept for rollback until a later release. Everything else this plugin keeps in KV
+ * (approval codes, the site's origin, stats, alert days, the scheduler's tick and schedule, the
+ * daily mark, the ping code, the unreadable-email note) is rebuilt or short-lived, so it stays
+ * there.
+ */
+export const CONFIG_SETTINGS: SettingsKeys = { name: "config", legacy: CONFIG_KEY };
+export const FORMS_SETTINGS: SettingsKeys = { name: "forms", legacy: FORMS_KEY };
 export const ALERTS_KEY = "alerts";
 export const TICK_KEY = "tick";
 export const PING_KEY = "ping";
@@ -147,9 +159,14 @@ export function migrate(raw: unknown, forms: Record<string, KnownForm>): Config 
 	};
 }
 
-/** The config, moved to deliveries on first read after the update, with a private key made on first use. */
+/**
+ * The config, moved to deliveries on first read after the update to 0.2, with a private key made
+ * on first use. The settings are read first, then the plain key 0.3.0 and earlier used (copied
+ * forward and kept); a new private key is made only when neither has one. A key made while an
+ * old one is still waiting would change every form's address and the private email address.
+ */
 export async function loadConfig(ctx: PluginContext): Promise<Config> {
-	const raw = await ctx.kv.get(CONFIG_KEY);
+	const raw = await readSettings(ctx, CONFIG_SETTINGS);
 	let config: Config;
 	let changed = false;
 	if (isRecord(raw) && raw.version === 2) {
@@ -165,24 +182,33 @@ export async function loadConfig(ctx: PluginContext): Promise<Config> {
 		changed = raw !== null && raw !== undefined;
 	}
 	if (!config.key) {
-		config.key = newKey();
+		// The settings had no usable key: check the plain key before making one. A read the
+		// settings answered never looked there. Costs one read, only on a site with no key yet.
+		const plain = await ctx.kv.get<unknown>(CONFIG_KEY);
+		const kept = isRecord(plain) ? siteParts(plain) : null;
+		if (kept?.key) {
+			config.key = kept.key;
+			if (kept.keySetAt) config.keySetAt = kept.keySetAt;
+		} else {
+			config.key = newKey();
+		}
 		changed = true;
 	}
-	if (changed) await ctx.kv.set(CONFIG_KEY, config);
+	if (changed) await saveConfig(ctx, config);
 	return config;
 }
 
 export async function saveConfig(ctx: PluginContext, config: Config): Promise<void> {
-	await ctx.kv.set(CONFIG_KEY, config);
+	await writeSettings(ctx, CONFIG_SETTINGS, config);
 }
 
 export async function loadForms(ctx: PluginContext): Promise<Record<string, KnownForm>> {
-	const raw = await ctx.kv.get<Record<string, KnownForm>>(FORMS_KEY);
-	return isRecord(raw) ? raw : {};
+	const raw = await readSettings(ctx, FORMS_SETTINGS);
+	return isRecord(raw) ? (raw as Record<string, KnownForm>) : {};
 }
 
 export async function saveForms(ctx: PluginContext, forms: Record<string, KnownForm>) {
-	await ctx.kv.set(FORMS_KEY, forms);
+	await writeSettings(ctx, FORMS_SETTINGS, forms);
 }
 
 /** The private email address the email way uses. */

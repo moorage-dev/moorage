@@ -36,7 +36,7 @@ async function start(url = ORIGIN) {
 }
 
 async function config(runtime: PluginRuntimeTestHost) {
-	return (await runtime.inspect.kv.get<Config>("config"))!;
+	return (await runtime.inspect.setting<Config>("config"))!;
 }
 
 let counter = 0;
@@ -60,11 +60,11 @@ function delivery(overrides: Partial<Delivery> = {}): Delivery {
 
 /** Put deliveries straight into the setup, as if the owner had made them. */
 async function setDeliveries(runtime: PluginRuntimeTestHost, list: Delivery[]) {
-	await runtime.fixtures.plugin.kv("config", { ...(await config(runtime)), deliveries: list });
+	await runtime.fixtures.plugin.setting("config", { ...(await config(runtime)), deliveries: list });
 }
 
 async function setForms(runtime: PluginRuntimeTestHost, forms: KnownForm[]) {
-	await runtime.fixtures.plugin.kv("forms", Object.fromEntries(forms.map((f) => [f.slug, f])));
+	await runtime.fixtures.plugin.setting("forms", Object.fromEntries(forms.map((f) => [f.slug, f])));
 }
 
 function known(slug: string, name: string, extra: Partial<KnownForm> = {}): KnownForm {
@@ -194,7 +194,7 @@ describe("receiving an enquiry straight from a form", () => {
 		expect(stored?.data).toMatchObject({ fields: [], cleared: true });
 		expect(JSON.stringify(stored)).not.toContain("tom@example.com");
 		// The form is now known as connected, the straight way.
-		const forms = await runtime.inspect.kv.get<Record<string, KnownForm>>("forms");
+		const forms = await runtime.inspect.setting<Record<string, KnownForm>>("forms");
 		expect(forms?.contact).toMatchObject({ connectedWay: "straight" });
 		expect(forms?.contact?.connectedAt).toBeTruthy();
 	});
@@ -506,7 +506,7 @@ describe("the email way", () => {
 		expect(emails).toContain("orders@crumb.test");
 		expect(emails).toContain("Crumb & Co.: new enquiry from Tom Reyes (Contact us)");
 		expect(emails).toContain("Your name: Tom Reyes");
-		const forms = await runtime.inspect.kv.get<Record<string, KnownForm>>("forms");
+		const forms = await runtime.inspect.setting<Record<string, KnownForm>>("forms");
 		expect(forms?.["contact-us"]?.connectedWay).toBe("email");
 	});
 
@@ -536,7 +536,7 @@ describe("the email way", () => {
 			["contact-us", "none", "No delivery for this form; not sent"],
 		]);
 		// The way out: the form is now known by that name, so Edit can tick it.
-		const forms = await runtime.inspect.kv.get<Record<string, KnownForm>>("forms");
+		const forms = await runtime.inspect.setting<Record<string, KnownForm>>("forms");
 		expect(forms?.["contact-us"]?.name).toBe("Contact us");
 	});
 
@@ -932,7 +932,7 @@ describe("New delivery", () => {
 		const emails = JSON.stringify(await runtime.inspect.email());
 		expect(emails).toContain("test enquiry from Anna Baker (Contact form)");
 		// The form is remembered for next time.
-		const forms = await runtime.inspect.kv.get<Record<string, KnownForm>>("forms");
+		const forms = await runtime.inspect.setting<Record<string, KnownForm>>("forms");
 		expect(forms?.contact?.name).toBe("Contact form");
 	});
 
@@ -1103,7 +1103,7 @@ describe("Connect this form", () => {
 		expect(text(done)).toContain(
 			"Not sending yet: Contact form is connected. Send yourself an enquiry through it on your site",
 		);
-		const forms = await runtime.inspect.kv.get<Record<string, KnownForm>>("forms");
+		const forms = await runtime.inspect.setting<Record<string, KnownForm>>("forms");
 		expect(forms?.contact?.connectedWay).toBe("by hand");
 	});
 
@@ -1253,7 +1253,7 @@ describe("alerts", () => {
 	it("emails once when a form that usually gets enquiries goes quiet", async () => {
 		const { runtime } = await start();
 		const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
-		await runtime.fixtures.plugin.kv("forms", {
+		await runtime.fixtures.plugin.setting("forms", {
 			newsletter: known("newsletter", "Newsletter", {
 				addedAt: day(30),
 				lastAt: day(4),
@@ -1263,7 +1263,7 @@ describe("alerts", () => {
 		await runtime.transport.invokeHook("cron", { name: "maintenance", data: null });
 		const emails = JSON.stringify(await runtime.inspect.email());
 		expect(emails).toContain("Crumb & Co.: no enquiries from Newsletter since");
-		const forms = await runtime.inspect.kv.get<Record<string, KnownForm>>("forms");
+		const forms = await runtime.inspect.setting<Record<string, KnownForm>>("forms");
 		expect(forms?.newsletter?.quietAlertedFor).toBe(forms?.newsletter?.lastAt);
 	});
 
