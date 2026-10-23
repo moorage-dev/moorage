@@ -13,6 +13,9 @@ import type { Config, Delivery, KnownForm, Send } from "../src/types.js";
 // The main paths (an arriving enquiry, the email way, the every-minute run) already make more
 // than 10 calls in 0.3.0, because each delivery sends and logs inside the same run. Moving the
 // settings must not add to that: each path is pinned at or below what 0.3.0 made.
+//
+// These fakes count neither logging nor the real sandbox wrapper. The real counts per invocation
+// (higher than these) are pinned in sandbox-budget.test.ts (B39).
 
 const KEY = "K".repeat(32);
 const ORIGIN = "https://crumb.test";

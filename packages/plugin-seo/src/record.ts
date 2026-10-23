@@ -298,6 +298,48 @@ interface Rebuilt {
 	oldKey: string;
 }
 
+type Credits = Awaited<ReturnType<NonNullable<PluginContext["bylines"]>["getEntriesBylines"]>>;
+
+/** The authors credited on the first entry of `credits`. */
+function authorsOf(credits: Credits): EntryRecord["authors"] {
+	return (credits[0]?.bylines ?? []).map(({ byline }) => ({
+		name: byline.displayName,
+		...(byline.websiteUrl ? { url: byline.websiteUrl } : {}),
+	}));
+}
+
+/**
+ * The record an entry without one would get, for describing its page in one public view: two
+ * reads at once, nothing written, no other page read. The stored record is left to the check
+ * or the entry's next save, so a page view stays within the sandbox's 10 calls per run. What a
+ * page shows from a record (dates, authors, picture sizes, the JSON-LD field) is the same as
+ * the stored record's; only the page checks, which no page shows, are left out.
+ */
+export async function viewRecord(
+	ctx: PluginContext,
+	collection: string,
+	id: string,
+	config: SeoConfig,
+): Promise<EntryRecord | null> {
+	if (!ctx.content) return null;
+	const [entry, credits] = await Promise.all([
+		ctx.content.get(collection, id),
+		ctx.bylines?.getEntriesBylines(collection, [id]) ?? [],
+	]);
+	if (!entry) return null;
+	return makeRecord({
+		collection,
+		entry,
+		authors: authorsOf(credits),
+		previous: null,
+		config,
+		siteUrl: ctx.site.url,
+		duplicateTitle: false,
+		// It is being shown as a page of its own.
+		hasPages: true,
+	});
+}
+
 /** Read an entry and what is needed to rebuild its record: five operations, no writes. */
 async function prepareEntry(
 	ctx: PluginContext,
@@ -315,10 +357,7 @@ async function prepareEntry(
 		store.get(key),
 		ctx.schema?.getCollection(collection),
 	]);
-	const authors = (credits[0]?.bylines ?? []).map(({ byline }) => ({
-		name: byline.displayName,
-		...(byline.websiteUrl ? { url: byline.websiteUrl } : {}),
-	}));
+	const authors = authorsOf(credits);
 
 	const draft = makeRecord({
 		collection,

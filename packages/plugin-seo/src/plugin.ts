@@ -4,7 +4,7 @@ import type { PageMetadataContribution, PluginContext } from "emdash";
 import type { SandboxedPlugin } from "emdash/plugin";
 
 import { handleAdmin } from "./admin.js";
-import { loadConfig } from "./config.js";
+import { CONFIG, loadConfig, normalizeConfig } from "./config.js";
 import { buildGraph } from "./graph.js";
 import { handlePanel } from "./panel.js";
 import {
@@ -13,12 +13,14 @@ import {
 	entryStore,
 	observeImage,
 	removeEntryRecord,
+	viewRecord,
 	type EntryRecord,
 } from "./record.js";
-import { addMore, IMPORT_TASK, loadImport } from "./redirects-admin.js";
+import { addMore, IMPORT_TASK, loadImport, removeMore } from "./redirects-admin.js";
 import { isNoindex, mergeRobots } from "./robots.js";
-import { loadScan, SCAN_KEY, SCAN_TASK, scanStep, startScan } from "./scan.js";
+import { loadScan, SANDBOX_CALLS, SCAN_KEY, SCAN_TASK, scanStep, startScan } from "./scan.js";
 import { memoSettings } from "./settings-memo.js";
+import { pickSettings } from "./settings-store.js";
 
 /**
  * An EmDash preview link, which its owner opens to check their work: settings
@@ -51,6 +53,7 @@ const plugin: SandboxedPlugin = {
 		// Runs on every uncached public render. Steady state is one read, the
 		// entry's precomputed record: the config is kept in memory between page
 		// views (settings-memo.ts), and when it is not, both are read at once.
+		// Never writes, except the picture note below, and stays at 5 calls or fewer.
 		"page:metadata": async (event, ctx) => {
 			const { page } = event;
 			const content = page.content;
@@ -75,9 +78,9 @@ const plugin: SandboxedPlugin = {
 					if ("error" in found) throw found.error;
 					const { stored } = found;
 					const store = entryStore(ctx);
-					// First render of an entry saved before the plugin was installed. The
-					// record is kept, so it is built from a fresh read, not the copy in memory.
-					record = stored ?? (await buildEntryRecord(ctx, collection, id, await loadConfig(ctx)));
+					// First render of an entry saved before the plugin was installed: described
+					// from the entry itself, and nothing stored (see viewRecord).
+					record = stored ?? (await viewRecord(ctx, collection, id, config));
 					// The picture this render shares (what becomes og:image) is something
 					// the saved-entry check cannot see. Written only when it is news, and
 					// not in the request that just built the record.
@@ -137,12 +140,19 @@ const plugin: SandboxedPlugin = {
 		// numbers are usually there before anyone opens the SEO page.
 		"plugin:activate": async (_event, ctx) => {
 			try {
-				if (await loadScan(ctx)) return;
-				const collections = (await ctx.schema?.listCollections()) ?? [];
+				// One read for the check and the settings: a sandboxed run may make only 10 calls.
+				const [stored, collections] = await Promise.all([
+					ctx.kv.list(),
+					ctx.schema?.listCollections() ?? [],
+				]);
+				const kv = new Map(stored.map((item) => [item.key, item.value]));
+				if (kv.get(SCAN_KEY)) return;
+				const config = normalizeConfig(await pickSettings(ctx, kv, CONFIG, { copy: false }));
 				const scan = await startScan(
 					ctx,
 					collections.filter((c) => c.routable && !c.hidden).map((c) => c.slug),
-					await loadConfig(ctx),
+					config,
+					SANDBOX_CALLS - 2,
 				);
 				// Run in the site's process (`plugins: []`), the plugin is switched on when the
 				// server starts, which on a new site is before setup has added any pages. A check
@@ -152,7 +162,8 @@ const plugin: SandboxedPlugin = {
 				ctx.log.warn("could not start the first page check", { error: String(error) });
 			}
 		},
-		// Continues a redirects import a few rows at a time until it is done.
+		// Continues the site-wide check, and a redirects import (or its removal) a few rows at a
+		// time until it is done.
 		cron: async (event, ctx) => {
 			if (event.name === SCAN_TASK) {
 				const scan = await loadScan(ctx);
@@ -164,6 +175,7 @@ const plugin: SandboxedPlugin = {
 			if (event.name !== IMPORT_TASK) return;
 			const state = await loadImport(ctx);
 			if (state?.status === "adding") await addMore(ctx, state);
+			else if (state?.status === "removing") await removeMore(ctx, state);
 			else await ctx.cron?.cancel(IMPORT_TASK);
 		},
 		"content:afterDelete": async (event, ctx) => {

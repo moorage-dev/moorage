@@ -71,21 +71,26 @@ async function organisation(runtime: PluginRuntimeTestHost): Promise<unknown> {
 }
 
 describe("settings saved by 0.1.7 under the plain `config` key", () => {
-	it("are read on a page view, copied to `settings:config`, and the old key is kept", async () => {
+	it("are read on a page view, which writes nothing", async () => {
 		const runtime = await start();
 		await runtime.fixtures.plugin.kv("config", SAVED);
 
 		expect(await organisation(runtime)).toEqual({ type: "Dentist", name: "Acme Dental" });
-		expect(await runtime.inspect.setting("config")).toEqual(SAVED);
+		// Copied by the SEO page (below) or the next save: a page view must stay within
+		// the sandbox's few calls, and never writes.
+		expect(await runtime.inspect.setting("config")).toBeNull();
 		expect(await runtime.inspect.kv.get("config")).toEqual(SAVED);
 	});
 
-	it("are read and copied when an Admin opens the SEO page first", async () => {
+	it("are read and copied when an Admin opens the SEO page", async () => {
 		const runtime = await start();
 		await runtime.fixtures.plugin.kv("config", SAVED);
 
+		// The first visit runs the first step of the page check; the copy waits for a visit
+		// with a call to spare (a sandboxed request may make only 10).
 		const response = await runtime.admin.loadPage("/overview");
 		expect(JSON.stringify(response.blocks)).toContain("Acme Dental");
+		await runtime.admin.loadPage("/overview");
 		expect(await runtime.inspect.setting("config")).toEqual(SAVED);
 		expect(await runtime.inspect.kv.get("config")).toEqual(SAVED);
 	});

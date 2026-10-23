@@ -12,9 +12,14 @@ import { parseUrl } from "./url.js";
  */
 export const CONFIG: SettingsKeys = { name: "config", legacy: "config" };
 
-/** Always a fresh read. Page views use `memoSettings` around it; saves and record builds do not. */
+/**
+ * Always a fresh read. Page views use `memoSettings` around it; saves and record builds do not.
+ * Never writes: settings an earlier release kept under `config` are copied forward only by the
+ * SEO page and by saves, so page views, saves of entries and background steps stay within the
+ * sandbox's 10 calls per run.
+ */
 export async function loadConfig(ctx: Pick<PluginContext, "kv" | "settings" | "log">) {
-	return normalizeConfig(await readSettings(ctx, CONFIG));
+	return normalizeConfig(await readSettings(ctx, CONFIG, { copy: false }));
 }
 
 /** Page-level schema types a collection can map to. */

@@ -28,6 +28,8 @@ export const SCAN_TASK = "seo-scan";
  * the plugin stays a few below it.
  */
 export const SANDBOX_OPERATIONS = 10;
+/** The calls every run of this plugin keeps to: one below the limit, for a warning in the log. */
+export const SANDBOX_CALLS = SANDBOX_OPERATIONS - 1;
 
 // Entries checked per request. The sandbox allows only a handful of
 // operations and a few milliseconds of CPU per request, so a site is checked
@@ -41,8 +43,18 @@ const SWEEP_PAGE = 100;
 const SWEEP_CONFIRM = 1;
 // Statuses of published pages, the only records a check rewrites.
 const LIVE: string[] = ["ready", "look", "fix", "hidden"];
-// Collections without published pages that one request may pass over.
+// Collections without published pages that one request may pass over, budget permitting.
 const MAX_EMPTY_READS = 5;
+// Calls to the host one batch of entries makes: list, bylines and stored records, write.
+const BATCH_CALLS = 4;
+// Calls a step keeps for its end: saving where it got to, and starting or stopping the
+// background task.
+const STEP_END_CALLS = 2;
+/**
+ * Calls one step may make by default: the background task's, after it read the check (one call)
+ * and the settings (two at most), so the run stays at 9.
+ */
+export const STEP_CALLS = 6;
 /** Rows in the "To fix" table. */
 export const FIX_ROWS = 10;
 
@@ -91,11 +103,16 @@ export async function loadScan(ctx: PluginContext): Promise<ScanState | null> {
 	return ctx.kv.get<ScanState>(SCAN_KEY);
 }
 
-/** Start checking every published page of the given collections. */
+/**
+ * Start checking every published page of the given collections: the first step at once, the
+ * rest in the background task, scheduled only when the first step did not finish the check.
+ * `calls` is what the caller can spare, as for `scanStep`.
+ */
 export async function startScan(
 	ctx: PluginContext,
 	collections: string[],
 	config: SeoConfig,
+	calls = STEP_CALLS,
 ): Promise<ScanState> {
 	const state: ScanState = {
 		status: "running",
@@ -106,20 +123,34 @@ export async function startScan(
 		tally: { checked: 0, fix: 0, hidden: 0, rows: [], more: false },
 		startedAt: new Date().toISOString(),
 	};
+	const first = await scanStep(ctx, state, config, calls, { scheduled: false });
+	if (first.status === "done" && !first.sweep) return first;
 	try {
 		await ctx.cron?.schedule(SCAN_TASK, { schedule: "* * * * *" });
-	} catch (error) {
-		ctx.log.warn("could not schedule background check", { error: String(error) });
+	} catch {
+		// Each visit to the SEO page continues the check as well. Not logged: the log is a
+		// call to the host too, and this request has none to spare.
 	}
-	return scanStep(ctx, state, config);
+	return first;
 }
 
-async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConfig) {
+/**
+ * One batch of one collection. Returns the calls to the host it made. With fewer than
+ * BATCH_CALLS of `room`, a batch that turns out to have pages is left as it is (one read spent)
+ * for the next step, which reads it again.
+ */
+async function entriesStep(
+	ctx: PluginContext,
+	state: ScanState,
+	config: SeoConfig,
+	room = BATCH_CALLS,
+): Promise<number> {
 	const collection = state.collections[0];
 	if (collection === undefined) {
 		state.phase = "titles";
-		return;
+		return 0;
 	}
+	let calls = 1;
 	// Saves that write after this moment may have read a newer entry than the list below.
 	const listedAt = new Date().toISOString();
 	const thisCheck = (record: EntryRecord) => (record.checkedAt ?? "") >= state.startedAt;
@@ -129,6 +160,7 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 		where: { status: "published" },
 	});
 	const entries = page?.items ?? [];
+	if (entries.length > 0 && room < BATCH_CALLS) return calls;
 	if (entries.length > 0) {
 		const store = entryStore(ctx);
 		const ids = entries.map((entry) => entry.id);
@@ -136,6 +168,7 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 			ctx.bylines?.getEntriesBylines(collection, ids) ?? [],
 			store.getMany(ids.map((id) => entryKey(collection, id))),
 		]);
+		calls += 2;
 		const authors = new Map(credits.map((credit) => [credit.entryId, credit.bylines]));
 		// Records a save wrote after this check listed its entries stay as they are: the save may
 		// have read a newer version of the entry. The entry's updatedAt says so for most edits,
@@ -191,7 +224,10 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 			state.sweep = {};
 		}
 		const writes = records.filter((item) => !kept.has(item.id));
-		if (writes.length > 0) await store.putMany(writes);
+		if (writes.length > 0) {
+			await store.putMany(writes);
+			calls += 1;
+		}
 		for (const { data } of records) count(state.tally, data, 1);
 		state.checked += entries.length;
 	}
@@ -204,6 +240,7 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 			state.sweep = {};
 		}
 	}
+	return calls;
 }
 
 /**
@@ -380,11 +417,18 @@ function count(tally: Stats, data: EntryRecord, sign: 1 | -1): void {
 	}
 }
 
-/** Do one batch of a running check and save where it got to. */
+/**
+ * Do one batch of a running check and save where it got to. `calls` is how many calls to the
+ * host the step may make, saving included: on Cloudflare a sandboxed run may make only 10, and
+ * the caller has spent some already. One batch is always done, whatever `calls` says.
+ * `scheduled: false` when no background task can be running for it, so none is stopped.
+ */
 export async function scanStep(
 	ctx: PluginContext,
 	current: ScanState,
 	config: SeoConfig,
+	calls = STEP_CALLS,
+	{ scheduled = true }: { scheduled?: boolean } = {},
 ): Promise<ScanState> {
 	const state: ScanState = {
 		...current,
@@ -395,12 +439,21 @@ export async function scanStep(
 
 	if (state.sweep) await sweepStep(ctx, state, config);
 	else if (state.phase === "entries") {
-		// An empty collection costs one read, so several can be passed in one
-		// request; the first one with pages uses up the rest of the budget.
+		// An empty collection costs one read, so several can be passed in one request; the
+		// first one with pages ends the step, or waits for the next step when it no longer fits.
+		let used = 0;
 		for (let reads = 0; reads < MAX_EMPTY_READS && state.phase === "entries"; reads += 1) {
-			const before = state.checked;
-			await entriesStep(ctx, state, config);
-			if (state.checked !== before || (state as ScanState).status === "done") break;
+			const room = calls - STEP_END_CALLS - used;
+			if (reads > 0 && room < 1) break;
+			const before = {
+				checked: state.checked,
+				collections: state.collections.length,
+				cursor: state.cursor,
+			};
+			used += await entriesStep(ctx, state, config, reads === 0 ? BATCH_CALLS : room);
+			if (state.checked !== before.checked || (state as ScanState).status === "done") break;
+			// A batch with pages left for the next step: nothing moved.
+			if (state.collections.length === before.collections && state.cursor === before.cursor) break;
 		}
 		// Nothing published anywhere: there is nothing to compare, so the check is complete.
 		if ((state as ScanState).phase === "titles" && state.checked === 0) {
@@ -410,7 +463,7 @@ export async function scanStep(
 	} else await titlesStep(ctx, state);
 
 	// The step above may have finished the check; TypeScript cannot see that.
-	if ((state as ScanState).status === "done" && !state.sweep) {
+	if (scheduled && (state as ScanState).status === "done" && !state.sweep) {
 		try {
 			await ctx.cron?.cancel(SCAN_TASK);
 		} catch {
