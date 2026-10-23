@@ -118,6 +118,11 @@ export interface Enquiry {
 	cleared?: boolean;
 	/** Already counted as delivered in the week's numbers. */
 	counted?: boolean;
+	/**
+	 * The deliveries it got a log row for on arrival (`NO_DELIVERY` when none took it), so a run
+	 * knows its other rows without reading them. Missing on enquiries from before 0.4.
+	 */
+	rows?: string[];
 }
 
 export type SendStatus = "delivered" | "retrying" | "fixing" | "gaveup" | "skipped";

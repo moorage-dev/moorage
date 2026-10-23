@@ -2,16 +2,19 @@
 
 import type { PluginContext, StorageCollection } from "emdash";
 
-import { sweepApprovals } from "./approval.js";
+import { APPROVAL_PREFIX, isLiveApproval } from "./approval.js";
 import {
 	ALERTS_KEY,
+	DAILY_KEY,
 	day,
-	loadConfig,
-	loadForms,
-	saveConfig,
-	saveForms,
-	siteLabel,
+	kvOf,
+	saveFormsQuietly,
+	SCHEDULE_KEY,
 	since,
+	siteLabel,
+	type State,
+	type Stats,
+	STATS_KEY,
 	TICK_KEY,
 } from "./config.js";
 import { fieldsOf } from "./enquiry.js";
@@ -24,6 +27,7 @@ import {
 	repeatNote,
 	schedulerAlert,
 } from "./messages.js";
+import { type Meter, warnIfRoom } from "./meter.js";
 import {
 	type Config,
 	type Delivery,
@@ -32,20 +36,31 @@ import {
 	NO_DELIVERY,
 	type Send,
 } from "./types.js";
-import { appLabel, appRequest, classifyApp } from "./webhook.js";
+import { appRequest, classifyApp } from "./webhook.js";
 
+/**
+ * How enquiries travel. On Cloudflare a sandboxed plugin may make only 10 calls to the site in
+ * one run (meter.ts), and every send is one, so nothing is sent while an enquiry arrives: the
+ * arrival stores it with a log row per delivery ("Trying again", due now) and asks for a run.
+ * Runs (the every-minute task, the one-shot `deliver` task and its follow-ups) send what fits,
+ * write the results, and leave the rest for a follow-up run. The queue is the log rows
+ * themselves, so nothing waits anywhere else (0.3.1 delivers the same rows after a rollback).
+ */
 export const DELIVER_TASK = "deliver";
 export const MAINTENANCE_TASK = "maintenance";
-export const STATS_KEY = "stats";
-const DAILY_KEY = "daily";
+/** The once-a-day work (quiet forms, cleanup), with a run of its own. */
+export const DAILY_TASK = "daily";
+export { STATS_KEY };
 
 /** Waits after each failed try: 8 tries over about 45 hours. */
 export const DELAYS_MIN = [1, 5, 30, 120, 360, 720, 1440];
 export const MAX_ATTEMPTS = DELAYS_MIN.length + 1;
-/** Sends per scheduled run and per arriving enquiry. */
-export const PER_RUN = 3;
+/** Log rows read per run; how many are sent depends on the calls left. */
+const BATCH = 8;
 const DAY_MS = 86_400_000;
 export const KEEP_DAYS = 30;
+/** The every-minute task counts as stopped after this long without a run. */
+const STUCK_MS = 20 * 60_000;
 
 /** The log and retry queue. The storage keeps its 0.1 name, so the log survives the update. */
 export function sends(ctx: PluginContext): StorageCollection<Send> {
@@ -69,6 +84,11 @@ export function deliveryName(config: Config, id: string): string {
 	return config.deliveries.find((d) => d.id === id)?.name ?? "a delivery that was deleted";
 }
 
+/** A one-shot run of `DELIVER_TASK` (inbound) or of a follow-up, which has a name of its own. */
+export function isDeliverTask(name: string): boolean {
+	return name === DELIVER_TASK || name.startsWith(`${DELIVER_TASK}-`);
+}
+
 /**
  * A form is connected once it was marked so, or once an enquiry came from it, after the private
  * address was last reset (`keySetAt`): a reset disconnects every form.
@@ -84,21 +104,26 @@ export function isConnected(form: KnownForm | undefined, keySetAt?: string): boo
 const REPEAT_MS = { off: 0, "24h": DAY_MS, "7d": 7 * DAY_MS } as const;
 const REPEAT_WORDS = { off: "", "24h": "24 hours", "7d": "7 days" } as const;
 
-/** Daily counts for the stats: received and delivered enquiries (tests excluded). */
-async function count(ctx: PluginContext, what: "r" | "d") {
-	const stats = (await ctx.kv.get<Record<string, { r: number; d: number }>>(STATS_KEY)) ?? {};
+/** The daily counts with `what` raised by `by` today, two weeks kept. */
+function counted(state: State, what: "r" | "d", by: number): Stats {
+	const stats: Stats = { ...kvOf<Stats>(state, STATS_KEY) };
 	const today = day(new Date().toISOString());
-	const entry = stats[today] ?? { r: 0, d: 0 };
-	entry[what] += 1;
+	const entry = { ...(stats[today] ?? { r: 0, d: 0 }) };
+	entry[what] += by;
 	stats[today] = entry;
 	const keep = Object.keys(stats).sort().slice(-14);
-	await ctx.kv.set(STATS_KEY, Object.fromEntries(keep.map((k) => [k, stats[k]!])));
+	return Object.fromEntries(keep.map((k) => [k, stats[k]!]));
 }
 
-export async function weekCounts(
-	ctx: PluginContext,
-): Promise<{ received: number; delivered: number }> {
-	const stats = (await ctx.kv.get<Record<string, { r: number; d: number }>>(STATS_KEY)) ?? {};
+async function count(ctx: PluginContext, state: State, what: "r" | "d", by = 1) {
+	const stats = counted(state, what, by);
+	await ctx.kv.set(STATS_KEY, stats);
+	state.entries.set(STATS_KEY, stats);
+}
+
+/** Received and delivered enquiries in the last 7 days (tests excluded). */
+export function weekCounts(state: State): { received: number; delivered: number } {
+	const stats = kvOf<Stats>(state, STATS_KEY) ?? {};
 	const from = day(new Date(Date.now() - 6 * DAY_MS).toISOString());
 	let received = 0;
 	let delivered = 0;
@@ -110,38 +135,38 @@ export async function weekCounts(
 	return { received, delivered };
 }
 
-/** Remember the form: its name, its fields (when not known from its definition), when it last sent, how it is connected. */
-async function noteForm(ctx: PluginContext, enquiry: Enquiry, loaded?: Record<string, KnownForm>) {
-	if (enquiry.via === "test") return;
-	const forms = loaded ?? (await loadForms(ctx));
+/** The forms with this one remembered: its name, its fields, when it last sent, how it is connected. */
+function noteForm(forms: Record<string, KnownForm>, enquiry: Enquiry): Record<string, KnownForm> {
 	const now = enquiry.receivedAt;
 	const known = forms[enquiry.formId];
 	const fields = fieldsOf(enquiry);
 	const days = [...new Set([...(known?.days ?? []), day(now)])].slice(-30);
 	const way = enquiry.via === "email" ? "email" : "straight";
-	forms[enquiry.formId] = known
-		? {
-				...known,
-				name: enquiry.formName || known.name,
-				...(known.source === "enquiry" || known.fields.length === 0 ? { fields } : {}),
-				lastAt: now,
-				days,
-				connectedAt: known.connectedAt ?? now,
-				// What actually arrives wins over a connection marked by hand.
-				connectedWay: way,
-			}
-		: {
-				slug: enquiry.formId,
-				name: enquiry.formName,
-				fields,
-				source: "enquiry",
-				addedAt: now,
-				lastAt: now,
-				days,
-				connectedAt: now,
-				connectedWay: way,
-			};
-	await saveForms(ctx, forms);
+	return {
+		...forms,
+		[enquiry.formId]: known
+			? {
+					...known,
+					name: enquiry.formName || known.name,
+					...(known.source === "enquiry" || known.fields.length === 0 ? { fields } : {}),
+					lastAt: now,
+					days,
+					connectedAt: known.connectedAt ?? now,
+					// What actually arrives wins over a connection marked by hand.
+					connectedWay: way,
+				}
+			: {
+					slug: enquiry.formId,
+					name: enquiry.formName,
+					fields,
+					source: "enquiry",
+					addedAt: now,
+					lastAt: now,
+					days,
+					connectedAt: now,
+					connectedWay: way,
+				},
+	};
 }
 
 /** Recent log rows for one form, newest first, to spot the same person sending again. */
@@ -156,43 +181,32 @@ async function recentForForm(ctx: PluginContext, formId: string, sinceMs: number
 
 export interface ReceiveResult {
 	duplicate: boolean;
+	/** Log rows waiting for a run ("Trying again"). */
 	queued: number;
-	delivered: number;
 }
 
 /**
- * Store an enquiry once and start delivering it. `inline` tries up to three deliveries at once
- * (the forms plugin calls after the visitor has their answer); otherwise a scheduled run does.
- * Every delivery of the form gets a log row: one that is turned off, or holds a repeat or
- * possibly spam, gets "Not sent" with the reason, and Send again. An enquiry no delivery takes
- * is logged too, so the owner sees it arrived.
+ * Store an enquiry once, with a log row for every delivery of its form: due now, or "Not sent"
+ * with the reason (turned off, a held repeat, possibly spam) and Send again. An enquiry no
+ * delivery takes gets a "Not sent" row too, so the owner sees it arrived. Nothing is sent here.
+ *
+ * At most 5 calls: the recent rows (only with an email address), the enquiry, its rows, the
+ * known forms and the week's count. The enquiry and its rows go first: a run cut short after
+ * them loses only the form's last-seen time and the count, never the enquiry.
  */
 export async function receive(
 	ctx: PluginContext,
+	state: State,
 	id: string,
 	enquiry: Enquiry,
-	opts: {
-		inline: boolean;
-		only?: Delivery;
-		schedule?: boolean;
-		/** The config and forms the caller already read in this run: each read is a call to the host. */
-		config?: Config;
-		forms?: Record<string, KnownForm>;
-	},
 ): Promise<ReceiveResult> {
 	const now = Date.now();
-	const config = opts.config ?? (await loadConfig(ctx));
+	const config = state.config;
 	const recent = enquiry.email ? await recentForForm(ctx, enquiry.formId, now - 7 * DAY_MS) : [];
 	const previous = recent.find((r) => r.data.email === enquiry.email && !r.data.test);
 	if (previous) {
 		enquiry.repeatAfterMs = Math.max(0, now - Date.parse(previous.data.createdAt));
 	}
-
-	const created = await enquiries(ctx).compareAndSet(id, null, enquiry);
-	if (!created.applied) return { duplicate: true, queued: 0, delivered: 0 };
-	await noteForm(ctx, enquiry, opts.forms);
-	const test = enquiry.via === "test";
-	if (!test) await count(ctx, "r");
 
 	const createdAt = new Date(now).toISOString();
 	const who = enquiry.name ?? enquiry.email ?? "Someone";
@@ -201,7 +215,6 @@ export async function receive(
 	if (enquiry.throwaway) notes.push("Possibly fake address");
 	if (repeat) notes.push(repeat);
 	if (enquiry.spam) notes.push("Possibly spam");
-	if (test) notes.push("Test");
 	if (enquiry.unreadable) notes.push("Sent as text: its fields could not be read");
 	if (enquiry.hasFiles) notes.push("Has an attachment, see Forms → Submissions");
 
@@ -213,13 +226,9 @@ export async function receive(
 		...(enquiry.email ? { email: enquiry.email } : {}),
 		attempts: 0,
 		createdAt,
-		...(test ? { test: true } : {}),
 	};
 	const rows: Array<{ id: string; data: Send }> = [];
-	const targets = opts.only
-		? [opts.only]
-		: config.deliveries.filter((delivery) => servesForm(delivery, enquiry.formId));
-	for (const delivery of targets) {
+	for (const delivery of config.deliveries.filter((d) => servesForm(d, enquiry.formId))) {
 		const row: Send = {
 			...base,
 			destination: delivery.id,
@@ -237,7 +246,6 @@ export async function receive(
 		};
 		const window = REPEAT_MS[delivery.repeat];
 		const twice =
-			!test &&
 			window > 0 &&
 			enquiry.email &&
 			recent.some(
@@ -247,19 +255,19 @@ export async function receive(
 					Date.parse(r.data.createdAt) > now - window &&
 					!r.data.test,
 			);
-		if (!opts.only && !delivery.on) hold("", "Turned off; not sent");
+		if (!delivery.on) hold("", "Turned off; not sent");
 		else if (twice) {
 			const earlier = recent.find(
 				(r) => r.data.destination === delivery.id && r.data.email === enquiry.email && !r.data.test,
 			);
 			const note = earlier ? repeatNote(now - Date.parse(earlier.data.createdAt)) : repeat;
 			hold(repeat, `${note}; not sent: repeats are off for ${REPEAT_WORDS[delivery.repeat]}`);
-		} else if (!test && enquiry.spam && delivery.holdSpam) {
+		} else if (enquiry.spam && delivery.holdSpam) {
 			hold("Possibly spam", "Possibly spam; not sent");
 		}
 		rows.push({ id: sendId(id, delivery.id), data: row });
 	}
-	if (rows.length === 0 && !test) {
+	if (rows.length === 0) {
 		rows.push({
 			id: sendId(id, NO_DELIVERY),
 			data: {
@@ -273,24 +281,43 @@ export async function receive(
 			},
 		});
 	}
-	if (rows.length > 0) await sends(ctx).putMany(rows);
 
-	const due = rows.filter((r) => r.data.status === "retrying");
-	let delivered = 0;
-	if (opts.inline) {
-		for (const row of due.slice(0, PER_RUN)) {
-			const after = await attempt(ctx, config, row.id, row.data);
-			if (after.status === "delivered") delivered += 1;
-		}
-	}
-	await finishEnquiry(ctx, id, config);
-	if (opts.schedule !== false && (!opts.inline || due.length > PER_RUN)) await scheduleNext(ctx);
-	return { duplicate: false, queued: due.length, delivered };
+	const created = await enquiries(ctx).compareAndSet(id, null, {
+		...enquiry,
+		rows: rows.map((r) => r.data.destination),
+	});
+	if (!created.applied) return { duplicate: true, queued: 0 };
+	await sends(ctx).putMany(rows);
+	state.forms = noteForm(state.forms, enquiry);
+	await saveFormsQuietly(ctx, state.forms);
+	await count(ctx, state, "r");
+	return { duplicate: false, queued: rows.filter((r) => r.data.status === "retrying").length };
 }
 
-/** Send one enquiry through one delivery, without touching the log. */
+/**
+ * Ask for a delivery run now. From an arriving enquiry, a fixed name (`DELIVER_TASK`); from a
+ * run, a name of its own: EmDash deletes a one-shot task once its run ends, so a run that asked
+ * for itself again would be lost. `alert`: the run starts with the failure alert this one had
+ * no calls left for.
+ */
+export async function scheduleDelivery(
+	ctx: PluginContext,
+	opts: { followUp?: boolean; alert?: boolean } = {},
+) {
+	if (!ctx.cron) return;
+	const name = opts.followUp
+		? `${DELIVER_TASK}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+		: DELIVER_TASK;
+	await ctx.cron.schedule(name, {
+		schedule: new Date(Date.now() + 1000).toISOString(),
+		...(opts.alert ? { data: { alert: true } } : {}),
+	});
+}
+
+/** Send one enquiry through one delivery, without touching the log. One call. */
 export async function sendTo(
 	ctx: PluginContext,
+	state: State,
 	delivery: Delivery,
 	id: string,
 	enquiry: Enquiry,
@@ -308,7 +335,7 @@ export async function sendTo(
 		}
 		const [first, ...copies] = delivery.to ?? [];
 		if (!first) return done({ kind: "fixing", plain: "This delivery has no email address." });
-		const message = enquiryEmail(await siteLabel(ctx), enquiry, test);
+		const message = enquiryEmail(siteLabel(ctx, state), enquiry, test);
 		try {
 			await ctx.email.send({
 				to: first,
@@ -350,20 +377,26 @@ export async function sendTo(
 	}
 }
 
-/** One try for one log row; updates the row, schedules the next try, alerts on failure. */
-export async function attempt(
+/** Whether a try for this row makes a call: its delivery and its contents are both still here. */
+function sendable(config: Config, row: Send, enquiry: Enquiry | null | undefined): boolean {
+	return Boolean(
+		config.deliveries.some((d) => d.id === row.destination) && enquiry && !enquiry.cleared,
+	);
+}
+
+/** The log row after one try: sent, needs fixing, tried again later, or given up. */
+async function tryRow(
 	ctx: PluginContext,
-	config: Config,
-	id: string,
+	state: State,
 	row: Send,
+	stored: Enquiry | null | undefined,
 ): Promise<Send> {
+	const config = state.config;
 	const delivery = config.deliveries.find((d) => d.id === row.destination);
-	const stored = await enquiries(ctx).get(row.enquiryId);
-	const enquiry = stored?.cleared ? null : stored;
+	const enquiry = stored && !stored.cleared ? stored : null;
 	const now = Date.now();
-	let next: Send;
 	if (!delivery || !enquiry) {
-		next = {
+		return {
 			...row,
 			status: "gaveup",
 			nextAt: "",
@@ -371,172 +404,331 @@ export async function attempt(
 				? "The enquiry's contents are no longer here. It is still in Forms → Submissions."
 				: "This delivery was deleted.",
 		};
-	} else {
-		const outcome = await sendTo(ctx, delivery, row.enquiryId, enquiry, row.test === true);
-		const attempts = row.attempts + 1;
-		const { plain: _plain, raw: _raw, field: _field, held: _held, ...rest } = row;
-		const base = { ...rest, attempts, ms: outcome.ms };
-		if (outcome.kind === "delivered") {
-			next = { ...base, status: "delivered", nextAt: "", deliveredAt: new Date(now).toISOString() };
-		} else if (outcome.kind === "fixing") {
-			next = {
-				...base,
-				status: "fixing",
-				nextAt: "",
-				...(outcome.plain ? { plain: outcome.plain } : {}),
-				...(outcome.raw ? { raw: outcome.raw } : {}),
-				...(outcome.field ? { field: outcome.field } : {}),
-			};
-		} else if (row.test) {
-			// A test is answered now or not at all: it is never tried again.
-			next = {
-				...base,
-				status: "gaveup",
-				nextAt: "",
-				plain: `${delivery.kind === "hubspot" ? "HubSpot" : delivery.kind === "app" ? appLabel(delivery.app) : "The email service"} did not answer.`,
-				...(outcome.raw ? { raw: outcome.raw } : {}),
-			};
-		} else if (attempts >= MAX_ATTEMPTS) {
-			next = {
-				...base,
-				status: "gaveup",
-				nextAt: "",
-				plain: `"${delivery.name}" did not answer after ${MAX_ATTEMPTS} tries over two days. Check it is working, then press Send again.`,
-				...(outcome.raw ? { raw: outcome.raw } : {}),
-			};
-		} else {
-			const wait = Math.max(DELAYS_MIN[attempts - 1]! * 60, outcome.retryAfter ?? 0);
-			next = {
-				...base,
-				status: "retrying",
-				nextAt: new Date(now + wait * 1000).toISOString(),
-				plain: "No answer yet; trying again.",
-				...(outcome.raw ? { raw: outcome.raw } : {}),
-			};
-		}
 	}
-	await sends(ctx).put(id, next);
-	if (next.status === "delivered" && !row.test) await finishEnquiry(ctx, row.enquiryId, config);
-	if ((next.status === "fixing" || next.status === "gaveup") && !row.test) {
-		await alertFailures(ctx, config);
+	const outcome = await sendTo(ctx, state, delivery, row.enquiryId, enquiry, row.test === true);
+	const attempts = row.attempts + 1;
+	const { plain: _plain, raw: _raw, field: _field, held: _held, ...rest } = row;
+	const base = { ...rest, attempts, ms: outcome.ms };
+	if (outcome.kind === "delivered") {
+		return { ...base, status: "delivered", nextAt: "", deliveredAt: new Date(now).toISOString() };
 	}
-	return next;
+	if (outcome.kind === "fixing") {
+		return {
+			...base,
+			status: "fixing",
+			nextAt: "",
+			...(outcome.plain ? { plain: outcome.plain } : {}),
+			...(outcome.raw ? { raw: outcome.raw } : {}),
+			...(outcome.field ? { field: outcome.field } : {}),
+		};
+	}
+	if (attempts >= MAX_ATTEMPTS) {
+		return {
+			...base,
+			status: "gaveup",
+			nextAt: "",
+			plain: `"${delivery.name}" did not answer after ${MAX_ATTEMPTS} tries over two days. Check it is working, then press Send again.`,
+			...(outcome.raw ? { raw: outcome.raw } : {}),
+		};
+	}
+	const wait = Math.max(DELAYS_MIN[attempts - 1]! * 60, outcome.retryAfter ?? 0);
+	return {
+		...base,
+		status: "retrying",
+		nextAt: new Date(now + wait * 1000).toISOString(),
+		plain: "No answer yet; trying again.",
+		...(outcome.raw ? { raw: outcome.raw } : {}),
+	};
+}
+
+/** The ids of every log row an enquiry may have, besides those listed in `with`. */
+function siblingIds(config: Config, enquiryId: string, enquiry: Enquiry, also: string[]): string[] {
+	const destinations = enquiry.rows ?? [...config.deliveries.map((d) => d.id), NO_DELIVERY];
+	return [...new Set([...destinations.map((d) => sendId(enquiryId, d)), ...also])];
+}
+
+interface Tried {
+	id: string;
+	row: Send;
 }
 
 /**
- * Once every delivery is done with an enquiry, it counts as delivered and its contents go; the
- * Forms inbox keeps the original. A held row ("Not sent", with Send again) keeps the contents
- * until it is sent or the log row is cleaned up after 30 days.
+ * The enquiries the tried rows may finish, and the log rows still to be read to tell. An
+ * enquiry with a row known to be waiting cannot finish this run, so its other rows are not read.
  */
-export async function finishEnquiry(ctx: PluginContext, enquiryId: string, loaded?: Config) {
-	const enquiry = await enquiries(ctx).get(enquiryId);
-	if (!enquiry || enquiry.cleared) return;
-	const config = loaded ?? (await loadConfig(ctx));
-	const ids = [
-		...config.deliveries.map((d) => sendId(enquiryId, d.id)),
-		sendId(enquiryId, NO_DELIVERY),
-	];
-	const mine = [...(await sends(ctx).getMany(ids)).values()];
-	if (mine.some((d) => d.status === "retrying")) return;
-	const sent = mine.filter((d) => d.status === "delivered").length;
-	const settled = mine.every((d) => d.status === "delivered" || d.status === "skipped");
-	let counted = enquiry.counted === true;
-	if (!counted && settled && sent > 0 && enquiry.via !== "test") {
-		await count(ctx, "d");
-		counted = true;
+function finishing(
+	config: Config,
+	tried: Tried[],
+	known: Map<string, Send>,
+	stored: Map<string, Enquiry>,
+): { candidates: string[]; unread: string[] } {
+	const candidates: string[] = [];
+	const unread = new Set<string>();
+	for (const enquiryId of new Set(tried.map((t) => t.row.enquiryId))) {
+		const enquiry = stored.get(enquiryId);
+		if (!enquiry || enquiry.cleared) continue;
+		const mine = [...known.entries()].filter(([, s]) => s.enquiryId === enquiryId);
+		if (mine.some(([, s]) => s.status === "retrying")) continue;
+		candidates.push(enquiryId);
+		for (const id of siblingIds(
+			config,
+			enquiryId,
+			enquiry,
+			mine.map(([rowId]) => rowId),
+		))
+			if (!known.has(id)) unread.add(id);
 	}
-	const done = mine.every((d) => d.status === "delivered" || (d.status === "skipped" && !d.held));
-	// The contents go; a bare record stays until cleanup so a repeat is still a no-op.
-	if (done) {
-		await enquiries(ctx).put(enquiryId, {
-			formId: enquiry.formId,
-			formName: enquiry.formName,
-			receivedAt: enquiry.receivedAt,
-			fields: [],
-			via: enquiry.via,
-			throwaway: false,
-			hasFiles: false,
-			cleared: true,
-			...(counted ? { counted: true } : {}),
-		});
-	} else if (counted && !enquiry.counted) {
-		await enquiries(ctx).put(enquiryId, { ...enquiry, counted: true });
-	}
+	return { candidates, unread: [...unread] };
 }
 
-/** Due tries, three at a time, then the next one-shot run. */
-export async function runDue(ctx: PluginContext): Promise<number> {
-	const config = await loadConfig(ctx);
+/**
+ * Write what the tries did: the log rows, then (once every delivery is done with an enquiry)
+ * its contents go and it counts as delivered, then the failure alert. Each write is one call:
+ * the rows, the other rows of a finishing enquiry when they are not known yet, the enquiries,
+ * the count, and the alert (email, then the day it went out) or the follow-up run that sends it.
+ */
+async function record(
+	m: Meter,
+	state: State,
+	tried: Tried[],
+	known: Map<string, Send>,
+	stored: Map<string, Enquiry>,
+): Promise<{ alertLeft: boolean }> {
+	const ctx = m.ctx;
+	if (tried.length === 0) return { alertLeft: false };
+	await sends(ctx).putMany(tried.map((t) => ({ id: t.id, data: t.row })));
+
+	const { candidates, unread } = finishing(state.config, tried, known, stored);
+	const all = new Map(known);
+	if (candidates.length > 0 && unread.length > 0) {
+		for (const [id, row] of await sends(ctx).getMany(unread)) all.set(id, row);
+	}
+	const updates: Array<{ id: string; data: Enquiry }> = [];
+	let delivered = 0;
+	for (const enquiryId of candidates) {
+		const enquiry = stored.get(enquiryId)!;
+		const mine = [...all.values()].filter((s) => s.enquiryId === enquiryId);
+		if (mine.some((s) => s.status === "retrying")) continue;
+		const sent = mine.filter((s) => s.status === "delivered").length;
+		const settled = mine.every((s) => s.status === "delivered" || s.status === "skipped");
+		let isCounted = enquiry.counted === true;
+		if (!isCounted && settled && sent > 0 && enquiry.via !== "test") {
+			delivered += 1;
+			isCounted = true;
+		}
+		const done = mine.every((s) => s.status === "delivered" || (s.status === "skipped" && !s.held));
+		// The contents go; a bare record stays until cleanup so a repeat is still a no-op.
+		if (done) {
+			updates.push({
+				id: enquiryId,
+				data: {
+					formId: enquiry.formId,
+					formName: enquiry.formName,
+					receivedAt: enquiry.receivedAt,
+					fields: [],
+					via: enquiry.via,
+					throwaway: false,
+					hasFiles: false,
+					cleared: true,
+					...(isCounted ? { counted: true } : {}),
+				},
+			});
+		} else if (isCounted && !enquiry.counted) {
+			updates.push({ id: enquiryId, data: { ...enquiry, counted: true } });
+		}
+	}
+	if (updates.length > 0) await enquiries(ctx).putMany(updates);
+	if (delivered > 0) await count(ctx, state, "d", delivered);
+
+	const failed = tried.filter(
+		(t) => !t.row.test && (t.row.status === "fixing" || t.row.status === "gaveup"),
+	);
+	if (failed.length === 0 || !canAlert(ctx, state, "failure")) return { alertLeft: false };
+	if (m.left() < 2) return { alertLeft: true };
+	await sendAlert(
+		m,
+		state,
+		"failure",
+		failureAlert(
+			siteLabel(ctx, state),
+			failed.map((t) => ({ send: t.row, name: deliveryName(state.config, t.row.destination) })),
+		),
+	);
+	return { alertLeft: false };
+}
+
+/**
+ * Due tries, as many as the calls left allow, oldest first. A run that leaves work (more due
+ * tries, or an alert it had no calls for) asks for a follow-up run. Every call it makes is
+ * counted: reads (due rows, their enquiries), one per send, and the writes `record` needs.
+ */
+export async function runBatch(m: Meter, state: State): Promise<{ sent: number; more: boolean }> {
+	const ctx = m.ctx;
+	// The due rows, their enquiries, and a follow-up when nothing fits.
+	if (m.left() < 3) return { sent: 0, more: true };
 	const due = await sends(ctx).query({
 		where: { status: "retrying", nextAt: { lte: new Date().toISOString() } },
 		orderBy: { nextAt: "asc" },
-		limit: PER_RUN,
+		limit: BATCH,
 	});
-	for (const item of due.items) await attempt(ctx, config, item.id, item.data);
-	await scheduleNext(ctx);
-	return due.items.length;
+	if (due.items.length === 0) return { sent: 0, more: false };
+	const ids = [...new Set(due.items.map((item) => item.data.enquiryId))];
+	const stored = new Map<string, Enquiry>();
+	for (const [id, enquiry] of await enquiries(ctx).getMany(ids)) stored.set(id, enquiry);
+	const config = state.config;
+	const alertable = canAlert(ctx, state, "failure");
+
+	// Plan: add rows while their sends and every write they may need still fit.
+	const batch = new Map(due.items.map((item) => [item.id, item.data]));
+	const planned: typeof due.items = [];
+	for (const item of due.items) {
+		const next = [...planned, item];
+		const calls = next.filter((p) => sendable(config, p.data, stored.get(p.data.enquiryId))).length;
+		const real = next.some((p) => !p.data.test);
+		// As if every planned row were done: the most rows a finishing enquiry may need read.
+		const assumed = new Map(batch);
+		for (const p of next) assumed.set(p.id, { ...p.data, status: "delivered" });
+		const ahead = finishing(
+			config,
+			next.map((p) => ({ id: p.id, row: assumed.get(p.id)! })),
+			assumed,
+			stored,
+		);
+		const left = due.items.length > next.length || Boolean(due.hasMore);
+		const writes =
+			1 + // the rows
+			(ahead.candidates.length > 0 && ahead.unread.length > 0 ? 1 : 0) + // other rows of an enquiry
+			1 + // the enquiries
+			(real ? 1 : 0) + // the week's count
+			(left || (alertable && real) ? 1 : 0); // a follow-up (more to do, or the alert)
+		if (calls + writes > m.left()) break;
+		planned.push(item);
+	}
+	if (planned.length === 0) {
+		await scheduleDelivery(ctx, { followUp: true });
+		return { sent: 0, more: true };
+	}
+
+	const known = new Map(due.items.map((d) => [d.id, d.data]));
+	const tried: Tried[] = [];
+	let sent = 0;
+	for (const item of planned) {
+		const enquiry = stored.get(item.data.enquiryId);
+		const row = await tryRow(ctx, state, item.data, enquiry);
+		if (sendable(config, item.data, enquiry)) sent += 1;
+		tried.push({ id: item.id, row });
+		known.set(item.id, row);
+	}
+	const { alertLeft } = await record(m, state, tried, known, stored);
+	const more = due.items.length > planned.length || Boolean(due.hasMore);
+	if ((more || alertLeft) && m.left() >= 1) {
+		await scheduleDelivery(ctx, { followUp: true, alert: alertLeft });
+	}
+	return { sent, more };
 }
 
-/** A one-shot run at the earliest due try (at once if one is overdue). */
-export async function scheduleNext(ctx: PluginContext) {
-	if (!ctx.cron) return;
-	const next = await sends(ctx).query({
-		where: { status: "retrying" },
-		orderBy: { nextAt: "asc" },
-		limit: 1,
-	});
-	const first = next.items[0]?.data.nextAt;
-	if (!first) return;
-	const at = Math.max(Date.parse(first), Date.now() + 1000);
-	await ctx.cron.schedule(DELIVER_TASK, { schedule: new Date(at).toISOString() });
+/**
+ * Try one log row again now (Send again, Send now). A held "Not sent" row is sent now too.
+ * At most 8 calls with the one that read the setup: the row, its enquiry, the send, and
+ * `record`'s writes.
+ */
+export async function sendAgain(m: Meter, state: State, id: string): Promise<Send | null> {
+	const ctx = m.ctx;
+	const row = await sends(ctx).get(id);
+	if (!row || row.status === "delivered" || row.destination === NO_DELIVERY) return row;
+	if (row.status === "skipped" && !row.held) return row;
+	const prepared: Send = {
+		...row,
+		// A held row is sent after all: its "not sent" reason no longer applies.
+		notes: row.notes
+			.filter((note) => note !== "Turned off; not sent")
+			.map((note) => note.split("; not sent")[0]!),
+		attempts: row.status === "retrying" ? row.attempts : 0,
+	};
+	const enquiry = await enquiries(ctx).get(row.enquiryId);
+	const stored = new Map<string, Enquiry>(enquiry ? [[row.enquiryId, enquiry]] : []);
+	const after = await tryRow(ctx, state, prepared, enquiry);
+	const { alertLeft } = await record(
+		m,
+		state,
+		[{ id, row: after }],
+		new Map([[id, after]]),
+		stored,
+	);
+	if (alertLeft && m.left() >= 1) await scheduleDelivery(ctx, { followUp: true, alert: true });
+	return after;
 }
 
-/** Send an alert of this kind unless one went out today. Returns whether it was sent. */
-export async function alertOnce(
+/** An alert of this kind may go out: email works, someone is listed, and none went out today. */
+export function canAlert(
 	ctx: PluginContext,
-	config: Config,
+	state: State,
+	kind: "failure" | "quiet" | "scheduler",
+): boolean {
+	if (!ctx.email || state.config.alertTo.length === 0) return false;
+	const sent = kvOf<Record<string, string>>(state, ALERTS_KEY) ?? {};
+	return sent[kind] !== day(new Date().toISOString());
+}
+
+/**
+ * Send an alert, then note the day it went out: a send that fails is tried again by the next
+ * run that finds the problem. Two calls (three when it fails and a call is left to log it).
+ */
+export async function sendAlert(
+	m: Meter,
+	state: State,
 	kind: "failure" | "quiet" | "scheduler",
 	message: { subject: string; text: string },
 ): Promise<boolean> {
-	if (!ctx.email || config.alertTo.length === 0) return false;
-	const sent = (await ctx.kv.get<Record<string, string>>(ALERTS_KEY)) ?? {};
-	const today = day(new Date().toISOString());
-	if (sent[kind] === today) return false;
-	await ctx.kv.set(ALERTS_KEY, { ...sent, [kind]: today });
-	const [to, ...cc] = config.alertTo;
+	const ctx = m.ctx;
+	if (!ctx.email || !canAlert(ctx, state, kind)) return false;
+	const [to, ...cc] = state.config.alertTo;
 	try {
 		await ctx.email.send({ to: to!, ...(cc.length ? { cc } : {}), ...message });
-		return true;
 	} catch (error) {
-		ctx.log.warn("could not send an alert", { kind, error: String(error) });
+		warnIfRoom(m, "could not send an alert", { kind, error: String(error) });
 		return false;
 	}
+	const sent = {
+		...kvOf<Record<string, string>>(state, ALERTS_KEY),
+		[kind]: day(new Date().toISOString()),
+	};
+	await ctx.kv.set(ALERTS_KEY, sent);
+	state.entries.set(ALERTS_KEY, sent);
+	return true;
 }
 
-/** Real (not test) sends that need the owner: refused, or given up on. */
+/** Real (not test) sends that need the owner: refused, or given up on. One call. */
 export async function needsFixing(ctx: PluginContext, limit = 10, destination?: string) {
-	const where = (status: string) => ({ status, ...(destination ? { destination } : {}) });
-	const [fixing, gaveup] = await Promise.all([
-		sends(ctx).query({ where: where("fixing"), orderBy: { createdAt: "desc" }, limit }),
-		sends(ctx).query({ where: where("gaveup"), orderBy: { createdAt: "desc" }, limit }),
-	]);
-	return [...fixing.items, ...gaveup.items]
-		.filter((item) => !item.data.test)
-		.sort((a, b) => b.data.createdAt.localeCompare(a.data.createdAt));
+	const result = await sends(ctx).query({
+		where: { status: { in: ["fixing", "gaveup"] }, ...(destination ? { destination } : {}) },
+		orderBy: { createdAt: "desc" },
+		limit: limit + 10,
+	});
+	return result.items.filter((item) => !item.data.test).slice(0, limit);
 }
 
-async function alertFailures(ctx: PluginContext, config: Config) {
-	const rows = await needsFixing(ctx);
+/** The failure alert a run had no calls left for. Four calls with the follow-up's first read. */
+async function alertLeftOver(m: Meter, state: State) {
+	if (!canAlert(m.ctx, state, "failure")) return;
+	const rows = await needsFixing(m.ctx);
 	if (rows.length === 0) return;
-	await alertOnce(
-		ctx,
-		config,
+	await sendAlert(
+		m,
+		state,
 		"failure",
 		failureAlert(
-			await siteLabel(ctx),
-			rows.map((r) => ({ send: r.data, name: deliveryName(config, r.data.destination) })),
+			siteLabel(m.ctx, state),
+			rows.map((r) => ({ send: r.data, name: deliveryName(state.config, r.data.destination) })),
 		),
 	);
+}
+
+/** A run of `DELIVER_TASK` or a follow-up. */
+export async function deliverRun(m: Meter, state: State, data: unknown) {
+	if (typeof data === "object" && data !== null && (data as { alert?: unknown }).alert === true)
+		await alertLeftOver(m, state);
+	await runBatch(m, state);
 }
 
 /** A form that usually gets enquiries and has had none for 3 days. */
@@ -552,82 +744,118 @@ export function quietForms(forms: Record<string, KnownForm>, now = Date.now()): 
 	return Object.values(forms).filter((form) => isQuiet(form, now));
 }
 
-export async function checkQuiet(ctx: PluginContext, config: Config) {
-	const forms = await loadForms(ctx);
-	const fresh = quietForms(forms).filter((f) => f.quietAlertedFor !== f.lastAt);
-	if (fresh.length === 0) return;
-	const sent = await alertOnce(
-		ctx,
-		config,
+/** Whether the every-minute task ran in the last 20 minutes. */
+export function tickFresh(state: State, now = Date.now()): boolean {
+	const tick = kvOf<string>(state, TICK_KEY);
+	return Boolean(tick) && now - Date.parse(tick!) <= STUCK_MS;
+}
+
+/** Retries are due but nothing has run them for 20 minutes, from rows already read. */
+export function schedulerStuck(state: State, retrying: Send[], now = Date.now()): boolean {
+	if (tickFresh(state, now)) return false;
+	return retrying.some((row) => row.nextAt && Date.parse(row.nextAt) <= now - STUCK_MS);
+}
+
+/**
+ * After an enquiry arrived: if the every-minute task has stopped and tries are overdue, tell the
+ * alert list (nothing can deliver until it runs again). Three calls, only then.
+ */
+export async function alertIfStuck(m: Meter, state: State) {
+	if (tickFresh(state) || !canAlert(m.ctx, state, "scheduler") || m.left() < 3) return;
+	const overdue = await sends(m.ctx).count({
+		status: "retrying",
+		nextAt: { lte: new Date(Date.now() - STUCK_MS).toISOString() },
+	});
+	if (overdue > 0) await sendAlert(m, state, "scheduler", schedulerAlert(siteLabel(m.ctx, state)));
+}
+
+export const SCHEDULE = "* * * * *";
+
+/**
+ * The every-minute task that runs the queue. Made on activation, and again from an admin visit
+ * or an arriving enquiry if it is missing. Never from inside the email hook (see plugin.ts).
+ * Two calls when it is made.
+ */
+export async function ensureSchedule(ctx: PluginContext, state: State, force = false) {
+	if (!ctx.cron) return;
+	if (!force && kvOf<string>(state, SCHEDULE_KEY) === SCHEDULE) return;
+	await ctx.cron.schedule(MAINTENANCE_TASK, { schedule: SCHEDULE });
+	await ctx.kv.set(SCHEDULE_KEY, SCHEDULE);
+	state.entries.set(SCHEDULE_KEY, SCHEDULE);
+}
+
+/**
+ * Every minute: note that the scheduler runs, ask for the day's work once a day (it has a run
+ * of its own), deliver what fits, and throw away approval codes that ran out with any calls
+ * left (a code waits 15 minutes at most).
+ */
+export async function maintenance(m: Meter, state: State) {
+	const ctx = m.ctx;
+	const now = new Date().toISOString();
+	await ctx.kv.set(TICK_KEY, now);
+	state.entries.set(TICK_KEY, now);
+	if (kvOf<string>(state, DAILY_KEY) !== day(now) && ctx.cron) {
+		await ctx.cron.schedule(DAILY_TASK, { schedule: new Date(Date.now() + 1000).toISOString() });
+	}
+	await runBatch(m, state);
+	for (const [key, value] of state.entries) {
+		if (m.left() < 1) break;
+		if (!key.startsWith(APPROVAL_PREFIX) || isLiveApproval(value)) continue;
+		await ctx.kv.delete(key);
+		state.entries.delete(key);
+	}
+}
+
+/**
+ * Once a day: alert about forms that went quiet, and delete log rows and leftover enquiries
+ * older than 30 days (100 of each a day). The day is marked done only after all of it, so a run
+ * cut short is done again by the next one. At most 9 calls.
+ */
+export async function daily(m: Meter, state: State) {
+	const ctx = m.ctx;
+	const today = day(new Date().toISOString());
+	if (kvOf<string>(state, DAILY_KEY) === today) return;
+	await checkQuiet(m, state);
+	if (!(await cleanup(m))) return;
+	if (m.left() < 1) return;
+	await ctx.kv.set(DAILY_KEY, today);
+}
+
+async function checkQuiet(m: Meter, state: State) {
+	const fresh = quietForms(state.forms).filter((f) => f.quietAlertedFor !== f.lastAt);
+	if (fresh.length === 0 || m.left() < 3) return;
+	const sent = await sendAlert(
+		m,
+		state,
 		"quiet",
 		quietAlert(
-			await siteLabel(ctx),
+			siteLabel(m.ctx, state),
 			fresh.map((f) => quietLine(f, since(f.lastAt!))),
 		),
 	);
-	if (!sent) return;
+	if (!sent || m.left() < 1) return;
+	const forms = { ...state.forms };
 	for (const form of fresh) forms[form.slug] = { ...form, quietAlertedFor: form.lastAt! };
-	await saveForms(ctx, forms);
+	state.forms = forms;
+	await saveFormsQuietly(m.ctx, forms);
 }
 
-/** Retries are due but nothing has run them for 20 minutes. */
-export async function schedulerStuck(ctx: PluginContext): Promise<boolean> {
-	const overdue = await sends(ctx).count({
-		status: "retrying",
-		nextAt: { lte: new Date(Date.now() - 20 * 60_000).toISOString() },
-	});
-	if (overdue === 0) return false;
-	const tick = await ctx.kv.get<string>(TICK_KEY);
-	return !tick || Date.now() - Date.parse(tick) > 20 * 60_000;
-}
-
-export async function alertIfStuck(ctx: PluginContext, config: Config) {
-	if (await schedulerStuck(ctx))
-		await alertOnce(ctx, config, "scheduler", schedulerAlert(await siteLabel(ctx)));
-}
-
-const SCHEDULE_KEY = "schedule";
-const SCHEDULE = "* * * * *";
-
-/**
- * The every-minute task that catches up. Made on activation, and again from an admin visit or
- * an arriving enquiry if it is missing. Never from inside the email hook (see plugin.ts).
- */
-export async function ensureSchedule(ctx: PluginContext, force = false) {
-	if (!ctx.cron) return;
-	if (!force && (await ctx.kv.get<string>(SCHEDULE_KEY)) === SCHEDULE) return;
-	await ctx.cron.schedule(MAINTENANCE_TASK, { schedule: SCHEDULE });
-	await ctx.kv.set(SCHEDULE_KEY, SCHEDULE);
-}
-
-/**
- * Every minute: catch up, throw away approval codes that ran out (a code waits 15 minutes at
- * most), and once a day check for quiet forms and clean up.
- */
-export async function maintenance(ctx: PluginContext) {
-	await ctx.kv.set(TICK_KEY, new Date().toISOString());
-	await runDue(ctx);
-	await sweepApprovals(ctx);
-	const today = day(new Date().toISOString());
-	if ((await ctx.kv.get<string>(DAILY_KEY)) === today) return;
-	await ctx.kv.set(DAILY_KEY, today);
-	const config = await loadConfig(ctx);
-	await checkQuiet(ctx, config);
-	await cleanup(ctx);
-}
-
-/** Log rows and leftover enquiries older than 30 days go. */
-export async function cleanup(ctx: PluginContext) {
+/** Log rows and leftover enquiries older than 30 days go. Returns whether it got through. */
+export async function cleanup(m: Meter): Promise<boolean> {
+	const ctx = m.ctx;
 	const before = new Date(Date.now() - KEEP_DAYS * DAY_MS).toISOString();
+	if (m.left() < 2) return false;
 	const old = await sends(ctx).query({ where: { createdAt: { lt: before } }, limit: 100 });
 	if (old.items.length) await sends(ctx).deleteMany(old.items.map((i) => i.id));
+	if (m.left() < 2) return false;
 	const stale = await enquiries(ctx).query({ where: { receivedAt: { lt: before } }, limit: 100 });
 	if (stale.items.length) await enquiries(ctx).deleteMany(stale.items.map((i) => i.id));
+	return true;
 }
 
 const NO_DELIVERY_NOTE = "No delivery for this form; not sent";
 
-/** Enquiries no delivery took, by form: the forms the owner may have meant. */
+/** Enquiries no delivery took, by form: the forms the owner may have meant. One call. */
 export async function notSentForms(
 	ctx: PluginContext,
 ): Promise<Array<{ formId: string; formName: string; count: number }>> {
@@ -650,60 +878,60 @@ export async function notSentForms(
 }
 
 /**
- * Add a form to a delivery and send the enquiries that arrived from it while no delivery took
- * it. Returns how many are on their way.
+ * Move the enquiries that arrived from a form while no delivery took it to `delivery`, due now,
+ * and ask for a run. A row already moved (an earlier press whose answer was lost) is never
+ * moved again, so nothing is sent twice. Returns how many are on their way and the form's name.
+ * Four calls, five with the run.
  */
-export async function adoptForm(
+export async function adoptHeld(
 	ctx: PluginContext,
 	formId: string,
-	deliveryId: string,
-): Promise<{ delivery: Delivery; count: number } | null> {
-	const config = await loadConfig(ctx);
-	const delivery = config.deliveries.find((d) => d.id === deliveryId);
-	if (!delivery || !formId) return null;
-	if (delivery.forms !== "all" && !delivery.forms.includes(formId)) {
-		delivery.forms = [...delivery.forms, formId];
-		await saveConfig(ctx, config);
-	}
-	const held = await sends(ctx).query({
-		where: { destination: NO_DELIVERY, formId },
-		limit: 100,
-	});
+	delivery: Delivery,
+): Promise<{ count: number; formName?: string }> {
+	const held = await sends(ctx).query({ where: { destination: NO_DELIVERY, formId }, limit: 50 });
+	if (held.items.length === 0) return { count: 0 };
+	const formName = held.items[0]!.data.formName;
+	const targets = held.items.map((item) => sendId(item.data.enquiryId, delivery.id));
+	const existing = await sends(ctx).getMany(targets);
 	const now = new Date().toISOString();
-	const moved = held.items.map((item) => {
-		const { held: _held, ...rest } = item.data;
-		return {
-			id: sendId(item.data.enquiryId, delivery.id),
-			data: {
-				...rest,
-				destination: delivery.id,
-				status: "retrying" as const,
-				nextAt: now,
-				notes: rest.notes.filter((note) => note !== NO_DELIVERY_NOTE),
-			},
-		};
-	});
-	if (moved.length > 0) {
-		await sends(ctx).putMany(moved);
-		await sends(ctx).deleteMany(held.items.map((item) => item.id));
-		for (const row of moved.slice(0, PER_RUN)) await attempt(ctx, config, row.id, row.data);
-		await scheduleNext(ctx);
-	}
-	return { delivery, count: moved.length };
+	const moved = held.items
+		.filter((item) => !existing.has(sendId(item.data.enquiryId, delivery.id)))
+		.map((item) => {
+			const { held: _held, ...rest } = item.data;
+			return {
+				id: sendId(item.data.enquiryId, delivery.id),
+				data: {
+					...rest,
+					destination: delivery.id,
+					status: "retrying" as const,
+					nextAt: now,
+					notes: rest.notes.filter((note) => note !== NO_DELIVERY_NOTE),
+				},
+			};
+		});
+	if (moved.length > 0) await sends(ctx).putMany(moved);
+	await sends(ctx).deleteMany(held.items.map((item) => item.id));
+	if (moved.length > 0) await scheduleDelivery(ctx);
+	return { count: moved.length, formName };
 }
 
-/** Try one log row again now (Send again / Send now). A held "Not sent" row is sent now too. */
-export async function sendAgain(ctx: PluginContext, id: string): Promise<Send | null> {
-	const row = await sends(ctx).get(id);
-	if (!row || row.status === "delivered" || row.destination === NO_DELIVERY) return row;
-	if (row.status === "skipped" && !row.held) return row;
-	const config = await loadConfig(ctx);
-	return attempt(ctx, config, id, {
-		...row,
-		// A held row is sent after all: its "not sent" reason no longer applies.
-		notes: row.notes
-			.filter((note) => note !== "Turned off; not sent")
-			.map((note) => note.split("; not sent")[0]!),
-		attempts: row.status === "retrying" ? row.attempts : 0,
-	});
+/**
+ * Send all failed again: their rows are due now and a run sends them. A row is moved only from
+ * "Needs fixing" or "Gave up", so pressing twice sends nothing twice. Three calls.
+ */
+export async function queueFailed(ctx: PluginContext, destination?: string): Promise<number> {
+	const rows = await needsFixing(ctx, 10, destination);
+	if (rows.length === 0) return 0;
+	const now = new Date().toISOString();
+	await sends(ctx).putMany(
+		rows.map((item) => {
+			const { plain: _plain, raw: _raw, field: _field, held: _held, ...rest } = item.data;
+			return {
+				id: item.id,
+				data: { ...rest, status: "retrying" as const, nextAt: now, attempts: 0 },
+			};
+		}),
+	);
+	await scheduleDelivery(ctx);
+	return rows.length;
 }

@@ -22,7 +22,8 @@ const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 /** The only scope that reaches /_emdash/api/plugins/* (EmDash middleware/auth.ts). */
 const SCOPE = "admin";
 const CLIENT_ID = "lead-delivery";
-const PREFIX = "approval:";
+export const APPROVAL_PREFIX = "approval:";
+const PREFIX = APPROVAL_PREFIX;
 /** EmDash's codes last 15 minutes; never keep one longer, whatever it says. */
 const MAX_SECONDS = 15 * 60;
 /** The approval page inside EmDash's admin. */
@@ -205,10 +206,30 @@ function isStored(value: unknown): value is Stored {
 	);
 }
 
+/** A stored code that is still usable. */
+export function isLiveApproval(value: unknown, now = Date.now()): boolean {
+	return isStored(value) && value.expiresAt > now;
+}
+
+/** Where a caller already has the stored code from `ctx.kv.list()`, so it costs no read. */
+export interface Known {
+	/** The stored value for this key (undefined or null when there is none). */
+	stored?: unknown;
+}
+
+async function storedFor(ctx: PluginContext, key: string, known?: Known): Promise<unknown> {
+	if (known && "stored" in known) return known.stored ?? null;
+	return ctx.kv.get<unknown>(storageKey(key));
+}
+
 /** The live approval for `key`, without its device code; an expired one is deleted. */
-export async function peekApproval(ctx: PluginContext, key: string): Promise<Shown | undefined> {
-	const stored = await ctx.kv.get<unknown>(storageKey(key));
-	if (stored === null) return undefined;
+export async function peekApproval(
+	ctx: PluginContext,
+	key: string,
+	known?: Known,
+): Promise<Shown | undefined> {
+	const stored = await storedFor(ctx, key, known);
+	if (stored === null || stored === undefined) return undefined;
 	if (!isStored(stored) || stored.expiresAt <= Date.now()) {
 		await cancelApproval(ctx, key);
 		return undefined;
@@ -249,15 +270,22 @@ async function revoke(ctx: PluginContext, origin: string, token: string): Promis
 /**
  * Exchange the approved code once, run `use` with an authenticated `call`, then revoke.
  * Revoking the refresh token deletes it and every access token made from it.
+ *
+ * The revoke comes straight after `use`, before anything is written: on Cloudflare a sandboxed
+ * run may make only 10 calls, and a write that came first could use up the call the revoke
+ * needs. `use` therefore only calls the site with the access; the caller writes what it learned
+ * afterwards. The used code is deleted after the revoke, unless `canForget` says no call is
+ * left for it (it no longer works anyway: EmDash takes each code once).
  */
 export async function withApproval<T>(
 	ctx: PluginContext,
 	origin: string,
 	key: string,
 	use: (call: AdminCall, intent: Intent) => Promise<T>,
+	opts: Known & { canForget?: (revoked: boolean) => boolean } = {},
 ): Promise<FinishResult<T>> {
-	const stored = await ctx.kv.get<unknown>(storageKey(key));
-	if (stored === null) return { kind: "missing" };
+	const stored = await storedFor(ctx, key, opts);
+	if (stored === null || stored === undefined) return { kind: "missing" };
 	if (!isStored(stored)) {
 		await cancelApproval(ctx, key);
 		return { kind: "missing" };
@@ -292,7 +320,9 @@ export async function withApproval<T>(
 		if (answer === "expired_token") return { kind: "expired" };
 		return { kind: "unavailable" };
 	}
-	await cancelApproval(ctx, key);
+	const forget = async (revoked: boolean) => {
+		if (opts.canForget?.(revoked) !== false) await cancelApproval(ctx, key);
+	};
 	const data = isRecord(body) && isRecord(body.data) ? body.data : undefined;
 	const access = data?.access_token;
 	const refresh = data?.refresh_token;
@@ -304,8 +334,13 @@ export async function withApproval<T>(
 				: typeof access === "string" && access
 					? access
 					: "";
-		if (!token) return { kind: "unavailable" };
-		return { kind: "unavailable", revoked: await revoke(ctx, origin, token) };
+		if (!token) {
+			await forget(true);
+			return { kind: "unavailable" };
+		}
+		const revoked = await revoke(ctx, origin, token);
+		await forget(revoked);
+		return { kind: "unavailable", revoked };
 	}
 
 	const call: AdminCall = async (path, init) => {
@@ -325,14 +360,17 @@ export async function withApproval<T>(
 		return reply;
 	};
 
+	let result: FinishResult<T>;
 	try {
 		const value = await use(call, stored.intent);
-		return { kind: "done", value, revoked: await revoke(ctx, origin, refresh) };
+		result = { kind: "done", value, revoked: await revoke(ctx, origin, refresh) };
 	} catch (error) {
 		const reason =
 			error instanceof Error ? scrub(error.message, [access, refresh]) : "It did not work.";
-		return { kind: "failed", reason, revoked: await revoke(ctx, origin, refresh) };
+		result = { kind: "failed", reason, revoked: await revoke(ctx, origin, refresh) };
 	}
+	await forget(result.revoked);
+	return result;
 }
 
 /** Never let a token reach a message, even through an error text. */

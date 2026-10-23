@@ -6,6 +6,7 @@ import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, KnownForm, Send } from "../src/types.js";
+import { runQueued } from "./queue.js";
 
 const PAGE = "/enquiries";
 const ORIGIN = "https://crumb.test";
@@ -91,13 +92,24 @@ function payload(id: string, data: Record<string, unknown> = {}) {
 	};
 }
 
-async function inbound(runtime: PluginRuntimeTestHost, body: unknown, key?: string) {
+/**
+ * An enquiry posted straight from a form, then delivered by the runs that follow (it is stored
+ * on arrival and sent by the scheduler), unless `queued` asks to stop at arrival.
+ */
+async function inbound(
+	runtime: PluginRuntimeTestHost,
+	body: unknown,
+	key?: string,
+	{ queued = false } = {},
+) {
 	const k = key ?? (await config(runtime)).key;
-	return runtime.actions.routes.request("inbound", {
+	const response = await runtime.actions.routes.request("inbound", {
 		method: "POST",
 		url: `${ORIGIN}/_emdash/api/plugins/lead-delivery/inbound?key=${k}`,
 		body,
 	});
+	if (!queued) await runQueued(runtime);
+	return response;
 }
 
 /** Real (not test) log rows. */
@@ -289,23 +301,23 @@ describe("delivery problems", () => {
 		expect(sent[0]!.text).toContain("it is kept in Lead delivery");
 	});
 
-	it("tries again when an app does not answer, three at a time", async () => {
+	it("tries again when an app does not answer, a few per run", async () => {
 		const { runtime } = await start();
 		await setDeliveries(
 			runtime,
 			[0, 1, 2, 3].map((i) => delivery({ app: "make", url: `${HOOK}${i}`, name: `App ${i}` })),
 		);
-		for (let i = 0; i < 3; i++)
+		for (let i = 0; i < 4; i++)
 			await runtime.http.respond(`${HOOK}${i}`, new Response("", { status: 503 }));
-		await inbound(runtime, payload("01E"));
+		await inbound(runtime, payload("01E"), undefined, { queued: true });
+		// Stored, every delivery due: nothing is sent while the enquiry arrives.
+		expect((await rows(runtime)).map((r) => [r.status, r.attempts])).toEqual(
+			Array(4).fill(["retrying", 0]),
+		);
+		await runQueued(runtime);
 		const waiting = await rows(runtime);
-		expect(waiting.map((r) => [r.status, r.attempts]).sort()).toEqual([
-			["retrying", 0],
-			["retrying", 1],
-			["retrying", 1],
-			["retrying", 1],
-		]);
-		const tried = waiting.find((r) => r.attempts === 1)!;
+		expect(waiting.map((r) => [r.status, r.attempts])).toEqual(Array(4).fill(["retrying", 1]));
+		const tried = waiting[0]!;
 		const wait = Date.parse(tried.nextAt) - Date.parse(tried.createdAt);
 		expect(wait).toBeGreaterThan(55_000);
 		expect(wait).toBeLessThan(120_000);
@@ -316,10 +328,9 @@ describe("delivery problems", () => {
 		}
 		for (let i = 0; i < 4; i++) await runtime.http.respond(`${HOOK}${i}`, new Response("ok"));
 		const before = runtime.http.requests().length;
-		await runtime.transport.invokeHook("cron", { name: "deliver", data: null });
-		expect(runtime.http.requests().length - before).toBe(3);
-		const after = (await rows(runtime)).map((r) => r.status).sort();
-		expect(after).toEqual(["delivered", "delivered", "delivered", "retrying"]);
+		await runQueued(runtime);
+		expect(runtime.http.requests().length - before).toBe(4);
+		expect((await rows(runtime)).map((r) => r.status)).toEqual(Array(4).fill("delivered"));
 	});
 
 	it("sends again from the log", async () => {
@@ -339,8 +350,9 @@ describe("delivery problems", () => {
 			type: "success",
 			message: 'Sent again. "Contact us → n8n" delivered Tom Reyes\'s enquiry.',
 		});
-		// The same view comes back: the delivery's page.
-		expect(headers(response)).toContain("Contact us → n8n");
+		// A short screen says so, with the way back to the delivery's page.
+		expect(headers(response)).toEqual(["Sent again"]);
+		expect(buttons(response).map((b) => b.label)).toEqual(["← Back to Contact us → n8n"]);
 	});
 });
 
@@ -461,7 +473,7 @@ describe("repeats and possibly spam", () => {
 		expect(list.find((r) => r.destination === mail.id)).toMatchObject({
 			notes: ["Possibly fake address", "Possibly spam"],
 		});
-		await runtime.transport.invokeHook("cron", { name: "deliver", data: null });
+		await runQueued(runtime);
 		const emails = (await runtime.inspect.email()) as unknown as Array<{
 			subject: string;
 			text: string;
@@ -500,7 +512,7 @@ describe("the email way", () => {
 			["retrying", "contact-us"],
 		]);
 
-		await runtime.transport.invokeHook("cron", { name: "deliver", data: null });
+		await runQueued(runtime);
 		expect((await rows(runtime)).map((r) => r.status)).toEqual(["delivered"]);
 		const emails = JSON.stringify(await runtime.inspect.email());
 		expect(emails).toContain("orders@crumb.test");
@@ -606,7 +618,7 @@ describe("enquiries from a form no delivery takes", () => {
 			'"contact → Shop inbox" now takes Contact us. Sending its 2 enquiries.',
 		);
 		expect((await config(runtime)).deliveries[0]!.forms).toEqual(["contact", "contact-us"]);
-		await runtime.transport.invokeHook("cron", { name: "deliver", data: null });
+		await runQueued(runtime);
 		const list = await rows(runtime);
 		expect(list.map((r) => [r.destination, r.status])).toEqual([
 			[d.id, "delivered"],
@@ -767,6 +779,9 @@ describe("updating from 0.1", () => {
 			["mailplace1", "delivered"],
 		]);
 
+		// The setup moves to deliveries in the settings when an admin opens the page.
+		const admin = await runtime.fixtures.user({ email: "anna@crumb.test", role: "admin" });
+		await runtime.admin.loadPage(PAGE, { user: admin });
 		const after = await config(runtime);
 		expect(after.version).toBe(2);
 		expect(after.key).toBe(OLD_KEY);
@@ -1260,7 +1275,11 @@ describe("alerts", () => {
 				days: [day(12), day(8), day(4)].map((d) => d.slice(0, 10)),
 			}),
 		});
+		// The every-minute run asks for the day's run, which checks the forms.
 		await runtime.transport.invokeHook("cron", { name: "maintenance", data: null });
+		const tasks = (await runtime.inspect.scheduledTasks()) as Array<{ name: string }>;
+		expect(tasks.map((t) => t.name)).toContain("daily");
+		await runtime.transport.invokeHook("cron", { name: "daily", data: null });
 		const emails = JSON.stringify(await runtime.inspect.email());
 		expect(emails).toContain("Crumb & Co.: no enquiries from Newsletter since");
 		const forms = await runtime.inspect.setting<Record<string, KnownForm>>("forms");
@@ -1298,7 +1317,7 @@ describe("home and who sees what", () => {
 		await setDeliveries(runtime, [working, broken, off]);
 		await runtime.http.respond(HOOK, new Response("gone", { status: 404 }));
 		await inbound(runtime, payload("01R"));
-		await runtime.transport.invokeHook("cron", { name: "deliver", data: null });
+		await runQueued(runtime);
 		const page = await runtime.admin.loadPage(PAGE, { user: admin });
 		// Header, New delivery, stats, banners, Deliveries, Latest enquiries, site settings.
 		const types = page.blocks.map((b) => b.type);
