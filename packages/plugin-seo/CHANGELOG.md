@@ -1,5 +1,13 @@
 # @moorage/plugin-seo
 
+## 0.1.11
+
+### Patch Changes
+
+- 8370eca: New screenshots of the current admin page, with the help line at its foot.
+- 6516427: Admins see a small help line at the foot of the page, with a link to the guide; it can be hidden in Settings.
+- ee58b7f: The README now says to restart the site after changing its address.
+
 ## 0.1.10
 
 ### Patch Changes

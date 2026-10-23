@@ -1,5 +1,11 @@
 # @moorage/plugin-analytics
 
+## 0.2.7
+
+### Patch Changes
+
+- 6516427: Admins see a small help line at the foot of the page, with a link to the guide; it can be hidden under Advanced.
+
 ## 0.2.6
 
 ### Patch Changes

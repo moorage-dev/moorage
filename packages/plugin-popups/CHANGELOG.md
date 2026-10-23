@@ -1,5 +1,12 @@
 # @moorage/plugin-popups
 
+## 0.1.8
+
+### Patch Changes
+
+- 6516427: Admins see a small help line at the foot of the page, with a link to the guide; it can be hidden in Settings.
+- 8370eca: New screenshots of the current admin page, with the help line at its foot.
+
 ## 0.1.7
 
 ### Patch Changes

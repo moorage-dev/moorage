@@ -1,5 +1,12 @@
 # @moorage/plugin-lead-delivery
 
+## 0.4.1
+
+### Patch Changes
+
+- 6516427: Admins see a small help line at the foot of the page, with a link to the guide; it can be hidden under Settings for the whole site.
+- 8370eca: New screenshots of the current admin page, with the help line at its foot.
+
 ## 0.4.0
 
 ### Minor Changes
