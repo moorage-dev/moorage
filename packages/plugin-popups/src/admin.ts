@@ -25,7 +25,7 @@ import {
 } from "./config.js";
 import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
 import { hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
-import { rate, type CountRow, type Totals } from "./stats.js";
+import { rate, totals as sumRows, type CountRow, type Totals } from "./stats.js";
 import { describeMoment, fromMoment, HALF_HOURS, toMoment } from "./time.js";
 
 /**
@@ -159,6 +159,57 @@ function responsesText(popup: Popup, totals: Totals | undefined): string {
 }
 
 const num = (n: number | undefined) => (n ? n.toLocaleString("en") : "–");
+
+/**
+ * One popup's numbers, as words: the Numbers tab's row and the stats on the
+ * popup's own page, so both always say the same. "–" where nothing was counted.
+ */
+export function numberCells(popup: Popup, t: Totals | undefined) {
+	const responses = responsesText(popup, t);
+	const seen = t?.seen ?? 0;
+	return {
+		seen: num(seen),
+		responses: seen < 100 && seen > 0 ? `${responses} (not enough visitors yet)` : responses,
+		closed: popup.kind === "inline" ? "–" : num(t?.closed),
+		phones: seen ? `${Math.round(((t?.phone ?? 0) / seen) * 100)}%` : "–",
+		since: t?.since ? shortDay(t.since) : "–",
+	};
+}
+
+/** Under a finished popup's status line: its numbers since it started, as on the Numbers tab. */
+function ownNumbers(popup: Popup, state: PageState): Block[] {
+	const cells = numberCells(popup, state.totals.get(popup.id));
+	// Two by two: EmDash lays a stats block out in one line that never wraps, and four boxes
+	// run off a 390 px phone.
+	return [
+		{
+			type: "stats",
+			items: [
+				{ label: "Seen", value: cells.seen },
+				{ label: "Responses", value: cells.responses },
+			],
+		},
+		{
+			type: "stats",
+			items: [
+				{ label: "Closed", value: cells.closed },
+				{ label: "On phones", value: cells.phones },
+			],
+		},
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: "nav",
+					label: "See all numbers",
+					value: "numbers",
+					style: "secondary",
+				},
+			],
+		},
+	];
+}
 
 /** A form's id changes with the saved data, so the admin shows saved values after a save. */
 function formId(name: string, popup: Popup | undefined, extra = ""): string {
@@ -339,24 +390,8 @@ function numbersBlocks(state: PageState): Block[] {
 	const { from, to } = state.range;
 	const chosen = from || to;
 	const rows = state.rows;
-	const byPopup = new Map<string, Totals>();
-	for (const row of rows) {
-		const t = byPopup.get(row.popup) ?? {
-			seen: 0,
-			sent: 0,
-			clicked: 0,
-			closed: 0,
-			phone: 0,
-			since: null,
-		};
-		t.seen += row.seen;
-		t.sent += row.sent;
-		t.clicked += row.clicked;
-		t.closed += row.closed;
-		t.phone += row.phone;
-		if (!t.since || row.day < t.since) t.since = row.day;
-		byPopup.set(row.popup, t);
-	}
+	// The same sums as the totals each popup's own page shows.
+	const byPopup = sumRows(rows);
 	const all = [...byPopup.values()].reduce(
 		(a, t) => ({
 			seen: a.seen + t.seen,
@@ -461,19 +496,7 @@ function numbersBlocks(state: PageState): Block[] {
 		],
 		rows: state.store.popups
 			.filter((popup) => byPopup.has(popup.id))
-			.map((popup) => {
-				const t = byPopup.get(popup.id)!;
-				const responses = responsesText(popup, t);
-				return {
-					name: popup.name,
-					seen: num(t.seen),
-					responses:
-						t.seen < 100 && t.seen > 0 ? `${responses} (not enough visitors yet)` : responses,
-					closed: popup.kind === "inline" ? "–" : num(t.closed),
-					phones: t.seen ? `${Math.round((t.phone / t.seen) * 100)}%` : "–",
-					since: t.since ? shortDay(t.since) : "–",
-				};
-			}),
+			.map((popup) => ({ name: popup.name, ...numberCells(popup, byPopup.get(popup.id)) })),
 	});
 	blocks.push(
 		{
@@ -708,16 +731,18 @@ function formField(state: PageState, popup: Popup): Record<string, unknown> {
 export function mayShowStep2(input: Interaction | undefined): boolean {
 	const action = typeof input?.action_id === "string" ? input.action_id : "";
 	const value = typeof input?.value === "string" ? input.value : "";
-	if (input?.type === "form_submit") return /^save_s[1-4]$/.test(action);
+	if (input?.type === "form_submit") return /^save_(s[1-4]|all)$/.test(action);
 	if (input?.type !== "block_action") return false;
 	if (action === "row") return value.startsWith("change:") || value.startsWith("toggle:");
 	return action === "nav" && value.startsWith("back:");
 }
 
-function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
+type Field = Record<string, unknown>;
+
+function step2Fields(state: PageState, popup: Popup): Field[] {
 	const bar = popup.kind === "bar";
 	const inline = popup.kind === "inline";
-	const fields: Array<Record<string, unknown>> = [
+	const fields: Field[] = [
 		{
 			type: "text_input",
 			action_id: "heading",
@@ -803,31 +828,50 @@ function step2Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
 			initial_value: typed(state, "decline", popup.decline),
 		});
 	}
-	const blocks: Block[] = [];
-	blocks.push({
-		type: "form",
-		block_id: formId("s2", popup),
-		fields: fields as never,
-		submit: {
-			label: wizard ? (inline ? "Next: turn on" : "Next: when and where") : "Save",
-			action_id: "save_s2",
-		},
-	});
-	if (!bar) {
-		blocks.push({
+	return fields;
+}
+
+/** One line under what it says: where pictures and forms come from. */
+function step2Note(state: PageState, popup: Popup): Block[] {
+	if (popup.kind === "bar") return [];
+	return [
+		{
 			type: "context",
 			text: state.admin
 				? "Pictures come from Media; forms and their thank-you message from Forms."
 				: popup.contains === "form"
 					? `It contains the form "${popup.form}". Only an administrator can change the form.`
 					: "Pictures come from Media; add new ones there.",
-		});
-	}
-	return blocks;
+		},
+	];
 }
 
-function step3Form(state: PageState, popup: Popup, wizard: boolean): Block {
-	const fields: Array<Record<string, unknown>> = [];
+function step2Blocks(state: PageState, popup: Popup): Block[] {
+	return [
+		{
+			type: "form",
+			block_id: formId("s2", popup),
+			fields: step2Fields(state, popup) as never,
+			submit: {
+				label: popup.kind === "inline" ? "Next: turn on" : "Next: when and where",
+				action_id: "save_s2",
+			},
+		},
+		...step2Note(state, popup),
+	];
+}
+
+function step3Form(state: PageState, popup: Popup): Block {
+	return {
+		type: "form",
+		block_id: formId("s3", popup),
+		fields: step3Fields(state, popup) as never,
+		submit: { label: "Next: dates and turn on", action_id: "save_s3" },
+	};
+}
+
+function step3Fields(state: PageState, popup: Popup): Field[] {
+	const fields: Field[] = [];
 	if (popup.kind !== "bar") {
 		fields.push({
 			type: "select",
@@ -837,7 +881,7 @@ function step3Form(state: PageState, popup: Popup, wizard: boolean): Block {
 				value,
 				label: TRIGGER_CHOICE[value],
 			})),
-			initial_value: popup.trigger === "load" ? "read" : popup.trigger,
+			initial_value: typed(state, "trigger", popup.trigger === "load" ? "read" : popup.trigger),
 		});
 	}
 	if (popup.kind === "modal") {
@@ -860,7 +904,7 @@ function step3Form(state: PageState, popup: Popup, wizard: boolean): Block {
 				{ value: "prefix", label: "Only pages whose address starts with…" },
 				{ value: "collections", label: "Everything in a collection" },
 			],
-			initial_value: popup.where,
+			initial_value: typed(state, "where", popup.where),
 		},
 		{
 			type: "text_input",
@@ -900,7 +944,7 @@ function step3Form(state: PageState, popup: Popup, wizard: boolean): Block {
 				{ value: "desktop", label: "Computers only" },
 				{ value: "phone", label: "Phones only" },
 			],
-			initial_value: popup.devices,
+			initial_value: typed(state, "devices", popup.devices),
 		},
 		{
 			type: "select",
@@ -911,15 +955,10 @@ function step3Form(state: PageState, popup: Popup, wizard: boolean): Block {
 				{ value: "month", label: "After a month (recommended)" },
 				{ value: "never", label: "Never" },
 			],
-			initial_value: popup.again,
+			initial_value: typed(state, "again", popup.again),
 		},
 	);
-	return {
-		type: "form",
-		block_id: formId("s3", popup),
-		fields: fields as never,
-		submit: { label: wizard ? "Next: dates and turn on" : "Save", action_id: "save_s3" },
-	};
+	return fields;
 }
 
 function summary(popup: Popup, state: PageState): Block {
@@ -980,7 +1019,12 @@ function clickInstructions(popup: Popup): Block[] {
 	];
 }
 
-function previewLinks(popup: Popup, state: PageState): Block[] {
+/**
+ * The preview shows what is saved. `unsaved` says what to add about changes on
+ * screen: in "New popup" the dates sit below it; on a finished popup's page it
+ * sits under the one Save.
+ */
+function previewLinks(popup: Popup, state: PageState, unsaved = ""): Block[] {
 	if (!state.origin) return [];
 	const inline = popup.kind === "inline";
 	const page = !inline && popup.where === "prefix" && popup.prefixes[0] ? popup.prefixes[0] : "/";
@@ -1017,65 +1061,158 @@ function previewLinks(popup: Popup, state: PageState): Block[] {
 		},
 		{
 			type: "context",
-			text: "The preview opens a page of your site with it already showing, and says whether a real visitor would see it now and why not. Nothing is counted and the form does not send. Narrow the window to see the phone layout. Save your changes first.",
+			text: `The preview opens a page of your site with it already showing, and says whether a real visitor would see it now and why not. Nothing is counted and the form does not send. Narrow the window to see the phone layout.${unsaved ? ` ${unsaved}` : ""}`,
 		},
 		...notes,
 	];
 }
 
-function step4Blocks(state: PageState, popup: Popup, wizard: boolean): Block[] {
-	const start = popup.start ? fromMoment(popup.start, state.zone) : null;
-	const end = popup.end ? fromMoment(popup.end, state.zone) : null;
-	const times = HALF_HOURS.map((t) => ({ value: t, label: t }));
+const zoneLine = (state: PageState): Block => ({
+	type: "context",
+	text: `Times are ${state.zone} time, your site's time zone.`,
+});
+
+function step4Blocks(state: PageState, popup: Popup): Block[] {
 	return [
 		summary(popup, state),
 		...clickInstructions(popup),
-		...previewLinks(popup, state),
-		{ type: "context", text: `Times are ${state.zone} time, your site's time zone.` },
+		...previewLinks(popup, state, "Save your changes first."),
+		zoneLine(state),
 		{
 			type: "form",
 			block_id: formId("s4", popup),
-			fields: [
-				{
-					type: "date_input",
-					action_id: "start_date",
-					label: "Starts on (leave empty to start now)",
-					initial_value: typed(state, "start_date", start?.date ?? "") || undefined,
-				},
-				{
-					type: "select",
-					action_id: "start_time",
-					label: "Start time",
-					options: times,
-					initial_value: typed(state, "start_time", start?.clock ?? "00:00"),
-				},
-				{
-					type: "date_input",
-					action_id: "end_date",
-					label: "Ends on (leave empty to keep it on)",
-					initial_value: typed(state, "end_date", end?.date ?? "") || undefined,
-				},
-				{
-					type: "select",
-					action_id: "end_time",
-					label: "End time",
-					options: times,
-					initial_value: typed(state, "end_time", end?.clock ?? "00:00"),
-				},
-				{
-					type: "toggle",
-					action_id: "on",
-					label: "Turn it on",
-					description: "It starts at its start time by itself and stops at its end.",
-					initial_value: wizard ? true : popup.on,
-				},
-			],
-			submit: { label: wizard ? "Save and finish" : "Save", action_id: "save_s4" },
+			fields: step4Fields(state, popup, true) as never,
+			submit: { label: "Save and finish", action_id: "save_s4" },
 		},
 	];
 }
 
-/** "New popup", one step at a time, or a finished popup with every step as a section. */
+function step4Fields(state: PageState, popup: Popup, wizard: boolean): Field[] {
+	const start = popup.start ? fromMoment(popup.start, state.zone) : null;
+	const end = popup.end ? fromMoment(popup.end, state.zone) : null;
+	const times = HALF_HOURS.map((t) => ({ value: t, label: t }));
+	return [
+		{
+			type: "date_input",
+			action_id: "start_date",
+			label: "Starts on (leave empty to start now)",
+			initial_value: typed(state, "start_date", start?.date ?? "") || undefined,
+		},
+		{
+			type: "select",
+			action_id: "start_time",
+			label: "Start time",
+			options: times,
+			initial_value: typed(state, "start_time", start?.clock ?? "00:00"),
+		},
+		{
+			type: "date_input",
+			action_id: "end_date",
+			label: "Ends on (leave empty to keep it on)",
+			initial_value: typed(state, "end_date", end?.date ?? "") || undefined,
+		},
+		{
+			type: "select",
+			action_id: "end_time",
+			label: "End time",
+			options: times,
+			initial_value: typed(state, "end_time", end?.clock ?? "00:00"),
+		},
+		{
+			type: "toggle",
+			action_id: "on",
+			label: "Turn it on",
+			description: "It starts at its start time by itself and stops at its end.",
+			initial_value: wizard ? true : popup.on,
+		},
+	];
+}
+
+/** Whether a finished popup's page has "When and where": an Admin's, and not for a box in a page. */
+const editsPlaces = (state: PageState, popup: Popup) => state.admin && popup.kind !== "inline";
+
+/**
+ * A finished popup's one form: what it says, when and where (Admin), and dates.
+ * Its id follows the saved popup only, so a refused save keeps every box as
+ * typed and a saved one draws the saved values.
+ */
+function editForm(state: PageState, popup: Popup): Block {
+	return {
+		type: "form",
+		block_id: formId("edit", popup),
+		fields: [
+			...step2Fields(state, popup),
+			...(editsPlaces(state, popup) ? step3Fields(state, popup) : []),
+			...step4Fields(state, popup, false),
+		] as never,
+		submit: { label: "Save changes", action_id: "save_all" },
+	};
+}
+
+const backTo = (label: string, value: string): Block => ({
+	type: "actions",
+	elements: [{ type: "button", action_id: "nav", label, value, style: "secondary" }],
+});
+
+/** A finished popup's name and kind, on a screen of their own: the kind decides the other boxes. */
+function kindPage(state: PageState, popup: Popup): BlockResponse {
+	return {
+		blocks: [
+			{ type: "header", text: popup.name },
+			...errorBlocks(state),
+			{
+				type: "context",
+				text: "The kind decides which boxes the popup has. What it says, where it shows and its dates are kept.",
+			},
+			step1Form(state, popup, false),
+			backTo("Back", `back:${popup.id}:4`),
+		],
+		...(state.toast ? { toast: state.toast } : {}),
+	};
+}
+
+function finishedBlocks(state: PageState, popup: Popup): Block[] {
+	const blocks: Block[] = [
+		{ type: "context", text: `${kindLine(popup)} · ${statusOf(popup, state)}` },
+		...ownNumbers(popup, state),
+	];
+	const own = pageActions(popup, state.admin);
+	if (own) blocks.push(own);
+	blocks.push(summary(popup, state));
+	if (state.admin)
+		blocks.push({
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: "nav",
+					label: "Change name or kind",
+					value: `kind:${popup.id}`,
+					style: "secondary",
+				},
+			],
+		});
+	blocks.push(
+		{
+			type: "header",
+			text: editsPlaces(state, popup)
+				? "What it says, when and where, and dates"
+				: "What it says, and dates",
+		},
+		{
+			type: "context",
+			text: `Change anything below, then press Save changes once at the end. Times are ${state.zone} time, your site's time zone.`,
+		},
+		editForm(state, popup),
+		...step2Note(state, popup),
+		...clickInstructions(popup),
+		...previewLinks(popup, state, "It shows what was last saved."),
+		backTo("Back to the list", "list"),
+	);
+	return blocks;
+}
+
+/** "New popup", one step at a time, or a finished popup with one form for everything. */
 function popupPage(state: PageState, popup: Popup | undefined, step: number): BlockResponse {
 	const blocks: Block[] = [{ type: "header", text: popup ? popup.name : "New popup" }];
 	const wizard = !popup || popup.step < 4;
@@ -1083,9 +1220,9 @@ function popupPage(state: PageState, popup: Popup | undefined, step: number): Bl
 	if (wizard) {
 		blocks.push(stepsLine(popup, step));
 		if (step === 1) blocks.push(step1Form(state, popup, true));
-		if (step === 2 && popup) blocks.push(...step2Blocks(state, popup, true));
-		if (step === 3 && popup) blocks.push(step3Form(state, popup, true));
-		if (step === 4 && popup) blocks.push(...step4Blocks(state, popup, true));
+		if (step === 2 && popup) blocks.push(...step2Blocks(state, popup));
+		if (step === 3 && popup) blocks.push(step3Form(state, popup));
+		if (step === 4 && popup) blocks.push(...step4Blocks(state, popup));
 		const back =
 			step > 1 && popup
 				? `back:${popup.id}:${popup.kind === "inline" && step === 4 ? 2 : step - 1}`
@@ -1106,32 +1243,7 @@ function popupPage(state: PageState, popup: Popup | undefined, step: number): Bl
 		const own = popup ? pageActions(popup, state.admin) : null;
 		if (own) blocks.push(own);
 	} else if (popup) {
-		blocks.push({ type: "context", text: `${kindLine(popup)} · ${statusOf(popup, state)}` });
-		const own = pageActions(popup, state.admin);
-		if (own) blocks.push(own);
-		if (state.admin) {
-			blocks.push({ type: "header", text: "1 What kind" }, step1Form(state, popup, false));
-		}
-		blocks.push({ type: "header", text: "2 What it says" }, ...step2Blocks(state, popup, false));
-		if (state.admin && popup.kind !== "inline") {
-			blocks.push({ type: "header", text: "3 When and where" }, step3Form(state, popup, false));
-		}
-		blocks.push(
-			{ type: "header", text: "4 Dates and turn on" },
-			...step4Blocks(state, popup, false),
-		);
-		blocks.push({
-			type: "actions",
-			elements: [
-				{
-					type: "button",
-					action_id: "nav",
-					label: "Back to the list",
-					value: "list",
-					style: "secondary",
-				},
-			],
-		});
+		blocks.push(...finishedBlocks(state, popup));
 	}
 	return { blocks, ...(state.toast ? { toast: state.toast } : {}) };
 }
@@ -1257,6 +1369,12 @@ export async function handleInteraction(
 			const popup = find(id);
 			if (popup) return { response: popupPage(state, popup, Number(step) || 1) };
 		}
+		if (value.startsWith("kind:")) {
+			if (!state.admin) return only("Only an administrator can change the kind.");
+			const popup = find(value.slice(5));
+			if (popup) return { response: kindPage(state, popup) };
+		}
+		if (value === "numbers") return { response: renderPage(state, TAB.numbers) };
 		return { response: renderPage(state) };
 	}
 	if (type === "block_action" && action === "new") {
@@ -1499,7 +1617,12 @@ export async function handleInteraction(
 		const errors: string[] = [];
 		if (!name) errors.push("Give it a name, so you can find it in the list.");
 		if (!kind || !(kind in KIND_LABEL)) errors.push("Choose what kind it is.");
-		if (errors.length) return refuse(existing, 1, errors);
+		if (errors.length)
+			return existing && existing.step >= 4
+				? {
+						response: kindPage({ ...state, draft: values, errors, toast: REFUSED }, existing),
+					}
+				: refuse(existing, 1, errors);
 		if (!existing && store.popups.length >= MAX_POPUPS)
 			return only(`A site can have ${MAX_POPUPS} popups.`);
 		const base: Popup =
@@ -1561,179 +1684,225 @@ export async function handleInteraction(
 	const popup = existing;
 
 	if (action === "save_s2") {
-		const heading = text(values, "heading", popup.heading);
-		const words = text(values, "text", popup.text);
-		const errors: string[] = [];
-		if (!heading) errors.push(popup.kind === "bar" ? "Write the message." : "Write a heading.");
-		if (heading.length > MAX_HEADING)
-			errors.push(
-				`The ${popup.kind === "bar" ? "message" : "heading"} is ${heading.length} letters; keep it to ${MAX_HEADING}.`,
-			);
-		if (words.length > MAX_TEXT)
-			errors.push(`The text is ${words.length} letters; keep it to ${MAX_TEXT}.`);
-		const contains =
-			state.admin && popup.kind !== "bar" && has(values, "contains")
-				? values.contains === "form"
-					? "form"
-					: "button"
-				: popup.kind === "bar"
-					? "button"
-					: popup.contains;
-		const form = state.admin ? text(values, "form", popup.form) : popup.form;
-		const buttonLabel = text(values, "button_label", popup.buttonLabel);
-		const buttonUrl = text(values, "button_url", popup.buttonUrl);
-		if (contains === "form" && !form)
-			errors.push(
-				state.forms?.length
-					? "Choose the form."
-					: "Type the form's short name, as shown under Forms.",
-			);
-		if (contains === "button") {
-			if (popup.kind !== "bar" && (!buttonLabel || !buttonUrl))
-				errors.push("Write the button words and where the button goes.");
-			if ((buttonLabel && !buttonUrl) || (!buttonLabel && buttonUrl)) {
-				if (popup.kind === "bar")
-					errors.push("Write both the link words and the link, or neither.");
-			}
-			if (buttonUrl && !isSafeLink(buttonUrl))
-				errors.push(
-					"The link must be a page on this site such as /cakes, a full address starting with https://, or an email (mailto:) or phone (tel:) link.",
-				);
-		}
-		if (errors.length) return refuse(popup, 2, errors);
-		let picture = popup.kind === "bar" ? null : pictureFrom(state, values.picture, popup.picture);
-		if (picture && picture.id !== popup.picture?.id) {
-			// The media library gives plugins a signed-in address; visitors need the public one.
-			const url = await helpers.publicUrl(picture.id);
-			if (!url)
-				return refuse(popup, 2, [
-					"That picture could not be prepared for visitors just now. Please save again in a moment.",
-				]);
-			picture = { ...picture, url };
-		}
-		const notes: string[] = [];
-		let formNote: Popup["formNote"] = "";
-		let problems: Problems | undefined;
-		if (
-			contains === "form" &&
-			state.admin &&
-			(form !== popup.form ||
-				contains !== popup.contains ||
-				popup.formNote ||
-				state.problems[popup.id] ||
-				popup.step < 2)
-		) {
-			const check = await helpers.checkForm(form, popup.kind !== "inline");
-			const said = describeCheck(check, form);
-			if (said?.refuse) return refuse(popup, 2, [said.text]);
-			if (said) notes.push(said.text);
-			formNote =
-				check.result === "paused" ? "paused" : check.result === "unchecked" ? "unchecked" : "";
-			// A form that was fixed takes its warning away.
-			problems = { ...state.problems };
-			delete problems[popup.id];
-		}
-		return finish(
-			{
-				...popup,
-				heading,
-				text: words,
-				picture,
-				contains,
-				form,
-				thanks: state.admin
-					? text(values, "thanks", popup.thanks).slice(0, MAX_HEADING)
-					: popup.thanks,
-				buttonLabel: buttonLabel.slice(0, 40),
-				buttonUrl,
-				decline: has(values, "decline") ? (values.decline as Popup["decline"]) : popup.decline,
-				formNote:
-					contains === "form" ? formNote || (form === popup.form ? popup.formNote : "") : "",
-			},
-			2,
-			{ notes },
-			problems,
-		);
+		const part = await wordsPart(popup, values, state, helpers);
+		if (part.errors.length) return refuse(popup, 2, part.errors);
+		return finish(part.popup, 2, { notes: part.notes }, part.problems);
 	}
-
 	if (action === "save_s3") {
 		if (!state.admin) return only("Only an administrator can change when and where it shows.");
-		const where = has(values, "where") ? (values.where as Popup["where"]) : popup.where;
-		const prefixes = has(values, "prefixes") ? parsePaths(values.prefixes) : popup.prefixes;
-		const collections = Array.isArray(values.collections)
-			? values.collections.filter(
-					(c): c is string => typeof c === "string" && state.collections.some((k) => k.slug === c),
-				)
-			: popup.collections;
-		const errors: string[] = [];
-		if (where === "prefix" && prefixes.length === 0)
-			errors.push("Type at least one address, such as /cakes/.");
-		if (where === "collections" && collections.length === 0)
-			errors.push("Tick at least one collection.");
-		if (errors.length) return refuse(popup, 3, errors);
-		return finish(
-			{
-				...popup,
-				trigger:
-					popup.kind === "bar"
-						? "load"
-						: has(values, "trigger")
-							? (values.trigger as Popup["trigger"])
-							: popup.trigger,
-				firstPage:
-					popup.kind === "modal" &&
-					(typeof values.first_page === "boolean" ? values.first_page : popup.firstPage),
-				where,
-				prefixes,
-				collections,
-				exclude: has(values, "exclude") ? parsePaths(values.exclude) : popup.exclude,
-				devices: has(values, "devices") ? (values.devices as Popup["devices"]) : popup.devices,
-				again: has(values, "again") ? (values.again as Popup["again"]) : popup.again,
-			},
-			3,
-		);
+		const part = placesPart(popup, values, state);
+		if (part.errors.length) return refuse(popup, 3, part.errors);
+		return finish(part.popup, 3);
 	}
-
 	if (action === "save_s4") {
-		const moment = (dateKey: string, timeKey: string, saved: number | null) => {
-			if (!has(values, dateKey)) return { ok: true, ms: saved };
-			const date =
-				typeof values[dateKey] === "string" ? (values[dateKey] as string).slice(0, 10) : "";
-			if (!date) return { ok: true, ms: null };
-			const clock =
-				typeof values[timeKey] === "string"
-					? (values[timeKey] as string)
-					: saved
-						? fromMoment(saved, state.zone).clock
-						: "00:00";
-			const ms = toMoment(date, clock, state.zone);
-			return { ok: ms !== null, ms };
-		};
-		const start = moment("start_date", "start_time", popup.start);
-		const end = moment("end_date", "end_time", popup.end);
-		const errors: string[] = [];
-		if (!start.ok || !end.ok) errors.push("Choose the days from the calendar.");
-		if (start.ms && end.ms && end.ms <= start.ms) errors.push("It must end after it starts.");
+		const part = datesPart(popup, values, state);
+		if (part.errors.length) return refuse(popup, 4, part.errors);
+		return finish(part.popup, 4);
+	}
+	if (action === "save_all") {
+		// Only a finished popup's page has the one form; "New popup" goes one step at a time.
+		if (popup.step < 4) return { response: popupPage(state, popup, popup.step + 1) };
+		const words = await wordsPart(popup, values, state, helpers);
+		// An Editor's page has no "When and where", and whatever arrives for it is ignored.
+		const places = editsPlaces(state, popup)
+			? placesPart(words.popup, values, state)
+			: { popup: words.popup, errors: [] };
+		const dates = datesPart(places.popup, values, state);
+		const errors = [...words.errors, ...places.errors, ...dates.errors];
 		if (errors.length) return refuse(popup, 4, errors);
-		// A time chosen without a day moves an existing day to that time.
-		const startMs =
-			!has(values, "start_date") && popup.start && typeof values.start_time === "string"
-				? toMoment(fromMoment(popup.start, state.zone).date, values.start_time, state.zone)
-				: start.ms;
-		const endMs =
-			!has(values, "end_date") && popup.end && typeof values.end_time === "string"
-				? toMoment(fromMoment(popup.end, state.zone).date, values.end_time, state.zone)
-				: end.ms;
-		return finish(
-			{
-				...popup,
-				start: startMs,
-				end: endMs,
-				on: typeof values.on === "boolean" ? values.on : popup.step < 4 ? true : popup.on,
-			},
-			4,
-		);
+		return finish(dates.popup, 4, { notes: words.notes }, words.problems);
 	}
 
 	return { response: renderPage(state) };
+}
+
+/** What one part of a popup's form changes, or why it cannot be saved. */
+interface Part {
+	popup: Popup;
+	errors: string[];
+	notes?: string[];
+	problems?: Problems;
+}
+
+/** What it says: words, picture, button or form. */
+async function wordsPart(
+	popup: Popup,
+	values: Record<string, unknown>,
+	state: PageState,
+	helpers: Helpers,
+): Promise<Part> {
+	const heading = text(values, "heading", popup.heading);
+	const words = text(values, "text", popup.text);
+	const errors: string[] = [];
+	if (!heading) errors.push(popup.kind === "bar" ? "Write the message." : "Write a heading.");
+	if (heading.length > MAX_HEADING)
+		errors.push(
+			`The ${popup.kind === "bar" ? "message" : "heading"} is ${heading.length} letters; keep it to ${MAX_HEADING}.`,
+		);
+	if (words.length > MAX_TEXT)
+		errors.push(`The text is ${words.length} letters; keep it to ${MAX_TEXT}.`);
+	const contains =
+		state.admin && popup.kind !== "bar" && has(values, "contains")
+			? values.contains === "form"
+				? "form"
+				: "button"
+			: popup.kind === "bar"
+				? "button"
+				: popup.contains;
+	const form = state.admin ? text(values, "form", popup.form) : popup.form;
+	const buttonLabel = text(values, "button_label", popup.buttonLabel);
+	const buttonUrl = text(values, "button_url", popup.buttonUrl);
+	if (contains === "form" && !form)
+		errors.push(
+			state.forms?.length
+				? "Choose the form."
+				: "Type the form's short name, as shown under Forms.",
+		);
+	if (contains === "button") {
+		if (popup.kind !== "bar" && (!buttonLabel || !buttonUrl))
+			errors.push("Write the button words and where the button goes.");
+		if ((buttonLabel && !buttonUrl) || (!buttonLabel && buttonUrl)) {
+			if (popup.kind === "bar") errors.push("Write both the link words and the link, or neither.");
+		}
+		if (buttonUrl && !isSafeLink(buttonUrl))
+			errors.push(
+				"The link must be a page on this site such as /cakes, a full address starting with https://, or an email (mailto:) or phone (tel:) link.",
+			);
+	}
+	if (errors.length) return { popup, errors };
+	let picture = popup.kind === "bar" ? null : pictureFrom(state, values.picture, popup.picture);
+	if (picture && picture.id !== popup.picture?.id) {
+		// The media library gives plugins a signed-in address; visitors need the public one.
+		const url = await helpers.publicUrl(picture.id);
+		if (!url)
+			return {
+				popup,
+				errors: [
+					"That picture could not be prepared for visitors just now. Please save again in a moment.",
+				],
+			};
+		picture = { ...picture, url };
+	}
+	const notes: string[] = [];
+	let formNote: Popup["formNote"] = "";
+	let problems: Problems | undefined;
+	if (
+		contains === "form" &&
+		state.admin &&
+		(form !== popup.form ||
+			contains !== popup.contains ||
+			popup.formNote ||
+			state.problems[popup.id] ||
+			popup.step < 2)
+	) {
+		const check = await helpers.checkForm(form, popup.kind !== "inline");
+		const said = describeCheck(check, form);
+		if (said?.refuse) return { popup, errors: [said.text] };
+		if (said) notes.push(said.text);
+		formNote =
+			check.result === "paused" ? "paused" : check.result === "unchecked" ? "unchecked" : "";
+		// A form that was fixed takes its warning away.
+		problems = { ...state.problems };
+		delete problems[popup.id];
+	}
+	return {
+		popup: {
+			...popup,
+			heading,
+			text: words,
+			picture,
+			contains,
+			form,
+			thanks: state.admin
+				? text(values, "thanks", popup.thanks).slice(0, MAX_HEADING)
+				: popup.thanks,
+			buttonLabel: buttonLabel.slice(0, 40),
+			buttonUrl,
+			decline: has(values, "decline") ? (values.decline as Popup["decline"]) : popup.decline,
+			formNote: contains === "form" ? formNote || (form === popup.form ? popup.formNote : "") : "",
+		},
+		errors: [],
+		notes,
+		problems,
+	};
+}
+
+/** When and where: Admins only; the callers check. */
+function placesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
+	const where = has(values, "where") ? (values.where as Popup["where"]) : popup.where;
+	const prefixes = has(values, "prefixes") ? parsePaths(values.prefixes) : popup.prefixes;
+	const collections = Array.isArray(values.collections)
+		? values.collections.filter(
+				(c): c is string => typeof c === "string" && state.collections.some((k) => k.slug === c),
+			)
+		: popup.collections;
+	const errors: string[] = [];
+	if (where === "prefix" && prefixes.length === 0)
+		errors.push("Type at least one address, such as /cakes/.");
+	if (where === "collections" && collections.length === 0)
+		errors.push("Tick at least one collection.");
+	if (errors.length) return { popup, errors };
+	return {
+		popup: {
+			...popup,
+			trigger:
+				popup.kind === "bar"
+					? "load"
+					: has(values, "trigger")
+						? (values.trigger as Popup["trigger"])
+						: popup.trigger,
+			firstPage:
+				popup.kind === "modal" &&
+				(typeof values.first_page === "boolean" ? values.first_page : popup.firstPage),
+			where,
+			prefixes,
+			collections,
+			exclude: has(values, "exclude") ? parsePaths(values.exclude) : popup.exclude,
+			devices: has(values, "devices") ? (values.devices as Popup["devices"]) : popup.devices,
+			again: has(values, "again") ? (values.again as Popup["again"]) : popup.again,
+		},
+		errors: [],
+	};
+}
+
+/** Dates and on or off. */
+function datesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
+	const moment = (dateKey: string, timeKey: string, saved: number | null) => {
+		if (!has(values, dateKey)) return { ok: true, ms: saved };
+		const date =
+			typeof values[dateKey] === "string" ? (values[dateKey] as string).slice(0, 10) : "";
+		if (!date) return { ok: true, ms: null };
+		const clock =
+			typeof values[timeKey] === "string"
+				? (values[timeKey] as string)
+				: saved
+					? fromMoment(saved, state.zone).clock
+					: "00:00";
+		const ms = toMoment(date, clock, state.zone);
+		return { ok: ms !== null, ms };
+	};
+	const start = moment("start_date", "start_time", popup.start);
+	const end = moment("end_date", "end_time", popup.end);
+	const errors: string[] = [];
+	if (!start.ok || !end.ok) errors.push("Choose the days from the calendar.");
+	if (start.ms && end.ms && end.ms <= start.ms) errors.push("It must end after it starts.");
+	if (errors.length) return { popup, errors };
+	// A time chosen without a day moves an existing day to that time.
+	const startMs =
+		!has(values, "start_date") && popup.start && typeof values.start_time === "string"
+			? toMoment(fromMoment(popup.start, state.zone).date, values.start_time, state.zone)
+			: start.ms;
+	const endMs =
+		!has(values, "end_date") && popup.end && typeof values.end_time === "string"
+			? toMoment(fromMoment(popup.end, state.zone).date, values.end_time, state.zone)
+			: end.ms;
+	return {
+		popup: {
+			...popup,
+			start: startMs,
+			end: endMs,
+			on: typeof values.on === "boolean" ? values.on : popup.step < 4 ? true : popup.on,
+		},
+		errors: [],
+	};
 }
