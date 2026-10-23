@@ -143,7 +143,9 @@ describe("page:metadata (every uncached public page view)", () => {
 			metadata(runtime, contentPage(entry.id)),
 		);
 		expect(m.error).toBeUndefined();
-		expect(m.calls).toEqual(["settingsGet", "storageGet"]);
+		// Both are read at once, so they may arrive in either order.
+		expect(m.calls).toHaveLength(2);
+		expect(m.calls).toEqual(expect.arrayContaining(["settingsGet", "storageGet"]));
 	});
 
 	it("an entry with its record, on a site updated from an earlier release", async () => {
