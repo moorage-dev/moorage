@@ -1,5 +1,20 @@
 # @moorage/plugin-seo
 
+## 0.1.8
+
+### Patch Changes
+
+- 961b4b9: Your SEO settings now stay put when your site moves the plugin between running in-process (`plugins: []`) and sandboxed (`sandboxed: []`). EmDash keeps most plugin data in a different place in each mode, so before this the Settings tab came back empty after a switch, and the old values only returned when you switched back. Settings are now kept where EmDash finds them in both modes.
+  
+  Nothing to do on your side: the first page view or visit to the SEO page after updating copies your settings to the new place. Update first, open the SEO page once, and only then switch modes. Each save also keeps a copy where earlier versions look, so going back to 0.1.7 still shows your latest settings. If you go back, change settings there and then update again, the update shows the settings from before you went back; save them again.
+
+- a9004ee: The warning that two pages share a title no longer disappears by itself. When a page was saved while "Check my pages" was running, or two pages with the same title were saved at the same moment, one of them could lose the warning (or keep it after a rename) until the next check. A save now reads the pages with its title after writing, and a check no longer writes over a page saved after it read that page, so the warning ends up on exactly the pages that share a title.
+
+- A page deleted while "Check my pages" was running no longer lingers in the SEO page's counts, and no longer keeps another page flagged for sharing its title. At the end of each full check, the plugin now removes what it kept about pages the check did not find, then settles the title warnings; pages created or saved during the check are left alone. This only ever showed in the admin, never on the public site.
+- The Google preview panel no longer risks hitting Cloudflare's limit of 10 operations per request when a page's title and its page type are changed together. The panel now leaves moving the "same title" warning between pages to the save itself (or the next check), as it already did in the usual case.
+- The end-of-check cleanup above now asks EmDash about each page before removing what the plugin kept about it. A page that was unpublished, or whose record a page view wrote back, while the check ran keeps its record and the page type an admin picked; an unpublished one is simply counted as a draft.
+- Saving a page that moves it from one shared title to another could take 11 operations on a site whose SEO settings were never saved, over Cloudflare's limit of 10 per request, so the "same title" warnings were not updated for that save. Such a save now reads both titles at once and stays at 9 at most.
+
 ## 0.1.7
 
 ### Patch Changes

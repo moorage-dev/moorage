@@ -1,6 +1,6 @@
 {
 	"name": "@moorage/plugin-site-health",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "Site Health for EmDash: a broken link checker for your pages, menus and links to other sites, with email alerts and a setup checklist.",
 	"keywords": [
 		"emdash",

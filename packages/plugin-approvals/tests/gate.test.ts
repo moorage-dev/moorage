@@ -62,7 +62,7 @@ async function site(config?: Record<string, unknown>): Promise<Site> {
 		name: "Jo Park",
 		role: "contributor",
 	});
-	if (config) await runtime.fixtures.plugin.kv("config", config);
+	if (config) await runtime.fixtures.plugin.setting("config", config);
 	return { host: runtime, admin, admin2, editor, contributor };
 }
 
@@ -151,7 +151,7 @@ describe("the publish gate", () => {
 		const s = await site(HELD);
 		const id = await page(s, {}, s.admin);
 		expect((await s.host.actions.content.publish("pages", id, actor(s.admin))).success).toBe(true);
-		await s.host.fixtures.plugin.kv("config", { ...HELD, preset: "me" });
+		await s.host.fixtures.plugin.setting("config", { ...HELD, preset: "me" });
 		await edit(s, id, { content: "New text" }, s.admin);
 		const held = await s.host.actions.content.publish("pages", id, actor(s.admin));
 		expect(held.success).toBe(false);
@@ -425,7 +425,7 @@ describe("scheduled publishing", () => {
 		const when = new Date(Date.now() + 60_000).toISOString();
 		const scheduled = await s.host.actions.content.schedule("pages", id, when, actor(s.editor));
 		expect(scheduled.success).toBe(true);
-		await s.host.fixtures.plugin.kv("config", HELD);
+		await s.host.fixtures.plugin.setting("config", HELD);
 		s.host.scheduled.setTime(new Date(Date.now() + 120_000));
 		await s.host.scheduled.run();
 		const rejections = await s.host.inspect.scheduledPolicyRejections();
@@ -462,7 +462,7 @@ describe("the Approvals page", () => {
 			{ user: s.admin },
 		);
 		expect(saved.toast?.type).toBe("success");
-		expect(await s.host.inspect.kv.get("config")).toMatchObject({
+		expect(await s.host.inspect.setting("config")).toMatchObject({
 			collections: ["pages"],
 			preset: "me",
 			checks: "require",
@@ -551,7 +551,7 @@ async function soloSite(config: Record<string, unknown>) {
 		name: "Jo Park",
 		role: "contributor",
 	});
-	await runtime.fixtures.plugin.kv("config", config);
+	await runtime.fixtures.plugin.setting("config", config);
 	const created = await runtime.actions.content.create("pages", {
 		data: { title: "Summer menu", content: "Iced coffee £3.20 and lemon tart" },
 		slug: "summer-menu",

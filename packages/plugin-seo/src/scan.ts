@@ -2,9 +2,16 @@
 
 import type { PluginContext } from "emdash";
 
-import type { Issue } from "./checks.js";
 import type { SeoConfig } from "./config.js";
-import { entryKey, entryStore, makeRecord, setDuplicate, type EntryRecord } from "./record.js";
+import {
+	entryKey,
+	entryStore,
+	isDuplicate,
+	isOlder,
+	makeRecord,
+	setDuplicate,
+	type EntryRecord,
+} from "./record.js";
 
 /** KV keys for the site-wide check and its cached results. */
 export const SCAN_KEY = "scan";
@@ -12,11 +19,28 @@ export const STATS_KEY = "stats";
 /** Name of the background task that continues a site-wide check. */
 export const SCAN_TASK = "seo-scan";
 
+/**
+ * Operations (calls to EmDash: storage, KV, content, cron) one sandboxed hook or route may make
+ * on Cloudflare: Worker Loader's subrequest limit, 10 by default in EmDash 1.3.1
+ * (`DEFAULT_LIMITS.subrequests` in @emdash-cms/cloudflare's sandbox runner, passed to Worker
+ * Loader as `limits.subRequests`). On Cloudflare the call that goes over throws; local workerd and
+ * Node do not enforce it, so only the operation-count tests catch an overrun. Every request of
+ * the plugin stays a few below it.
+ */
+export const SANDBOX_OPERATIONS = 10;
+
 // Entries checked per request. The sandbox allows only a handful of
 // operations and a few milliseconds of CPU per request, so a site is checked
 // in small batches, continued by a background task.
 const BATCH = 20;
 const TITLE_PAGE = 100;
+// Records read per request when looking for records whose entry is gone.
+const SWEEP_PAGE = 100;
+// Entries looked up per request to confirm they are gone (normally there are none). One keeps
+// a step at 7 operations on a site that never saved settings, which costs a second read.
+const SWEEP_CONFIRM = 1;
+// Statuses of published pages, the only records a check rewrites.
+const LIVE: string[] = ["ready", "look", "fix", "hidden"];
 // Collections without published pages that one request may pass over.
 const MAX_EMPTY_READS = 5;
 /** Rows in the "To fix" table. */
@@ -33,6 +57,17 @@ export interface ScanState {
 	/** Last title seen on the previous page of the title pass. */
 	lastTitle?: { key: string; id: string; flagged: boolean };
 	checked: number;
+	/** The collections this check covers, all of them. Absent on checks started before 0.1.8. */
+	scope?: string[];
+	/**
+	 * Present once every entry has been read: records of pages in `scope` that this check did not
+	 * write are then removed, before the title pass, in steps of their own.
+	 */
+	sweep?: {
+		cursor?: string;
+		/** Records the check did not write whose page still exists and is published. */
+		kept?: string[];
+	};
 	/** Running totals, so a check never has to recount what it just wrote. */
 	tally: Stats;
 	startedAt: string;
@@ -65,6 +100,7 @@ export async function startScan(
 	const state: ScanState = {
 		status: "running",
 		collections,
+		scope: [...collections],
 		phase: "entries",
 		checked: 0,
 		tally: { checked: 0, fix: 0, hidden: 0, rows: [], more: false },
@@ -84,6 +120,9 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 		state.phase = "titles";
 		return;
 	}
+	// Saves that write after this moment may have read a newer entry than the list below.
+	const listedAt = new Date().toISOString();
+	const thisCheck = (record: EntryRecord) => (record.checkedAt ?? "") >= state.startedAt;
 	const page = await ctx.content?.list(collection, {
 		limit: BATCH,
 		cursor: state.cursor,
@@ -98,10 +137,25 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 			store.getMany(ids.map((id) => entryKey(collection, id))),
 		]);
 		const authors = new Map(credits.map((credit) => [credit.entryId, credit.bylines]));
+		// Records a save wrote after this check listed its entries stay as they are: the save may
+		// have read a newer version of the entry. The entry's updatedAt says so for most edits,
+		// but not for SEO panel fields, so the time the record was written counts too. Only the
+		// flag may still change on them, below. Every record of a listed entry ends up written
+		// during this check, which is how the sweep tells the records of deleted pages apart.
+		const kept = new Set<string>();
 		const records = entries.map((entry) => {
-			const before = previous.get(entryKey(collection, entry.id)) ?? null;
+			const id = entryKey(collection, entry.id);
+			const before = previous.get(id) ?? null;
+			if (
+				before &&
+				((isOlder(entry.updatedAt, before.updatedAt) && thisCheck(before)) ||
+					(before.checkedAt ?? "") >= listedAt)
+			) {
+				kept.add(id);
+				return { id, data: before };
+			}
 			return {
-				id: entryKey(collection, entry.id),
+				id,
 				data: makeRecord({
 					hasPages: true,
 					collection,
@@ -114,8 +168,7 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 					config,
 					siteUrl: ctx.site.url,
 					// Kept as it was; the title pass below settles it for the whole site.
-					duplicateTitle:
-						before?.issues?.some((issue: Issue) => issue.id === "duplicate-title") ?? false,
+					duplicateTitle: before ? isDuplicate(before) : false,
 				}),
 			};
 		});
@@ -128,12 +181,17 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 				if (data.titleKey) seen.set(data.titleKey, (seen.get(data.titleKey) ?? 0) + 1);
 			}
 			for (const item of records) {
-				item.data = setDuplicate(item.data, (seen.get(item.data.titleKey ?? "") ?? 0) > 1);
+				const duplicate = (seen.get(item.data.titleKey ?? "") ?? 0) > 1;
+				if (kept.has(item.id) && isDuplicate(item.data) !== duplicate) kept.delete(item.id);
+				item.data = setDuplicate(item.data, duplicate);
 			}
 			state.status = "done";
 			state.finishedAt = new Date().toISOString();
+			// The flags above are final; the sweep only removes records of deleted pages.
+			state.sweep = {};
 		}
-		await store.putMany(records);
+		const writes = records.filter((item) => !kept.has(item.id));
+		if (writes.length > 0) await store.putMany(writes);
 		for (const { data } of records) count(state.tally, data, 1);
 		state.checked += entries.length;
 	}
@@ -143,8 +201,70 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 		state.collections = state.collections.slice(1);
 		if (state.collections.length === 0 && (state as ScanState).status !== "done") {
 			state.phase = "titles";
+			state.sweep = {};
 		}
 	}
+}
+
+/**
+ * Settle records of published pages this check did not write. Usually their entry was deleted
+ * after the check read it and before it wrote the record: the delete hook ran once, in between,
+ * and the check wrote the record back. A record written since the check started (a page created
+ * or saved meanwhile) is newer than the check and is not looked at.
+ *
+ * Each one is confirmed with EmDash first, a few per request: a page that is gone loses its
+ * record; one that is no longer published becomes a draft record, keeping the page type an admin
+ * picked; one still published (its record written back by a page view, say) stays as it is.
+ * Read in the order records were created, so removing rows already read never moves the cursor.
+ */
+async function sweepStep(ctx: PluginContext, state: ScanState, config: SeoConfig) {
+	const scope = new Set(state.scope ?? []);
+	const store = entryStore(ctx);
+	const cursor = state.sweep?.cursor;
+	const kept = new Set(state.sweep?.kept ?? []);
+	const page =
+		scope.size > 0 && ctx.content
+			? await store.query({ where: { status: { in: LIVE } }, limit: SWEEP_PAGE, cursor })
+			: { items: [], hasMore: false, cursor: undefined };
+	const stale = page.items.filter(
+		({ id, data }) =>
+			!kept.has(id) &&
+			scope.has(data.collection ?? "") &&
+			(data.entryId ?? "") !== "" &&
+			(data.checkedAt ?? "") < state.startedAt,
+	);
+	const confirm = stale.slice(0, SWEEP_CONFIRM);
+	const entries = await Promise.all(
+		confirm.map(({ data }) => ctx.content?.get(data.collection ?? "", data.entryId ?? "")),
+	);
+	const gone: string[] = [];
+	const drafts: Array<{ id: string; data: EntryRecord }> = [];
+	confirm.forEach(({ id, data }, index) => {
+		const entry = entries[index];
+		if (!entry) gone.push(id);
+		else if (entry.status !== "published") {
+			drafts.push({
+				id,
+				data: makeRecord({
+					hasPages: true,
+					collection: data.collection ?? "",
+					entry,
+					authors: data.authors,
+					previous: data,
+					config,
+					siteUrl: ctx.site.url,
+					duplicateTitle: false,
+				}),
+			});
+		} else kept.add(id);
+	});
+	if (gone.length > 0) await store.deleteMany(gone);
+	if (drafts.length > 0) await store.putMany(drafts);
+	const keptIds = kept.size > 0 ? { kept: [...kept] } : {};
+	// After confirming any, read the same page again next time: the step has spent its budget.
+	if (confirm.length > 0) state.sweep = { ...(cursor ? { cursor } : {}), ...keptIds };
+	else if (page.hasMore && page.cursor) state.sweep = { cursor: page.cursor, ...keptIds };
+	else delete state.sweep;
 }
 
 /** Walk records in title order; neighbours with the same title are duplicates. */
@@ -156,14 +276,11 @@ async function titlesStep(ctx: PluginContext, state: ScanState) {
 		cursor: state.titleCursor,
 	});
 	const items = page.items.filter((item) => (item.data.titleKey ?? "") !== "");
-	const writes = new Map<string, EntryRecord>();
+	// What this pass read, by id, and the flags it would change.
+	const read = new Map(items.map((item) => [item.id, item.data]));
+	const flips = new Map<string, boolean>();
 	const flag = (id: string, data: EntryRecord, duplicate: boolean) => {
-		const has = data.issues?.some((issue) => issue.id === "duplicate-title") ?? false;
-		if (has === duplicate) return;
-		const changed = setDuplicate(data, duplicate);
-		writes.set(id, changed);
-		count(state.tally, data, -1);
-		count(state.tally, changed, 1);
+		if (isDuplicate(data) !== duplicate) flips.set(id, duplicate);
 	};
 
 	let last = state.lastTitle;
@@ -177,14 +294,41 @@ async function titlesStep(ctx: PluginContext, state: ScanState) {
 		// The last record of the previous page turns out to share this title.
 		if (sameAsLast && last && !last.flagged && index === 0) {
 			const earlier = await store.get(last.id);
-			if (earlier) flag(last.id, earlier, true);
+			if (earlier) {
+				read.set(last.id, earlier);
+				flag(last.id, earlier, true);
+			}
 		}
 		const duplicate = sameAsLast || sameAsNext;
 		flag(item.id, item.data, duplicate);
 		last = { key, id: item.id, flagged: duplicate };
 	}
-	if (writes.size > 0) {
-		await store.putMany([...writes].map(([id, data]) => ({ id, data })));
+
+	if (flips.size > 0) {
+		// A save may have changed one of these pages since they were read: renamed it, or
+		// flagged it itself. Read the titles with a change again just before writing, and
+		// leave any title with a page that changed to that save, which reads the pages with
+		// its old and new title after writing and settles both.
+		const titles = new Set([...flips.keys()].map((id) => read.get(id)?.titleKey ?? ""));
+		const ids = [...read].filter(([, data]) => titles.has(data.titleKey ?? "")).map(([id]) => id);
+		const current = await store.getMany(ids);
+		for (const id of ids) {
+			const was = read.get(id);
+			const now = current.get(id);
+			if (!was || now?.checkedAt !== was.checkedAt || now?.titleKey !== was.titleKey) {
+				titles.delete(was?.titleKey ?? "");
+			}
+		}
+		const writes: Array<{ id: string; data: EntryRecord }> = [];
+		for (const [id, duplicate] of flips) {
+			const data = read.get(id);
+			if (!data || !titles.has(data.titleKey ?? "")) continue;
+			const changed = setDuplicate(data, duplicate);
+			writes.push({ id, data: changed });
+			count(state.tally, data, -1);
+			count(state.tally, changed, 1);
+		}
+		if (writes.length > 0) await store.putMany(writes);
 	}
 
 	state.lastTitle = last;
@@ -247,9 +391,10 @@ export async function scanStep(
 		collections: [...current.collections],
 		tally: { ...current.tally, rows: [...current.tally.rows] },
 	};
-	if (state.status === "done") return state;
+	if (state.status === "done" && !state.sweep) return state;
 
-	if (state.phase === "entries") {
+	if (state.sweep) await sweepStep(ctx, state, config);
+	else if (state.phase === "entries") {
 		// An empty collection costs one read, so several can be passed in one
 		// request; the first one with pages uses up the rest of the budget.
 		for (let reads = 0; reads < MAX_EMPTY_READS && state.phase === "entries"; reads += 1) {
@@ -265,7 +410,7 @@ export async function scanStep(
 	} else await titlesStep(ctx, state);
 
 	// The step above may have finished the check; TypeScript cannot see that.
-	if ((state as ScanState).status === "done") {
+	if ((state as ScanState).status === "done" && !state.sweep) {
 		try {
 			await ctx.cron?.cancel(SCAN_TASK);
 		} catch {

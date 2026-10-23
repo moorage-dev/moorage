@@ -206,15 +206,51 @@ export function observeImage(record: EntryRecord, hasImage: boolean): EntryRecor
 	};
 }
 
-/** Other published pages that share a title, excluding one entry. */
-async function sameTitle(
+// Pages read back per title. More pages than this with one title are rare; the title pass
+// of a full check settles the rest.
+const GROUP_LIMIT = 10;
+
+/** Published pages with a normalised title, this entry included. */
+async function titleGroup(
 	ctx: PluginContext,
 	key: string,
-	exceptId: string,
 ): Promise<Array<{ id: string; data: EntryRecord }>> {
-	if (key === "") return [];
-	const result = await entryStore(ctx).query({ where: { titleKey: key }, limit: 5 });
-	return result.items.filter((item) => item.id !== exceptId);
+	return (await titleGroups(ctx, [key]))[0] ?? [];
+}
+
+/** The pages of each title, read in one operation; empty titles have none. */
+async function titleGroups(
+	ctx: PluginContext,
+	keys: string[],
+): Promise<Array<Array<{ id: string; data: EntryRecord }>>> {
+	const wanted = [...new Set(keys.filter((key) => key !== ""))];
+	if (wanted.length === 0) return keys.map(() => []);
+	const result = await entryStore(ctx).query({
+		where: { titleKey: wanted.length === 1 ? (wanted[0] ?? "") : { in: wanted } },
+		limit: GROUP_LIMIT * wanted.length,
+	});
+	return keys.map((key) =>
+		key === "" ? [] : result.items.filter((item) => item.data.titleKey === key),
+	);
+}
+
+/** Whether a record carries the "same title as another page" issue. */
+export function isDuplicate(record: EntryRecord): boolean {
+	return record.issues?.some((issue) => issue.id === "duplicate-title") ?? false;
+}
+
+/**
+ * Switch the flag on the pages of one title read back from the store: on for all of
+ * them when there are two or more, off for one left alone.
+ */
+function settleGroup(
+	group: Array<{ id: string; data: EntryRecord }>,
+	writes: Map<string, EntryRecord>,
+): void {
+	const duplicate = group.length > 1;
+	for (const { id, data } of group) {
+		if (isDuplicate(data) !== duplicate) writes.set(id, setDuplicate(data, duplicate));
+	}
 }
 
 /** A record with the "same title as another page" issue switched on or off. */
@@ -252,13 +288,23 @@ export async function buildEntryRecord(
 	return (await rebuildEntry(ctx, collection, id, config))?.record ?? null;
 }
 
-/** As buildEntryRecord, also returning the entry it read, to save a second read. */
-export async function rebuildEntry(
+/** An entry's record rebuilt from the saved entry, not yet written. */
+interface Rebuilt {
+	entry: ContentEntry;
+	previous: EntryRecord | null;
+	/** Keeps the stored flag while the title stays the same; off otherwise. */
+	record: EntryRecord;
+	newKey: string;
+	oldKey: string;
+}
+
+/** Read an entry and what is needed to rebuild its record: five operations, no writes. */
+async function prepareEntry(
 	ctx: PluginContext,
 	collection: string,
 	id: string,
 	config: SeoConfig,
-): Promise<{ record: EntryRecord; entry: ContentEntry } | null> {
+): Promise<Rebuilt | null> {
 	const entry = await ctx.content?.get(collection, id);
 	if (!entry) return null;
 
@@ -285,28 +331,97 @@ export async function rebuildEntry(
 		// Without schema access, assume the collection has pages.
 		hasPages: schema ? schema.routable && !schema.hidden : true,
 	});
-	const twins = await sameTitle(ctx, draft.titleKey ?? "", key);
-	const record = setDuplicate(draft, twins.length > 0);
+	const newKey = draft.titleKey ?? "";
+	const oldKey = previous?.titleKey ?? "";
+	// Until the titles are read back, a page keeps its flag while it keeps its title.
+	const record = setDuplicate(
+		draft,
+		newKey !== "" && newKey === oldKey && previous !== null && isDuplicate(previous),
+	);
+	return { entry, previous, record, newKey, oldKey };
+}
 
-	const writes: Array<{ id: string; data: EntryRecord }> = [{ id: key, data: record }];
-	// Pages that now share this title learn about it.
-	for (const twin of twins) {
-		if (!twin.data.issues?.some((issue) => issue.id === "duplicate-title")) {
-			writes.push({ id: twin.id, data: setDuplicate(twin.data, true) });
+/** As buildEntryRecord, also returning the entry it read, to save a second read. */
+export async function rebuildEntry(
+	ctx: PluginContext,
+	collection: string,
+	id: string,
+	config: SeoConfig,
+): Promise<{ record: EntryRecord; entry: ContentEntry } | null> {
+	const prepared = await prepareEntry(ctx, collection, id, config);
+	if (!prepared) return null;
+	const { entry, record, newKey, oldKey } = prepared;
+	const store = entryStore(ctx);
+	const key = entryKey(collection, id);
+
+	// Write first, then read the pages with the new and the old title. A save and a check
+	// (or two saves) running at the same time each write before they read, so at least one
+	// of them sees the other's record and leaves the flags right on both.
+	// Both titles in one read: a save moving a page between titles stays at 9 operations even on
+	// a site that never saved settings (two reads), one below the sandbox's limit of 10.
+	await store.put(key, record);
+	const [group = [], left = []] = await titleGroups(ctx, [newKey, oldKey !== newKey ? oldKey : ""]);
+
+	const writes = new Map<string, EntryRecord>();
+	let members = group;
+	const stored = group.find((item) => item.id === key)?.data;
+	if (newKey !== "" && stored?.checkedAt !== record.checkedAt) {
+		// Someone wrote this entry's record after us. Another save of the same entry settles
+		// its own record; a check that read the entry before this save wrote an older copy,
+		// so ours goes back. A copy found with neither title (a third one) is left to the next
+		// save or check: reading it would take the save to the sandbox's limit of 10 operations.
+		const current = stored ?? left.find((item) => item.id === key)?.data ?? null;
+		if (current && isOlder(current.updatedAt, record.updatedAt)) {
+			writes.set(key, record);
+			members = [...group.filter((item) => item.id !== key), { id: key, data: record }];
 		}
 	}
-	// A page left alone with the old title is no longer a duplicate.
-	const oldKey = previous?.titleKey ?? "";
-	if (oldKey !== "" && oldKey !== record.titleKey) {
-		const left = await sameTitle(ctx, oldKey, key);
-		const only = left.length === 1 ? left[0] : undefined;
-		if (only) writes.push({ id: only.id, data: setDuplicate(only.data, false) });
-	}
-	await store.putMany(writes);
+	// Pages that now share this title learn about it; a page left alone with the old title
+	// is no longer a duplicate.
+	settleGroup(members, writes);
+	settleGroup(
+		left.filter((item) => item.id !== key),
+		writes,
+	);
+	if (writes.size > 0)
+		await store.putMany([...writes].map(([itemId, data]) => ({ id: itemId, data })));
+	return { record: writes.get(key) ?? record, entry };
+}
+
+/**
+ * The record for the editor panel: rebuilt from the saved entry, with `change` (the page
+ * type an admin picked) applied, and written in one operation. The panel never moves a page
+ * between titles, which costs up to five more operations: on Cloudflare a sandboxed route may
+ * make only ten (Worker Loader's subrequest limit; see SANDBOX_OPERATIONS in scan.ts). When the title changed since the record was written, the save hook
+ * that follows every save, or the next full check, settles the flags; the panel then keeps the
+ * stored record as it is, only with `change` applied, so that hook still sees the old title.
+ */
+export async function refreshForPanel(
+	ctx: PluginContext,
+	collection: string,
+	id: string,
+	config: SeoConfig,
+	change?: (record: EntryRecord) => EntryRecord,
+): Promise<{ record: EntryRecord; entry: ContentEntry } | null> {
+	const prepared = await prepareEntry(ctx, collection, id, config);
+	if (!prepared) return null;
+	const { entry, previous, newKey, oldKey } = prepared;
+	const record = change ? change(prepared.record) : prepared.record;
+	const key = entryKey(collection, id);
+	if (previous === null || newKey === oldKey) await entryStore(ctx).put(key, record);
+	else if (change) await entryStore(ctx).put(key, change(previous));
 	return { record, entry };
 }
 
-/** Remove an entry's record and un-flag a page left alone with its title. */
+/** Whether a stored record describes an older version of the entry than `than`. */
+export function isOlder(updatedAt: string | null | undefined, than: string | null | undefined) {
+	if (!updatedAt || !than) return false;
+	const a = Date.parse(updatedAt);
+	const b = Date.parse(than);
+	return Number.isFinite(a) && Number.isFinite(b) && a < b;
+}
+
+/** Remove an entry's record and settle the flag on the pages left with its title. */
 export async function removeEntryRecord(
 	ctx: PluginContext,
 	collection: string,
@@ -316,7 +431,11 @@ export async function removeEntryRecord(
 	const key = entryKey(collection, id);
 	const previous = await store.get(key);
 	await store.delete(key);
-	const left = await sameTitle(ctx, previous?.titleKey ?? "", key);
-	const only = left.length === 1 ? left[0] : undefined;
-	if (only) await store.put(only.id, setDuplicate(only.data, false));
+	const writes = new Map<string, EntryRecord>();
+	settleGroup(
+		(await titleGroup(ctx, previous?.titleKey ?? "")).filter((item) => item.id !== key),
+		writes,
+	);
+	if (writes.size > 0)
+		await store.putMany([...writes].map(([itemId, data]) => ({ id: itemId, data })));
 }

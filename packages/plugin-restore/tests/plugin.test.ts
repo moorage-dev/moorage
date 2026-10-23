@@ -64,7 +64,7 @@ describe("sandboxed", () => {
 		expect(JSON.stringify(response.blocks)).toContain("Cloudflare did not accept that key");
 		const [request] = runtime.http.requests();
 		expect(request?.headers.authorization).toBe("Bearer wrong-key");
-		expect(await runtime.inspect.kv.get("connection")).toBeNull();
+		expect(await runtime.inspect.setting("connection")).toBeNull();
 		expect(await runtime.inspect.settings.raw("token")).toBeNull();
 	});
 });

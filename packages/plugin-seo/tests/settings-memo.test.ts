@@ -35,23 +35,32 @@ function page(content?: PublicPageContext["content"], query = ""): PublicPageCon
 	};
 }
 
+/** A site whose settings were saved by this release: they are in `ctx.settings`. */
 function fake(config: unknown, recordGate?: Promise<void>) {
-	const kv = new Map<string, unknown>([["config", config]]);
+	const settings = new Map<string, unknown>([["config", config]]);
 	const started: string[] = [];
 	let reads = 0;
 	const ctx = {
 		plugin: { id: "seo", version: "0.0.0" },
 		site: { name: "Acme", url: "https://acme.test", locale: "en" },
+		settings: {
+			async get(key: string) {
+				reads++;
+				started.push(`settings:${key}`);
+				await recordGate;
+				return settings.get(key) ?? null;
+			},
+			async set(key: string, value: unknown) {
+				settings.set(key, value);
+			},
+		},
 		kv: {
 			async get(key: string) {
 				reads++;
 				started.push(`kv:${key}`);
-				await recordGate;
-				return kv.get(key) ?? null;
+				return null;
 			},
-			async set(key: string, value: unknown) {
-				kv.set(key, value);
-			},
+			async set() {},
 		},
 		storage: {
 			entries: {
@@ -65,7 +74,7 @@ function fake(config: unknown, recordGate?: Promise<void>) {
 		},
 		log: { info() {}, warn() {}, error() {}, debug() {} },
 	} as unknown as PluginContext;
-	return { ctx, kv, started, reads: () => reads };
+	return { ctx, settings, started, reads: () => reads };
 }
 
 const name = (contributions: PageMetadataContribution[]) => {
@@ -90,7 +99,7 @@ describe("settings kept between page views", () => {
 		const site = fake({ site: { name: "Acme Dental" } });
 		await hook({ page: page() }, site.ctx);
 		// Saved in another isolate: this one still keeps the old config for page views.
-		site.kv.set("config", { site: { name: "Acme Clinic" } });
+		site.settings.set("config", { site: { name: "Acme Clinic" } });
 		expect(name(await hook({ page: page() }, site.ctx))).toBe("Acme Dental");
 		expect(name(await hook({ page: page(undefined, "?_preview=token") }, site.ctx))).toBe(
 			"Acme Clinic",
@@ -106,7 +115,7 @@ describe("settings kept between page views", () => {
 		const site = fake({ site: { name: "Acme Dental" } });
 		await hook({ page: page() }, site.ctx);
 		// Another isolate saved: the stored value changes without this isolate knowing.
-		site.kv.set("config", { site: { name: "Acme Clinic" } });
+		site.settings.set("config", { site: { name: "Acme Clinic" } });
 		vi.advanceTimersByTime(SETTINGS_TTL_MS - 1);
 		expect(name(await hook({ page: page() }, site.ctx))).toBe("Acme Dental");
 		expect(site.reads()).toBe(1);
@@ -125,7 +134,7 @@ describe("settings kept between page views", () => {
 		);
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		// Both reads were sent before either answered.
-		expect(site.started).toEqual(["kv:config", "record"]);
+		expect(site.started).toEqual(["settings:config", "record"]);
 		open();
 		expect(await rendering).toHaveLength(2);
 	});

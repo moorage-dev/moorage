@@ -177,11 +177,11 @@ export async function connect(
 		lastCheck: { at: new Date(now).toISOString(), ok: true },
 	};
 	await ctx.settings.set(KEY_SETTING, key);
-	await ctx.kv.set("connection", connection);
+	await ctx.settings.set("connection", connection);
 	if ((await emails(ctx)).length === 0) {
 		const team = await people(query).catch(() => [] as Person[]);
 		const admins = team.filter((p) => p.role >= 50 && !p.disabled && p.email).map((p) => p.email);
-		if (admins.length > 0) await ctx.kv.set("emails", admins.slice(0, 20));
+		if (admins.length > 0) await ctx.settings.set("emails", admins.slice(0, 20));
 	}
 	await snapshotPeople(ctx, query, now).catch(() => undefined);
 	return { ok: true, connection };
@@ -213,7 +213,7 @@ export async function check(ctx: PluginContext, now: number): Promise<Connection
 		}
 	}
 	const next = { ...connection, reach, expiresOn, lastCheck: result };
-	await ctx.kv.set("connection", next);
+	await ctx.settings.set("connection", next);
 	if (!result.ok && result.problem !== "network") {
 		await notify(
 			ctx,
@@ -252,7 +252,7 @@ export async function refreshZone(
 	const { zone, zoneSet } = readZone(value);
 	if (zone === connection.zone && zoneSet === connection.zoneSet) return connection;
 	const next = { ...connection, zone, zoneSet };
-	await ctx.kv.set("connection", next);
+	await ctx.settings.set("connection", next);
 	return next;
 }
 
@@ -490,8 +490,8 @@ async function writeBack(
 	lead: StoredRow[],
 ) {
 	await ctx.settings.set(KEY_SETTING, saved.key);
-	await ctx.kv.set("connection", saved.connection);
-	await ctx.kv.set("emails", saved.emails);
+	await ctx.settings.set("connection", saved.connection);
+	await ctx.settings.set("emails", saved.emails);
 	await ctx.kv.set("people", saved.people);
 	await ctx.storage.restores!.putMany(
 		[...saved.restores, record].map((item) => ({ id: item.id, data: item })),

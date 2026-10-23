@@ -3,8 +3,13 @@
 import type { PluginContext } from "emdash";
 
 import type { Group, LinkRow, Reason, Source } from "./model.js";
+import { pickSettings, type SettingsKeys } from "./settings-store.js";
 
-/** KV keys. Everything is read with one `kv.list()` per run. */
+/**
+ * KV keys. Everything is read with one `kv.list()` per run. All but the options
+ * are state the plugin rebuilds (the check, its queue and results, the
+ * checklist, when emails went out), so losing them costs one more check.
+ */
 export const KEY = {
 	scan: "scan",
 	summary: "summary",
@@ -13,6 +18,14 @@ export const KEY = {
 	alerts: "alerts",
 	checklist: "checklist",
 } as const;
+
+/**
+ * Who gets emails and whether links to other sites are checked: `ctx.settings`
+ * "options" (KV key `settings:options`), the same in-process and sandboxed. Up
+ * to 0.1.2 it was the plain KV key `options`, still written for rollback (see
+ * settings-store.ts).
+ */
+export const OPTIONS: SettingsKeys = { name: "options", legacy: KEY.options };
 
 /**
  * Can the site open its own pages? Decided by the first page of each full check.
@@ -167,7 +180,7 @@ export const ROWS_PER_GROUP = 10;
 export async function load(ctx: PluginContext): Promise<Loaded> {
 	const items = await ctx.kv.list();
 	const kv = new Map(items.map((item) => [item.key, item.value as unknown]));
-	const options = (kv.get(KEY.options) as Partial<Options> | undefined) ?? {};
+	const options = ((await pickSettings(ctx, kv, OPTIONS)) as Partial<Options> | null) ?? {};
 	const alerts = (kv.get(KEY.alerts) as Partial<Alerts> | undefined) ?? {};
 	const queue = (kv.get(KEY.queue) as Partial<Queue> | undefined) ?? {};
 	const checklist = (kv.get(KEY.checklist) as Partial<ChecklistState> | undefined) ?? {};
