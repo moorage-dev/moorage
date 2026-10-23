@@ -24,7 +24,8 @@ import {
 	addOne,
 	updateOne,
 	removeOne,
-	removeBatch,
+	removeMore,
+	stopRemoving,
 	type RedirectRow,
 	stopImport,
 	type ImportState,
@@ -32,6 +33,7 @@ import {
 import {
 	FIX_ROWS,
 	readStats,
+	SANDBOX_CALLS,
 	SCAN_KEY,
 	scanStep,
 	startScan,
@@ -40,7 +42,7 @@ import {
 	type Stats,
 } from "./scan.js";
 import { forgetSettings } from "./settings-memo.js";
-import { pickSettings, writeSettings } from "./settings-store.js";
+import { copyForward, needsCopy, pickSettings, writeSettings } from "./settings-store.js";
 import { parseUrl } from "./url.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
@@ -219,20 +221,33 @@ interface AdminData {
 	scan: ScanState | null;
 	/** Page counts and the first pages to fix; null before any page was checked. */
 	stats: Stats | null;
+	/**
+	 * Settings an earlier release saved under the plain key, not yet copied to their new place.
+	 * Copied by a visit that has a call to spare for it (see refreshStats), or by any save.
+	 */
+	uncopied?: { value: unknown };
 }
 
-async function loadData(ctx: PluginContext): Promise<AdminData> {
+// Calls to the host loadData makes.
+const LOAD_CALLS = 3;
+
+/**
+ * Everything the page shows. `rows: false` leaves out the redirects list, for actions that
+ * change redirects and read the list again afterwards (one call fewer of the sandbox's 10).
+ */
+async function loadData(ctx: PluginContext, { rows = true } = {}): Promise<AdminData> {
 	// One read for everything the plugin keeps in KV: requests are limited to a
 	// handful of operations, and every tab is rendered on every response.
 	const [stored, collections, existing] = await Promise.all([
 		ctx.kv.list(),
 		ctx.schema?.listCollections() ?? [],
-		listRedirects(ctx),
+		rows ? listRedirects(ctx) : { rows: [], more: false },
 	]);
 	const kv = new Map(stored.map((item) => [item.key, item.value]));
 	const redirects = kv.get(IMPORT_KEY) as ImportState | undefined;
 	return {
-		config: normalizeConfig(await pickSettings(ctx, kv, CONFIG)),
+		...(needsCopy(kv, CONFIG) ? { uncopied: { value: kv.get(CONFIG.legacy) } } : {}),
+		config: normalizeConfig(await pickSettings(ctx, kv, CONFIG, { copy: false })),
 		// Only collections with public pages have anything to describe to search engines.
 		collections: collections.filter((collection) => collection.routable && !collection.hidden),
 		redirects: redirects && Array.isArray(redirects.rows) ? redirects : null,
@@ -246,8 +261,12 @@ async function loadData(ctx: PluginContext): Promise<AdminData> {
 /** Fresh page counts, stored so that other actions can show them without recounting. */
 async function refreshStats(ctx: PluginContext, data: AdminData): Promise<AdminData> {
 	const stats = await readStats(ctx);
-	if (JSON.stringify(stats) !== JSON.stringify(data.stats)) await ctx.kv.set(STATS_KEY, stats);
-	return { ...data, stats };
+	// One call is left after loadData's three reads and readStats' five: it copies settings an
+	// earlier release saved, when there are any, and otherwise keeps the counts for other actions.
+	if (data.uncopied) await copyForward(ctx, CONFIG, data.uncopied.value);
+	else if (JSON.stringify(stats) !== JSON.stringify(data.stats)) await ctx.kv.set(STATS_KEY, stats);
+	const { uncopied: _copied, ...rest } = data;
+	return { ...rest, stats };
 }
 
 /** Current page counts: the stored recount, or the totals of the check that just finished. */
@@ -1246,12 +1265,14 @@ function setCollection(data: AdminData, value: unknown, change: "type" | "visibl
  */
 async function freshCounts(ctx: PluginContext, data: AdminData): Promise<AdminData> {
 	if (data.scan?.status === "done") return refreshStats(ctx, data);
+	const calls = SANDBOX_CALLS - LOAD_CALLS;
 	const scan = data.scan
-		? await scanStep(ctx, data.scan, data.config)
+		? await scanStep(ctx, data.scan, data.config, calls)
 		: await startScan(
 				ctx,
 				data.collections.map((collection) => collection.slug),
 				data.config,
+				calls,
 			);
 	// The check keeps its own totals, so nothing is recounted here: a request
 	// only has a handful of operations to spend.
@@ -1266,10 +1287,15 @@ export async function handleAdmin(
 	role: number | undefined,
 	ctx: PluginContext,
 ): Promise<BlockResponse> {
-	const data = await loadData(ctx);
 	const admin = (role ?? 0) >= ADMIN_ROLE;
 	const interaction = isRecord(input) ? input : {};
 	const action = typeof interaction.action_id === "string" ? interaction.action_id : "";
+	// These read the redirects list after their change, so not before it as well.
+	const importing =
+		admin &&
+		interaction.type === "block_action" &&
+		(action === "add_redirects" || action === "more_redirects" || action === "remove_redirects");
+	const data = await loadData(ctx, { rows: !importing });
 
 	if (interaction.type === "page_load" && interaction.page === "widget:seo") {
 		// The dashboard is how people come back, so it always shows current counts.
@@ -1385,11 +1411,15 @@ export async function handleAdmin(
 		if (action === "remove_redirect" && typeof interaction.value === "string") {
 			return redirectsChanged(await removeOne(ctx, interaction.value), "Redirect removed.");
 		}
+		// What an import may spend in this request: all but loadData's two reads (the redirects
+		// list is left out for these actions) and the list read again after the change.
+		const importCalls = SANDBOX_CALLS - (LOAD_CALLS - 1) - 1;
 		if (action === "add_redirects" || action === "more_redirects") {
-			if (!data.redirects || data.redirects.status === "done") {
-				return render(data, ctx, admin, { tab: TAB.redirects });
+			const current = data.redirects;
+			if (!current || (current.status !== "checked" && current.status !== "adding")) {
+				return render(await rowsReread(data), ctx, admin, { tab: TAB.redirects });
 			}
-			const redirects = await addMore(ctx, data.redirects);
+			const redirects = await addMore(ctx, current, importCalls);
 			return render(await rowsReread({ ...data, redirects }), ctx, admin, {
 				tab: TAB.redirects,
 				toast:
@@ -1397,8 +1427,16 @@ export async function handleAdmin(
 						? { type: "success", message: `${plural(redirects.added, "redirect")} added.` }
 						: {
 								type: "info",
-								message: `${redirects.added} added so far. The rest follow in the background.`,
+								message: `${redirects.added} added so far. The rest follow in the background, a few each minute.`,
 							},
+			});
+		}
+		if (action === "stop_redirects" && data.redirects?.status === "removing") {
+			const removed = data.redirects.removed ?? 0;
+			const redirects = await stopRemoving(ctx, data.redirects);
+			return render(await rowsReread({ ...data, redirects }), ctx, admin, {
+				tab: TAB.redirects,
+				toast: { type: "info", message: `Stopped. ${plural(removed, "redirect")} removed.` },
 			});
 		}
 		if (action === "stop_redirects" && data.redirects?.status === "adding") {
@@ -1409,25 +1447,36 @@ export async function handleAdmin(
 			});
 		}
 		if (action === "reset_redirects") {
-			// An import that is still running must finish or be stopped first.
-			if (data.redirects?.status !== "adding") await ctx.kv.delete(IMPORT_KEY);
-			return render(
-				{ ...data, redirects: data.redirects?.status === "adding" ? data.redirects : null },
-				ctx,
-				admin,
-				{ tab: TAB.redirects },
-			);
-		}
-		if (action === "remove_redirects" && data.redirects) {
-			const left = await removeBatch(ctx, data.redirects);
-			const changed = { ...data, redirects: left === 0 ? null : data.redirects };
-			return render(await rowsReread(changed), ctx, admin, {
+			// An import that is still adding or removing must finish (or be stopped) first.
+			const busy = data.redirects?.status === "adding" || data.redirects?.status === "removing";
+			if (!busy) await ctx.kv.delete(IMPORT_KEY);
+			return render({ ...data, redirects: busy ? data.redirects : null }, ctx, admin, {
 				tab: TAB.redirects,
-				toast:
-					left === 0
-						? { type: "success", message: "Removed. Your other redirects are untouched." }
-						: { type: "info", message: `${left} still to remove. Press Remove again.` },
 			});
+		}
+		if (
+			action === "remove_redirects" &&
+			(data.redirects?.status === "done" || data.redirects?.status === "removing")
+		) {
+			const redirects = await removeMore(ctx, data.redirects, importCalls);
+			return render(await rowsReread({ ...data, redirects }), ctx, admin, {
+				tab: TAB.redirects,
+				toast: !redirects
+					? { type: "success", message: "Removed. Your other redirects are untouched." }
+					: redirects.status === "done"
+						? {
+								type: "error",
+								message:
+									"EmDash would not remove some of them. Press Remove to try again, or remove them in the full Redirects screen.",
+							}
+						: {
+								type: "info",
+								message: `${redirects.removed ?? 0} removed so far. The rest are removed in the background, a few each minute.`,
+							},
+			});
+		}
+		if (action === "remove_redirects") {
+			return render(await rowsReread(data), ctx, admin, { tab: TAB.redirects });
 		}
 		if (action === "export_redirects") {
 			const { text, count } = await exportText(ctx);

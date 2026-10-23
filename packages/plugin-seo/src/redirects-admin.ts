@@ -37,7 +37,8 @@ const FORMAT_NAMES: Record<ListFormat, string> = {
 };
 
 export interface ImportState {
-	status: "checked" | "adding" | "done";
+	/** "removing": the redirects it added are being removed again. */
+	status: "checked" | "adding" | "done" | "removing";
 	format: ListFormat;
 	rows: ReadyRow[];
 	skipped: SkippedRow[];
@@ -48,7 +49,17 @@ export interface ImportState {
 	group: string;
 	/** Requests in a row that added nothing; a row that keeps failing is skipped. */
 	stalls?: number;
+	/** While removing: how many have been removed so far. */
+	removed?: number;
 }
+
+/**
+ * Calls to the host one run of the background task may spend on the import, after reading it
+ * (one call): a sandboxed run may make only 10 on Cloudflare, and every run keeps to 9.
+ */
+export const TASK_CALLS = 8;
+
+const EVERY_MINUTE = { schedule: "* * * * *" };
 
 export async function loadImport(ctx: PluginContext): Promise<ImportState | null> {
 	const state = await ctx.kv.get<ImportState>(IMPORT_KEY);
@@ -94,14 +105,42 @@ function refusal(error: unknown): { kind: "exists" | "invalid" | "stop"; message
 	return { kind: "stop", message };
 }
 
+/** Start the background task that carries on with an import. Not logged when it fails: that
+ * would cost another call, and "Add more now" or "Remove more now" carry on instead. */
+async function schedule(ctx: PluginContext): Promise<void> {
+	try {
+		await ctx.cron?.schedule(IMPORT_TASK, EVERY_MINUTE);
+	} catch {
+		// See above.
+	}
+}
+
+async function cancel(ctx: PluginContext): Promise<void> {
+	try {
+		await ctx.cron?.cancel(IMPORT_TASK);
+	} catch {
+		// The task also stops itself the next time it runs.
+	}
+}
+
 /**
- * Add as many of the remaining redirects as this request allows. Safe to call
- * repeatedly: a redirect created just before progress could be saved shows up
- * as "already exists" next time and is counted as added.
+ * Add as many of the remaining redirects as `calls` allows (calls to the host, including saving
+ * where it got to and starting or stopping the background task), then save; the background task
+ * carries on from there, a few rows a minute. It stops before the sandbox's limit instead of
+ * relying on the host to refuse. Safe to call repeatedly: a redirect created just before
+ * progress could be saved shows up as "already exists" next time and is counted as added.
  */
-export async function addMore(ctx: PluginContext, state: ImportState): Promise<ImportState> {
+export async function addMore(
+	ctx: PluginContext,
+	state: ImportState,
+	calls = TASK_CALLS,
+): Promise<ImportState> {
 	const next: ImportState = { ...state, status: "adding", skipped: [...state.skipped] };
+	// The background task runs once the import is under way, not while it is only checked.
+	const scheduled = state.status === "adding";
+	let used = 0;
 	const save = async () => {
+		used += 1;
 		try {
 			await ctx.kv.set(IMPORT_KEY, next);
 			return true;
@@ -109,20 +148,17 @@ export async function addMore(ctx: PluginContext, state: ImportState): Promise<I
 			return false;
 		}
 	};
-
-	if (state.status === "checked") {
-		try {
-			await ctx.cron?.schedule(IMPORT_TASK, { schedule: "* * * * *" });
-		} catch (error) {
-			ctx.log.warn("could not schedule background import", { error: String(error) });
-		}
-	}
+	/** Calls kept for the end: the save, and starting the task (not finished) or stopping it. */
+	const reserve = (finishing: boolean) => 1 + (finishing === scheduled ? 1 : 0);
 
 	let sinceSave = 0;
 	const startedAt = next.cursor;
 	while (next.cursor < next.rows.length) {
 		const row = next.rows[next.cursor];
 		if (!row) break;
+		const last = next.cursor === next.rows.length - 1;
+		if (next.cursor !== startedAt && used + 1 + reserve(last) > calls) break;
+		used += 1;
 		try {
 			await ctx.redirects?.create?.({
 				source: row.source,
@@ -134,7 +170,7 @@ export async function addMore(ctx: PluginContext, state: ImportState): Promise<I
 		} catch (error) {
 			const { kind, message } = refusal(error);
 			if (kind === "stop") {
-				// Usually the request ran out of operations and the next one carries on.
+				// EmDash is busy, or the request ran out of calls: the next one carries on.
 				// A row that stops every request is skipped so the import cannot hang.
 				if (next.cursor !== startedAt) break;
 				next.stalls = (next.stalls ?? 0) + 1;
@@ -151,7 +187,9 @@ export async function addMore(ctx: PluginContext, state: ImportState): Promise<I
 		next.cursor += 1;
 		next.stalls = 0;
 		sinceSave += 1;
-		if (sinceSave >= SAVE_EVERY) {
+		// Progress is saved every few rows in case the request is cut short, when that still
+		// leaves room for another row; otherwise the save at the end follows soon.
+		if (sinceSave >= SAVE_EVERY && used + 1 + 1 + reserve(false) <= calls) {
 			if (!(await save())) return next;
 			sinceSave = 0;
 		}
@@ -159,40 +197,74 @@ export async function addMore(ctx: PluginContext, state: ImportState): Promise<I
 
 	if (next.cursor >= next.rows.length) {
 		next.status = "done";
-		try {
-			await ctx.cron?.cancel(IMPORT_TASK);
-		} catch {
-			// The task also stops itself the next time it runs.
-		}
-	}
+		if (scheduled) await cancel(ctx);
+	} else if (!scheduled) await schedule(ctx);
 	await save();
 	return next;
 }
 
-/** Remove the redirects the last import added. Returns how many are still left. */
-export async function removeBatch(ctx: PluginContext, state: ImportState): Promise<number> {
+/**
+ * Remove the redirects the import added, as many as `calls` allows (two calls each: EmDash
+ * needs a redirect's current revision to delete it), then save how far it got; the background
+ * task removes the rest. Returns null once they are all gone and the import is forgotten.
+ */
+export async function removeMore(
+	ctx: PluginContext,
+	state: ImportState,
+	calls = TASK_CALLS,
+): Promise<ImportState | null> {
+	const scheduled = state.status === "removing";
+	const next: ImportState = { ...state, status: "removing", removed: state.removed ?? 0 };
 	const batch = await ctx.redirects?.list({ limit: PAGE_SIZE, group: state.group });
+	let used = 1;
 	const items = batch?.items ?? [];
+	const reserve = (finishing: boolean) => 1 + (finishing === scheduled ? 1 : 0);
 	let left = items.length;
+	let failed = false;
 	for (const item of items) {
+		const finishing = left === 1 && !batch?.hasMore;
+		if (used + 2 + reserve(finishing) > calls) break;
+		used += 2;
 		try {
 			const current = await ctx.redirects?.get(item.id);
 			if (current) await ctx.redirects?.delete?.(item.id, { _rev: current._rev });
 			left -= 1;
+			next.removed = (next.removed ?? 0) + 1;
 		} catch {
+			failed = true;
 			break;
 		}
 	}
 	if (left === 0 && !batch?.hasMore) {
-		try {
-			await ctx.cron?.cancel(IMPORT_TASK);
-		} catch {
-			// Nothing scheduled.
-		}
 		await ctx.kv.delete(IMPORT_KEY);
-		return 0;
+		if (scheduled) await cancel(ctx);
+		return null;
 	}
-	return left;
+	// A redirect EmDash keeps refusing to remove would keep the task running for ever: after a
+	// few runs that removed nothing, stop, and offer Remove again.
+	next.stalls = failed && next.removed === (state.removed ?? 0) ? (state.stalls ?? 0) + 1 : 0;
+	if (next.stalls >= MAX_STALLS) return stopRemoving(ctx, next, scheduled);
+	if (!scheduled) await schedule(ctx);
+	await ctx.kv.set(IMPORT_KEY, next);
+	return next;
+}
+
+/** Stop removing; what is left stays, and Remove starts again. */
+export async function stopRemoving(
+	ctx: PluginContext,
+	state: ImportState,
+	scheduled = true,
+): Promise<ImportState> {
+	const { stalls: _stalls, removed, ...rest } = state;
+	// What is left of the import, so Remove offers the right number again.
+	const next: ImportState = {
+		...rest,
+		status: "done",
+		added: Math.max(0, state.added - (removed ?? 0)),
+	};
+	if (scheduled) await cancel(ctx);
+	await ctx.kv.set(IMPORT_KEY, next);
+	return next;
 }
 
 /** The site's redirects as copyable text. */
@@ -407,6 +479,33 @@ function importBlocks(state: ImportState | null): Block[] {
 				],
 			},
 			...skippedTable(state.skipped),
+		];
+	}
+	if (state.status === "removing") {
+		const removed = state.removed ?? 0;
+		return [
+			{
+				type: "meter",
+				label: `${removed} of ${state.added} removed`,
+				value: removed,
+				max: Math.max(state.added, removed, 1),
+			},
+			{
+				type: "context",
+				text: "The rest are removed in the background, a few each minute. You can leave this page.",
+			},
+			{
+				type: "actions",
+				elements: [
+					{
+						type: "button",
+						action_id: "remove_redirects",
+						label: "Remove more now",
+						style: "primary",
+					},
+					{ type: "button", action_id: "stop_redirects", label: "Stop here" },
+				],
+			},
 		];
 	}
 	if (state.status === "adding") {

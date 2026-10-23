@@ -1,9 +1,10 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
+import type { PluginContext } from "emdash";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ImportState } from "../src/redirects-admin.js";
+import { removeMore, type ImportState } from "../src/redirects-admin.js";
 import { exportList, planImport } from "../src/redirects.js";
 
 const PAGE = "/overview";
@@ -202,10 +203,51 @@ describe("Redirects tab", () => {
 		expect(created).toMatchObject({ destination: "/new-1", type: 301, enabled: true });
 		expect(created?.groupName).toMatch(/^Imported /);
 
+		// A click removes what fits in one request; the background task removes the rest.
 		const removed = await runtime.admin.act(PAGE, "remove_redirects");
-		expect(removed.toast?.message).toBe("Removed. Your other redirects are untouched.");
+		const removing = await state(runtime);
+		expect(removing?.status).toBe("removing");
+		expect(removed.toast?.message).toBe(
+			`${removing?.removed} removed so far. The rest are removed in the background, a few each minute.`,
+		);
+		expect(JSON.stringify(removed.blocks)).toContain(`${removing?.removed} of 5 removed`);
+		for (let run = 0; run < 10 && (await state(runtime)); run += 1)
+			await runtime.transport.invokeHook("cron", { name: "redirects-import" });
 		expect(await sources(runtime)).toEqual(["/kept"]);
 		expect(await state(runtime)).toBeNull();
+	});
+
+	it("lets an admin stop removing, keeping what is left", async () => {
+		const runtime = await start();
+		await runtime.admin.submit(PAGE, "check_redirects", {
+			list: "/old-1,/new-1\n/old-2,/new-2\n/old-3,/new-3\n/old-4,/new-4",
+		});
+		await runtime.admin.act(PAGE, "add_redirects");
+		await runtime.admin.act(PAGE, "remove_redirects");
+		const removed = (await state(runtime))?.removed ?? 0;
+		expect(removed).toBeGreaterThan(0);
+
+		const stopped = await runtime.admin.act(PAGE, "stop_redirects");
+		expect(stopped.toast?.message).toBe(
+			`Stopped. ${removed} redirect${removed === 1 ? "" : "s"} removed.`,
+		);
+		expect(await state(runtime)).toMatchObject({ status: "done", added: 4 - removed });
+		expect(JSON.stringify(stopped.blocks)).toContain(`Remove the ${4 - removed} just added`);
+		expect((await sources(runtime)).length).toBe(4 - removed);
+	});
+
+	it("finishes removing with Remove more now", async () => {
+		const runtime = await start();
+		await runtime.admin.submit(PAGE, "check_redirects", {
+			list: "/old-1,/new-1\n/old-2,/new-2\n/old-3,/new-3\n/old-4,/new-4",
+		});
+		await runtime.admin.act(PAGE, "add_redirects");
+		await runtime.admin.act(PAGE, "remove_redirects");
+		let last = await runtime.admin.act(PAGE, "remove_redirects");
+		for (let click = 0; click < 5 && (await state(runtime)); click += 1)
+			last = await runtime.admin.act(PAGE, "remove_redirects");
+		expect(last.toast?.message).toBe("Removed. Your other redirects are untouched.");
+		expect(await sources(runtime)).toEqual([]);
 	});
 
 	it("shows the redirects just added, and drops them once removed, without a reload", async () => {
@@ -385,5 +427,47 @@ describe("Redirects tab", () => {
 		const editor = await runtime.fixtures.user({ email: "editor@acme.test", role: "editor" });
 		await runtime.admin.submit(PAGE, "check_redirects", { list: "/a,/b" }, { user: editor });
 		expect(await state(runtime)).toBeNull();
+	});
+});
+
+describe("removing an import that EmDash will not remove", () => {
+	it("stops after a few runs that removed nothing, so the task does not run for ever", async () => {
+		const kv = new Map<string, unknown>();
+		const cron: string[] = [];
+		const ctx = {
+			redirects: {
+				list: async () => ({
+					items: [{ id: "r1", source: "/a", destination: "/b" }],
+					hasMore: false,
+				}),
+				get: async () => ({ _rev: "1" }),
+				delete: async () => {
+					throw new Error("EmDash is busy");
+				},
+			},
+			kv: {
+				set: async (key: string, value: unknown) => void kv.set(key, value),
+				delete: async (key: string) => kv.delete(key),
+			},
+			cron: {
+				schedule: async () => void cron.push("schedule"),
+				cancel: async () => void cron.push("cancel"),
+			},
+		} as unknown as PluginContext;
+		let state: ImportState | null = {
+			status: "done",
+			format: "plain",
+			rows: [{ source: "/a", destination: "/b", type: 301 }],
+			skipped: [],
+			cursor: 1,
+			added: 1,
+			group: "Imported test",
+		};
+		for (let run = 0; run < 5 && state && (run === 0 || state.status === "removing"); run += 1)
+			state = await removeMore(ctx, state);
+		expect(state).toMatchObject({ status: "done", added: 1 });
+		expect(state?.stalls).toBeUndefined();
+		expect(cron).toEqual(["schedule", "cancel"]);
+		expect(kv.get("redirects")).toMatchObject({ status: "done" });
 	});
 });

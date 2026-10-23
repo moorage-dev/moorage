@@ -329,6 +329,9 @@ describe("checks on a real site", () => {
 		const runtime = await start();
 		const first = await addPage(runtime, "services", "Our services", "What we do.");
 		const second = await addPage(runtime, "services-2", "Our  SERVICES", "More of what we do.");
+		// EmDash runs the save hooks of those edits in the background; let them finish, or the
+		// records read below may be ones they have written but not yet settled.
+		await new Promise((resolve) => setTimeout(resolve, 300));
 		await checkAll(runtime);
 
 		expect((await record(runtime, first.id))?.issues?.map((issue) => issue.id)).toEqual([
@@ -717,9 +720,9 @@ describe("the picture for shared links", () => {
 		expect(observeImage({ ...base, needsImage: undefined, issues: [] }, true)).toBeNull();
 	});
 
-	it("does not write in the request that first builds a page's record", async () => {
+	it("leaves a page without a record to its next save, then settles on the next render", async () => {
 		const { runtime } = await start();
-		// Never saved through a hook, so the first render builds its record.
+		// Never saved through a hook, so it has no record yet.
 		const entry = await runtime.fixtures.content("pages", {
 			slug: "new",
 			data: { title: "New page", body: LONG_TEXT },
@@ -727,7 +730,10 @@ describe("the picture for shared links", () => {
 		});
 		expect(await record(runtime, entry.id)).toBeNull();
 
+		// A page view writes nothing: the record is built by the check or the next save.
 		await render(runtime, entry, PICTURE);
+		expect(await record(runtime, entry.id)).toBeNull();
+		await save(runtime, entry.id);
 		expect(await record(runtime, entry.id)).toMatchObject({ needsImage: true });
 		expect(listed(await record(runtime, entry.id))).toBe(true);
 		// The next render settles it.

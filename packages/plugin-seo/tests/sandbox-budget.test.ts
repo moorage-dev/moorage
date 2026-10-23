@@ -4,9 +4,9 @@
 //
 // On Cloudflare each hook call, route call and cron run may make 10 calls to the host (see
 // bridge-budget.ts); every ctx.* call counts, ctx.log included, and the 11th throws. These tests
-// pin the CURRENT number of calls of every path, measured on a cold isolate (settings not yet in
-// memory), so any change shows up here. They are a record, not a target: a number above 9 is
-// marked TODO(B39) and explained in the B39 audit; lowering it is product work.
+// pin the number of calls of every path, measured on a cold isolate (settings not yet in memory),
+// so any change shows up here, and hold every path to at most 9: one below the limit, so a log
+// line on an unexpected error still fits.
 
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
 import type { PublicPageContext } from "emdash";
@@ -14,7 +14,23 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_CONFIG } from "../src/config.js";
 import { isDuplicate, type EntryRecord } from "../src/record.js";
-import { describeCalls, measure, type Measured } from "./bridge-budget.js";
+import { describeCalls, measure, SANDBOX_SUBREQUESTS, type Measured } from "./bridge-budget.js";
+
+/** The most calls any path may make: one below Cloudflare's limit. */
+const BUDGET = SANDBOX_SUBREQUESTS - 1;
+
+/** Calls that change something. A public page view makes none of them, except the one below. */
+const WRITES = new Set([
+	"kvSet",
+	"kvDelete",
+	"settingsSet",
+	"settingsDelete",
+	"storagePut",
+	"storagePutMany",
+	"storageDelete",
+	"storageDeleteMany",
+]);
+const writes = (m: Measured<unknown>) => m.calls.filter((call) => WRITES.has(call));
 
 const PAGE = "/overview";
 const LONG_TEXT =
@@ -103,6 +119,22 @@ async function cold<T>(
 	await runtime.restart();
 	const measured = await measure(invoke);
 	console.info(describeCalls(label, measured));
+	expect(measured.calls.length, label).toBeLessThanOrEqual(BUDGET);
+	return measured;
+}
+
+/** The same with Cloudflare's limit enforced: nothing may be refused. */
+async function enforced<T>(
+	runtime: PluginRuntimeTestHost,
+	label: string,
+	invoke: () => Promise<T>,
+): Promise<Measured<T>> {
+	await runtime.restart();
+	const measured = await measure(invoke, { enforce: true });
+	console.info(describeCalls(label, measured));
+	expect(measured.refused, label).toEqual([]);
+	expect(measured.error, label).toBeUndefined();
+	expect(measured.calls.length, label).toBeLessThanOrEqual(BUDGET);
 	return measured;
 }
 
@@ -159,7 +191,8 @@ describe("page:metadata (every uncached public page view)", () => {
 			metadata(runtime, contentPage(entry.id)),
 		);
 		expect(m.error).toBeUndefined();
-		expect(m.calls.length).toBe(4);
+		expect(writes(m)).toEqual([]);
+		expect(m.calls.length).toBe(3);
 	});
 
 	it("an entry whose picture for shared links is news (writes the record back)", async () => {
@@ -174,6 +207,9 @@ describe("page:metadata (every uncached public page view)", () => {
 		expect(m.calls.length).toBe(4);
 	});
 
+	// An entry saved before the plugin was installed has no record yet. Its page is described
+	// from the entry itself, read for this view only: nothing is written, and the record is left
+	// to the check (started when the plugin is switched on) or the entry's next save.
 	it("first view of an entry saved before the plugin was installed, configured site", async () => {
 		const runtime = await start();
 		await configured(runtime);
@@ -182,8 +218,9 @@ describe("page:metadata (every uncached public page view)", () => {
 			metadata(runtime, contentPage(entry.id)),
 		);
 		expect(m.error).toBeUndefined();
-		expect(await runtime.inspect.storage.get("entries", `pages:${entry.id}`)).not.toBeNull();
-		expect(m.calls.length).toBe(9);
+		expect(writes(m)).toEqual([]);
+		expect(await runtime.inspect.storage.get("entries", `pages:${entry.id}`)).toBeNull();
+		expect(m.calls.length).toBe(4);
 	});
 
 	it("first view of an entry saved before the plugin was installed, fresh site", async () => {
@@ -193,22 +230,16 @@ describe("page:metadata (every uncached public page view)", () => {
 			metadata(runtime, contentPage(entry.id)),
 		);
 		expect(m.error).toBeUndefined();
-		// TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 (see the B39 audit). This is
-		// the first view of every page on a fresh registry install until the check has run.
-		expect(m.calls.length).toBe(11);
+		expect(writes(m)).toEqual([]);
+		expect(m.calls.length).toBe(5);
 	});
 
-	it("that first view under Cloudflare's limit: the page renders, without the entry's details", async () => {
+	it("that first view under Cloudflare's limit: nothing is refused", async () => {
 		const runtime = await start();
 		const entry = await addPage(runtime, "about", "About us");
-		await runtime.restart();
-		const m = await measure(() => metadata(runtime, contentPage(entry.id)), { enforce: true });
-		console.info(describeCalls("metadata no record fresh enforced", m));
-		expect(m.error).toBeUndefined();
-		// The record was written before the limit; reading the pages that share its title was
-		// refused, and so was the warning about it.
-		expect(m.refused).toEqual(["storageQuery", "log"]);
-		expect(await runtime.inspect.storage.get("entries", `pages:${entry.id}`)).not.toBeNull();
+		await enforced(runtime, "metadata no record fresh enforced", () =>
+			metadata(runtime, contentPage(entry.id)),
+		);
 	});
 
 	it("first view of an entry saved before the plugin was installed, updated site", async () => {
@@ -219,8 +250,22 @@ describe("page:metadata (every uncached public page view)", () => {
 			metadata(runtime, contentPage(entry.id)),
 		);
 		expect(m.error).toBeUndefined();
-		// TODO(B39): over Cloudflare's sandbox limit of 10 (see the B39 audit).
-		expect(m.calls.length).toBe(11);
+		// The settings are copied to their new place by the SEO page, never by a page view.
+		expect(writes(m)).toEqual([]);
+		expect(await runtime.inspect.setting("config")).toBeNull();
+		expect(m.calls.length).toBe(5);
+	});
+
+	it("an ordinary view writes nothing, on any site", async () => {
+		const runtime = await start();
+		await migrated(runtime);
+		const entry = await addPage(runtime, "about", "About us");
+		await checkAll(runtime);
+		await runtime.fixtures.plugin.setting("config", null);
+		for (const context of [page(), contentPage(entry.id)]) {
+			const m = await cold(runtime, "metadata ordinary view", () => metadata(runtime, context));
+			expect(writes(m)).toEqual([]);
+		}
 	});
 });
 
@@ -279,7 +324,7 @@ describe("content hooks (each save, publish, unpublish, restore, delete)", () =>
 		await migrated(runtime);
 		const entry = await addPage(runtime, "about", "About us");
 		const m = await cold(runtime, "afterSave migrated first", () => save(runtime, entry.id));
-		expect(m.calls.length).toBe(9);
+		expect(m.calls.length).toBe(8);
 	});
 
 	it("content:afterSave moving a page between shared titles, fresh site", async () => {
@@ -309,8 +354,7 @@ describe("content hooks (each save, publish, unpublish, restore, delete)", () =>
 		expect(m.error).toBeUndefined();
 		expect(await flagged(runtime, a.id)).toBe(false);
 		expect(await flagged(runtime, c.id)).toBe(true);
-		// TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 (see the B39 audit).
-		expect(m.calls.length).toBe(10);
+		expect(m.calls.length).toBe(9);
 	});
 
 	it("content:afterDelete of a page that shared its title", async () => {
@@ -333,7 +377,58 @@ describe("plugin:activate and the background tasks", () => {
 			runtime.transport.invokeHook("plugin:activate", {}),
 		);
 		expect(m.error).toBeUndefined();
-		expect(m.calls.length).toBe(10);
+		expect(m.calls.length).toBe(8);
+		expect(await runtime.inspect.kv.get("scan")).toMatchObject({ status: "done", checked: 3 });
+	});
+
+	it("plugin:activate on a site updated from an earlier release, with more pages than one step", async () => {
+		const runtime = await start();
+		await migrated(runtime);
+		for (let index = 0; index < 25; index += 1)
+			await addPage(runtime, `p${index}`, `Page ${index}`);
+		const m = await cold(runtime, "activate migrated 25 pages", () =>
+			runtime.transport.invokeHook("plugin:activate", {}),
+		);
+		expect(m.error).toBeUndefined();
+		expect(await runtime.inspect.kv.get("scan")).toMatchObject({ status: "running", checked: 20 });
+	});
+
+	it("plugin:activate again, once the check has run, changes nothing", async () => {
+		const runtime = await start();
+		await addPage(runtime, "p", "Page");
+		await checkAll(runtime);
+		const before = await runtime.inspect.kv.get("scan");
+		const m = await cold(runtime, "activate again", () =>
+			runtime.transport.invokeHook("plugin:activate", {}),
+		);
+		expect(writes(m)).toEqual([]);
+		expect(await runtime.inspect.kv.get("scan")).toEqual(before);
+	});
+
+	it("each step of the check when an empty collection comes before the pages", async () => {
+		const runtime = await start();
+		for (const slug of ["articles", "events", "news"]) {
+			await runtime.fixtures.collection({
+				slug,
+				label: slug,
+				urlPattern: `/${slug}/{slug}`,
+				supports: ["drafts", "revisions", "seo"],
+				fields: [{ slug: "title", label: "Title", type: "string" }],
+			});
+		}
+		for (let index = 0; index < 25; index += 1)
+			await addPage(runtime, `p${index}`, `Page ${index}`);
+		await cold(runtime, "admin first visit, empty collections first", () =>
+			runtime.admin.loadPage(PAGE),
+		);
+		for (let step = 0; step < 20; step += 1) {
+			const scan = await runtime.inspect.kv.get<{ status: string; sweep?: unknown }>("scan");
+			if (scan?.status === "done" && !scan.sweep) break;
+			await cold(runtime, `cron seo-scan step ${step}, empty collections first`, () =>
+				runtime.transport.invokeHook("cron", { name: "seo-scan" }),
+			);
+		}
+		expect(await runtime.inspect.kv.get("scan")).toMatchObject({ status: "done", checked: 25 });
 	});
 
 	it("each step of the background check on a site of 45 pages", async () => {
@@ -381,13 +476,30 @@ describe("SEO admin page", () => {
 		expect(m.calls.length).toBe(9);
 	});
 
+	for (const [label, invoke] of [
+		["admin visit", (runtime: PluginRuntimeTestHost) => runtime.admin.loadPage(PAGE)],
+		["widget", (runtime: PluginRuntimeTestHost) => runtime.admin.loadWidget("seo")],
+		["check_pages", (runtime: PluginRuntimeTestHost) => runtime.admin.act(PAGE, "check_pages")],
+	] as const) {
+		it(`${label} on a site updated from an earlier release, check done`, async () => {
+			const runtime = await start();
+			await migrated(runtime);
+			for (let index = 0; index < 3; index += 1)
+				await addPage(runtime, `p${index}`, `Page ${index}`);
+			await checkAll(runtime);
+			await runtime.fixtures.plugin.setting("config", null);
+			const m = await cold(runtime, `${label} migrated done`, () => invoke(runtime));
+			expect(m.error).toBeUndefined();
+		});
+	}
+
 	it("saving the identity on a site updated from an earlier release", async () => {
 		const runtime = await start();
 		await migrated(runtime);
 		const m = await cold(runtime, "save_identity migrated", () =>
 			runtime.admin.submit(PAGE, "save_identity", { kind: "organization", name: "Acme" }),
 		);
-		expect(m.calls.length).toBe(6);
+		expect(m.calls.length).toBe(5);
 	});
 
 	for (const action of [
@@ -424,43 +536,76 @@ describe("redirects on the SEO page", () => {
 		expect(m.calls.length).toBe(5);
 	});
 
-	it("add_redirects with 20 rows goes on until the host refuses (by design)", async () => {
+	const ROWS = 20;
+	const list = Array.from({ length: ROWS }, (_, i) => `/old-${i},/new-${i}`).join("\n");
+	type Import = { status: string; added: number; cursor: number; skipped: unknown[] };
+
+	/** Run the background task under Cloudflare's limit until the import is no longer under way. */
+	async function background(runtime: PluginRuntimeTestHost, label: string) {
+		const runs: number[] = [];
+		for (let run = 0; run < 30; run += 1) {
+			const state = await runtime.inspect.kv.get<Import>("redirects");
+			if (state?.status !== "adding" && state?.status !== "removing") return runs;
+			const m = await enforced(runtime, `${label} cron ${run}`, () =>
+				runtime.transport.invokeHook("cron", { name: "redirects-import" }),
+			);
+			runs.push(m.calls.length);
+		}
+		throw new Error("the background task never finished");
+	}
+
+	it("add_redirects with 20 rows: the click adds what fits, the background task the rest", async () => {
 		const runtime = await start();
-		const list = Array.from({ length: 20 }, (_, i) => `/old-${i},/new-${i}`).join("\n");
 		await runtime.admin.submit(PAGE, "check_redirects", { list });
-		const m = await cold(runtime, "add_redirects 20 rows", () =>
+		const click = await enforced(runtime, "add_redirects 20 rows", () =>
 			runtime.admin.act(PAGE, "add_redirects"),
 		);
-		// TODO(B39): 32 calls with no limit (every row in one request). On Cloudflare the 11th call
-		// throws and the import continues from its last saved row in the background task, by design.
-		expect(m.calls.length).toBe(32);
+		const after = await runtime.inspect.kv.get<Import>("redirects");
+		expect(after?.status).toBe("adding");
+		expect(after?.added).toBeGreaterThan(0);
+		// The admin is told how far it got, and that the rest follow.
+		expect(click.result?.toast?.message).toBe(
+			`${after?.added} added so far. The rest follow in the background, a few each minute.`,
+		);
+		expect(JSON.stringify(click.result?.blocks)).toContain(`${after?.added} of ${ROWS} added`);
+
+		const runs = await background(runtime, "add_redirects");
+		expect(runs.length).toBeGreaterThan(0);
+		const done = await runtime.inspect.kv.get<Import>("redirects");
+		expect(done).toMatchObject({ status: "done", added: ROWS, cursor: ROWS, skipped: [] });
+		expect((await runtime.inspect.redirects()).length).toBe(ROWS);
 	});
 
-	it("add_redirects with 20 rows under Cloudflare's limit keeps its progress", async () => {
+	it("more_redirects continues where the import got to", async () => {
 		const runtime = await start();
-		const list = Array.from({ length: 20 }, (_, i) => `/old-${i},/new-${i}`).join("\n");
-		await runtime.admin.submit(PAGE, "check_redirects", { list });
-		await runtime.restart();
-		const m = await measure(() => runtime.admin.act(PAGE, "add_redirects"), { enforce: true });
-		console.info(describeCalls("add_redirects 20 rows enforced", m));
-		expect(m.error).toBeUndefined();
-		expect((await runtime.inspect.redirects()).length).toBeGreaterThan(0);
-		const state = await runtime.inspect.kv.get<{ cursor: number; status: string }>("redirects");
-		expect(state?.status).toBe("adding");
-		expect(state?.cursor).toBe(4);
-	});
-
-	it("remove_redirects with 20 imported redirects", async () => {
-		const runtime = await start();
-		const list = Array.from({ length: 20 }, (_, i) => `/old-${i},/new-${i}`).join("\n");
 		await runtime.admin.submit(PAGE, "check_redirects", { list });
 		await runtime.admin.act(PAGE, "add_redirects");
-		const m = await cold(runtime, "remove_redirects 20", () =>
+		const before = (await runtime.inspect.kv.get<Import>("redirects"))?.added ?? 0;
+		await enforced(runtime, "more_redirects", () => runtime.admin.act(PAGE, "more_redirects"));
+		expect((await runtime.inspect.kv.get<Import>("redirects"))?.added).toBeGreaterThan(before);
+	});
+
+	it("remove_redirects with 20 imported redirects: the rest are removed in the background", async () => {
+		const runtime = await start();
+		await runtime.fixtures.redirect({ source: "/keep", destination: "/kept" });
+		await runtime.admin.submit(PAGE, "check_redirects", { list });
+		await runtime.admin.act(PAGE, "add_redirects");
+		await background(runtime, "add before remove");
+		expect((await runtime.inspect.redirects()).length).toBe(ROWS + 1);
+
+		const click = await enforced(runtime, "remove_redirects 20", () =>
 			runtime.admin.act(PAGE, "remove_redirects"),
 		);
-		// TODO(B39): 47 calls, two per redirect; it relies on the host refusing the 11th call to stop,
-		// and asks to press Remove again for the rest.
-		expect(m.calls.length).toBe(47);
+		const after = await runtime.inspect.kv.get<Import & { removed?: number }>("redirects");
+		expect(after?.status).toBe("removing");
+		expect(click.result?.toast?.message).toBe(
+			`${after?.removed ?? 0} removed so far. The rest are removed in the background, a few each minute.`,
+		);
+		expect(JSON.stringify(click.result?.blocks)).toContain(`of ${ROWS} removed`);
+
+		await background(runtime, "remove_redirects");
+		expect(await runtime.inspect.kv.get("redirects")).toBeNull();
+		expect((await runtime.inspect.redirects()).map((row) => row.source)).toEqual(["/keep"]);
 	});
 
 	it("export_redirects", async () => {
@@ -511,6 +656,6 @@ describe("Google preview panel", () => {
 			}),
 		);
 		expect(m.error).toBeUndefined();
-		expect(m.calls.length).toBe(9);
+		expect(m.calls.length).toBe(8);
 	});
 });

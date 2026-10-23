@@ -88,6 +88,19 @@ async function metadata(
 	})) as PageMetadataContribution[];
 }
 
+/** The entry's stored record, once the save hook EmDash runs in the background has written it. */
+async function savedRecord(
+	runtime: PluginRuntimeTestHost,
+	key: string,
+): Promise<EntryRecord | null> {
+	for (let attempt = 0; attempt < 40; attempt += 1) {
+		const stored = await runtime.inspect.storage.get<EntryRecord>("entries", key);
+		if (stored?.authors.length) return stored;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return runtime.inspect.storage.get<EntryRecord>("entries", key);
+}
+
 describe("hello route", () => {
 	it("returns a greeting through the sandbox host", async () => {
 		const plain = await createPluginTestHost();
@@ -139,10 +152,11 @@ describe("page:metadata", () => {
 		// The collection is kept out of search, so only the site itself is described.
 		expect(nodeTypes(jsonLd(contributions, "primary"))).toEqual(["Dentist", "WebSite"]);
 		expect(robots(contributions)).toBe("noindex, follow");
-		// The entry predates the plugin: its record is built on this first render.
+		// The entry predates the plugin. A page view writes nothing: the record is left to the
+		// check or the entry's next save.
 		expect(
 			await runtime.inspect.storage.get<EntryRecord>("entries", `pages:${entry.id}`),
-		).toMatchObject({ v: 1, authors: [], custom: [] });
+		).toBeNull();
 
 		// Back in search (saved on the SEO page, so it shows at once), the page is
 		// described with the collection's type.
@@ -160,6 +174,71 @@ describe("page:metadata", () => {
 			"ContactPage",
 			"BreadcrumbList",
 		]);
+	});
+
+	it("describes an entry with no record yet exactly as its record would", async () => {
+		const runtime = await runtimeHost();
+		await runtime.fixtures.collection({
+			slug: "posts",
+			label: "Posts",
+			fields: [
+				{ slug: "title", label: "Title", type: "string" },
+				{ slug: "json_ld", label: "JSON-LD", type: "json" },
+				{ slug: "featured_image", label: "Image", type: "image" },
+			],
+		});
+		const byline = await runtime.fixtures.byline({
+			slug: "ada",
+			displayName: "Ada Lovelace",
+			websiteUrl: "https://ada.test",
+		});
+		const entry = await runtime.fixtures.content("posts", {
+			slug: "hello",
+			data: {
+				title: "Hello",
+				json_ld: { "@type": "Event", "@id": "https://acme.test/blog/hello#launch", name: "Launch" },
+				featured_image: {
+					id: "hero",
+					src: "https://acme.test/hero.jpg",
+					width: 1200,
+					height: 630,
+				},
+			},
+			status: "published",
+			publishedAt: "2026-09-01T10:00:00.000Z",
+		});
+		await runtime.actions.content.update("posts", entry.id, {
+			bylines: [{ bylineId: byline.id }],
+		});
+		const key = `posts:${entry.id}`;
+		const saved = await savedRecord(runtime, key);
+		expect(saved?.authors).toEqual([{ name: "Ada Lovelace", url: "https://ada.test" }]);
+		const context = page({
+			url: "https://acme.test/blog/hello",
+			path: "/blog/hello",
+			pageType: "article",
+			pageTitle: "Hello",
+			image: "https://acme.test/hero.jpg",
+			kind: "content",
+			content: { collection: "posts", id: entry.id, slug: "hello" },
+		});
+		const withRecord = graphNodes(jsonLd(await metadata(runtime, context), "primary"));
+
+		// As on a site that had the entry before the plugin was installed.
+		await runtime.fixtures.plugin.storage("entries", key, null);
+		expect(await runtime.inspect.storage.get("entries", key)).toBeNull();
+		const withoutRecord = graphNodes(jsonLd(await metadata(runtime, context), "primary"));
+
+		expect(withoutRecord).toEqual(withRecord);
+		expect(withoutRecord).toContainEqual(
+			expect.objectContaining({
+				author: [{ "@type": "Person", name: "Ada Lovelace", url: "https://ada.test" }],
+			}),
+		);
+		expect(withoutRecord).toContainEqual(expect.objectContaining({ "@type": "Event" }));
+		// The picture's size, from the entry's own image field.
+		expect(JSON.stringify(withoutRecord)).toContain('"width":1200,"height":630');
+		expect(await runtime.inspect.storage.get("entries", key)).toBeNull();
 	});
 
 	it("keeps the config in the sandbox between page views, and a save shows at once", async () => {
@@ -220,10 +299,10 @@ describe("page:metadata", () => {
 			kind: "content",
 			content: { collection: "posts", id: entry.id, slug: "hello" },
 		});
+		const stored = await savedRecord(runtime, `posts:${entry.id}`);
 
 		const contributions = await metadata(runtime, context);
 
-		const stored = await runtime.inspect.storage.get<EntryRecord>("entries", `posts:${entry.id}`);
 		expect(stored).toMatchObject({
 			v: 1,
 			publishedAt: "2026-09-01T10:00:00.000Z",
