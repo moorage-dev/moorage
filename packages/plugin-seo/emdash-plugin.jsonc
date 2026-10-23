@@ -24,7 +24,7 @@
 	"release": {
 		"requires": { "env:emdash": ">=1.2.0" },
 		"artifacts": {
-			// The Moorage cleat (moorage.dev/logo.png), the same on every plugin.
+			// This plugin's own glyph on the Moorage land tile, from icon.svg (scripts/render-banners.mjs in apps/demo-site).
 			"icon": { "file": "./images/icon.png" },
 			// Cover at the top of the listing and its share image: 3:1, from banner.svg (scripts/render-banners.mjs in apps/demo-site).
 			"banner": { "file": "./images/banner.png" },

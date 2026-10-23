@@ -7,18 +7,17 @@
 .paper{fill:#FCFCF9}.water{fill:#DCEBF2}.land{fill:#F2E9CF}
 .shore{fill:none;stroke:#16202A;stroke-width:3}
 .contour{fill:none;stroke:#C5D0D8;stroke-width:2}
-.line{fill:none;stroke:#16202A;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round}
-.thin{fill:none;stroke:#16202A;stroke-width:2.5;stroke-linecap:round}
-.grey{fill:none;stroke:#5F6E7B;stroke-width:6;stroke-linecap:round}
-.bar{fill:none;stroke:#16202A;stroke-width:10;stroke-linecap:round}
-.mbar{fill:none;stroke:#A0185A;stroke-width:10;stroke-linecap:round}
-.track{fill:none;stroke:#A0185A;stroke-width:4;stroke-dasharray:16 11;stroke-linecap:round}
-.head{fill:none;stroke:#A0185A;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.line{fill:none;stroke:#16202A;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+.grey{fill:none;stroke:#5F6E7B;stroke-width:7;stroke-linecap:round}
+.pale{fill:none;stroke:#C5D0D8;stroke-width:7;stroke-linecap:round}
+.mbar{fill:none;stroke:#A0185A;stroke-width:12;stroke-linecap:round}
+.track{fill:none;stroke:#A0185A;stroke-width:5;stroke-dasharray:16 11;stroke-linecap:round}
+.head{fill:none;stroke:#A0185A;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
 .mark{color:#A0185A;fill:#A0185A}
-.box{fill:#FCFCF9;stroke:#16202A;stroke-width:3.5}
-.dashed{fill:#FCFCF9;stroke:#4A5764;stroke-width:3.5;stroke-dasharray:4 7;stroke-linecap:round}
-.ring{fill:#FCFCF9;stroke:#16202A;stroke-width:3.5}
-.disc{fill:#16202A}
+.box{fill:#FCFCF9;stroke:#16202A;stroke-width:5}
+.dashed{fill:#FCFCF9;stroke:#4A5764;stroke-width:4;stroke-dasharray:5 8;stroke-linecap:round}
+.ring{fill:#FCFCF9;stroke:#16202A;stroke-width:5}
+.disc{fill:#16202A}.mfill{fill:#A0185A}
 .name{font-family:Newsreader,Georgia,serif;font-weight:400;font-size:66px;letter-spacing:-0.015em;fill:#16202A}
 .say{font-family:Newsreader,Georgia,serif;font-weight:400;font-size:40px;fill:#4A5764}
 </style>
@@ -32,15 +31,14 @@
 <text class="name" x="282" y="190">Lead Delivery</text>
 <text class="say" x="285" y="256">Form enquiries, where you work.</text>
 <use class="mark" href="#cleat" x="748" y="410" width="72" height="42"/>
-<rect class="box" x="950" y="180" width="120" height="146" rx="6"/>
-<path class="grey" d="M970 212H1050M970 246H1050M970 280H1020" style="stroke-width:5"/>
-<rect x="970" y="298" width="56" height="14" rx="4" style="fill:#A0185A"/>
-<path class="track" d="M1078 222C1110 222 1120 170 1160 170"/>
-<path class="track" d="M1078 253H1160"/>
-<path class="track" d="M1078 284C1110 284 1120 336 1160 336"/>
-<path class="head" d="M1150 160L1162 170L1150 180M1150 243L1162 253L1150 263M1150 326L1162 336L1150 346"/>
-<rect class="box" x="1172" y="152" width="48" height="36" rx="3"/>
-<path class="thin" d="M1172 154L1196 174L1220 154" style="stroke-width:3"/>
-<circle class="ring" cx="1196" cy="253" r="17"/>
-<circle class="disc" cx="1196" cy="336" r="15"/>
+<rect class="box" x="948" y="178" width="112" height="150" rx="6"/>
+<path class="grey" d="M968 210H1040M968 242H1040M968 274H1016" style="stroke-width:6"/>
+<rect x="968" y="294" width="56" height="16" rx="5" class="mfill"/>
+<path class="track" d="M1068 220C1098 220 1106 170 1138 170"/>
+<path class="track" d="M1068 253H1138"/>
+<path class="track" d="M1068 286C1098 286 1106 336 1138 336"/>
+<path class="head" d="M1128 160L1140 170L1128 180M1128 243L1140 253L1128 263M1128 326L1140 336L1128 346"/>
+<rect class="box" x="1152" y="148" width="64" height="46" rx="5"/><path class="line" d="M1154 152L1184 176L1214 152"/>
+<rect class="box" x="1152" y="230" width="64" height="46" rx="5"/><circle cx="1172" cy="248" r="7" class="disc"/><path class="line" d="M1162 268C1164 260 1180 260 1182 268M1192 246H1206M1192 258H1206" style="stroke-width:4.5"/>
+<path class="line" d="M1170 314V326M1198 314V326"/><path d="M1160 326H1208V338A24 24 0 0 1 1160 338Z" class="box"/><path class="line" d="M1184 362V372"/>
 </svg>

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500" role="img" aria-label="Backup &amp; Restore. Back to any moment in 30 days.">
+<!-- Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE. -->
+<!-- Registry banner (3:1). Words, the cleat and the drawing stay inside x 280-1220, the part a 2:1 or 1.91:1 share card keeps.
+     Render: node scripts/render-banners.mjs (fonts: Newsreader, from moorage-web). -->
+<defs><symbol id="cleat" viewBox="0 0 48 28"><path fill="currentColor" d="M3.6 3.4C5.8 2.8 8.2 4 11.2 5C15 6.2 19.4 6.6 24 6.6S33 6.2 36.8 5C39.8 4 42.2 2.8 44.4 3.4A3.7 3.7 0 0 1 45 10.5C42 11.7 38.4 11.9 35.6 13.3C34 14.1 33.3 15.2 33 16.6L32.4 19.4H38V24H10V19.4H15.6L15 16.6C14.7 15.2 14 14.1 12.4 13.3C9.6 11.9 6 11.7 3 10.5A3.7 3.7 0 0 1 3.6 3.4Z"/><rect y="25.6" width="48" height="2.4" fill="currentColor"/></symbol></defs>
+<style>
+.paper{fill:#FCFCF9}.water{fill:#DCEBF2}.land{fill:#F2E9CF}
+.shore{fill:none;stroke:#16202A;stroke-width:3}
+.contour{fill:none;stroke:#C5D0D8;stroke-width:2}
+.line{fill:none;stroke:#16202A;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+.grey{fill:none;stroke:#5F6E7B;stroke-width:7;stroke-linecap:round}
+.pale{fill:none;stroke:#C5D0D8;stroke-width:7;stroke-linecap:round}
+.mbar{fill:none;stroke:#A0185A;stroke-width:12;stroke-linecap:round}
+.track{fill:none;stroke:#A0185A;stroke-width:5;stroke-dasharray:16 11;stroke-linecap:round}
+.head{fill:none;stroke:#A0185A;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+.mark{color:#A0185A;fill:#A0185A}
+.box{fill:#FCFCF9;stroke:#16202A;stroke-width:5}
+.dashed{fill:#FCFCF9;stroke:#4A5764;stroke-width:4;stroke-dasharray:5 8;stroke-linecap:round}
+.ring{fill:#FCFCF9;stroke:#16202A;stroke-width:5}
+.disc{fill:#16202A}.mfill{fill:#A0185A}
+.name{font-family:Newsreader,Georgia,serif;font-weight:400;font-size:66px;letter-spacing:-0.015em;fill:#16202A}
+.say{font-family:Newsreader,Georgia,serif;font-weight:400;font-size:40px;fill:#4A5764}
+</style>
+<rect class="paper" width="1500" height="500"/>
+<path class="water" d="M0 0H912C902 70 930 140 918 230S936 380 920 500H0Z"/>
+<path class="contour" d="M912 0C902 70 930 140 918 230S936 380 920 500"/>
+<path class="land" d="M0 0H852C842 70 870 140 858 230S876 380 860 500H0Z"/>
+<path class="shore" d="M852 0C842 70 870 140 858 230S876 380 860 500"/>
+<path class="contour" d="M1290 0C1270 90 1330 160 1310 250S1340 400 1320 500"/>
+<path class="contour" d="M1400 0C1384 100 1440 170 1420 260S1446 410 1432 500" style="stroke-dasharray:10 10"/>
+<text class="name" x="282" y="190">Backup &amp; Restore</text>
+<text class="say" x="285" y="256">Back to any moment in 30 days.</text>
+<use class="mark" href="#cleat" x="748" y="410" width="72" height="42"/>
+<g transform="translate(944 150) scale(1.05)"><circle cx="52" cy="52" r="36" fill="#FCFCF9" stroke="none"/><path fill="none" d="M19.37 36.79A36 36 0 1 1 18.17 64.31" stroke="#16202A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M32.94 33.5L18.11 39.5L13.17 24.29" fill="none" stroke="#A0185A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path fill="none" d="M52 32V52L66 62" stroke="#16202A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></g>
+<path class="line" d="M948 316H1216"/>
+<circle class="ring" cx="960" cy="316" r="9"/><circle class="ring" cx="1004" cy="316" r="9"/><circle class="ring" cx="1048" cy="316" r="9"/><circle class="ring" cx="1092" cy="316" r="9"/><circle class="ring" cx="1136" cy="316" r="9"/><circle class="ring" cx="1180" cy="316" r="9"/>
+<circle class="disc" cx="1048" cy="316" r="13"/>
+<circle class="mfill" cx="1206" cy="316" r="12"/>
+<path class="track" d="M1200 296C1186 226 1080 232 1058 290"/>
+<path class="head" d="M1050 278L1057 293L1071 284"/>
+</svg>

@@ -16,6 +16,10 @@
 	"release": {
 		"requires": { "env:emdash": ">=1.3.0" },
 		"artifacts": {
+			// This plugin's own glyph on the Moorage land tile, from icon.svg (scripts/render-banners.mjs in apps/demo-site).
+			"icon": { "file": "./images/icon.png" },
+			// Cover at the top of the listing and its share image: 3:1, from banner.svg (scripts/render-banners.mjs in apps/demo-site).
+			"banner": { "file": "./images/banner.png" },
 			"screenshots": [
 				{ "file": "./images/pick-a-moment.png", "lang": "en" },
 				{ "file": "./images/review.png", "lang": "en" },

@@ -7,18 +7,17 @@
 .paper{fill:#FCFCF9}.water{fill:#DCEBF2}.land{fill:#F2E9CF}
 .shore{fill:none;stroke:#16202A;stroke-width:3}
 .contour{fill:none;stroke:#C5D0D8;stroke-width:2}
-.line{fill:none;stroke:#16202A;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round}
-.thin{fill:none;stroke:#16202A;stroke-width:2.5;stroke-linecap:round}
-.grey{fill:none;stroke:#5F6E7B;stroke-width:6;stroke-linecap:round}
-.bar{fill:none;stroke:#16202A;stroke-width:10;stroke-linecap:round}
-.mbar{fill:none;stroke:#A0185A;stroke-width:10;stroke-linecap:round}
-.track{fill:none;stroke:#A0185A;stroke-width:4;stroke-dasharray:16 11;stroke-linecap:round}
-.head{fill:none;stroke:#A0185A;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.line{fill:none;stroke:#16202A;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+.grey{fill:none;stroke:#5F6E7B;stroke-width:7;stroke-linecap:round}
+.pale{fill:none;stroke:#C5D0D8;stroke-width:7;stroke-linecap:round}
+.mbar{fill:none;stroke:#A0185A;stroke-width:12;stroke-linecap:round}
+.track{fill:none;stroke:#A0185A;stroke-width:5;stroke-dasharray:16 11;stroke-linecap:round}
+.head{fill:none;stroke:#A0185A;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
 .mark{color:#A0185A;fill:#A0185A}
-.box{fill:#FCFCF9;stroke:#16202A;stroke-width:3.5}
-.dashed{fill:#FCFCF9;stroke:#4A5764;stroke-width:3.5;stroke-dasharray:4 7;stroke-linecap:round}
-.ring{fill:#FCFCF9;stroke:#16202A;stroke-width:3.5}
-.disc{fill:#16202A}
+.box{fill:#FCFCF9;stroke:#16202A;stroke-width:5}
+.dashed{fill:#FCFCF9;stroke:#4A5764;stroke-width:4;stroke-dasharray:5 8;stroke-linecap:round}
+.ring{fill:#FCFCF9;stroke:#16202A;stroke-width:5}
+.disc{fill:#16202A}.mfill{fill:#A0185A}
 .name{font-family:Newsreader,Georgia,serif;font-weight:400;font-size:66px;letter-spacing:-0.015em;fill:#16202A}
 .say{font-family:Newsreader,Georgia,serif;font-weight:400;font-size:40px;fill:#4A5764}
 </style>
@@ -33,12 +32,12 @@
 <text class="name" x="282" y="224">Broken Links</text>
 <text class="say" x="285" y="290">Dead links found, then fixed.</text>
 <use class="mark" href="#cleat" x="748" y="410" width="72" height="42"/>
-<path class="line" d="M985 300H1060"/>
-<path class="line" d="M1110 300H1180" style="stroke:#C5D0D8"/>
-<circle class="ring" cx="985" cy="300" r="18"/>
-<circle class="ring" cx="1085" cy="300" r="18"/>
-<path class="thin" d="M1061 324L1109 276" style="stroke-width:3.5"/>
-<circle class="disc" cx="1190" cy="300" r="13"/>
-<path class="track" d="M1000 286C1030 190 1150 190 1182 278"/>
-<path class="head" d="M1172 266L1184 283L1194 264"/>
+<g transform="translate(940 190) scale(1.2)"><path d="M50 86C22 68 10 52 10 36C10 23 20 14 31 14C40 14 46 19 50 26C54 19 60 14 69 14C80 14 90 23 90 36C90 52 78 68 50 86Z" fill="#FCFCF9" stroke="#16202A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path fill="none" d="M8 52H32L40 38L50 66L58 46L63 52H92" stroke="#A0185A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="rotate(-35 1160 270)">
+<path class="line" d="M1138 248H1112A22 22 0 0 0 1112 292H1138" style="stroke-width:9"/>
+<path class="line" d="M1182 248H1208A22 22 0 0 1 1208 292H1182" style="stroke-width:9"/>
+</g>
+<path class="head" d="M1148 236L1144 224M1172 304L1176 316" style="stroke-width:5"/>
+<path class="track" d="M1112 230C1120 180 1196 176 1206 222"/>
+<path class="head" d="M1196 214L1207 226L1216 212"/>
 </svg>

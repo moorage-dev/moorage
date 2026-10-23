@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Backup & Restore">
+<!-- Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE. -->
+<!-- Registry icon (square; the registry rounds the corners). Glyph drawn on a 100-unit grid, scaled 3.2. -->
+<rect width="512" height="512" fill="#F2E9CF"/>
+<g transform="translate(96 96) scale(3.2)"><circle cx="52" cy="52" r="36" fill="#FCFCF9" stroke="none"/><path fill="none" d="M19.37 36.79A36 36 0 1 1 18.17 64.31" stroke="#16202A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><path d="M32.94 33.5L18.11 39.5L13.17 24.29" fill="none" stroke="#A0185A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><path fill="none" d="M52 32V52L66 62" stroke="#16202A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

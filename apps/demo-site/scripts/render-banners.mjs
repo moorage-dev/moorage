@@ -7,7 +7,8 @@ import { pathToFileURL } from "node:url";
 
 // node scripts/render-banners.mjs <fonts folder>
 // Renders each plugin's registry banner, packages/plugin-*/images/banner.svg, to banner.png next to it:
-// 3000 x 1000 (twice 1500 x 500) when that stays under 1 MiB, else 1500 x 500. The SVGs name their fonts
+// 3000 x 1000 (twice 1500 x 500) when that stays under 1 MiB, else 1500 x 500. Also renders each
+// images/icon.svg to icon.png, 512 x 512 (square; the registry rounds the corners). The SVGs name their fonts
 // (Newsreader); <fonts folder> holds the woff2 files moorage.dev uses (moorage-web/src/assets/fonts).
 // Run from apps/demo-site (it has Playwright): pnpm --filter demo-site exec node scripts/render-banners.mjs ../../../moorage-web/src/assets/fonts
 import { chromium } from "@playwright/test";
@@ -60,6 +61,23 @@ html,body{margin:0}svg{display:block;font-optical-sizing:auto}
 		console.log(`${out} ${1500 * scale}x${500 * scale} ${(size / 1024).toFixed(0)} KB`);
 		if (size < MiB) break;
 	}
+}
+for (const dir of readdirSync(packages).filter((d) => d.startsWith("plugin-"))) {
+	const svgPath = `${packages}${dir}/images/icon.svg`;
+	if (!existsSync(svgPath)) continue;
+	writeFileSync(
+		tmp,
+		`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0}svg{display:block}</style></head><body>${readFileSync(svgPath, "utf8")}</body></html>`,
+	);
+	const page = await browser.newPage({
+		viewport: { width: 512, height: 512 },
+		colorScheme: "light",
+	});
+	await page.goto(pathToFileURL(tmp).href, { waitUntil: "load" });
+	const out = `${packages}${dir}/images/icon.png`;
+	await page.locator("svg").screenshot({ path: out });
+	await page.close();
+	console.log(`${out} 512x512 ${(statSync(out).size / 1024).toFixed(0)} KB`);
 }
 rmSync(tmp, { force: true });
 await browser.close();
