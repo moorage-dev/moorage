@@ -134,6 +134,8 @@ export interface Options {
 	/** Who gets emails. Undefined until the first Admin opens the page. */
 	recipients?: string[];
 	outbound: boolean;
+	/** The admin's choice to hide the help line at the foot of the page (shown when unset). */
+	hideHelpLine?: boolean;
 }
 
 export interface AlertItem {

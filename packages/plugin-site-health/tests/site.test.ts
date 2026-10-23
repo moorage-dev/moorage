@@ -6,6 +6,7 @@ import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MISSING_PATH } from "../src/checklist.js";
+import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import type { LinkRow } from "../src/model.js";
 import type { Alerts, Queue, ScanState, Summary } from "../src/state.js";
 import { idFor } from "../src/url.js";
@@ -606,6 +607,85 @@ describe("a site in the middle of an update", () => {
 		const page = text(await runtime.admin.loadPage(PAGE));
 		expect(page).toContain("We cannot open your pages to check them");
 		expect(page).not.toContain("middle of an update");
+	});
+});
+
+describe("the help line", () => {
+	const line = (response: BlockResponse) =>
+		response.blocks.find((block) => block.type === "actions" && block.block_id === HELP_LINE);
+
+	it("ends an admin's page, under both tabs, with the guide, the plugins and the maker", async () => {
+		const runtime = await start();
+		const page = await runtime.admin.loadPage(PAGE);
+		expect(page.blocks.at(-1)).toEqual({
+			type: "actions",
+			block_id: HELP_LINE,
+			elements: [
+				{
+					type: "link",
+					label: "Help",
+					target: {
+						kind: "external",
+						url: "https://moorage.dev/guides/find-and-fix-broken-links-on-emdash",
+					},
+				},
+				{
+					type: "link",
+					label: "More free plugins",
+					target: { kind: "external", url: "https://moorage.dev/plugins" },
+				},
+				{
+					type: "link",
+					label: "by Moorage",
+					target: { kind: "external", url: "https://moorage.dev" },
+				},
+			],
+		});
+		expect(validateBlockResponse(page, { pluginPagePaths: [PAGE] }).valid).toBe(true);
+		const saved = await runtime.admin.submit(PAGE, "save_options", { recipients: "a@acme.test" });
+		expect(saved.blocks.filter((block) => block.block_id === HELP_LINE)).toHaveLength(1);
+	});
+
+	it("never shows to an editor, nor on the widget; authors and contributors cannot open the page", async () => {
+		const runtime = await start();
+		const editor = await runtime.fixtures.user({ email: "sam@acme.test", role: "editor" });
+		expect(text(await runtime.admin.loadPage(PAGE, { user: editor }))).not.toMatch(/moorage/i);
+		expect(text(await runtime.admin.loadWidget("site-health"))).not.toMatch(/moorage/i);
+		for (const role of ["author", "contributor"] as const) {
+			const user = await runtime.fixtures.user({ email: `${role}@acme.test`, role });
+			await expect(runtime.admin.loadPage(PAGE, { user })).rejects.toThrow(/403/);
+		}
+	});
+
+	it("hides with the switch under Options, keeps it through other saves, and shows again", async () => {
+		const runtime = await start();
+		await runtime.admin.loadPage(PAGE);
+		const hidden = await runtime.admin.submit(PAGE, HIDE_ACTION, { hide_help_line: true });
+		expect(line(hidden)).toBeUndefined();
+		expect(text(hidden)).toContain(HIDE_ACTION);
+		expect(
+			(await runtime.inspect.setting<{ hideHelpLine?: boolean }>("options"))?.hideHelpLine,
+		).toBe(true);
+		expect(line(await runtime.admin.loadPage(PAGE))).toBeUndefined();
+
+		await runtime.admin.submit(PAGE, "save_options", {
+			recipients: "b@acme.test",
+			outbound: false,
+		});
+		await runtime.admin.submit(PAGE, HIDE_ACTION, {});
+		expect(line(await runtime.admin.loadPage(PAGE))).toBeUndefined();
+
+		expect(
+			line(await runtime.admin.submit(PAGE, HIDE_ACTION, { hide_help_line: false })),
+		).toBeDefined();
+	});
+
+	it("an editor cannot use the switch", async () => {
+		const runtime = await start();
+		await runtime.admin.loadPage(PAGE);
+		const editor = await runtime.fixtures.user({ email: "sam@acme.test", role: "editor" });
+		await runtime.admin.submit(PAGE, HIDE_ACTION, { hide_help_line: true }, { user: editor });
+		expect(line(await runtime.admin.loadPage(PAGE))).toBeDefined();
 	});
 });
 

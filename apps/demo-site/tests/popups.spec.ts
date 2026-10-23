@@ -12,6 +12,8 @@ import {
 	type Page,
 } from "@playwright/test";
 
+import { expectHelpLine, helpLinks, setHidden } from "./help-line.js";
+
 /**
  * Popups, in a real browser, against the approved mockup's key facts
  * (planning/plugins/popups/mockup.html): sizes, positions and words.
@@ -1109,4 +1111,39 @@ test.describe("with the cookie banner", () => {
 		expect(Number(layers[0])).toBeLessThan(Number(layers[1]));
 		await page.context().close();
 	});
+});
+
+test("an admin sees the help line on the list and on a new popup, and the switch in Settings hides it", async () => {
+	test.setTimeout(240_000);
+	const guide = "add-a-popup-or-top-bar-to-emdash";
+	const page = await adminContext.newPage();
+	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+	await page.addLocatorHandler(welcome, async () => {
+		await welcome.getByRole("button", { name: "Get Started" }).click();
+	});
+	const open = async () => {
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible({ timeout: 150_000 });
+	};
+	await open();
+	await expectHelpLine(page, guide);
+	await page.getByRole("button", { name: "New popup" }).click();
+	await expect(page.getByLabel("Name (only you see it)")).toBeVisible();
+	await expectHelpLine(page, guide);
+
+	await open();
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await expectHelpLine(page, guide);
+	await setHidden(page, true);
+	await expect(page.getByText("Saved. The help line is hidden.")).toBeVisible();
+	await expect(helpLinks(page)).toHaveCount(0);
+	await open();
+	await expect(helpLinks(page)).toHaveCount(0);
+
+	// Back as it was, for the tests after this one.
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await setHidden(page, false);
+	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
+	await expectHelpLine(page, guide);
+	await page.close();
 });

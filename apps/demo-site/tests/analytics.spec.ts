@@ -9,6 +9,8 @@ import {
 	type Page,
 } from "@playwright/test";
 
+import { expectHelpLine, helpLinks, setHidden } from "./help-line.js";
+
 /**
  * Analytics & Cookie Consent, in a real browser.
  *
@@ -935,8 +937,14 @@ test.describe("the consent record and the admin page", () => {
 			),
 		).toBeVisible();
 		await expect(page.getByText("The banner has no link to your privacy policy")).toBeHidden();
-		// The product name of the company behind the plugin never shows in the admin.
-		await expect(page.locator("main")).not.toContainText(/moorage/i);
+		// The company behind the plugin is named only in the admin's help line at the foot.
+		await expect(helpLinks(page)).toHaveCount(3);
+		const words = await page.locator("main").evaluate((main) => {
+			const copy = main.cloneNode(true) as HTMLElement;
+			for (const link of copy.querySelectorAll('a[href^="https://moorage.dev"]')) link.remove();
+			return copy.textContent ?? "";
+		});
+		expect(words).not.toMatch(/moorage/i);
 		await page.close();
 
 		// And the visitor's page now carries the tool.
@@ -960,4 +968,36 @@ test.describe("the consent record and the admin page", () => {
 		expect(emitted).not.toMatch(/moorage/i);
 		await visitor.close();
 	});
+});
+
+test("an admin sees the help line under every tab, and the switch under Advanced hides it", async ({
+	page,
+}) => {
+	const guide = "add-google-analytics-and-a-cookie-banner-to-emdash";
+	const open = async () => {
+		await page.goto(ADMIN_PAGE);
+		await expect(page.getByRole("tab", { name: "Status" })).toBeVisible({ timeout: 60_000 });
+	};
+	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+	await page.addLocatorHandler(welcome, async () => {
+		await welcome.getByRole("button", { name: "Get Started" }).click();
+	});
+	await open();
+	await expectHelpLine(page, guide);
+	await page.getByRole("tab", { name: "Cookie banner" }).click();
+	await expectHelpLine(page, guide);
+	await page.getByRole("tab", { name: "Advanced" }).click();
+	await expectHelpLine(page, guide);
+
+	await setHidden(page, true);
+	await expect(page.getByText("Saved. The help line is hidden.")).toBeVisible();
+	await expect(helpLinks(page)).toHaveCount(0);
+	await open();
+	await expect(helpLinks(page)).toHaveCount(0);
+
+	// Back as it was, for the tests after this one.
+	await page.getByRole("tab", { name: "Advanced" }).click();
+	await setHidden(page, false);
+	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
+	await expectHelpLine(page, guide);
 });

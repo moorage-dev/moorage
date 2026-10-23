@@ -33,6 +33,7 @@ import {
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, listForms, type FormCheck } from "./forms.js";
 import { isPopupPreview, pageFragments, previewItem } from "./fragment.js";
+import { withHelpLine } from "./help-line.js";
 import { fetchOwnSite } from "./self-fetch.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import {
@@ -357,7 +358,9 @@ export function createPlugin() {
 						forgetSettings(PLUGIN_ID);
 					}
 					if (outcome.problems) await ctx.kv.set(PROBLEMS_KEY, outcome.problems);
-					return outcome.response;
+					// At the foot of every screen of the page (list, popup, preview), for admins only.
+					const settings = (outcome.save ?? store).settings;
+					return withHelpLine(outcome.response, admin && !settings.hideHelpLine);
 				},
 			},
 			// Public write: one count for one popup. See `stats.ts` for the limits.

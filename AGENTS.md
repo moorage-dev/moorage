@@ -22,7 +22,7 @@ no company website, no private services, no secrets, no customer data.
 
 - Licence is MIT. Every source file starts with `// Copyright <year> GoSi Tech. Licensed under the MIT License; see LICENSE.` (GoSi Tech is the legal owner; Moorage is its product name) followed by a blank line (the import sorter leaves it on line 1 only when a blank line follows). Every package has `"license": "MIT"` and a copy of `LICENSE`.
 - Depend only on EmDash core, official `@emdash-cms/*` packages and our own packages. No third-party EmDash plugins. Extend official plugins by configuration, wrapping, or an upstream PR, never a fork.
-- Every plugin must solve its whole problem on any EmDash site with no account and no key. No Moorage-specific fields in registry builds. The word "Moorage" never appears inside the EmDash admin UI.
+- Every plugin must solve its whole problem on any EmDash site with no account and no key. No Moorage-specific fields in registry builds. Editors never see "Moorage" in the EmDash admin. Admins see one quiet line at the foot of each plugin page ("Help · More free plugins · by Moorage", `src/help-line.ts` in each package), which they can hide in that plugin's settings; never in widgets, editor panels, emails or anything public.
 - One admin page per plugin, few settings, nothing a non-technical editor can break.
 - Formatting: tabs, oxfmt. Linting: oxlint. TypeScript strict with `noUncheckedIndexedAccess` and `verbatimModuleSyntax`.
 - Commit messages: imperative, one line, no attribution lines.

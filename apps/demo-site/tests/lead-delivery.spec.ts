@@ -9,6 +9,8 @@ import {
 	type Page,
 } from "@playwright/test";
 
+import { expectHelpLine, helpLinks, setHidden } from "./help-line.js";
+
 // Lead Delivery on the demo site. No real service is called: the HubSpot delivery is turned off
 // before any enquiry, other apps point at a `.invalid` host, and email goes to the dev console
 // provider (`/_emdash/api/dev/emails`). On localhost a site cannot call itself, so the email way
@@ -525,3 +527,28 @@ test("enquiries from a form no delivery takes: a banner, then one choice adds th
 });
 
 // The README and registry pictures: tests/lead-delivery-screenshots.spec.ts.
+
+test("an admin sees the help line, and the switch in the site settings hides it", async () => {
+	const guide = "send-emdash-form-enquiries-to-email-or-hubspot";
+	const page = await adminContext.newPage();
+	await open(page);
+	await expectHelpLine(page, guide);
+	await page.getByRole("button", { name: "See all enquiries" }).click();
+	await expectHelpLine(page, guide);
+
+	await open(page);
+	const settings = page.getByRole("button", { name: "Settings for the whole site" });
+	if ((await settings.getAttribute("aria-expanded")) === "false") await settings.click();
+	await setHidden(page, true);
+	await expect(page.getByText("Saved. The help line is hidden.")).toBeVisible();
+	await expect(helpLinks(page)).toHaveCount(0);
+	await open(page);
+	await expect(helpLinks(page)).toHaveCount(0);
+
+	// Back as it was, for the tests after this one.
+	if ((await settings.getAttribute("aria-expanded")) === "false") await settings.click();
+	await setHidden(page, false);
+	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
+	await expectHelpLine(page, guide);
+	await page.close();
+});

@@ -1544,6 +1544,15 @@ const ACTIONS: ActionCase[] = [
 		count: 6,
 		before: 21,
 	},
+	// New in 0.4.1: the switch that hides the help line. The same one save as the alert list.
+	{
+		action: "save_help_line",
+		values: { hide_help_line: true },
+		did: async (h) => {
+			expect((await h.inspect.setting<Config>("config"))?.hideHelpLine).toBe(true);
+		},
+		count: 6,
+	},
 	{
 		action: "check_reach",
 		seed: async (h) => h.http.respond(PING, notReachable()),

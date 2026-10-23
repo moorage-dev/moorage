@@ -53,6 +53,8 @@ export interface AnalyticsConfig {
 	/** Address prefixes that are never tracked, e.g. "/thank-you". */
 	exclude: string[];
 	gtmLoading: GtmLoading;
+	/** The admin's choice to hide the help line at the foot of the page (shown by default). */
+	hideHelpLine: boolean;
 }
 
 export const DEFAULT_TITLE = "Can we use cookies?";
@@ -101,6 +103,7 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 	},
 	exclude: [],
 	gtmLoading: "choice",
+	hideHelpLine: false,
 };
 
 const MAX_EXCLUDES = 50;
@@ -300,6 +303,7 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 		},
 		exclude: parseExcludes(source.exclude),
 		gtmLoading: oneOf(source.gtmLoading, ["choice", "immediate"], defaults.gtmLoading),
+		hideHelpLine: source.hideHelpLine === true,
 	};
 }
 

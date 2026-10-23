@@ -2,6 +2,8 @@
 
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
+import { expectHelpLine, helpLinks, setHidden } from "./help-line.js";
+
 // Content Approval with three people: Ellen (Admin, approves), Sam (Editor, writes) and
 // Jo (Contributor). Dev sign-in only ever makes an Admin, so each person signs in once,
 // takes a name of their own, and Ellen then gives Sam and Jo their roles.
@@ -513,6 +515,37 @@ test.describe.serial("Content Approval", () => {
 		await front(ellen);
 		await ellen.page.goto(APPROVALS);
 		await expect(ellen.page.getByText(/Pages · asked by Jo Park/)).toBeVisible({ timeout: 60_000 });
+	});
+
+	test("Ellen sees the help line and can hide it in Settings; Sam and Jo never see it", async () => {
+		const guide = "approve-pages-before-they-go-live-on-emdash";
+		for (const person of [sam, jo]) {
+			const page = await front(person);
+			await page.goto(APPROVALS);
+			await expect(page.getByRole("heading", { name: "Approvals" }).first()).toBeVisible({
+				timeout: 60_000,
+			});
+			await expect(page.locator("main")).not.toContainText(/moorage/i);
+		}
+		const page = await front(ellen);
+		await page.goto(APPROVALS);
+		await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible({ timeout: 60_000 });
+		await expectHelpLine(page, guide);
+		await page.getByRole("tab", { name: "Settings" }).click();
+		await expectHelpLine(page, guide);
+		// The switch is part of the settings form, saved with the rest.
+		await setHidden(page, true);
+		await expect(page.getByText(/^Saved\./)).toBeVisible();
+		await expect(helpLinks(page)).toHaveCount(0);
+		await page.goto(APPROVALS);
+		await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible({ timeout: 60_000 });
+		await expect(helpLinks(page)).toHaveCount(0);
+		await expect(page.getByText(/Pages · asked by Jo Park/)).toBeVisible();
+
+		await page.getByRole("tab", { name: "Settings" }).click();
+		await setHidden(page, false);
+		await expect(helpLinks(page)).toHaveCount(3);
+		await expectHelpLine(page, guide);
 	});
 
 	// EmDash 1.3.1 shows plugin editor buttons and panels to a Contributor on their own draft but

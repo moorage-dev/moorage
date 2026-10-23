@@ -93,6 +93,8 @@ export interface Config {
 	 * name. Nothing secret. The banner shows until dismissed or until EmDash has ended it (90 days).
 	 */
 	accessLeft?: { at: string; form: string };
+	/** The admin's choice to hide the help line at the foot of the page (shown when unset). */
+	hideHelpLine?: true;
 }
 
 /** One enquiry as this plugin received it. Contents are deleted once all its deliveries are done. */

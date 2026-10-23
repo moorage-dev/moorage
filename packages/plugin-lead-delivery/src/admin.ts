@@ -44,6 +44,7 @@ import {
 } from "./deliver.js";
 import { UNREADABLE_KEY } from "./enquiry.js";
 import { checkReach, findForm, refreshDefinitions, withConnected, withForm } from "./forms.js";
+import { hiddenFrom, HIDE_ACTION, hideForm, withHelpLine } from "./help-line.js";
 import { CHOICES, choiceFor, matchedCount, parseHubSpot, UNMATCHED } from "./hubspot.js";
 import { ACCESS_LEFT_WHAT_TO_DO, instructions } from "./messages.js";
 import { type Meter, meter } from "./meter.js";
@@ -427,6 +428,7 @@ function settingsAccordion(data: Data, open: boolean): Block {
 				}),
 			]),
 			context(KEEP_NOTE),
+			hideForm(config.hideHelpLine === true),
 		],
 	};
 }
@@ -1830,11 +1832,32 @@ function lightView(returnTo: View, title: string, text: string, data: Data): Blo
 	return [way, header(title), section(text)];
 }
 
+/**
+ * The Lead delivery page and its dashboard widget. Every screen of the page ends with the help
+ * line for an admin who has not hidden it, read from the setup as it is after this request's
+ * changes; the widget never gets it.
+ */
 export async function handleAdmin(
 	input: unknown,
 	user: User | undefined,
 	requestUrl: string,
 	rawCtx: PluginContext,
+): Promise<BlockResponse> {
+	const seen: { data?: Data } = {};
+	const response = await adminScreen(input, user, requestUrl, rawCtx, seen);
+	const widgetLoad =
+		isRecord(input) && input.type === "page_load" && str(input.page).startsWith("widget:");
+	const data = seen.data;
+	if (widgetLoad || !data) return response;
+	return withHelpLine(response, data.admin && data.config.hideHelpLine !== true);
+}
+
+async function adminScreen(
+	input: unknown,
+	user: User | undefined,
+	requestUrl: string,
+	rawCtx: PluginContext,
+	seen: { data?: Data },
 ): Promise<BlockResponse> {
 	// Every call to the site is counted: sandboxed on Cloudflare a run may make only 10. One read
 	// (the plugin's KV and settings) serves the whole request; settings found only where 0.3.0
@@ -1862,6 +1885,7 @@ export async function handleAdmin(
 		...(user ? { user } : {}),
 		admin,
 	};
+	seen.data = data;
 	/** Save the setup (and keep `data` on it): two calls, the second the copy for 0.3.0. */
 	const save = async (config: Config, mirror = true) => {
 		state.config = config;
@@ -2447,6 +2471,16 @@ export async function handleAdmin(
 		const { notice: _notice, ...rest } = data.config;
 		await save(rest);
 		return render(data);
+	}
+	if (action === HIDE_ACTION) {
+		const hidden = hiddenFrom(values, data.config.hideHelpLine === true);
+		const { hideHelpLine: _hidden, ...rest } = data.config;
+		await save(hidden ? { ...rest, hideHelpLine: true } : rest);
+		return render(data, {
+			screen: "home",
+			settingsOpen: true,
+			toast: ok(hidden ? "Saved. The help line is hidden." : "Saved. The help line shows again."),
+		});
 	}
 	if (action === "save_alerts") {
 		const settings: View = { screen: "home", settingsOpen: true };

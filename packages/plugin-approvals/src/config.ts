@@ -26,6 +26,8 @@ export interface Config {
 	checks: Checks;
 	/** Remind approvers once after two days. */
 	remind: boolean;
+	/** The admin's choice to hide the help line at the foot of the page (shown by default). */
+	hideHelpLine: boolean;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -34,6 +36,7 @@ export const DEFAULT_CONFIG: Config = {
 	ai: true,
 	checks: "remind",
 	remind: true,
+	hideHelpLine: false,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -51,6 +54,7 @@ export function normalizeConfig(value: unknown): Config {
 		ai: raw.ai !== false,
 		checks: raw.checks === "require" || raw.checks === "off" ? raw.checks : "remind",
 		remind: raw.remind !== false,
+		hideHelpLine: raw.hideHelpLine === true,
 	};
 }
 

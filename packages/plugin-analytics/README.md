@@ -143,6 +143,7 @@ On your site, one row per answer: the random reference, the time, the answer, th
 - **Do I need the banner if I only use Cloudflare Web Analytics?** No. It sets no cookies, so no banner is shown.
 - **Can I use my own consent tool?** Yes: choose "No one: another consent tool asks instead". The tools then load for everyone without waiting and this plugin sends no consent signals, so your other tool has to hold them back itself. With Google Tag Manager that works well; with the other tools it usually does not, and the Status tab warns you.
 - **A form redirects to a thank-you page. Is it counted?** Not by the form itself: the page changes before the success message appears. Count the thank-you page as a conversion in your analytics tool instead.
+- **What is the line at the foot of the page?** Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" at the bottom of the Advanced tab and press Save.
 - **Both Google Analytics and Google Tag Manager?** Only if your container does not also contain Google Analytics, or every visit is counted twice.
 
 ## Changelog

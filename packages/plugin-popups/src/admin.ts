@@ -24,6 +24,7 @@ import {
 	type Store,
 } from "./config.js";
 import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
+import { hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import { rate, type CountRow, type Totals } from "./stats.js";
 import { describeMoment, fromMoment, HALF_HOURS, toMoment } from "./time.js";
 
@@ -615,6 +616,7 @@ function settingsBlocks(state: PageState): Block[] {
 				},
 			],
 		},
+		hideForm(s.hideHelpLine),
 	];
 }
 
@@ -1356,6 +1358,27 @@ export async function handleInteraction(
 		}
 		// The route reads the rows for the new dates and renders again.
 		return { response: renderPage({ ...state, range: { from, to } }, TAB.numbers) };
+	}
+	if (action === HIDE_ACTION) {
+		if (!state.admin) return only("Only an administrator can change the settings.");
+		const hidden = hiddenFrom(values, store.settings.hideHelpLine);
+		const save = next(store.popups, { ...store.settings, hideHelpLine: hidden });
+		return {
+			save,
+			response: renderPage(
+				{
+					...state,
+					store: save,
+					toast: {
+						type: "success",
+						message: hidden
+							? "Saved. The help line is hidden."
+							: "Saved. The help line shows again.",
+					},
+				},
+				TAB.settings,
+			),
+		};
 	}
 	if (action === "save_look" || action === "save_emails") {
 		if (!state.admin) return only("Only an administrator can change the settings.");

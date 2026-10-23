@@ -7,6 +7,7 @@ import { NO_EMAIL_SERVICE, parseRecipients, problemLine, sendTest } from "./aler
 import { fits, type Counter } from "./budget.js";
 import { afterExternal, afterOwnPage, afterOwnPath, request, verdict } from "./check.js";
 import { linksInData, scanHtml } from "./extract.js";
+import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import {
 	describe,
 	foundOn,
@@ -721,6 +722,7 @@ function checklistTab(
 							},
 						})),
 					},
+			hideForm(data.options.hideHelpLine === true),
 		],
 	});
 	return blocks;
@@ -748,6 +750,8 @@ function render(ctx: PluginContext, data: Loaded, admin: boolean, state: PageSta
 				},
 			]
 		: [intro, ...problems];
+	// Under both tabs, for admins only.
+	if (admin) blocks.push(...helpLine(data.options.hideHelpLine !== true));
 	return { blocks, ...(state.toast ? { toast: state.toast } : {}) };
 }
 
@@ -1160,6 +1164,25 @@ export async function handleAdmin(
 
 	if (interaction.type === "form_submit" && admin) {
 		const values = isRecord(interaction.values) ? interaction.values : {};
+		if (action === HIDE_ACTION) {
+			const hidden = hiddenFrom(values, data.options.hideHelpLine === true);
+			data.options = { ...data.options, hideHelpLine: hidden };
+			await writeSettings(ctx, OPTIONS, data.options);
+			return render(
+				ctx,
+				data,
+				admin,
+				await withFine({
+					tab: 1,
+					toast: {
+						type: "success",
+						message: hidden
+							? "Saved. The help line is hidden."
+							: "Saved. The help line shows again.",
+					},
+				}),
+			);
+		}
 		if (action === "save_options") {
 			const parsed = parseRecipients(
 				typeof values.recipients === "string"
@@ -1181,6 +1204,7 @@ export async function handleAdmin(
 				);
 			}
 			data.options = {
+				...data.options,
 				recipients: parsed.list,
 				outbound: typeof values.outbound === "boolean" ? values.outbound : data.options.outbound,
 			};

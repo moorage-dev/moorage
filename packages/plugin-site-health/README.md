@@ -104,6 +104,8 @@ Each run stays within the EmDash sandbox's limits of 10 calls (it makes at most 
 
 **Does it send anything anywhere?** Only to the websites your pages link to (to check them) and the email addresses you list.
 
+**What is the line at the foot of the page?** Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" under Checklist, Options and press Save.
+
 **Why do the checks and emails use the site's old address?** Plugins keep the site address EmDash had when the server started; Site Health uses it to open your own pages, to tell your links from other sites' and in its emails and instructions. After changing the site's address, restart the site.
 
 ## Changelog

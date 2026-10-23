@@ -3,6 +3,7 @@
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { HELP_LINE } from "../src/help-line.js";
 import type { ApprovalRequest } from "../src/requests.js";
 
 let host: PluginRuntimeTestHost | undefined;
@@ -607,6 +608,104 @@ async function soloSite(config: Record<string, unknown>) {
 	if (!created.success) throw new Error(created.error.message);
 	return { host: runtime, admin, contributor, id: created.data.item.id };
 }
+
+describe("the help line", () => {
+	const lines = (response: { blocks: Array<{ block_id?: string }> }) =>
+		response.blocks.filter((block) => block.block_id === HELP_LINE).length;
+	const LINE = {
+		type: "actions",
+		block_id: HELP_LINE,
+		elements: [
+			{
+				type: "link",
+				label: "Help",
+				target: {
+					kind: "external",
+					url: "https://moorage.dev/guides/approve-pages-before-they-go-live-on-emdash",
+				},
+			},
+			{
+				type: "link",
+				label: "More free plugins",
+				target: { kind: "external", url: "https://moorage.dev/plugins" },
+			},
+			{
+				type: "link",
+				label: "by Moorage",
+				target: { kind: "external", url: "https://moorage.dev" },
+			},
+		],
+	};
+
+	it("ends every screen an admin sees: the list, before any save too, and a review", async () => {
+		const fresh = await site();
+		const first = await fresh.host.admin.loadPage("/overview", { user: fresh.admin });
+		expect(first.blocks.at(-1)).toEqual(LINE);
+		await fresh.host.dispose();
+
+		const s = await site(HELD);
+		const id = await page(s);
+		await s.host.actions.content.publish("pages", id, actor(s.editor));
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
+		expect(list.blocks.at(-1)).toEqual(LINE);
+		const review = await s.host.admin.act("/overview", "review", {
+			user: s.admin,
+			value: { key: `pages:${id}` },
+		});
+		expect(lines(review)).toBe(1);
+		expect(review.blocks.at(-1)).toEqual(LINE);
+	});
+
+	it("never shows to editors or contributors, nor on the widget or the editor panel", async () => {
+		const s = await site(HELD);
+		const id = await page(s);
+		await s.host.actions.content.publish("pages", id, actor(s.editor));
+		for (const user of [s.editor, s.contributor]) {
+			expect(text(await s.host.admin.loadPage("/overview", { user }))).not.toMatch(/moorage/i);
+		}
+		const widget = await s.host.admin.loadWidget("approvals", { user: s.admin });
+		expect(text(widget)).not.toMatch(/moorage/i);
+		const panel = await s.host.admin.loadEditorPanel("approval", "pages", id, { user: s.admin });
+		expect(JSON.stringify(panel)).not.toMatch(/moorage/i);
+	});
+
+	it("hides with the switch in Settings, kept through later saves, and shows again", async () => {
+		const s = await site(HELD);
+		const settings = { collections: ["pages"], preset: "others", ai: true, checks: "remind" };
+		const hidden = await s.host.admin.submit(
+			"/overview",
+			"save_settings",
+			{ ...settings, hide_help_line: true },
+			{ user: s.admin },
+		);
+		expect(lines(hidden)).toBe(0);
+		expect(await s.host.inspect.setting("config")).toMatchObject({ hideHelpLine: true });
+		expect(lines(await s.host.admin.loadPage("/overview", { user: s.admin }))).toBe(0);
+
+		// A later save that leaves the switch untouched keeps it.
+		await s.host.admin.submit("/overview", "save_settings", settings, { user: s.admin });
+		expect(lines(await s.host.admin.loadPage("/overview", { user: s.admin }))).toBe(0);
+
+		const shown = await s.host.admin.submit(
+			"/overview",
+			"save_settings",
+			{ ...settings, hide_help_line: false },
+			{ user: s.admin },
+		);
+		expect(lines(shown)).toBe(1);
+	});
+
+	it("an editor cannot use the switch", async () => {
+		const s = await site(HELD);
+		await s.host.admin.submit(
+			"/overview",
+			"save_settings",
+			{ hide_help_line: true },
+			{ user: s.editor },
+		);
+		expect(lines(await s.host.admin.loadPage("/overview", { user: s.admin }))).toBe(1);
+	});
+});
 
 describe("your own request", () => {
 	const ME = { ...HELD, preset: "me" };

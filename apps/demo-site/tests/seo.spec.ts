@@ -2,6 +2,8 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { expectHelpLine, helpLinks, setHidden } from "./help-line.js";
+
 type SchemaNode = Record<string, unknown>;
 
 async function jsonLdScripts(page: Page): Promise<unknown[]> {
@@ -346,4 +348,29 @@ test("a page's own picture is described with its size, and a picture the theme s
 		expect(removed.ok()).toBe(true);
 		expect(deleted.ok()).toBe(true);
 	}
+});
+
+test("an admin sees the help line under every tab, and the switch in Settings hides it", async ({
+	page,
+}) => {
+	const guide = "add-schema-markup-to-emdash";
+	await openSeoPage(page);
+	await expectHelpLine(page, guide);
+	await page.getByRole("tab", { name: "Redirects" }).click();
+	await expectHelpLine(page, guide);
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await expectHelpLine(page, guide);
+
+	await setHidden(page, true);
+	await expect(page.getByText("Saved. The help line is hidden.")).toBeVisible();
+	await expect(helpLinks(page)).toHaveCount(0);
+	await openSeoPage(page);
+	await expect(page.getByText("Pages checked")).toBeVisible({ timeout: 30_000 });
+	await expect(helpLinks(page)).toHaveCount(0);
+
+	// Back as it was, for the tests after this one.
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await setHidden(page, false);
+	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
+	await expectHelpLine(page, guide);
 });
