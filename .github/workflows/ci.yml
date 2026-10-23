@@ -82,8 +82,9 @@ jobs:
           - mode: sandboxed
             shard: 2/4
             in_process: ""
-            # lead-delivery-screenshots.spec.ts skips itself unless DEMO_SITE_SCREENSHOTS=1.
-            specs: tests/lead-delivery.spec.ts tests/lead-delivery-screenshots.spec.ts tests/restore.spec.ts tests/smoke.spec.ts
+            # lead-delivery-screenshots.spec.ts skips itself unless DEMO_SITE_SCREENSHOTS=1,
+            # plugin-screenshots.spec.ts unless PLUGIN_SCREENSHOTS=1.
+            specs: tests/lead-delivery.spec.ts tests/lead-delivery-screenshots.spec.ts tests/plugin-screenshots.spec.ts tests/restore.spec.ts tests/smoke.spec.ts
           - mode: sandboxed
             shard: 3/4
             in_process: ""

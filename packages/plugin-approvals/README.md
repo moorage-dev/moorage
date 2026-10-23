@@ -2,7 +2,7 @@
 
 Content Approval for [EmDash](https://emdashcms.com): a second person OKs a page before it goes live. Writers keep pressing Publish; when a page needs approval, the publish is held and becomes a request, and the writer reads "Sent for approval. Not live yet." The approver approves and publishes in one step, approves for later, or sends it back with a note, and sees what changed in words. Runs on any EmDash site with no account and no key.
 
-![The Approval panel in the entry editor](images/review-panel-0-2-0.png)
+![The Approval panel in the entry editor](images/review-panel-0-2-1.png)
 
 ## What it does
 

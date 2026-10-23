@@ -2,7 +2,7 @@
 
 Tells you what is broken on your [EmDash](https://emdashcms.com) site before a customer does: a dead link in the menu, a page that shows an error, a map that will not load. It is a broken link checker for your pages, your menu and the links to other sites, with an email when something breaks and a short setup checklist. It runs on any EmDash site, with no account and no key.
 
-![The Problems tab](images/problems.png)
+![The Problems tab](images/problems-0-1-5.png)
 
 ## What it does
 

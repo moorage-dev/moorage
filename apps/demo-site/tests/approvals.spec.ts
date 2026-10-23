@@ -17,6 +17,8 @@ const ROLE = { contributor: 20, editor: 40 };
 // new names (the website reuses a picture by its file name), with the site named as a real one.
 const SCREENSHOTS = process.env.APPROVALS_SCREENSHOTS === "1";
 const SITE_TITLE = "Harbour Street Bakery";
+// The version the pictures ship in, in their file names.
+const VERSION = "0-2-1";
 const IMAGES = new URL("../../../packages/plugin-approvals/images/", import.meta.url);
 
 async function shot(
@@ -245,8 +247,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByText(/MCP|slug|webhook|fingerprint/)).toHaveCount(0);
 
 		await page.getByRole("checkbox", { name: "Pages" }).check();
-		await shot(page, "settings-0-2-0");
-		await shot(page, "settings-0-2-0-phone", 390);
+		await shot(page, `settings-${VERSION}`);
+		await shot(page, `settings-${VERSION}-phone`, 390);
 		await page.getByRole("button", { name: "Save", exact: true }).click();
 		await expect(
 			page.getByText("Saved. Publishing now asks for approval where you chose."),
@@ -339,7 +341,7 @@ test.describe.serial("Content Approval", () => {
 		await expect(
 			page.getByText(/^Sent for approval\. Not live yet\. Ellen Marsh has been asked/),
 		).toBeVisible();
-		await shot(page, "held-publish-0-2-0");
+		await shot(page, `held-publish-${VERSION}`);
 		expect(await status(sam, menu)).toBe("draft");
 
 		await page.getByRole("button", { name: "Approval", exact: true }).click();
@@ -395,8 +397,8 @@ test.describe.serial("Content Approval", () => {
 				.map((tab) => `${tab.textContent} (${Math.round(tab.getBoundingClientRect().right)})`),
 		);
 		expect(offScreen).toEqual([]);
-		await shot(page, "waiting-0-2-0-phone", 390);
-		await shot(page, "waiting-0-2-0");
+		await shot(page, `waiting-${VERSION}-phone`, 390);
+		await shot(page, `waiting-${VERSION}`);
 		await page.setViewportSize({ width: 1280, height: 900 });
 
 		await review.click();
@@ -405,8 +407,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByRole("button", { name: "Approve and publish" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
 		await expect(page.getByText("Approve without review (admins)")).toBeVisible();
-		await shot(page, "review-0-2-0");
-		await shot(page, "review-0-2-0-phone", 390);
+		await shot(page, `review-${VERSION}`);
+		await shot(page, `review-${VERSION}-phone`, 390);
 	});
 
 	test("Ellen sends it back from the panel; the form inside the editor does not save the page", async () => {
@@ -474,7 +476,7 @@ test.describe.serial("Content Approval", () => {
 			}),
 		).toBeVisible();
 		const panelTop = ellen.page.getByRole("button", { name: "Approval", exact: true });
-		await shot(ellen.page, "review-panel-0-2-0", 1280, panelTop);
+		await shot(ellen.page, `review-panel-${VERSION}`, 1280, panelTop);
 		if (SCREENSHOTS) {
 			// On a phone the editor's settings, plugin panels included, open as a sheet.
 			await ellen.page.setViewportSize({ width: 390, height: 844 });
@@ -482,7 +484,7 @@ test.describe.serial("Content Approval", () => {
 			const waiting = ellen.page.getByText("Waiting for your approval");
 			if (!(await waiting.isVisible())) await panelTop.click();
 			await expect(waiting).toBeVisible();
-			await shot(ellen.page, "review-panel-0-2-0-phone", 390, panelTop);
+			await shot(ellen.page, `review-panel-${VERSION}-phone`, 390, panelTop);
 			await ellen.page.keyboard.press("Escape");
 			await ellen.page.setViewportSize({ width: 1280, height: 900 });
 			await ellen.page.reload();
