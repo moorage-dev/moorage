@@ -18,11 +18,14 @@
 		"description": { "file": "listing/description.md" },
 		"installation": { "file": "listing/installation.md" },
 		"faq": { "file": "listing/faq.md" },
+		"security": { "file": "listing/security.md" },
 	},
 	// Registry listing only: the EmDash version a site needs, and the gallery.
 	"release": {
 		"requires": { "env:emdash": ">=1.2.0" },
 		"artifacts": {
+			// The Moorage cleat (moorage.dev/logo.png), the same on every plugin.
+			"icon": { "file": "./images/icon.png" },
 			"screenshots": [
 				{ "file": "./images/overview.png", "lang": "en" },
 				{ "file": "./images/google-preview.png", "lang": "en" },
@@ -34,7 +37,7 @@
 	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
 
 	"license": "MIT",
-	"author": { "name": "Moorage" },
+	"author": { "name": "Moorage", "url": "https://moorage.dev" },
 	"security": { "email": "security@moorage.dev" },
 
 	// Trust contract — what runtime APIs the plugin asks for.
