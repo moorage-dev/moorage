@@ -2,6 +2,8 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { expectHelpLine, helpLinks, setHidden } from "./help-line.js";
+
 const PAGE = "/_emdash/admin/plugins/site-health/health";
 const API = "/_emdash/api";
 const HEADERS = { "X-EmDash-Request": "1" };
@@ -151,4 +153,29 @@ test("the dashboard widget opens Site Health", async ({ page }) => {
 	await expect(link).toBeVisible({ timeout: 60_000 });
 	await link.click();
 	await expect(page.getByRole("tab", { name: "Problems" })).toBeVisible();
+});
+
+test("an admin sees the help line under both tabs, and the switch under Options hides it", async ({
+	page,
+}) => {
+	const guide = "find-and-fix-broken-links-on-emdash";
+	await open(page);
+	await expectHelpLine(page, guide);
+	await page.getByRole("tab", { name: "Checklist" }).click();
+	await expectHelpLine(page, guide);
+	const options = page.getByRole("button", { name: "Options" });
+	if ((await options.getAttribute("aria-expanded")) === "false") await options.click();
+
+	await setHidden(page, true);
+	await expect(page.getByText("Saved. The help line is hidden.")).toBeVisible();
+	await expect(helpLinks(page)).toHaveCount(0);
+	await open(page);
+	await expect(helpLinks(page)).toHaveCount(0);
+
+	// Back as it was, for the tests after this one.
+	await page.getByRole("tab", { name: "Checklist" }).click();
+	if ((await options.getAttribute("aria-expanded")) === "false") await options.click();
+	await setHidden(page, false);
+	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
+	await expectHelpLine(page, guide);
 });

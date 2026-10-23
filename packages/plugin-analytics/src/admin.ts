@@ -21,6 +21,7 @@ import {
 	type Audience,
 } from "./config.js";
 import { clientConfig } from "./fragment.js";
+import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import { checkId, TOOL_EXAMPLES, TOOL_NAMES, type ToolId } from "./ids.js";
 import type { ConsentCounts } from "./record.js";
 
@@ -522,6 +523,7 @@ function advancedBlocks(state: PageState): Block[] {
 			type: "context",
 			text: "The admin, preview links and the visual editor are never tracked.",
 		},
+		hideForm(config.hideHelpLine),
 	];
 }
 
@@ -538,6 +540,8 @@ export function renderPage(state: PageState, tab: number = TAB.status): BlockRes
 				{ label: "Advanced", blocks: advancedBlocks(tab === TAB.advanced ? state : clean(state)) },
 			],
 		});
+		// Under every tab, for admins only.
+		blocks.push(...helpLine(!state.config.hideHelpLine));
 	} else {
 		blocks.push(...statusBlocks(state), {
 			type: "context",
@@ -749,6 +753,15 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 					: config.gtmLoading,
 			},
 			TAB.advanced,
+		);
+	}
+
+	if (action === HIDE_ACTION) {
+		const hidden = hiddenFrom(values, config.hideHelpLine);
+		return done(
+			{ ...config, hideHelpLine: hidden },
+			TAB.advanced,
+			hidden ? "Saved. The help line is hidden." : "Saved. The help line shows again.",
 		);
 	}
 

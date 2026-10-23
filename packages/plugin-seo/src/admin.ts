@@ -11,6 +11,7 @@ import {
 	type SeoConfig,
 	type SiteIdentity,
 } from "./config.js";
+import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import { DAYS, formatDayHours, parseDayHours } from "./hours.js";
 import { PAGE_TYPES, typeLabel } from "./page-types.js";
 import {
@@ -1054,10 +1055,16 @@ function render(
 					},
 					{
 						label: "Settings",
-						blocks: [...identityTab(data, ctx.site.name), ...typesTab(data, state.pendingHide)],
+						blocks: [
+							...identityTab(data, ctx.site.name),
+							...typesTab(data, state.pendingHide),
+							hideForm(data.config.hideHelpLine),
+						],
 					},
 				],
 			},
+			// Under every tab, for admins only; editors get the early return above.
+			...helpLine(!data.config.hideHelpLine),
 		],
 		...(state.toast ? { toast: state.toast } : {}),
 	};
@@ -1560,5 +1567,12 @@ export async function handleAdmin(
 	if (action === "save_profiles") return save(saveProfiles(data, values));
 	if (action === "save_company") return save(saveCompany(data, values));
 	if (action === "save_advanced") return save(saveAdvanced(data, values));
+	if (action === HIDE_ACTION) {
+		const hidden = hiddenFrom(values, data.config.hideHelpLine);
+		return save(
+			{ config: { ...data.config, hideHelpLine: hidden }, state: { tab: TAB.types } },
+			hidden ? "Saved. The help line is hidden." : "Saved. The help line shows again.",
+		);
+	}
 	return render(data, ctx, admin, { tab: TAB.overview });
 }

@@ -509,6 +509,8 @@ describe("SEO admin page", () => {
 		"save_company",
 		"save_advanced",
 		"save_logo",
+		// The switch that hides the help line: the same one settings write as the others.
+		"save_help_line",
 	]) {
 		it(`${action} on a configured site`, async () => {
 			const runtime = await start();

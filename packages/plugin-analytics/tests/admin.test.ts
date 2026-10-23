@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { toolStatus, warnings } from "../src/admin.js";
 import { CONFIG_KEY, DEFAULT_MESSAGE, DEFAULT_TITLE, normalizeConfig } from "../src/config.js";
 import type { AnalyticsConfig } from "../src/config.js";
+import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import { createPlugin } from "../src/index.js";
 import { PRUNE_TASK } from "../src/record.js";
 import { fakeContext, type FakeContext } from "./helpers.js";
@@ -85,7 +86,7 @@ describe("the admin page", () => {
 		expect(fake.scheduled).toEqual([]);
 	});
 
-	it("keeps every screen valid Block Kit and free of the company name", async () => {
+	it("keeps every screen valid Block Kit, with the company name only in the admin's help line", async () => {
 		const fake = fakeContext();
 		const screens = [
 			await load(fake),
@@ -111,7 +112,8 @@ describe("the admin page", () => {
 		];
 		for (const screen of screens) {
 			expectValid(screen);
-			expect(JSON.stringify(screen)).not.toMatch(/moorage|gosi/i);
+			const rest = screen.blocks.filter((block) => block.block_id !== HELP_LINE);
+			expect(JSON.stringify({ ...screen, blocks: rest })).not.toMatch(/moorage|gosi/i);
 		}
 	});
 
@@ -120,6 +122,75 @@ describe("the admin page", () => {
 		await load(fake);
 		await load(fake);
 		expect(fake.scheduled).toEqual([{ name: PRUNE_TASK, schedule: "@daily" }]);
+	});
+});
+
+describe("the help line", () => {
+	const line = (response: BlockResponse) =>
+		response.blocks.find((block) => block.type === "actions" && block.block_id === HELP_LINE);
+
+	it("ends an admin's page, under every tab, with the guide, the plugins and the maker", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		expect(response.blocks.at(-1)).toEqual({
+			type: "actions",
+			block_id: HELP_LINE,
+			elements: [
+				{
+					type: "link",
+					label: "Help",
+					target: {
+						kind: "external",
+						url: "https://moorage.dev/guides/add-google-analytics-and-a-cookie-banner-to-emdash",
+					},
+				},
+				{
+					type: "link",
+					label: "More free plugins",
+					target: { kind: "external", url: "https://moorage.dev/plugins" },
+				},
+				{
+					type: "link",
+					label: "by Moorage",
+					target: { kind: "external", url: "https://moorage.dev" },
+				},
+			],
+		});
+		const after = await submit(fakeContext(), "save_advanced", { exclude: "/a" });
+		expect(after.blocks.filter((block) => block.block_id === HELP_LINE)).toHaveLength(1);
+	});
+
+	it("never shows to an editor or anyone below", async () => {
+		for (const role of [EDITOR, 30, 20]) {
+			expect(JSON.stringify(await load(fakeContext(), role))).not.toMatch(/moorage/i);
+		}
+	});
+
+	it("hides with the switch under Advanced, keeps it through other saves, and shows again", async () => {
+		const fake = fakeContext();
+		const page = await load(fake);
+		expect(
+			flatten(page.blocks).some(
+				(block) => block.type === "form" && block.submit?.action_id === HIDE_ACTION,
+			),
+		).toBe(true);
+		const hidden = await submit(fake, HIDE_ACTION, { hide_help_line: true });
+		expect(line(hidden)).toBeUndefined();
+		expect(hidden.toast).toEqual({ type: "success", message: "Saved. The help line is hidden." });
+		expect(saved(fake).hideHelpLine).toBe(true);
+		expect(line(await load(fake))).toBeUndefined();
+
+		await submit(fake, "save_advanced", { exclude: "/a" });
+		await submit(fake, "save_tools", { ga4: "G-AB12CD34EF" });
+		await submit(fake, HIDE_ACTION, {});
+		expect(saved(fake).hideHelpLine).toBe(true);
+		expect(line(await load(fake))).toBeUndefined();
+
+		expect(line(await submit(fake, HIDE_ACTION, { hide_help_line: false }))).toBeDefined();
+	});
+
+	it("shows on a site whose settings were saved before the switch existed", async () => {
+		expect(line(await load(fakeContext({ [CONFIG_KEY]: { exclude: ["/a"] } })))).toBeDefined();
 	});
 });
 

@@ -5,6 +5,7 @@ import { validateBlockResponse } from "@emdash-cms/blocks/server";
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import type { Config, Delivery, KnownForm, Send } from "../src/types.js";
 import { runQueued } from "./queue.js";
 
@@ -1319,11 +1320,11 @@ describe("home and who sees what", () => {
 		await inbound(runtime, payload("01R"));
 		await runQueued(runtime);
 		const page = await runtime.admin.loadPage(PAGE, { user: admin });
-		// Header, New delivery, stats, banners, Deliveries, Latest enquiries, site settings.
+		// Header, New delivery, stats, banners, Deliveries, Latest enquiries, site settings, rule, help line.
 		const types = page.blocks.map((b) => b.type);
 		expect(types.slice(0, 3)).toEqual(["header", "actions", "stats"]);
 		expect(headers(page)).toEqual(["Lead delivery", "Deliveries", "Latest enquiries"]);
-		expect(page.blocks.at(-2)).toMatchObject({
+		expect(page.blocks.at(-4)).toMatchObject({
 			type: "accordion",
 			label: "Settings for the whole site",
 			default_open: false,
@@ -1391,6 +1392,102 @@ describe("home and who sees what", () => {
 		const refused = await runtime.admin.act(PAGE, "delete", { user: editor, value: d.id });
 		expect(refused.toast).toEqual({ type: "error", message: "Only an admin can change this." });
 		expect((await config(runtime)).deliveries).toHaveLength(1);
+	});
+});
+
+describe("the help line", () => {
+	const line = (response: BlockResponse) =>
+		response.blocks.find((block) => block.type === "actions" && block.block_id === HELP_LINE);
+	const lines = (response: BlockResponse) =>
+		response.blocks.filter((block) => block.block_id === HELP_LINE).length;
+
+	it("ends every screen an admin sees with the guide, the plugins and the maker", async () => {
+		const { runtime, admin } = await start();
+		const home = await runtime.admin.loadPage(PAGE, { user: admin });
+		expect(home.blocks.at(-1)).toEqual({
+			type: "actions",
+			block_id: HELP_LINE,
+			elements: [
+				{
+					type: "link",
+					label: "Help",
+					target: {
+						kind: "external",
+						url: "https://moorage.dev/guides/send-emdash-form-enquiries-to-email-or-hubspot",
+					},
+				},
+				{
+					type: "link",
+					label: "More free plugins",
+					target: { kind: "external", url: "https://moorage.dev/plugins" },
+				},
+				{
+					type: "link",
+					label: "by Moorage",
+					target: { kind: "external", url: "https://moorage.dev" },
+				},
+			],
+		});
+		const d = delivery();
+		await setDeliveries(runtime, [d]);
+		for (const screen of [
+			await runtime.admin.act(PAGE, "new", { user: admin }),
+			await runtime.admin.act(PAGE, "open", { user: admin, value: d.id }),
+			await runtime.admin.act(PAGE, "see_all", { user: admin }),
+		]) {
+			expect(lines(screen)).toBe(1);
+			expect(screen.blocks.at(-1)?.block_id).toBe(HELP_LINE);
+			expect(validateBlockResponse(screen, { pluginPagePaths: [PAGE] }).valid).toBe(true);
+		}
+	});
+
+	it("never shows to an editor, nor on the widget", async () => {
+		const { runtime, admin } = await start();
+		const editor = await runtime.fixtures.user({ email: "client@crumb.test", role: "editor" });
+		expect(text(await runtime.admin.loadPage(PAGE, { user: editor }))).not.toMatch(/moorage/i);
+		expect(text(await runtime.admin.act(PAGE, "see_all", { user: editor }))).not.toMatch(
+			/moorage/i,
+		);
+		const widget = await runtime.admin.loadWidget("enquiries", { user: admin });
+		expect(text(widget)).not.toMatch(/moorage/i);
+		for (const role of ["author", "contributor"] as const) {
+			const user = await runtime.fixtures.user({ email: `${role}@crumb.test`, role });
+			await expect(runtime.admin.loadPage(PAGE, { user })).rejects.toThrow(/403/);
+		}
+	});
+
+	it("hides with the switch in the site settings, keeps it through other saves, and shows again", async () => {
+		const { runtime, admin } = await start();
+		const hidden = await runtime.admin.submit(
+			PAGE,
+			HIDE_ACTION,
+			{ hide_help_line: true },
+			{ user: admin },
+		);
+		expect(line(hidden)).toBeUndefined();
+		expect(hidden.toast).toEqual({ type: "success", message: "Saved. The help line is hidden." });
+		expect((await config(runtime)).hideHelpLine).toBe(true);
+		expect(line(await runtime.admin.loadPage(PAGE, { user: admin }))).toBeUndefined();
+
+		await runtime.admin.submit(PAGE, "save_alerts", { alert_to: "b@crumb.test" }, { user: admin });
+		await runtime.admin.submit(PAGE, HIDE_ACTION, {}, { user: admin });
+		expect((await config(runtime)).hideHelpLine).toBe(true);
+
+		const shown = await runtime.admin.submit(
+			PAGE,
+			HIDE_ACTION,
+			{ hide_help_line: false },
+			{ user: admin },
+		);
+		expect(line(shown)).toBeDefined();
+		expect((await config(runtime)).hideHelpLine).toBeUndefined();
+	});
+
+	it("an editor cannot use the switch", async () => {
+		const { runtime, admin } = await start();
+		const editor = await runtime.fixtures.user({ email: "client@crumb.test", role: "editor" });
+		await runtime.admin.submit(PAGE, HIDE_ACTION, { hide_help_line: true }, { user: editor });
+		expect(line(await runtime.admin.loadPage(PAGE, { user: admin }))).toBeDefined();
 	});
 });
 

@@ -77,6 +77,8 @@ export interface Settings {
 	colors: Colors;
 	corner: "right" | "left";
 	emails: string[];
+	/** The admin's choice to hide the help line at the foot of the page (shown by default). */
+	hideHelpLine: boolean;
 }
 
 export interface Store {
@@ -90,6 +92,7 @@ export const DEFAULT_SETTINGS: Settings = {
 	colors: { background: "", text: "", accent: "" },
 	corner: "right",
 	emails: [],
+	hideHelpLine: false,
 };
 
 export const KIND_LABEL: Record<Kind, string> = {
@@ -217,6 +220,7 @@ export function normalizeSettings(raw: unknown): Settings {
 					.filter((e): e is string => typeof e === "string" && isEmail(e))
 					.slice(0, MAX_EMAILS)
 			: [],
+		hideHelpLine: s.hideHelpLine === true,
 	};
 }
 

@@ -141,6 +141,8 @@ Nothing to do. On the first run after the update, each inbox, HubSpot form or ap
 
 **Why do instructions and emails show the site's old address?** Plugins keep the site address EmDash had when the server started. After changing the site's address, restart the site.
 
+**What is the line at the foot of the page?** Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" under Settings for the whole site and press Save.
+
 **Can my clients change it?** No. Editors see the counters, the deliveries and the log, and can press Send again; only admins add or change deliveries.
 
 **Is it free?** Yes, on any number of sites, your own or your clients', with no account and no key. It is open source under the MIT License.

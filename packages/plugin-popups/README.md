@@ -118,6 +118,8 @@ Editors can change words, pictures, dates and on or off, preview, and read the r
 
 **My popup with a form never opens.** Open the admin page: a warning names the problem. A red one means the form was deleted, or it uses Turnstile or a file upload; a yellow one means the form is paused under Forms. Use the Preview link to see why a real visitor would not see it.
 
+**What is the line at the foot of the page?** Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" at the bottom of the Settings tab and press Save.
+
 **Are my own visits counted?** No. A browser that has signed in to the admin is never counted.
 
 ## Develop

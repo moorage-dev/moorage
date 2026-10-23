@@ -83,6 +83,8 @@ Holds publishing (`hooks.content-policy:register`); reads content, drafts and th
 
 **The links in approval emails point to an old address.** Plugins keep the site address EmDash had when the server started. After changing the site's address, restart the site.
 
+**What is the line at the foot of the page?** Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" at the bottom of the Settings tab, with the other settings, and press Save.
+
 **Is it free?** Yes, on any number of sites, with no account and no key. MIT License.
 
 ## Develop

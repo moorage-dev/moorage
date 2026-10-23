@@ -7,6 +7,7 @@ import type { PageMetadataContribution } from "emdash";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { SeoConfig } from "../src/config.js";
+import { GUIDE_URL, HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 
 const PAGE = "/overview";
 
@@ -99,6 +100,88 @@ describe("SEO page", () => {
 
 		await runtime.admin.submit(PAGE, "save_identity", { name: "Hacked" }, { user: editor });
 		expect(await config(runtime)).toBeNull();
+	});
+});
+
+describe("the help line", () => {
+	const line = (response: BlockResponse) =>
+		response.blocks.find((block) => block.type === "actions" && block.block_id === HELP_LINE);
+
+	it("ends an admin's page, under every tab, with the guide, the plugins and the maker", async () => {
+		const runtime = await start();
+		const response = await runtime.admin.loadPage(PAGE);
+		// The last block, outside the tabs, so it shows whichever tab is open.
+		expect(response.blocks.at(-1)).toEqual({
+			type: "actions",
+			block_id: HELP_LINE,
+			elements: [
+				{ type: "link", label: "Help", target: { kind: "external", url: GUIDE_URL } },
+				{
+					type: "link",
+					label: "More free plugins",
+					target: { kind: "external", url: "https://moorage.dev/plugins" },
+				},
+				{
+					type: "link",
+					label: "by Moorage",
+					target: { kind: "external", url: "https://moorage.dev" },
+				},
+			],
+		});
+		expect(GUIDE_URL).toBe("https://moorage.dev/guides/add-schema-markup-to-emdash");
+		expect(validateBlockResponse(response, { pluginPagePaths: [PAGE] }).valid).toBe(true);
+		// After any change too, and only once.
+		const saved = await runtime.admin.submit(PAGE, "save_identity", { name: "Acme" });
+		expect(saved.blocks.filter((block) => block.block_id === HELP_LINE)).toHaveLength(1);
+	});
+
+	it("never shows to editors, authors or contributors, nor on the widget or the editor panel", async () => {
+		const runtime = await start();
+		const entry = await runtime.fixtures.content("pages", {
+			slug: "about",
+			data: { title: "About" },
+			status: "published",
+		});
+		const editor = await runtime.fixtures.user({ email: "editor@acme.test", role: "editor" });
+		expect(texts(await runtime.admin.loadPage(PAGE, { user: editor }))).not.toMatch(/moorage/i);
+		// Authors and contributors cannot open the page at all.
+		for (const role of ["author", "contributor"] as const) {
+			const user = await runtime.fixtures.user({ email: `${role}@acme.test`, role });
+			await expect(runtime.admin.loadPage(PAGE, { user })).rejects.toThrow(/403/);
+		}
+		expect(JSON.stringify(await runtime.admin.loadWidget("seo"))).not.toMatch(/moorage/i);
+		const panel = await runtime.admin.loadEditorPanel("preview", "pages", entry.id);
+		expect(JSON.stringify(panel)).not.toMatch(/moorage/i);
+	});
+
+	it("hides with the switch in Settings, keeps it through other saves, and shows again", async () => {
+		const runtime = await start();
+		const switchOf = (response: BlockResponse) =>
+			flatten(response.blocks).find(
+				(block) => block.type === "form" && block.submit?.action_id === HIDE_ACTION,
+			);
+		expect(switchOf(await runtime.admin.loadPage(PAGE))).toBeDefined();
+
+		const hidden = await runtime.admin.submit(PAGE, HIDE_ACTION, { hide_help_line: true });
+		// The very response that saved it already leaves it out.
+		expect(line(hidden)).toBeUndefined();
+		expect((await config(runtime))?.hideHelpLine).toBe(true);
+		expect(line(await runtime.admin.loadPage(PAGE))).toBeUndefined();
+
+		// Saving another setting, or this form untouched, keeps it hidden.
+		await runtime.admin.submit(PAGE, "save_advanced", { breadcrumbs: false });
+		await runtime.admin.submit(PAGE, HIDE_ACTION, {});
+		expect((await config(runtime))?.hideHelpLine).toBe(true);
+		expect(line(await runtime.admin.loadPage(PAGE))).toBeUndefined();
+
+		const shown = await runtime.admin.submit(PAGE, HIDE_ACTION, { hide_help_line: false });
+		expect(line(shown)).toBeDefined();
+	});
+
+	it("shows on a site whose settings were saved before the switch existed", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", { breadcrumbs: true });
+		expect(line(await runtime.admin.loadPage(PAGE))).toBeDefined();
 	});
 });
 

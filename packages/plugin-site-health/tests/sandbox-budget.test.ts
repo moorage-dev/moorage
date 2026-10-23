@@ -1014,4 +1014,15 @@ describe("routes: actions on a finished check", () => {
 		);
 		expect(m.calls.length).toBe(5);
 	});
+
+	it("hide the help line (the switch under Options)", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const m = await cold(runtime, "save_help_line", () =>
+			runtime.admin.submit(PAGE, "save_help_line", { hide_help_line: true }),
+		);
+		// The same one settings write as saving the options.
+		expect(m.calls.length).toBe(4);
+		expect(await runtime.inspect.setting("options")).toMatchObject({ hideHelpLine: true });
+	});
 });

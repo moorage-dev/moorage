@@ -73,6 +73,7 @@ function siteParts(value: Record<string, unknown>) {
 		typeof value.accessLeft.form === "string"
 			? { accessLeft: { at: value.accessLeft.at, form: value.accessLeft.form } }
 			: {}),
+		...(value.hideHelpLine === true ? { hideHelpLine: true as const } : {}),
 	};
 }
 

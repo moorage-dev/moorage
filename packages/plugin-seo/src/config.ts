@@ -127,6 +127,8 @@ export interface SeoConfig {
 	/** Derive a breadcrumb trail from the URL when the theme passes none. */
 	breadcrumbs: boolean;
 	steps: SetupSteps;
+	/** The admin's choice to hide the help line at the foot of the SEO page (shown by default). */
+	hideHelpLine: boolean;
 }
 
 export const DEFAULT_CONFIG: SeoConfig = {
@@ -136,6 +138,7 @@ export const DEFAULT_CONFIG: SeoConfig = {
 	jsonLdField: "json_ld",
 	breadcrumbs: true,
 	steps: { identity: false, types: false },
+	hideHelpLine: false,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -269,5 +272,6 @@ export function normalizeConfig(raw: unknown): SeoConfig {
 			identity: isRecord(raw.steps) && raw.steps.identity === true,
 			types: isRecord(raw.steps) && raw.steps.types === true,
 		},
+		hideHelpLine: raw.hideHelpLine === true,
 	};
 }

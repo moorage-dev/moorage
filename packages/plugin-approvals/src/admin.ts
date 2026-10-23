@@ -14,6 +14,7 @@ import {
 	ROLE,
 	type Config,
 } from "./config.js";
+import { hiddenFrom, hideField, withHelpLine } from "./help-line.js";
 import type { Meter } from "./meter.js";
 import type { CollectionInfo, Draft, UserInfo } from "./requests.js";
 import {
@@ -404,6 +405,9 @@ function settingsBlocks(
 						},
 					]
 				: []),
+			// In this form, not one of its own: the first save of this form is what turns
+			// approval on, so the switch must never save settings by itself.
+			hideField(current.hideHelpLine),
 		],
 		submit: { label: "Save", action_id: ACTION.saveSettings },
 	});
@@ -806,6 +810,22 @@ export async function handleAdmin(
 	user: UserInfo | undefined,
 	m: Meter,
 ): Promise<BlockResponse> {
+	const seen: { config?: Config | null } = {};
+	const response = await adminScreen(input, user, m, seen);
+	// Every screen of the page (the list, a review, a decision) ends with the help line for an
+	// admin who has not hidden it, as the settings are after this request; never the widget.
+	const widgetLoad = isRecord(input) && input.type === "page_load" && input.page === WIDGET_PAGE;
+	if (widgetLoad || seen.config === undefined) return response;
+	const admin = (user?.role ?? 0) >= ROLE.admin;
+	return withHelpLine(response, admin && seen.config?.hideHelpLine !== true);
+}
+
+async function adminScreen(
+	input: unknown,
+	user: UserInfo | undefined,
+	m: Meter,
+	seen: { config?: Config | null },
+): Promise<BlockResponse> {
 	const ctx: PluginContext = m.ctx;
 	const interaction = isRecord(input) ? input : {};
 	const action = typeof interaction.action_id === "string" ? interaction.action_id : "";
@@ -816,6 +836,7 @@ export async function handleAdmin(
 		interaction.page !== WIDGET_PAGE &&
 		(user?.role ?? 0) >= ROLE.admin;
 	const config = await loadConfig(ctx, { copy: opening });
+	seen.config = config;
 
 	if (interaction.type === "page_load" && interaction.page === WIDGET_PAGE)
 		return widget(ctx, config, user);
@@ -831,8 +852,10 @@ export async function handleAdmin(
 		const next = normalizeConfig({
 			...values,
 			remind: ctx.email ? values.remind : (config ?? DEFAULT_CONFIG).remind,
+			hideHelpLine: hiddenFrom(values, (config ?? DEFAULT_CONFIG).hideHelpLine),
 		});
 		await writeSettings(ctx, CONFIG, next);
+		seen.config = next;
 		const message =
 			next.collections.length === 0 && !next.ai
 				? "Saved. Nothing needs approval."

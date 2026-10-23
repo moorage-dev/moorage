@@ -6,6 +6,7 @@ import type { RouteContext } from "emdash";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { normalizeStore, type Store } from "../src/config.js";
+import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import { createPlugin } from "../src/index.js";
 import { fakeContext, popup, type FakeContext } from "./helpers.js";
 
@@ -79,7 +80,8 @@ describe("the list", () => {
 		const empty = all(page).find((b) => b.type === "empty");
 		expect(empty).toMatchObject({ title: "No popups yet" });
 		expect(words(page)).toContain("Your web person added Popups to this site");
-		expect(words(page)).not.toMatch(/Moorage|slug|webhook|KV|404/);
+		const rest = page.blocks.filter((block) => block.block_id !== HELP_LINE);
+		expect(JSON.stringify(rest)).not.toMatch(/Moorage|slug|webhook|KV|404/);
 	});
 
 	it("puts the name with its status, then Edit, first, so phones keep them in view", async () => {
@@ -452,6 +454,97 @@ describe("finished popups", () => {
 		expect(words(await press(fake, "row", "preview:abcd1234"))).toContain(
 			"https://hartleys.test/journal/?popups_preview=abcd1234&scheme=light",
 		);
+	});
+});
+
+describe("the help line", () => {
+	const line = (response: BlockResponse) =>
+		response.blocks.find((block) => block.type === "actions" && block.block_id === HELP_LINE);
+	const stocked = () => fakeContext({ popups: { popups: [popup()] } });
+
+	it("ends every screen an admin sees: the list, a popup and its preview", async () => {
+		const fake = stocked();
+		const list = await load(fake);
+		expect(list.blocks.at(-1)).toEqual({
+			type: "actions",
+			block_id: HELP_LINE,
+			elements: [
+				{
+					type: "link",
+					label: "Help",
+					target: {
+						kind: "external",
+						url: "https://moorage.dev/guides/add-a-popup-or-top-bar-to-emdash",
+					},
+				},
+				{
+					type: "link",
+					label: "More free plugins",
+					target: { kind: "external", url: "https://moorage.dev/plugins" },
+				},
+				{
+					type: "link",
+					label: "by Moorage",
+					target: { kind: "external", url: "https://moorage.dev" },
+				},
+			],
+		});
+		for (const screen of [
+			await press(fake, "row", "change:abcd1234"),
+			await press(fake, "row", "preview:abcd1234"),
+			await press(fake, "new"),
+		]) {
+			expect(screen.blocks.filter((block) => block.block_id === HELP_LINE)).toHaveLength(1);
+			expect(screen.blocks.at(-1)?.block_id).toBe(HELP_LINE);
+		}
+	});
+
+	it("never shows to an editor, on any screen", async () => {
+		const fake = stocked();
+		for (const screen of [
+			await load(fake, EDITOR),
+			await press(fake, "row", "change:abcd1234", EDITOR),
+			await press(fake, "row", "preview:abcd1234", EDITOR),
+		]) {
+			expect(words(screen)).not.toMatch(/moorage/i);
+		}
+	});
+
+	it("hides with the switch in Settings, keeps it through other saves, and shows again", async () => {
+		const fake = stocked();
+		// The switch sits in the Settings tab.
+		expect(
+			all(await load(fake)).some(
+				(block) => block.type === "form" && block.submit.action_id === HIDE_ACTION,
+			),
+		).toBe(true);
+		const hidden = await submit(fake, HIDE_ACTION, "help_line_switch_off", {
+			hide_help_line: true,
+		});
+		expect(line(hidden)).toBeUndefined();
+		expect(stored(fake).settings.hideHelpLine).toBe(true);
+		expect(line(await load(fake))).toBeUndefined();
+		expect(line(await press(fake, "row", "change:abcd1234"))).toBeUndefined();
+
+		await submit(fake, "save_look", "look", { scheme: "dark" });
+		await submit(fake, "save_emails", "emails", { emails: "a@hartleys.test" });
+		await press(fake, "row", "toggle:abcd1234");
+		expect(stored(fake).settings.hideHelpLine).toBe(true);
+		expect(stored(fake).popups).toHaveLength(1);
+
+		const shown = await submit(fake, HIDE_ACTION, "help_line_switch_on", { hide_help_line: false });
+		expect(line(shown)).toBeDefined();
+	});
+
+	it("an editor cannot use the switch", async () => {
+		const fake = stocked();
+		await submit(fake, HIDE_ACTION, "help_line_switch_off", { hide_help_line: true }, EDITOR);
+		expect(normalizeStore(fake.kv.get("popups")).settings.hideHelpLine).toBe(false);
+	});
+
+	it("shows on a site whose settings were saved before the switch existed", async () => {
+		const fake = fakeContext({ popups: { popups: [], settings: { scheme: "dark" } } });
+		expect(line(await load(fake))).toBeDefined();
 	});
 });
 
