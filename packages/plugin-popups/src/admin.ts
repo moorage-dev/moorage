@@ -261,6 +261,14 @@ const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; descr
 		}),
 	};
 
+/**
+ * A popup's own actions (change, preview, toggle, duplicate, delete) all send
+ * "verb:id". The More menu has its own id, "row_more": Block Kit keys each
+ * element of an actions block by its action id, so a "row" button beside a
+ * "row" menu repeats a React key. Both ids go to the same handler.
+ */
+const ROW_ACTIONS: readonly string[] = ["row", "row_more"];
+
 const rowButton = (popup: Popup, label: string, verb: string) => ({
 	type: "button",
 	action_id: "row",
@@ -292,7 +300,7 @@ function pageActions(popup: Popup, admin: boolean): Block | null {
 	if (admin)
 		elements.push({
 			type: "menu",
-			action_id: "row",
+			action_id: "row_more",
 			label: "More",
 			items: [
 				{ label: "Duplicate", value: `duplicate:${popup.id}` },
@@ -733,7 +741,8 @@ export function mayShowStep2(input: Interaction | undefined): boolean {
 	const value = typeof input?.value === "string" ? input.value : "";
 	if (input?.type === "form_submit") return /^save_(s[1-4]|all)$/.test(action);
 	if (input?.type !== "block_action") return false;
-	if (action === "row") return value.startsWith("change:") || value.startsWith("toggle:");
+	if (ROW_ACTIONS.includes(action))
+		return value.startsWith("change:") || value.startsWith("toggle:");
 	return action === "nav" && value.startsWith("back:");
 }
 
@@ -873,8 +882,10 @@ function step3Form(state: PageState, popup: Popup): Block {
 function step3Fields(state: PageState, popup: Popup): Field[] {
 	const fields: Field[] = [];
 	if (popup.kind !== "bar") {
+		// Radio, not a dropdown: a dropdown is as wide as its chosen words and these
+		// run past a phone's screen; radio labels wrap.
 		fields.push({
-			type: "select",
+			type: "radio",
 			action_id: "trigger",
 			label: "When it opens",
 			options: (Object.keys(TRIGGER_CHOICE) as Array<keyof typeof TRIGGER_CHOICE>).map((value) => ({
@@ -1383,7 +1394,7 @@ export async function handleInteraction(
 			return only(`A site can have ${MAX_POPUPS} popups. Delete one you no longer use first.`);
 		return { response: popupPage(state, undefined, 1) };
 	}
-	if (type === "block_action" && action === "row") {
+	if (type === "block_action" && ROW_ACTIONS.includes(action)) {
 		const [verb, id] = value.split(":");
 		const popup = find(id);
 		if (!popup) return { response: renderPage(state) };
