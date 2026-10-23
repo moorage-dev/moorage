@@ -3,17 +3,36 @@
 import type { ContentPolicyDecision, ContentPolicyEvent, PluginContext } from "emdash";
 
 import { isHeldRole, loadConfig, ROLE, type Config } from "./config.js";
-import { EMAIL_EVERY_MS, REMIND_AFTER_MS } from "./notify.js";
+import { EMAIL_EVERY_MS } from "./notify.js";
 import {
 	addHistory,
 	approvers,
 	personName,
 	requestKey,
 	requests,
+	seoGaps,
 	when,
 	type ApprovalRequest,
 } from "./requests.js";
 import { cleanReason, fieldHashes, fingerprint, nameList, secondPerson } from "./text.js";
+
+/**
+ * Queue the email to the approvers about a new or renewed request: one task, run at once,
+ * which also sets the two-day reminder for a new request. One call; none without email.
+ */
+export async function scheduleAsked(
+	ctx: PluginContext,
+	config: Config,
+	key: string,
+	now: string,
+	isNew: boolean,
+): Promise<void> {
+	if (!ctx.email || !ctx.cron) return;
+	await ctx.cron.schedule(taskName(MAIL_TASK, key, now), {
+		schedule: now,
+		data: { key, kind: "asked", ...(isNew && config.remind ? { remind: now } : {}) },
+	});
+}
 
 export const CHECK_FAILED =
 	"Not published: approval could not be checked just now. Nothing has changed. Try again in a minute; if it keeps happening, tell whoever looks after the site.";
@@ -45,8 +64,8 @@ async function askedNames(
 	request: ApprovalRequest,
 ): Promise<string | null> {
 	try {
-		// One page of people at most: this runs inside the publish, which has a time limit.
-		const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id, 1);
+		// One page of people at most: one call, inside the publish.
+		const people = await approvers(ctx, config, request.ai ? null : request.requestedBy?.id);
 		const names = people.slice(0, 4).map((p) => personName(p));
 		if (names.length === 0) return "";
 		return people.length > 4
@@ -292,22 +311,19 @@ export async function gate(
 			},
 			now,
 		);
+		// What the SEO panel lacks, for the Approvals list (EmDash sends `seo` with the page
+		// when its type has the panel).
+		const seo = isRecord(content.seo) ? (content.seo as { description?: string | null }) : null;
+		const checks = seoGaps(seo, data);
+		const checksChanged =
+			result.request.checks?.description !== checks.description ||
+			result.request.checks?.picture !== checks.picture;
+		result.request.checks = checks;
 		if (result.notify && ctx.email) result.request.emailedAt = now;
-		if (!result.again || result.notify) await store.put(key, result.request);
-		if (result.notify && ctx.email) {
-			// Email is sent by a one-shot task, so a slow email never delays the publish.
-			await ctx.cron?.schedule(taskName(MAIL_TASK, key, now), {
-				schedule: now,
-				data: { key, kind: "asked" },
-			});
-		}
-		if (!result.again && config.remind && ctx.email) {
-			const at = new Date(Date.parse(now) + REMIND_AFTER_MS).toISOString();
-			await ctx.cron?.schedule(taskName(REMIND_TASK, key, now), {
-				schedule: at,
-				data: { key, requestedAt: now },
-			});
-		}
+		if (!result.again || result.notify || checksChanged) await store.put(key, result.request);
+		// Email is sent by a one-shot task, so a slow email never delays the publish; that task
+		// also sets the two-day reminder.
+		if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);
 		if (event.origin.source === "scheduler") {
 			return refuse(
 				result.changed

@@ -2,7 +2,7 @@
 
 import type { PluginContext } from "emdash";
 
-import { readSettings, type SettingsKeys } from "./settings-store.js";
+import { pickSettings, type SettingsKeys } from "./settings-store.js";
 
 /**
  * Where the settings are kept: `ctx.settings` "config" (KV key `settings:config`),
@@ -57,9 +57,18 @@ export function normalizeConfig(value: unknown): Config {
 /**
  * The saved settings, or null until an Admin saves them once: nothing is held before that.
  * Throws when the store cannot be read; the publish hook refuses in that case.
+ *
+ * One call to the site whichever place the settings are in: `ctx.kv.list()` returns both
+ * the settings and the plain key earlier releases used. Settings found only under the plain
+ * key are copied forward (one more call) only with `copy`: the Approvals page does that, as it
+ * has calls to spare; hooks, actions and emails never do.
  */
-export async function loadConfig(ctx: PluginContext): Promise<Config | null> {
-	const stored = await readSettings(ctx, CONFIG);
+export async function loadConfig(
+	ctx: PluginContext,
+	{ copy = false }: { copy?: boolean } = {},
+): Promise<Config | null> {
+	const entries = new Map((await ctx.kv.list()).map((entry) => [entry.key, entry.value]));
+	const stored = await pickSettings(ctx, entries, CONFIG, { copy });
 	return stored === null || stored === undefined ? null : normalizeConfig(stored);
 }
 

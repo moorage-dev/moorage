@@ -3,9 +3,10 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { approve, saveNote, sendBack, type Outcome } from "./actions.js";
+import { approve, saveNote, sendBack, type Decision } from "./actions.js";
 import { loadConfig } from "./config.js";
-import type { UserInfo } from "./requests.js";
+import type { Meter } from "./meter.js";
+import type { Draft, UserInfo } from "./requests.js";
 import { approvers, collectionInfo, readDraft, requestKey, requests, when } from "./requests.js";
 import {
 	ACTION,
@@ -23,19 +24,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The "Approval" panel in the entry editor. */
+/**
+ * The "Approval" panel in the entry editor. An action returns what it read and wrote, and the
+ * panel is drawn from that: at most 9 calls (approve and publish with the "require" checks).
+ */
 export async function handlePanel(
 	input: unknown,
 	entry: { collection: string; id: string } | undefined,
 	user: UserInfo | undefined,
-	ctx: PluginContext,
+	m: Meter,
 ): Promise<BlockResponse> {
 	if (!entry) return { blocks: [] };
+	const ctx: PluginContext = m.ctx;
 	const config = await loadConfig(ctx);
 	const info = await collectionInfo(ctx, entry.collection);
 	const key = requestKey(entry.collection, entry.id);
 	const interaction = isRecord(input) ? input : {};
-	let outcome: Outcome | undefined;
+	let outcome: Decision | undefined;
 
 	if (config && interaction.type === "block_action") {
 		const value = buttonValue(interaction.value);
@@ -43,24 +48,35 @@ export async function handlePanel(
 			value?.key === key &&
 			(interaction.action_id === ACTION.approve || interaction.action_id === ACTION.approvePublish)
 		) {
-			outcome = await approve(ctx, config, user, key, {
-				seen: value.seen,
-				publish: interaction.action_id === ACTION.approvePublish,
-			});
+			outcome = await approve(
+				ctx,
+				config,
+				user,
+				key,
+				{ seen: value.seen, publish: interaction.action_id === ACTION.approvePublish },
+				{ info, meter: m },
+			);
 		}
 	}
 	if (config && interaction.type === "form_submit") {
 		const values = isRecord(interaction.values) ? interaction.values : {};
 		if (interaction.action_id === ACTION.sendBack)
-			outcome = await sendBack(ctx, config, user, key, values.note);
+			outcome = await sendBack(ctx, config, user, key, values.note, m);
 		if (interaction.action_id === ACTION.saveNote)
 			outcome = await saveNote(ctx, user, key, values.note);
 		if (interaction.action_id === ACTION.overridePublish)
-			outcome = await approve(ctx, config, user, key, {
-				seen: undefined,
-				publish: true,
-				override: typeof values.reason === "string" ? values.reason : "",
-			});
+			outcome = await approve(
+				ctx,
+				config,
+				user,
+				key,
+				{
+					seen: undefined,
+					publish: true,
+					override: typeof values.reason === "string" ? values.reason : "",
+				},
+				{ info, meter: m },
+			);
 	}
 	const toast = outcome
 		? {
@@ -86,7 +102,7 @@ export async function handlePanel(
 			...toast,
 		};
 	}
-	const request = await requests(ctx).get(key);
+	const request = outcome?.request ?? (await requests(ctx).get(key));
 	const held = config.collections.includes(entry.collection);
 	if (!held && !request) {
 		const blocks: Block[] = [{ type: "section", text: `Approval is off for ${info.label}.` }];
@@ -98,16 +114,31 @@ export async function handlePanel(
 		}
 		return { blocks, ...toast };
 	}
-	const draft = await readDraft(ctx, entry.collection, entry.id);
-	if (!draft)
-		return { blocks: [{ type: "context", text: "Save this page to ask for approval." }], ...toast };
-
 	if (!request || request.status === "closed") {
 		return {
 			blocks: [{ type: "context", text: "Pressing Publish sends this page for approval first." }],
 			...toast,
 		};
 	}
+	if (request.status === "sent_back" && request.sentBack) {
+		return {
+			blocks: [
+				{
+					type: "banner",
+					title: `Sent back by ${request.sentBack.by.name}, ${when(request.sentBack.at)}`,
+					description: `"${request.sentBack.note}"`,
+				},
+				{ type: "section", text: "Make the changes, save, then press Publish again." },
+				historyBlock(request, true),
+			],
+			...toast,
+			...refresh,
+		};
+	}
+	// The page is read only where the panel shows something about it, and only once.
+	const draft: Draft | null = outcome?.draft ?? (await readDraft(ctx, entry.collection, entry.id));
+	if (!draft)
+		return { blocks: [{ type: "context", text: "Save this page to ask for approval." }], ...toast };
 
 	const blocks: Block[] = [];
 	if (request.status === "waiting") {
@@ -151,15 +182,6 @@ export async function handlePanel(
 				});
 			}
 		}
-	} else if (request.status === "sent_back" && request.sentBack) {
-		blocks.push(
-			{
-				type: "banner",
-				title: `Sent back by ${request.sentBack.by.name}, ${when(request.sentBack.at)}`,
-				description: `"${request.sentBack.note}"`,
-			},
-			{ type: "section", text: "Make the changes, save, then press Publish again." },
-		);
 	} else if (request.status === "approved" && request.approval) {
 		if (request.approval.fingerprint === draft.fingerprint) {
 			blocks.push(

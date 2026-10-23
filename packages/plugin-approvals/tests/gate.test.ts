@@ -98,6 +98,18 @@ async function request(s: Site, id: string): Promise<ApprovalRequest | null> {
 	return s.host.inspect.storage.get<ApprovalRequest>("requests", `pages:${id}`);
 }
 
+/** Wait for EmDash's deferred work, such as the afterPublish hook after a plugin's publish. */
+async function settled(): Promise<void> {
+	const tasks = (globalThis as Record<symbol, unknown>)[Symbol.for("emdash:deferred-tasks")] as
+		| Set<Promise<unknown>>
+		| undefined;
+	for (;;) {
+		const pending = Array.from(tasks ?? []);
+		if (pending.length === 0) return;
+		await Promise.all(pending);
+	}
+}
+
 function text(blocks: unknown): string {
 	return JSON.stringify(blocks);
 }
@@ -264,8 +276,11 @@ describe("approving", () => {
 		expect(done.toast?.message).toBe("Approved and published. It's live now. Sam has been told.");
 		const item = await s.host.inspect.content.get("pages", id);
 		expect(item?.status).toBe("published");
+		// The publish hook that follows records it, and queues Sam's email.
+		await settled();
 		const stored = await request(s, id);
 		expect(stored?.status).toBe("published");
+		expect(stored?.history[0]?.text).toBe("Published by Ellen Marsh");
 		const copy = await s.host.inspect.storage.list("versions");
 		expect(text(copy)).toContain("Iced coffee £3.20 and lemon tart");
 	});
@@ -503,6 +518,37 @@ describe("the Approvals page", () => {
 		expect(text(writer)).not.toContain('"label":"Settings"');
 	});
 
+	it("counts the things to check on each row, kept current as the SEO panel is filled in", async () => {
+		const s = await site({ ...HELD, collections: ["articles"] });
+		await s.host.fixtures.collection({
+			slug: "articles",
+			label: "Articles",
+			supports: ["drafts", "revisions"],
+			hasSeo: true,
+			fields: [{ slug: "title", label: "Title", type: "string" }],
+		});
+		const created = await s.host.actions.content.create("articles", {
+			data: { title: "Opening hours" },
+			slug: "opening-hours",
+			authorId: s.editor.id,
+			actor: { id: s.editor.id, role: s.editor.role },
+		});
+		if (!created.success) throw new Error(created.error.message);
+		const id = created.data.item.id;
+		await s.host.actions.content.publish("articles", id, actor(s.editor));
+		const before = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(before).toContain("Articles · asked by Sam Reyes · just now · 2 things to check");
+
+		const updated = await s.host.actions.content.update("articles", id, {
+			seo: { description: "When the bakery is open" },
+			actor: { id: s.editor.id, role: s.editor.role },
+		});
+		if (!updated.success) throw new Error(updated.error.message);
+		await settled();
+		const after = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(after).toContain("Articles · asked by Sam Reyes · just now · 1 thing to check");
+	});
+
 	it("keeps a text copy on the History tab", async () => {
 		const s = await site(HELD);
 		const id = await page(s);
@@ -638,6 +684,7 @@ describe("your own request", () => {
 		);
 		expect(done.toast?.message).toBe("Published without review. It's live now.");
 		expect((await s.host.inspect.content.get("pages", s.id))?.status).toBe("published");
+		await settled();
 		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `pages:${s.id}`);
 		expect(stored).toMatchObject({
 			status: "published",

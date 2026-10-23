@@ -6,7 +6,8 @@ import type { PluginContext, StorageCollection } from "emdash";
 export type UserInfo = NonNullable<Awaited<ReturnType<NonNullable<PluginContext["users"]>["get"]>>>;
 type ContentItem = NonNullable<Awaited<ReturnType<NonNullable<PluginContext["content"]>["get"]>>>;
 
-import { approverRole, type Config } from "./config.js";
+import { approverRole, ROLE, type Config } from "./config.js";
+import type { MailJob } from "./notify.js";
 import { fingerprint, textCopy, type FieldInfo, type FieldText } from "./text.js";
 
 export type Status = "waiting" | "sent_back" | "approved" | "published" | "closed";
@@ -58,6 +59,16 @@ export interface ApprovalRequest {
 	publishedAt?: string;
 	/** When the approvers were last emailed about this request (at most once a day). */
 	emailedAt?: string;
+	/**
+	 * What the waiting version lacks in the SEO panel, noted when it was saved or held, so the
+	 * Approvals list can show "things to check" without reading every page.
+	 */
+	checks?: { description: boolean; picture: boolean };
+	/**
+	 * "Approve and publish" pressed: the publish that follows records "Published by" and sends
+	 * these emails (content:afterPublish), so the button itself stays within its calls.
+	 */
+	publishing?: { by: Person; at: string; jobs: MailJob[] };
 	history: HistoryEvent[];
 	updatedAt: string;
 }
@@ -101,19 +112,34 @@ export interface Draft {
 	fingerprint: string;
 	/** The live version, when the page is published. */
 	live: { data: Record<string, unknown> } | null;
+	/** The page's revision token for publishing, when read with `forPublish`. */
+	rev?: string;
 }
 
 /**
  * Rebuild the version a publish would make live, the same way EmDash builds the publish
  * hook's content: draft revision data over the live data, `_` keys dropped, the draft's
  * address. The fingerprint must match the one the hook computes, or every approval is lost.
+ *
+ * `forPublish` reads the page with its revision token (getVersioned) instead of a plain read,
+ * so publishing needs no further read. That read carries no SEO panel; `item.seo` is then
+ * missing.
  */
 export async function readDraft(
 	ctx: PluginContext,
 	collection: string,
 	id: string,
+	{ forPublish = false }: { forPublish?: boolean } = {},
 ): Promise<Draft | null> {
-	const item = await ctx.content?.get(collection, id);
+	let item: ContentItem | null | undefined;
+	let rev: string | undefined;
+	if (forPublish && ctx.content?.getVersioned) {
+		const versioned = await ctx.content.getVersioned(collection, id);
+		item = versioned?.item;
+		rev = versioned?._rev;
+	} else {
+		item = await ctx.content?.get(collection, id);
+	}
 	if (!item) return null;
 	const liveData = isRecord(item.data) ? item.data : {};
 	let data: Record<string, unknown> = { ...liveData };
@@ -134,6 +160,23 @@ export async function readDraft(
 		slug,
 		fingerprint: await fingerprint(data, slug),
 		live: item.status === "published" ? { data: liveData } : null,
+		...(rev ? { rev } : {}),
+	};
+}
+
+/**
+ * What the SEO panel is missing on a version. EmDash includes `seo` with a page only when its
+ * content type has the SEO panel; without it nothing is missing.
+ */
+export function seoGaps(
+	seo: { description?: string | null; image?: unknown } | null | undefined,
+	data: Record<string, unknown>,
+): { description: boolean; picture: boolean } {
+	if (!seo) return { description: false, picture: false };
+	const excerpt = typeof data.excerpt === "string" && data.excerpt.trim() !== "";
+	return {
+		description: !(seo.description?.trim() || excerpt),
+		picture: !seo.image,
 	};
 }
 
@@ -180,26 +223,52 @@ export function personName(user: Pick<UserInfo, "name" | "email"> | null | undef
 	return user?.name?.trim() || user?.email || "Someone";
 }
 
-/** Everyone who may approve under the settings, admins first. Excludes the person given. */
+export interface ApproverPage {
+	people: UserInfo[];
+	/** More people to read after these, from this cursor. */
+	next?: string;
+}
+
+/**
+ * One page (up to 100) of the people who may approve under the settings, admins first,
+ * without the person given. One call to the site. Under "Others need my OK" only admins are
+ * read, so the page holds every approver on any site with up to 100 admins; under "I need
+ * someone else's OK" it is the first 100 people. Emails read the further pages (notify.ts).
+ */
+export async function approverPage(
+	ctx: PluginContext,
+	config: Pick<Config, "preset">,
+	except?: string | null,
+	cursor?: string,
+): Promise<ApproverPage> {
+	return approverPageFor(ctx, approverRole(config.preset), except, cursor);
+}
+
+export async function approverPageFor(
+	ctx: PluginContext,
+	min: number,
+	except?: string | null,
+	cursor?: string,
+): Promise<ApproverPage> {
+	if (!ctx.users) return { people: [] };
+	const result = await ctx.users.list({
+		limit: 100,
+		...(min >= ROLE.admin ? { role: ROLE.admin } : {}),
+		...(cursor ? { cursor } : {}),
+	});
+	const people = result.items
+		.filter((user) => user.role >= min && user.id !== except)
+		.sort((a, b) => b.role - a.role || personName(a).localeCompare(personName(b)));
+	return { people, ...(result.nextCursor ? { next: result.nextCursor } : {}) };
+}
+
+/** The approvers on the first page (see approverPage). One call to the site. */
 export async function approvers(
 	ctx: PluginContext,
-	config: Config,
+	config: Pick<Config, "preset">,
 	except?: string | null,
-	pages = 5,
 ): Promise<UserInfo[]> {
-	if (!ctx.users) return [];
-	const min = approverRole(config.preset);
-	const found: UserInfo[] = [];
-	let cursor: string | undefined;
-	for (let page = 0; page < pages; page++) {
-		const result = await ctx.users.list({ limit: 100, ...(cursor ? { cursor } : {}) });
-		for (const user of result.items) {
-			if (user.role >= min && user.id !== except) found.push(user);
-		}
-		cursor = result.nextCursor;
-		if (!cursor) break;
-	}
-	return found.sort((a, b) => b.role - a.role || personName(a).localeCompare(personName(b)));
+	return (await approverPage(ctx, config, except)).people;
 }
 
 /** Whether this person may decide on this request. */
