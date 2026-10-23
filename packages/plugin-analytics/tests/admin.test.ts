@@ -459,6 +459,30 @@ describe("status wording", () => {
 		]);
 	});
 
+	it("tells the owner, in plain words, to add a menu item or link to /#cookie-settings", async () => {
+		const off = warnings(
+			config({
+				tools: { ga4: "G-AB12CD34EF" },
+				banner: { policyUrl: "/privacy", settingsButton: false },
+			}),
+		);
+		expect(off).toEqual([
+			{
+				title: 'The "Cookies" button is off',
+				description:
+					'Visitors must be able to change their answer as easily as they gave it. Add a menu item called "Cookie settings" to your footer menu, with the link /#cookie-settings, or turn the button back on under Cookie banner.',
+			},
+		]);
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const page = JSON.stringify(await load(fake));
+		expect(page).toContain(
+			"To add your own link, make a menu item or a link on your privacy page that goes to /#cookie-settings. The button steps aside while that link is on screen.",
+		);
+		// The owner is never asked to edit HTML.
+		expect(page).not.toMatch(/data-cookie-settings|attribute/);
+		expect(JSON.stringify(off)).not.toMatch(/data-cookie-settings|attribute/);
+	});
+
 	it("shows the 30-day answers once the banner is in use", async () => {
 		const fake = fakeContext({
 			[CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" }, banner: { policyUrl: "/privacy" } },

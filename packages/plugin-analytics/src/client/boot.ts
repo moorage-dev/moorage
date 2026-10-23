@@ -43,6 +43,10 @@ interface Globals {
 /** Where the visitor's country is remembered, as `DE.20374` (code, then the day it was learned). */
 export const GEO_KEY = "cookie_consent_geo";
 
+/** A link to this opens the cookie choices; so does anything marked data-cookie-settings. */
+const HASH = "#cookie-settings";
+const OPENERS = "[data-cookie-settings],a[href$='" + HASH + "']";
+
 const GRANTED = "granted";
 const DENIED = "denied";
 
@@ -53,7 +57,7 @@ const DARK =
 
 // A cookie, drawn in the text colour.
 const ICON =
-	'<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="6" r="1" fill="currentColor"/><circle cx="10" cy="9" r="1" fill="currentColor"/><circle cx="6.5" cy="10.5" r=".8" fill="currentColor"/></svg>';
+	'<svg viewBox="0 0 16 16" fill=currentColor aria-hidden=true><circle cx=8 cy=8 r=6.5 fill=none stroke=currentColor stroke-width=1.5 /><circle cx=6 cy=6 r=1 /><circle cx=10 cy=9 r=1 /><circle cx=6.5 cy=10.5 r=.8 /></svg>';
 
 // The look. Colours and fonts come from a theme's --cookie-consent-* variables when it sets
 // them (they cross into the shadow root), else from neutral defaults; the owner's colours
@@ -249,16 +253,27 @@ export function boot(c: ClientConfig): void {
 	const box = (name: string) => root!.querySelector<HTMLInputElement>("[name=" + name + "]");
 	const esc = (text: string) => text.replace(/[&<>"]/g, (ch) => "&#" + ch.charCodeAt(0) + ";");
 
+	/**
+	 * The link or button that opens the cookie choices, if `el` is in one: a link to #cookie-settings
+	 * on this site (`#cookie-settings`, `/#cookie-settings`, or a full address ending in it; a menu item
+	 * or a link in a page's text), or anything marked data-cookie-settings (the older way, still kept).
+	 */
+	const opener = (el: Element) => {
+		const o = el.closest<HTMLAnchorElement>(OPENERS);
+		// A link to #cookie-settings on another site is left alone.
+		return o && (o.hash != HASH || o.host == here.host) && o;
+	};
+
 	let linkOnScreen = false;
 	const show = () => {
 		const sheet = part(".b");
 		sheet.hidden = !state.ask;
 		mark(state.ask ? "asking" : "settled");
-		// While a theme link with data-cookie-settings is on screen it does the same job, so the button
+		// While a link that opens the choices is on screen it does the same job, so the button
 		// steps aside; it comes back when the link scrolls away.
 		part(".s").hidden = state.ask || !c.btn || linkOnScreen;
 		// Keep whatever has keyboard focus scrolled clear of the sheet, without moving the page.
-		d.documentElement.style.scrollPaddingBottom = state.ask ? sheet.offsetHeight + "px" : "";
+		html.style.scrollPaddingBottom = state.ask ? sheet.offsetHeight + "px" : "";
 	};
 
 	const open = () => {
@@ -443,19 +458,26 @@ export function boot(c: ClientConfig): void {
 		if (c.who || preview) {
 			build();
 			show();
-			const links = d.querySelectorAll("[data-cookie-settings]");
-			if (links.length && typeof IntersectionObserver === "function") {
-				const seen = new Set<Element>();
-				const watch = new IntersectionObserver((entries) => {
-					for (const entry of entries) {
-						if (entry.isIntersecting) seen.add(entry.target);
-						else seen.delete(entry.target);
-					}
-					linkOnScreen = seen.size > 0;
-					show();
-				});
-				links.forEach((link) => watch.observe(link));
+			// Arrived from a link to #cookie-settings (on a page without this script, or opened in a new
+			// tab): show the choices, and take the hash out of the address again.
+			if (here.hash == HASH) {
+				history.replaceState(history.state, "", here.pathname + here.search);
+				open();
 			}
+			// Every browser this script runs in (it needs <dialog>) has IntersectionObserver.
+			const seen = new Set<Element>();
+			const watch = new IntersectionObserver((entries) => {
+				for (const entry of entries) {
+					if (entry.isIntersecting) seen.add(entry.target);
+					else seen.delete(entry.target);
+				}
+				linkOnScreen = seen.size > 0;
+				show();
+			});
+			// The links in the page as it loaded (menus are drawn by the server). One added later still
+			// opens the choices (the click listener below is for the whole page); it just does not move
+			// the button aside, which keeps this script from watching every change to every page.
+			d.querySelectorAll(OPENERS).forEach((link) => opener(link) && watch.observe(link));
 		}
 		const go = () => apply(state.a, state.m);
 		// Visitors who are not asked get their tags when the browser is idle.
@@ -469,7 +491,7 @@ export function boot(c: ClientConfig): void {
 		const known = /^([A-Z]*)\.(\d+)$/.exec(local(GEO_KEY) || "");
 		if (preview) {
 			// The page follows too, for themes that colour the banner with light-dark().
-			d.documentElement.style.colorScheme = preview;
+			html.style.colorScheme = preview;
 			run();
 		}
 		// Only the regional rules need the visitor's country.
@@ -494,9 +516,13 @@ export function boot(c: ClientConfig): void {
 	d.addEventListener("click", (event) => {
 		const target = event.target as Element;
 		if (!target.closest) return;
-		if (root && target.closest("[data-cookie-settings]")) {
-			event.preventDefault();
-			open();
+		// One listener for the whole page, so links added later work too. Enter on a link is a click.
+		const o = opener(target);
+		if (o) {
+			// With no choices on this site (nothing asks) a link to #cookie-settings still stays on the
+			// page; a data-cookie-settings link with an address of its own goes there, as it always did.
+			if (root || o.hash) event.preventDefault();
+			if (root) open();
 		}
 		const link = c.ev && target.closest('a[href^="tel:"],a[href^="mailto:"]');
 		if (link) lead(link.getAttribute("href")![0] === "t" ? "phone" : "email");
@@ -510,7 +536,7 @@ export function boot(c: ClientConfig): void {
 					lead("form");
 				}
 			}
-		}).observe(d.documentElement, { subtree: true, attributes: true, attributeFilter: ["class"] });
+		}).observe(html, { subtree: true, attributes: true, attributeFilter: ["class"] });
 	}
 
 	if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", start);

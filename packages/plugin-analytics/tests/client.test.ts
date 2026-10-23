@@ -363,3 +363,139 @@ describe("telling other scripts whether the banner waits", () => {
 		expect(phase()).toBeNull();
 	});
 });
+
+describe("links to #cookie-settings", () => {
+	/** A stand-in for the browser's IntersectionObserver, so a test can say when a link is on screen. */
+	class Watcher {
+		static all: Watcher[] = [];
+		readonly watched = new Set<Element>();
+		constructor(private readonly report: (entries: unknown[]) => void) {
+			Watcher.all.push(this);
+		}
+		observe(target: Element) {
+			this.watched.add(target);
+		}
+		unobserve() {}
+		disconnect() {}
+		/** Tell the script that `target` came on screen, or left it. */
+		static seen(target: Element, on: boolean) {
+			for (const watcher of Watcher.all) {
+				if (watcher.watched.has(target)) watcher.report([{ target, isIntersecting: on }]);
+			}
+		}
+	}
+
+	beforeEach(() => {
+		Watcher.all = [];
+		vi.stubGlobal("IntersectionObserver", Watcher);
+	});
+
+	const panelOpen = () => shadow().querySelector("dialog")!.open;
+	const pill = () => shadow().querySelector<HTMLElement>(".s")!;
+	/** Click as a visitor would; true when the script kept the browser from following the link. */
+	const click = (element: Element) =>
+		!element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+	const link = (selector: string) => document.querySelector(selector)!;
+
+	it("a menu item to /#cookie-settings opens the cookie choices, on any page, without leaving it", async () => {
+		win.happyDOM.setURL("https://acme.test/pricing");
+		document.body.innerHTML = '<nav><a id=m href="/#cookie-settings">Cookie settings</a></nav>';
+		boot(settings());
+		await ready();
+		press("r");
+		expect(panelOpen()).toBe(false);
+		expect(click(link("#m"))).toBe(true);
+		expect(panelOpen()).toBe(true);
+		expect(window.location.href).toBe("https://acme.test/pricing");
+	});
+
+	it("a link in a page's text to #cookie-settings, or to a full address on this site, does the same", async () => {
+		// Not asked (outside Europe): the panel is still there to say no.
+		country("US");
+		document.body.innerHTML =
+			'<article><p>Change <a id=t href="#cookie-settings">your cookie choices</a> or <a id=f href="https://acme.test/privacy#cookie-settings">here</a>.</p></article>';
+		boot(settings());
+		await ready();
+		expect(bannerShown()).toBe(false);
+		expect(click(link("#t"))).toBe(true);
+		expect(panelOpen()).toBe(true);
+		shadow().querySelector("dialog")!.close();
+		expect(click(link("#f"))).toBe(true);
+		expect(panelOpen()).toBe(true);
+		expect(window.location.hash).toBe("");
+	});
+
+	it("leaves other links alone", async () => {
+		document.body.innerHTML =
+			'<a id=a href="#cookie-settings-old">a</a><a id=b href="https://other.test/#cookie-settings">b</a><a id=c href="#cookies">c</a>';
+		boot(settings());
+		await ready();
+		for (const id of ["#a", "#b", "#c"]) {
+			let followed: boolean | undefined;
+			// Seen after the script has had its turn; then the simulated browser is kept from leaving.
+			window.addEventListener(
+				"click",
+				(event) => {
+					followed = !event.defaultPrevented;
+					event.preventDefault();
+				},
+				{ once: true },
+			);
+			click(link(id));
+			expect(followed).toBe(true);
+			expect(panelOpen()).toBe(false);
+		}
+	});
+
+	it("works for a link added after the page loaded, such as a menu drawn later", async () => {
+		country("US");
+		boot(settings());
+		await ready();
+		const late = document.createElement("a");
+		late.href = "/#cookie-settings";
+		late.textContent = "Cookie settings";
+		document.body.append(late);
+		expect(click(late)).toBe(true);
+		expect(panelOpen()).toBe(true);
+	});
+
+	it("the floating button steps aside while a link to #cookie-settings is on screen, and comes back", async () => {
+		country("US");
+		document.body.innerHTML =
+			'<footer><a id=m href="/#cookie-settings">Cookie settings</a></footer>';
+		boot(settings());
+		await ready();
+		expect(pill().hidden).toBe(false);
+		Watcher.seen(link("#m"), true);
+		expect(pill().hidden).toBe(true);
+		Watcher.seen(link("#m"), false);
+		expect(pill().hidden).toBe(false);
+	});
+
+	it("arriving at an address ending in #cookie-settings opens the choices and tidies the address", async () => {
+		country("US");
+		win.happyDOM.setURL("https://acme.test/?ref=menu#cookie-settings");
+		boot(settings());
+		await ready();
+		expect(panelOpen()).toBe(true);
+		expect(window.location.href).toBe("https://acme.test/?ref=menu");
+	});
+
+	it("still opens from anything marked data-cookie-settings, as before", async () => {
+		document.body.innerHTML = "<button id=o data-cookie-settings>Cookies</button>";
+		boot(settings());
+		await ready();
+		expect(click(link("#o"))).toBe(true);
+		expect(panelOpen()).toBe(true);
+	});
+
+	it("on a site where nothing asks, the link opens nothing and does not leave the page", async () => {
+		win.happyDOM.setURL("https://acme.test/pricing");
+		document.body.innerHTML = '<a id=m href="/#cookie-settings">Cookie settings</a>';
+		boot(settings({ tools: { cloudflare: "0123456789abcdef0123456789abcdef" } }));
+		await ready();
+		expect(document.querySelector("#cookie-consent")).toBeNull();
+		expect(click(link("#m"))).toBe(true);
+		expect(window.location.href).toBe("https://acme.test/pricing");
+	});
+});

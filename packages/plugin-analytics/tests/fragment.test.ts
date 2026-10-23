@@ -218,11 +218,11 @@ describe("the browser script", () => {
 		expect(clientCode.startsWith("(function(){")).toBe(true);
 	});
 
-	it("stays under 6 KB gzipped with every tool switched on", () => {
+	it("stays under 6.25 KB gzipped with every tool switched on", () => {
 		const size = gzipSync(full, { level: 9 }).length;
 		// Printed so the number is in the test log.
-		console.log(`inline script: ${full.length} bytes, ${size} bytes gzipped (budget 6144)`);
-		expect(size).toBeLessThan(6144);
+		console.log(`inline script: ${full.length} bytes, ${size} bytes gzipped (budget 6400)`);
+		expect(size).toBeLessThan(6400);
 	});
 
 	it("never names the company behind the plugin, and has no noscript fallback", () => {

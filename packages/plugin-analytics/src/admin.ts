@@ -132,7 +132,7 @@ export function warnings(config: AnalyticsConfig): Array<{ title: string; descri
 		list.push({
 			title: 'The "Cookies" button is off',
 			description:
-				"Visitors must be able to change their answer as easily as they gave it. Make sure every page has a link or button with the attribute data-cookie-settings, for example in your footer, or turn the button back on under Cookie banner.",
+				'Visitors must be able to change their answer as easily as they gave it. Add a menu item called "Cookie settings" to your footer menu, with the link /#cookie-settings, or turn the button back on under Cookie banner.',
 		});
 	}
 	if (tools.gtm && config.gtmLoading === "immediate" && banner.audience !== "none") {
@@ -299,7 +299,7 @@ function bannerBlocks(state: PageState): Block[] {
 		},
 		{
 			type: "context",
-			text: 'Visitors must always be able to change their mind. A small "Cookies" button lets them; it stays away on pages that have a link with the attribute data-cookie-settings, for example "Cookie settings" in your footer.',
+			text: 'Visitors must always be able to change their mind. A small "Cookies" button lets them. To add your own link, make a menu item or a link on your privacy page that goes to /#cookie-settings. The button steps aside while that link is on screen.',
 		},
 		{
 			type: "form",

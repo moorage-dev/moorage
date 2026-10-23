@@ -592,6 +592,77 @@ test.describe("a visitor who is not asked", () => {
 		await expect(page.locator("#cookie-consent")).toHaveCount(0);
 		await save("save_banner", { audience: "europe" });
 	});
+
+	test("a menu item to /#cookie-settings, made in the admin, opens the cookie choices", async ({
+		page,
+		context,
+	}) => {
+		const MENU = "footer_support";
+		// The owner adds the link in EmDash's menu editor, as the admin text tells them to.
+		const editor = await adminContext.newPage();
+		await editor.goto(`/_emdash/admin/menus/${MENU}`);
+		const welcome = editor.getByRole("dialog", { name: /Welcome to EmDash/ });
+		await editor.addLocatorHandler(welcome, async () => {
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		});
+		await editor
+			.getByRole("button", { name: "Add Custom Link" })
+			.first()
+			.click({ timeout: 60_000 });
+		const dialog = editor.getByRole("dialog", { name: "Add Custom Link" });
+		await dialog.getByLabel("Label").fill("Cookie settings");
+		const url = dialog.getByLabel("URL");
+		// The menu editor refuses a link that starts with #, which is why the admin says /#cookie-settings.
+		await url.fill("#cookie-settings");
+		expect(await url.evaluate((input: HTMLInputElement) => input.validity.valid)).toBe(false);
+		await url.fill("/#cookie-settings");
+		expect(await url.evaluate((input: HTMLInputElement) => input.validity.valid)).toBe(true);
+		await dialog.getByRole("button", { name: "Add", exact: true }).click();
+		await expect(dialog).toBeHidden();
+		await editor.close();
+		const menu = (await (
+			await admin.get(`/_emdash/api/menus/${MENU}`, { headers: { "X-EmDash-Request": "1" } })
+		).json()) as { data: { items: Array<{ id: string; customUrl: string | null }> } };
+		const item = menu.data.items.find((each) => each.customUrl === "/#cookie-settings");
+		expect(item).toBeDefined();
+
+		try {
+			await stubVendors(context);
+			await inCountry(page, "US");
+			await page.goto("/pricing");
+			const link = page.locator("footer").getByRole("link", { name: "Cookie settings" });
+			await expect(link).toHaveAttribute("href", "/#cookie-settings");
+			await page.evaluate(() => scrollTo(0, 0));
+			await expect(settingsButton(page)).toBeVisible();
+			// While the link is on screen the floating button steps aside.
+			await link.scrollIntoViewIfNeeded();
+			await expect(settingsButton(page)).toBeHidden();
+
+			// From the keyboard: Enter on the link opens the choices on this page, with no hash left.
+			await link.focus();
+			await page.keyboard.press("Enter");
+			await expect(panel(page)).toBeVisible();
+			expect(new URL(page.url()).pathname).toBe("/pricing");
+			expect(new URL(page.url()).hash).toBe("");
+			await page.keyboard.press("Escape");
+			await expect(panel(page)).toBeHidden();
+			await link.click();
+			await expect(panel(page)).toBeVisible();
+			expect(page.url()).not.toContain("#");
+			await page.keyboard.press("Escape");
+
+			// Arriving with the hash, for example from a page the banner script is not on: the choices
+			// open, and the address is tidied.
+			await page.goto("/#cookie-settings");
+			await expect(panel(page)).toBeVisible();
+			expect(page.url()).not.toContain("#");
+		} finally {
+			// Leave the shared test site's menus as seeded.
+			await admin.delete(`/_emdash/api/menus/${MENU}/items/${item!.id}`, {
+				headers: { "X-EmDash-Request": "1" },
+			});
+		}
+	});
 });
 
 test.describe("tools with their own rules", () => {
