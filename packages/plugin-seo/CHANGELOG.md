@@ -1,5 +1,11 @@
 # @moorage/plugin-seo
 
+## 0.1.10
+
+### Patch Changes
+
+- 8e315f1: The EmDash registry listing gets an icon and a banner; no change to how the plugin works.
+
 ## 0.1.9
 
 ### Patch Changes
