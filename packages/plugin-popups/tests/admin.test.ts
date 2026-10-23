@@ -138,7 +138,9 @@ describe("the list", () => {
 		]);
 		// Near the top: before the first section.
 		expect(own.indexOf(actions)).toBeLessThan(
-			own.findIndex((b) => b.type === "header" && b.text === "1 What kind"),
+			own.findIndex(
+				(b) => b.type === "header" && b.text === "What it says, when and where, and dates",
+			),
 		);
 		const editor = words(await press(fake, "row", "change:abcd1234", EDITOR));
 		expect(editor).toContain("toggle:abcd1234");
@@ -289,7 +291,7 @@ describe("New popup, four steps", () => {
 			popups: { popups: [popup({ contains: "form", form: "old-letter" })] },
 		});
 		const page = await press(fake, "row", "change:abcd1234");
-		const field = formOf(page, "save_s2").fields.find((f) => f.action_id === "form");
+		const field = formOf(page, "save_all").fields.find((f) => f.action_id === "form");
 		expect(field).toMatchObject({
 			type: "select",
 			label: "Form",
@@ -313,7 +315,7 @@ describe("New popup, four steps", () => {
 		// No Forms plugin, or the list cannot be read: the box to type in.
 		forms({});
 		const typed = await press(fake, "row", "change:abcd1234");
-		expect(formOf(typed, "save_s2").fields.find((f) => f.action_id === "form")).toMatchObject({
+		expect(formOf(typed, "save_all").fields.find((f) => f.action_id === "form")).toMatchObject({
 			type: "text_input",
 			initial_value: "old-letter",
 		});
@@ -396,8 +398,8 @@ describe("finished popups", () => {
 		const actions = all(page)
 			.filter((b) => b.type === "form")
 			.map((b) => (b as Extract<Block, { type: "form" }>).submit.action_id);
-		expect(actions).toEqual(["save_s2", "save_s4"]);
-		expect(formOf(page, "save_s2").fields.map((f) => f.action_id)).not.toContain("form");
+		expect(actions).toEqual(["save_all"]);
+		expect(formOf(page, "save_all").fields.map((f) => f.action_id)).not.toContain("form");
 		await submit(fake, "save_s2", "s2:abcd1234:x", { heading: "New words", form: "other" }, EDITOR);
 		expect(stored(fake).popups[0]).toMatchObject({ heading: "New words", form: "newsletter" });
 		expect(
@@ -632,5 +634,281 @@ describe("Numbers and Settings", () => {
 
 	it("says when no email service is set up", async () => {
 		expect(words(await load(fakeContext()))).toContain("No email service is set up in EmDash yet");
+	});
+});
+
+describe("a finished popup's page: one Save", () => {
+	const field = (response: BlockResponse, id: string) =>
+		formOf(response, "save_all").fields.find((f) => f.action_id === id) as
+			| (Record<string, unknown> & { initial_value?: unknown })
+			| undefined;
+	const banner = (response: BlockResponse) =>
+		all(response).find((b) => b.type === "banner" && b.variant === "error") as
+			| Extract<Block, { type: "banner" }>
+			| undefined;
+
+	it("has one form for what it says, when and where, and dates, and the kind on its own screen", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const page = await press(fake, "row", "change:abcd1234");
+		const shown = all(page).filter((b) => b.type === "form") as Array<
+			Extract<Block, { type: "form" }>
+		>;
+		expect(shown.map((f) => f.submit)).toEqual([{ label: "Save changes", action_id: "save_all" }]);
+		const ids = shown[0]!.fields.map((f) => f.action_id);
+		for (const id of ["heading", "button_url", "trigger", "where", "devices", "start_date", "on"])
+			expect(ids).toContain(id);
+		// The kind decides which boxes there are, so it is changed on a screen of its own.
+		const kind = await press(fake, "nav", "kind:abcd1234");
+		expect(
+			(all(kind).filter((b) => b.type === "form") as Array<Extract<Block, { type: "form" }>>).map(
+				(f) => f.submit.action_id,
+			),
+		).toEqual(["save_s1"]);
+		expect(words(kind)).toContain("back:abcd1234:4");
+		const changed = await submit(fake, "save_s1", formOf(kind, "save_s1").block_id!, {
+			name: "Monthly news",
+			kind: "slide",
+		});
+		expect(stored(fake).popups[0]).toMatchObject({ name: "Monthly news", kind: "slide", step: 4 });
+		expect(formOf(changed, "save_all")).toBeDefined();
+		// A refused name stays on the kind's own screen.
+		const noName = await submit(fake, "save_s1", formOf(kind, "save_s1").block_id!, { name: "" });
+		expect(words(noName)).toContain("Give it a name");
+		expect(formOf(noName, "save_all")).toBeUndefined();
+		// Nothing about saving first beside Preview: Preview sits after the one Save.
+		expect(words(page)).not.toContain("Save your changes first");
+		const blocks = all(page);
+		expect(
+			blocks.findIndex((b) => b.type === "actions" && JSON.stringify(b).includes("popups_preview")),
+		).toBeGreaterThan(blocks.indexOf(shown[0]!));
+	});
+
+	it("keeps what was typed when a save is refused, and shows every problem at once", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const page = await press(fake, "row", "change:abcd1234");
+		const block = formOf(page, "save_all").block_id!;
+		const refused = await submit(fake, "save_all", block, {
+			heading: "",
+			text: "Typed but not saved",
+			button_label: "Order a cake",
+			button_url: "/cakes",
+			where: "prefix",
+			prefixes: "",
+			exclude: "/contact",
+			start_date: "2026-12-01",
+			start_time: "09:00",
+			end_date: "2026-11-01",
+			end_time: "09:00",
+		});
+		expect(refused.toast?.type).toBe("error");
+		// The same form id: the admin keeps every box as it was typed.
+		expect(formOf(refused, "save_all").block_id).toBe(block);
+		expect(field(refused, "text")?.initial_value).toBe("Typed but not saved");
+		expect(field(refused, "exclude")?.initial_value).toBe("/contact");
+		expect(field(refused, "start_date")?.initial_value).toBe("2026-12-01");
+		// One banner with the problems of all three parts.
+		const errors = all(refused).filter((b) => b.type === "banner" && b.variant === "error");
+		expect(errors).toHaveLength(1);
+		expect(banner(refused)!.description).toContain("Write a heading.");
+		expect(banner(refused)!.description).toContain("Type at least one address");
+		expect(banner(refused)!.description).toContain("It must end after it starts.");
+		expect(stored(fake).popups[0]).toMatchObject({
+			heading: "Fresh from the oven, once a month",
+			where: "all",
+			exclude: [],
+			start: null,
+		});
+	});
+
+	it("saves everything with one write and shows the saved values after", async () => {
+		forms({});
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const page = await press(fake, "row", "change:abcd1234");
+		const block = formOf(page, "save_all").block_id!;
+		const saved = await submit(fake, "save_all", block, {
+			heading: "Open on Boxing Day",
+			text: "Ten till two.",
+			button_label: "See the hours",
+			button_url: "/hours",
+			where: "prefix",
+			prefixes: "/cakes/",
+			devices: "desktop",
+			end_date: "2099-12-27",
+			end_time: "14:00",
+			on: true,
+		});
+		expect(saved.toast?.type).toBe("success");
+		expect(stored(fake).popups[0]).toMatchObject({
+			heading: "Open on Boxing Day",
+			text: "Ten till two.",
+			buttonUrl: "/hours",
+			where: "prefix",
+			prefixes: ["/cakes/"],
+			devices: "desktop",
+			end: Date.UTC(2099, 11, 27, 14),
+			on: true,
+		});
+		// A new form id, so the admin draws the saved values.
+		expect(formOf(saved, "save_all").block_id).not.toBe(block);
+		expect(field(saved, "heading")?.initial_value).toBe("Open on Boxing Day");
+		expect(field(saved, "prefixes")?.initial_value).toBe("/cakes/");
+		expect(field(saved, "end_date")?.initial_value).toBe("2099-12-27");
+	});
+
+	it("still offers the site's forms as a list after a save or a refusal", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string) =>
+				url.endsWith("/forms/list")
+					? new Response(
+							JSON.stringify({
+								data: {
+									items: [{ id: "f1", name: "Newsletter", slug: "newsletter", status: "active" }],
+								},
+							}),
+						)
+					: new Response(
+							JSON.stringify({
+								success: true,
+								data: { name: "Newsletter", pages: [], settings: { spamProtection: "honeypot" } },
+							}),
+						),
+			),
+		);
+		const fake = fakeContext({
+			popups: { popups: [popup({ contains: "form", form: "newsletter" })] },
+		});
+		const page = await press(fake, "row", "change:abcd1234");
+		const block = formOf(page, "save_all").block_id!;
+		const refused = await submit(fake, "save_all", block, { heading: "" });
+		expect(field(refused, "form")?.type).toBe("select");
+		const saved = await submit(fake, "save_all", block, { heading: "Hello", form: "newsletter" });
+		expect(saved.toast?.type).toBe("success");
+		expect(field(saved, "form")?.type).toBe("select");
+	});
+
+	it("lets an Editor save words and dates but never changes when and where", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const page = await press(fake, "row", "change:abcd1234", EDITOR);
+		const ids = formOf(page, "save_all").fields.map((f) => f.action_id);
+		expect(ids).toContain("heading");
+		expect(ids).toContain("end_date");
+		expect(ids).not.toContain("where");
+		expect(words(page)).not.toContain("kind:abcd1234");
+		const saved = await submit(
+			fake,
+			"save_all",
+			formOf(page, "save_all").block_id!,
+			{
+				heading: "New words",
+				where: "prefix",
+				prefixes: "/x/",
+				devices: "phone",
+				trigger: "exit",
+				end_date: "2099-12-27",
+				end_time: "14:00",
+			},
+			EDITOR,
+		);
+		expect(saved.toast?.type).toBe("success");
+		expect(stored(fake).popups[0]).toMatchObject({
+			heading: "New words",
+			end: Date.UTC(2099, 11, 27, 14),
+			where: "all",
+			prefixes: [],
+			devices: "all",
+			trigger: "read",
+		});
+		// An empty address list would be refused for an Admin; an Editor's is simply ignored.
+		const again = await submit(
+			fake,
+			"save_all",
+			formOf(saved, "save_all").block_id!,
+			{ heading: "Newer words", where: "prefix", prefixes: "" },
+			EDITOR,
+		);
+		expect(again.toast?.type).toBe("success");
+		expect(stored(fake).popups[0]).toMatchObject({ heading: "Newer words", where: "all" });
+		// And the kind's own screen refuses an Editor.
+		expect(words(await press(fake, "nav", "kind:abcd1234", EDITOR))).toContain(
+			"Only an administrator",
+		);
+	});
+});
+
+describe("a finished popup's own numbers", () => {
+	const statsOf = (response: BlockResponse) =>
+		(
+			all(response).filter((b) => b.type === "stats") as Array<Extract<Block, { type: "stats" }>>
+		).flatMap((b) => b.items);
+	const numbersRow = (response: BlockResponse, name: string) =>
+		(
+			all(response).find((b) => b.type === "table" && b.block_id === "numbers") as Extract<
+				Block,
+				{ type: "table" }
+			>
+		).rows.find((row) => row.name === name);
+	const row = (popupId: string, day: string, seen: number, clicked: number, sent = 0) => ({
+		popup: popupId,
+		day,
+		seen,
+		sent,
+		clicked,
+		closed: Math.floor(seen / 5),
+		phone: Math.floor(seen / 2),
+	});
+
+	it("shows the same numbers as the Numbers tab, with a way to see them all", async () => {
+		const fake = fakeContext({
+			popups: {
+				popups: [
+					popup(),
+					popup({ id: "form0001", name: "Letter", contains: "form", form: "newsletter" }),
+					popup({ id: "inline01", name: "Box", kind: "inline" }),
+					popup({ id: "none0001", name: "Quiet" }),
+				],
+			},
+		});
+		fake.rows.set("a", row("abcd1234", "2026-10-03", 150, 9));
+		fake.rows.set("b", row("abcd1234", "2026-10-05", 50, 1));
+		fake.rows.set("c", row("form0001", "2026-10-05", 40, 0, 3));
+		fake.rows.set("d", row("inline01", "2026-10-05", 120, 6));
+		const list = await load(fake);
+		for (const [id, name] of [
+			["abcd1234", "Monthly letter"],
+			["form0001", "Letter"],
+			["inline01", "Box"],
+		] as const) {
+			const own = await press(fake, "row", `change:${id}`);
+			const shown = numbersRow(list, name)!;
+			expect(statsOf(own)).toEqual([
+				{ label: "Seen", value: shown.seen },
+				{ label: "Responses", value: shown.responses },
+				{ label: "Closed", value: shown.closed },
+				{ label: "On phones", value: shown.phones },
+			]);
+		}
+		const own = await press(fake, "row", "change:abcd1234");
+		expect(statsOf(own).map((s) => s.value)).toEqual(["200", "10 clicks (5%)", "40", "50%"]);
+		// Under 100 views: no percentage, and the same words as the Numbers tab.
+		expect(statsOf(await press(fake, "row", "change:form0001"))[1]!.value).toBe(
+			"3 sign-ups (not enough visitors yet)",
+		);
+		// Nothing counted: a dash everywhere, as the Numbers tab would show.
+		expect(statsOf(await press(fake, "row", "change:none0001")).map((s) => s.value)).toEqual([
+			"–",
+			"–",
+			"–",
+			"–",
+		]);
+		// Under the status line, with a button to the Numbers tab.
+		const blocks = all(own);
+		const status = blocks.findIndex((b) => b.type === "context" && /· On/.test(b.text));
+		expect(status).toBeGreaterThan(-1);
+		expect(blocks[status + 1]?.type).toBe("stats");
+		expect(words(own)).toContain('"label":"See all numbers"');
+		const numbers = await press(fake, "nav", "numbers");
+		const tab = numbers.blocks.find((b) => b.type === "tab") as Extract<Block, { type: "tab" }>;
+		expect(tab.default_tab).toBe(1);
 	});
 });

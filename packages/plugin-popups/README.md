@@ -106,6 +106,8 @@ A new popup is off while you make it. Its last step has "Turn it on" already swi
 
 Each row of the list shows the popup's name and status, with Edit and Preview. Turn on or off, Duplicate and Delete are at the top of a popup's own page (open it with Edit).
 
+A new popup is made one step at a time. Once it is finished, its own page shows its numbers (seen, sign-ups or clicks, closed, on phones, the same as on the Numbers tab, with "See all numbers" to open that tab) and one form for what it says, when and where, and its dates, with one "Save changes" at the end. If something cannot be saved, every problem is listed together and everything you typed stays in place. The name and kind are changed with "Change name or kind", on a screen of their own, because the kind decides which boxes the popup has.
+
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
 
 ## FAQ

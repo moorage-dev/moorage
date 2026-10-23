@@ -309,6 +309,67 @@ test.describe("admin", () => {
 		await phone.close();
 	});
 
+	test("a finished popup has its own numbers and one Save, and a refused save keeps what was typed", async () => {
+		test.setTimeout(240_000);
+		const id = await make({
+			name: "Opening hours",
+			kind: "slide",
+			s2: {
+				heading: "Open on Boxing Day",
+				text: "Ten till two.",
+				contains: "button",
+				button_label: "See the hours",
+				button_url: "/hours",
+				decline: "no-thanks",
+			},
+		});
+		// One view, counted the way a visitor's browser does.
+		const counted = await admin.post(`${API}/count`, { data: { p: id, e: "seen", m: false } });
+		expect(counted.status()).toBe(200);
+		const page = await adminContext.newPage();
+		await page.setViewportSize({ width: 1280, height: 1400 });
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await page.locator("text=New popup").first().waitFor({ timeout: 150_000 });
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		if (await welcome.isVisible().catch(() => false))
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		const row = page.locator("tbody tr").filter({ hasText: "Opening hours" });
+		await row.getByRole("button", { name: "Edit", exact: true }).click();
+		await expect(page.getByRole("heading", { name: "Opening hours" })).toBeVisible();
+		// Its own numbers, as on the Numbers tab: one view, too few for a percentage.
+		await expect(page.getByText("Seen", { exact: true })).toBeVisible();
+		await expect(page.getByText("0 clicks (not enough visitors yet)")).toBeVisible();
+		await expect(page.getByRole("button", { name: "See all numbers" })).toBeVisible();
+		// One Save for everything: no Save per section.
+		const save = page.getByRole("button", { name: "Save changes" });
+		await expect(save).toHaveCount(1);
+		await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
+		// Words and where, then a refused save: everything typed stays.
+		const heading = page.getByLabel(/^Heading/);
+		const never = page.getByLabel(/^Never on these pages/);
+		await heading.fill("");
+		await never.fill("/contact");
+		await save.click();
+		await expect(page.getByText("Write a heading.")).toBeVisible();
+		await expect(never).toHaveValue("/contact");
+		await expect(page.getByLabel(/^Text/)).toHaveValue("Ten till two.");
+		// Fixed, one more Save keeps both parts.
+		await heading.fill("Open on Boxing Day, 10 till 2");
+		await save.click();
+		await expect(page.getByText("Write a heading.")).toHaveCount(0);
+		await expect(heading).toHaveValue("Open on Boxing Day, 10 till 2");
+		await expect(never).toHaveValue("/contact");
+		const list = JSON.stringify(
+			await (
+				await admin.post(`${API}/admin`, { headers: H, data: { type: "page_load", page: "/" } })
+			).json(),
+		);
+		expect(list).toContain("Every page, except /contact");
+		await page.getByRole("button", { name: "See all numbers" }).click();
+		await expect(page.getByRole("tab", { name: "Numbers", selected: true })).toBeVisible();
+		await page.close();
+	});
+
 	test("the Numbers tab downloads a spreadsheet", async () => {
 		test.setTimeout(240_000);
 		const page = await adminContext.newPage();
