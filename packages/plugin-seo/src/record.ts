@@ -215,9 +215,23 @@ async function titleGroup(
 	ctx: PluginContext,
 	key: string,
 ): Promise<Array<{ id: string; data: EntryRecord }>> {
-	if (key === "") return [];
-	const result = await entryStore(ctx).query({ where: { titleKey: key }, limit: GROUP_LIMIT });
-	return result.items;
+	return (await titleGroups(ctx, [key]))[0] ?? [];
+}
+
+/** The pages of each title, read in one operation; empty titles have none. */
+async function titleGroups(
+	ctx: PluginContext,
+	keys: string[],
+): Promise<Array<Array<{ id: string; data: EntryRecord }>>> {
+	const wanted = [...new Set(keys.filter((key) => key !== ""))];
+	if (wanted.length === 0) return keys.map(() => []);
+	const result = await entryStore(ctx).query({
+		where: { titleKey: wanted.length === 1 ? (wanted[0] ?? "") : { in: wanted } },
+		limit: GROUP_LIMIT * wanted.length,
+	});
+	return keys.map((key) =>
+		key === "" ? [] : result.items.filter((item) => item.data.titleKey === key),
+	);
 }
 
 /** Whether a record carries the "same title as another page" issue. */
@@ -343,11 +357,10 @@ export async function rebuildEntry(
 	// Write first, then read the pages with the new and the old title. A save and a check
 	// (or two saves) running at the same time each write before they read, so at least one
 	// of them sees the other's record and leaves the flags right on both.
+	// Both titles in one read: a save moving a page between titles stays at 9 operations even on
+	// a site that never saved settings (two reads), one below the sandbox's limit of 10.
 	await store.put(key, record);
-	const [group, left] = await Promise.all([
-		titleGroup(ctx, newKey),
-		oldKey !== "" && oldKey !== newKey ? titleGroup(ctx, oldKey) : [],
-	]);
+	const [group = [], left = []] = await titleGroups(ctx, [newKey, oldKey !== newKey ? oldKey : ""]);
 
 	const writes = new Map<string, EntryRecord>();
 	let members = group;
@@ -355,8 +368,9 @@ export async function rebuildEntry(
 	if (newKey !== "" && stored?.checkedAt !== record.checkedAt) {
 		// Someone wrote this entry's record after us. Another save of the same entry settles
 		// its own record; a check that read the entry before this save wrote an older copy,
-		// so ours goes back.
-		const current = stored ?? (await store.get(key));
+		// so ours goes back. A copy found with neither title (a third one) is left to the next
+		// save or check: reading it would take the save to the sandbox's limit of 10 operations.
+		const current = stored ?? left.find((item) => item.id === key)?.data ?? null;
 		if (current && isOlder(current.updatedAt, record.updatedAt)) {
 			writes.set(key, record);
 			members = [...group.filter((item) => item.id !== key), { id: key, data: record }];
