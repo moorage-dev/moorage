@@ -156,7 +156,8 @@ const plugin: SandboxedPlugin = {
 		cron: async (event, ctx) => {
 			if (event.name === SCAN_TASK) {
 				const scan = await loadScan(ctx);
-				if (scan?.status === "running") await scanStep(ctx, scan, await loadConfig(ctx));
+				if (scan?.status === "running" || scan?.sweep)
+					await scanStep(ctx, scan, await loadConfig(ctx));
 				else await ctx.cron?.cancel(SCAN_TASK);
 				return;
 			}
