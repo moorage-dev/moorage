@@ -20,11 +20,13 @@
 		"artifacts": {
 			// The Moorage cleat (moorage.dev/logo.png), the same on every plugin.
 			"icon": { "file": "./images/icon.png" },
+			// Cover at the top of the listing and its share image: 3:1, from banner.svg (scripts/render-banners.mjs in apps/demo-site).
+			"banner": { "file": "./images/banner.png" },
 			"screenshots": [
-				{ "file": "./images/review-panel.png", "lang": "en" },
-				{ "file": "./images/waiting-0-1-4.png", "lang": "en" },
-				{ "file": "./images/settings-0-1-4.png", "lang": "en" },
-				{ "file": "./images/held-publish.png", "lang": "en" },
+				{ "file": "./images/review-panel-0-2-0.png", "lang": "en" },
+				{ "file": "./images/waiting-0-2-0.png", "lang": "en" },
+				{ "file": "./images/settings-0-2-0.png", "lang": "en" },
+				{ "file": "./images/held-publish-0-2-0.png", "lang": "en" },
 			],
 		},
 	},

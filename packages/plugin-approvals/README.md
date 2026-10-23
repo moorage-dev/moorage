@@ -2,7 +2,7 @@
 
 Content Approval for [EmDash](https://emdashcms.com): a second person OKs a page before it goes live. Writers keep pressing Publish; when a page needs approval, the publish is held and becomes a request, and the writer reads "Sent for approval. Not live yet." The approver approves and publishes in one step, approves for later, or sends it back with a note, and sees what changed in words. Runs on any EmDash site with no account and no key.
 
-![The Approval panel in the entry editor](images/review-panel.png)
+![The Approval panel in the entry editor](images/review-panel-0-2-0.png)
 
 ## What it does
 
@@ -87,7 +87,7 @@ Holds publishing (`hooks.content-policy:register`); reads content, drafts and th
 
 ## Develop
 
-`pnpm build`, `pnpm test` (unit tests in the real sandbox with `@emdash-cms/plugin-test`), `pnpm typecheck`, `pnpm validate`. Browser tests: `DEMO_SITE_PORT=4404 pnpm --filter demo-site exec playwright test tests/approvals.spec.ts`, and with `DEMO_SITE_APPROVALS=in-process` for the in-process install. `APPROVALS_SCREENSHOTS=1` refreshes the pictures in `images/`.
+`pnpm build`, `pnpm test` (unit tests in the real sandbox with `@emdash-cms/plugin-test`), `pnpm typecheck`, `pnpm validate`. Browser tests: `DEMO_SITE_PORT=4404 pnpm --filter demo-site exec playwright test tests/approvals.spec.ts`, and with `DEMO_SITE_APPROVALS=in-process` for the in-process install. `APPROVALS_SCREENSHOTS=1` writes the pictures into `images/`, under names that carry the version (the site reuses a picture by its file name).
 
 ## Changelog
 
