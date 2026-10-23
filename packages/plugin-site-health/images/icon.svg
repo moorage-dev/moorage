@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Site Health & Broken Links">
+<!-- Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE. -->
+<!-- Registry icon (square; the registry rounds the corners). Glyph drawn on a 100-unit grid, scaled 3.2. -->
+<rect width="512" height="512" fill="#F2E9CF"/>
+<g transform="translate(96 96) scale(3.2)"><path d="M50 86C22 68 10 52 10 36C10 23 20 14 31 14C40 14 46 19 50 26C54 19 60 14 69 14C80 14 90 23 90 36C90 52 78 68 50 86Z" fill="#FCFCF9" stroke="#16202A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><path fill="none" d="M8 52H32L40 38L50 66L58 46L63 52H92" stroke="#A0185A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

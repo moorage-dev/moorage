@@ -11,8 +11,10 @@ const HEADERS = { "X-EmDash-Request": "1" };
 const APPROVALS = "/_emdash/admin/plugins/approvals/overview";
 const ROLE = { contributor: 20, editor: 40 };
 
-// APPROVALS_SCREENSHOTS=1 also saves the listing screenshots into the plugin's images folder.
+// APPROVALS_SCREENSHOTS=1 also saves the listing screenshots into the plugin's images folder, under
+// new names (the website reuses a picture by its file name), with the site named as a real one.
 const SCREENSHOTS = process.env.APPROVALS_SCREENSHOTS === "1";
+const SITE_TITLE = "Harbour Street Bakery";
 const IMAGES = new URL("../../../packages/plugin-approvals/images/", import.meta.url);
 
 async function shot(
@@ -175,7 +177,16 @@ test.describe.serial("Content Approval", () => {
 		test.setTimeout(180_000);
 		ellen = await signIn(browser);
 		await updateUser(ellen, ellen.id, { name: "Ellen Marsh", email: "ellen@agency.test" });
+		if (SCREENSHOTS) await siteTitle(SITE_TITLE);
 	});
+
+	async function siteTitle(title: string): Promise<void> {
+		const saved = await ellen.page.request.post(`${API}/settings`, {
+			headers: HEADERS,
+			data: { title },
+		});
+		expect(saved.ok(), await saved.text()).toBe(true);
+	}
 
 	async function saveSettings(values: Record<string, unknown>): Promise<void> {
 		const saved = await ellen.page.request.post(`${API}/plugins/approvals/admin`, {
@@ -206,6 +217,7 @@ test.describe.serial("Content Approval", () => {
 			});
 			expect(gone.ok(), await gone.text()).toBe(true);
 		}
+		if (SCREENSHOTS) await siteTitle("Acme");
 		for (const person of [ellen, sam, jo]) await person?.context.close();
 	});
 
@@ -231,8 +243,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByText(/MCP|slug|webhook|fingerprint/)).toHaveCount(0);
 
 		await page.getByRole("checkbox", { name: "Pages" }).check();
-		await shot(page, "settings-0-1-4");
-		await shot(page, "settings-0-1-4-phone", 390);
+		await shot(page, "settings-0-2-0");
+		await shot(page, "settings-0-2-0-phone", 390);
 		await page.getByRole("button", { name: "Save", exact: true }).click();
 		await expect(
 			page.getByText("Saved. Publishing now asks for approval where you chose."),
@@ -325,7 +337,7 @@ test.describe.serial("Content Approval", () => {
 		await expect(
 			page.getByText(/^Sent for approval\. Not live yet\. Ellen Marsh has been asked/),
 		).toBeVisible();
-		await shot(page, "held-publish");
+		await shot(page, "held-publish-0-2-0");
 		expect(await status(sam, menu)).toBe("draft");
 
 		await page.getByRole("button", { name: "Approval", exact: true }).click();
@@ -356,7 +368,7 @@ test.describe.serial("Content Approval", () => {
 			// The site was named during setup, after the plugin started, so its address stands in.
 			.toContainEqual(
 				expect.stringMatching(
-					/^(Acme|localhost:\d+): Sam Reyes asked you to approve "Summer menu"$/,
+					/^(Acme|Harbour Street Bakery|localhost:\d+): Sam Reyes asked you to approve "Summer menu"$/,
 				),
 			);
 	});
@@ -381,8 +393,8 @@ test.describe.serial("Content Approval", () => {
 				.map((tab) => `${tab.textContent} (${Math.round(tab.getBoundingClientRect().right)})`),
 		);
 		expect(offScreen).toEqual([]);
-		await shot(page, "waiting-0-1-4-phone", 390);
-		await shot(page, "waiting-0-1-4");
+		await shot(page, "waiting-0-2-0-phone", 390);
+		await shot(page, "waiting-0-2-0");
 		await page.setViewportSize({ width: 1280, height: 900 });
 
 		await review.click();
@@ -391,8 +403,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByRole("button", { name: "Approve and publish" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
 		await expect(page.getByText("Approve without review (admins)")).toBeVisible();
-		await shot(page, "review");
-		await shot(page, "review-phone", 390);
+		await shot(page, "review-0-2-0");
+		await shot(page, "review-0-2-0-phone", 390);
 	});
 
 	test("Ellen sends it back from the panel; the form inside the editor does not save the page", async () => {
@@ -460,7 +472,7 @@ test.describe.serial("Content Approval", () => {
 			}),
 		).toBeVisible();
 		const panelTop = ellen.page.getByRole("button", { name: "Approval", exact: true });
-		await shot(ellen.page, "review-panel", 1280, panelTop);
+		await shot(ellen.page, "review-panel-0-2-0", 1280, panelTop);
 		if (SCREENSHOTS) {
 			// On a phone the editor's settings, plugin panels included, open as a sheet.
 			await ellen.page.setViewportSize({ width: 390, height: 844 });
@@ -468,7 +480,7 @@ test.describe.serial("Content Approval", () => {
 			const waiting = ellen.page.getByText("Waiting for your approval");
 			if (!(await waiting.isVisible())) await panelTop.click();
 			await expect(waiting).toBeVisible();
-			await shot(ellen.page, "review-panel-phone", 390, panelTop);
+			await shot(ellen.page, "review-panel-0-2-0-phone", 390, panelTop);
 			await ellen.page.keyboard.press("Escape");
 			await ellen.page.setViewportSize({ width: 1280, height: 900 });
 			await ellen.page.reload();

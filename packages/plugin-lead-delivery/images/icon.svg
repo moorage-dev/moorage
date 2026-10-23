@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Lead Delivery">
+<!-- Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE. -->
+<!-- Registry icon (square; the registry rounds the corners). Glyph drawn on a 100-unit grid, scaled 3.2. -->
+<rect width="512" height="512" fill="#F2E9CF"/>
+<g transform="translate(96 96) scale(3.2)"><path d="M20 50L86 18L68 84L50 62Z" fill="#FCFCF9" stroke="#16202A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><path fill="none" d="M50 62L86 18M50 62L48 82L60 72" stroke="#16202A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><path fill="none" d="M10 86C18 78 26 76 34 78" stroke="#A0185A" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8.1 12.6"/></g>
+</svg>

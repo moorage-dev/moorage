@@ -2,7 +2,7 @@
 
 Lead Delivery for [EmDash](https://emdashcms.com) sends every enquiry from your forms where you work: your inbox, HubSpot, or another app such as Zapier, Make or n8n. Each enquiry is logged and tried again if it does not get through. If one cannot be delivered, everyone who looks after the site hears about it. It works with the official forms plugin, on any EmDash site, with no account and no key.
 
-![Lead delivery: counters, deliveries and the latest enquiries](images/home.png)
+![Lead delivery: counters, deliveries and the latest enquiries](images/home-0-4-0.png)
 
 ## How it works
 
@@ -16,7 +16,7 @@ Everything is on one page, **Lead delivery** under Marketing:
 - **Edit**: the name, the address or HubSpot form, which forms it takes (one form usually; several, or all forms including new ones, for an inbox that gets everything), on or off, and HubSpot field matching.
 - **Enquiries**: the whole log, or one delivery's, with Send again.
 
-![A delivery's page](images/delivery.png)
+![A delivery's page](images/delivery-0-4-0.png)
 
 ## What it does
 
@@ -159,7 +159,7 @@ DEMO_SITE_PORT=4401 DEMO_SITE_LEAD_DELIVERY=in-process pnpm --filter demo-site e
 # One-step connect needs a site that can call itself; localhost cannot, so this test-only switch
 # serves the demo site under a made-up name that it can call (apps/demo-site/self-alias.mjs):
 DEMO_SITE_PORT=4401 DEMO_SITE_SELF_ALIAS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-connect.spec.ts
-DEMO_SITE_PORT=4401 DEMO_SITE_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery.spec.ts   # refresh images/
+DEMO_SITE_PORT=4401 DEMO_SITE_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-screenshots.spec.ts   # new pictures in images/
 ```
 
 The tests never call a real service. HubSpot and the apps are simulated in the unit tests, and the browser tests use the dev email inbox and `.invalid` addresses.
