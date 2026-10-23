@@ -3,6 +3,7 @@
 import type { PluginContext } from "emdash";
 
 import { queueUrgent } from "./alerts.js";
+import { fits } from "./budget.js";
 import {
 	afterExternal,
 	afterOwnPage,
@@ -27,6 +28,11 @@ import {
 import { idFor, normalizePath, publicOrigin, shorten } from "./url.js";
 
 export const TASK = "site-health";
+/**
+ * The most host calls one step of the full check makes, its save included:
+ * the Checklist's five requests, its save and the check's.
+ */
+export const STEP_CALLS = 7;
 const WALK_BATCH = 50;
 const LIVE_BATCH = 2;
 const DAY = 86_400_000;
@@ -590,43 +596,61 @@ async function countStep(ctx: PluginContext, scan: ScanState): Promise<void> {
 	scan.phase = "freeze";
 }
 
+/**
+ * The first half of the last step: the rows to look at and the rows that could
+ * not be checked, kept in the check for the second half. The phase stays
+ * "freeze", so a check left here by going back to 0.1.3 still finishes there.
+ */
+async function listsStep(ctx: PluginContext, scan: ScanState): Promise<void> {
+	const store = links(ctx);
+	const [look, unknown, lookCount, unknownCount] = await Promise.all([
+		store.query({ where: { state: "look" }, limit: ROWS_PER_GROUP }),
+		store.query({ where: { state: "unknown" }, limit: ROWS_PER_GROUP }),
+		store.count({ state: "look" }),
+		store.count({ state: "unknown" }),
+	]);
+	scan.counts = { ...(scan.counts ?? NO_COUNTS), look: lookCount, unknown: unknownCount };
+	scan.lists = {
+		pass: scan.pass,
+		lookRows: look.items.map(({ id, data: row }) => view(id, row)),
+		unknownRows: unknown.items.map(({ id, data: row }) => view(id, row)),
+	};
+}
+
+const NO_COUNTS: NonNullable<ScanState["counts"]> = {
+	pages: 0,
+	links: 0,
+	fix: { site: 0, page: 0, link: 0 },
+	editorFix: 0,
+	look: 0,
+	unknown: 0,
+};
+
 async function freezeStep(
 	ctx: PluginContext,
 	scan: ScanState,
 	data: Loaded,
 	now: number,
 ): Promise<Summary | null> {
-	const store = links(ctx);
-	const [broken, look, unknown, lookCount, unknownCount] = await Promise.all([
-		store.query({ where: { state: "broken" }, orderBy: { count: "desc" }, limit: 100 }),
-		store.query({ where: { state: "look" }, limit: ROWS_PER_GROUP }),
-		store.query({ where: { state: "unknown" }, limit: ROWS_PER_GROUP }),
-		store.count({ state: "look" }),
-		store.count({ state: "unknown" }),
-	]);
+	const broken = await links(ctx).query({
+		where: { state: "broken" },
+		orderBy: { count: "desc" },
+		limit: 100,
+	});
 	const rows: Summary["rows"] = { site: [], page: [], link: [] };
 	for (const { id, data: row } of broken.items) {
 		const group = row.group ?? groupOf(row);
 		if (rows[group].length < ROWS_PER_GROUP) rows[group].push(view(id, { ...row, group }));
 	}
-	const counts = scan.counts ?? {
-		pages: 0,
-		links: 0,
-		fix: { site: 0, page: 0, link: 0 },
-		editorFix: 0,
-		look: 0,
-		unknown: 0,
-	};
+	const counts = scan.counts ?? NO_COUNTS;
 	const summary: Summary = {
 		...counts,
-		look: lookCount,
-		unknown: unknownCount,
 		pass: scan.pass,
 		finishedAt: iso(now),
 		...(data.summary ? { prevFinishedAt: data.summary.finishedAt } : {}),
 		rows,
-		lookRows: look.items.map(({ id, data: row }) => view(id, row)),
-		unknownRows: unknown.items.map(({ id, data: row }) => view(id, row)),
+		lookRows: scan.lists?.lookRows ?? [],
+		unknownRows: scan.lists?.unknownRows ?? [],
 		live: scan.live ?? "failed",
 	};
 	scan.status = "done";
@@ -636,13 +660,14 @@ async function freezeStep(
 	const empty = counts.pages === 0 && !data.summary;
 	scan.nextAt = iso(now + (empty ? 600_000 : DAY));
 	scan.counts = undefined;
+	scan.lists = undefined;
 	scan.phase = "redirects";
 	return empty ? null : summary;
 }
 
 /**
- * Do one step of a running full check and save where it got to. Uses at
- * most eight host calls on top of the one read the caller already made.
+ * Do one step of a running full check and save where it got to. Uses at most
+ * `STEP_CALLS` host calls, the save included, on top of what the caller made.
  */
 export async function passStep(
 	ctx: PluginContext,
@@ -684,7 +709,9 @@ export async function passStep(
 			await countStep(ctx, scan);
 			break;
 		case "freeze":
-			summary = await freezeStep(ctx, scan, data, now);
+			// In two runs: the lists first (also for a check an earlier release left here).
+			if (scan.lists?.pass === scan.pass) summary = await freezeStep(ctx, scan, data, now);
+			else await listsStep(ctx, scan);
 			break;
 	}
 	if (summary) {
@@ -700,7 +727,8 @@ export async function passStep(
 
 /** The longest any host is left alone between two requests. */
 const HOST_GAP = 60_000;
-const FETCH_BUDGET = 4;
+/** The writes that may close a run of `dueStep`: the rows, the summary, an alert, the queue. */
+const DUE_WRITES = 4;
 
 /**
  * Check what is due: links to other sites (three hosts at a time, never one
@@ -737,18 +765,15 @@ export async function dueStep(
 		} else if (row.kind !== "page" || !origin || data.summary?.live !== "ok") continue;
 		picked.push({ id: item.id, row });
 	}
-	let fetches = 0;
 	const results = await Promise.all(
 		picked.map(async ({ id, row }) => {
 			if (row.kind === "page") {
-				fetches += 1;
 				return {
 					id,
 					before: row,
 					after: afterOwnPage(row, await request(ctx, `${origin}${row.url}`), now),
 				};
 			}
-			fetches += 1;
 			// A site that refused HEAD before is asked with GET straight away.
 			const method = row.get ? "GET" : "HEAD";
 			const outcome = await request(ctx, row.url, { method });
@@ -760,19 +785,19 @@ export async function dueStep(
 			return { id, before: row, after: null as LinkRow | null, result, outcome };
 		}),
 	);
-	// Sites that refuse HEAD are asked again with GET while the budget lasts.
+	// Sites that refuse HEAD are asked again with GET while the run has calls to spare;
+	// the others are asked with GET on their next turn.
 	for (const item of results) {
 		if (item.after || !("result" in item) || !item.result) continue;
 		let result = item.result;
-		if (result.kind === "retry" && fetches < FETCH_BUDGET) {
-			fetches += 1;
+		if (result.kind === "retry" && fits(counter, 1 + DUE_WRITES)) {
 			result = verdict(
 				item.before.url,
 				await request(ctx, item.before.url, { method: "GET" }),
 				"GET",
 			);
 		}
-		if (result.kind === "retry" && fetches >= FETCH_BUDGET) {
+		if (result.kind === "retry") {
 			item.after = { ...item.before, due: iso(now + HOST_GAP), get: true };
 			continue;
 		}
@@ -845,16 +870,15 @@ export async function refreshEntry(
 		if (base && !(base.kind === "internal" && base.url === path))
 			items.set(base.id, { base, use: item.use });
 	}
-	const before = path ? await pages(ctx).get(path) : null;
-	const ids = [...new Set([...items.keys(), ...(before?.links ?? [])])].slice(0, 400);
-	const existing = ids.length > 0 ? await links(ctx).getMany(ids) : new Map<string, LinkRow>();
 	const internal = [...items.values()]
 		.filter((i) => i.base.kind === "internal")
 		.map((i) => i.base.url);
-	const known =
-		internal.length > 0
-			? await pages(ctx).getMany([...new Set(internal)])
-			: new Map<string, PageRow>();
+	// This page's own row and the pages it links to, in one read.
+	const wanted = [...new Set([...(path ? [path] : []), ...internal])];
+	const known = wanted.length > 0 ? await pages(ctx).getMany(wanted) : new Map<string, PageRow>();
+	const before = path ? (known.get(path) ?? null) : null;
+	const ids = [...new Set([...items.keys(), ...(before?.links ?? [])])].slice(0, 400);
+	const existing = ids.length > 0 ? await links(ctx).getMany(ids) : new Map<string, LinkRow>();
 	const writes: Array<{ id: string; data: LinkRow }> = [];
 	let summary = data.summary;
 	for (const id of ids) {

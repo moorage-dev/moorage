@@ -47,8 +47,8 @@ async function onEntry(
 	deleted = false,
 ): Promise<void> {
 	if (typeof id !== "string") return;
+	const ctx = counted(raw, { ops: 0 });
 	try {
-		const ctx = counted(raw, { ops: 0 });
 		const data = await load(ctx);
 		const entry = deleted ? null : await ctx.content?.get(collection, id);
 		await refreshEntry(
@@ -58,7 +58,7 @@ async function onEntry(
 			data,
 		);
 	} catch (error) {
-		raw.log.warn("could not re-read the page's links", { collection, id, error: String(error) });
+		ctx.log.warn("could not re-read the page's links", { collection, id, error: String(error) });
 	}
 }
 
@@ -66,18 +66,23 @@ const idOf = (content: unknown) => (content as { id?: unknown } | null)?.id;
 
 const plugin: SandboxedPlugin = {
 	hooks: {
-		// The first check starts as soon as the plugin is switched on.
-		"plugin:activate": async (_event, ctx) => {
+		// The first check starts as soon as the plugin is switched on (starting it
+		// schedules the task); a site that has one only makes sure the task is there.
+		"plugin:activate": async (_event, raw) => {
+			const counter = { ops: 0 };
+			const ctx = counted(raw, counter);
 			try {
-				await ensureTask(ctx);
-				const counter = { ops: 0 };
-				const c = counted(ctx, counter);
-				const data = await load(c);
-				if (data.scan) return;
-				data.scan = await startPass(c, data);
-				await passStep(c, data, counter);
+				const data = await load(ctx);
+				if (data.scan) {
+					await ensureTask(ctx);
+					return;
+				}
+				data.scan = await startPass(ctx, data);
+				await passStep(ctx, data, counter);
 			} catch (error) {
 				ctx.log.warn("could not start the first check", { error: String(error) });
+				// The scheduled task starts it instead.
+				await ensureTask(ctx);
 			}
 		},
 		cron: async (event, ctx) => {

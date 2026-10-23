@@ -4,6 +4,7 @@ import type { ActionElement, Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
 import { NO_EMAIL_SERVICE, parseRecipients, problemLine, sendTest } from "./alerts.js";
+import { fits, type Counter } from "./budget.js";
 import { afterExternal, afterOwnPage, afterOwnPath, request, verdict } from "./check.js";
 import { linksInData, scanHtml } from "./extract.js";
 import {
@@ -15,7 +16,7 @@ import {
 	type LinkRow,
 	type PageRow,
 } from "./model.js";
-import { estimate, links, pages, passStep, resolveLocal, startPass } from "./scan.js";
+import { estimate, links, pages, passStep, resolveLocal, startPass, STEP_CALLS } from "./scan.js";
 import { writeSettings } from "./settings-store.js";
 import {
 	applyChange,
@@ -938,14 +939,19 @@ async function checkAgain(
 	};
 }
 
-/** Move a stalled check along: the scheduler may not be running. */
+/**
+ * Move a stalled check along: the scheduler may not be running. Only when one
+ * step and the page's own read still fit in this run (not after the settings
+ * were copied, for one); otherwise the next load or the scheduled task does it.
+ */
 async function nudge(
 	ctx: PluginContext,
 	data: Loaded,
-	counter: { ops: number },
+	counter: Counter,
 	now: number,
 	force = false,
 ): Promise<void> {
+	if (!fits(counter, STEP_CALLS + 1)) return;
 	try {
 		// No check yet, or only one that found no pages (switched on before setup added them).
 		if (!data.scan || (!data.summary && data.scan.status === "done")) {
@@ -967,20 +973,21 @@ export async function handleAdmin(
 	input: unknown,
 	user: { role?: number; email?: string; name?: string | null } | undefined,
 	ctx: PluginContext,
-	counter: { ops: number },
+	counter: Counter,
 ): Promise<BlockResponse> {
 	const now = Date.now();
-	const data = await load(ctx);
 	const admin = (user?.role ?? 0) >= ADMIN_ROLE;
 	const interaction = isRecord(input) ? input : {};
 	const action = typeof interaction.action_id === "string" ? interaction.action_id : "";
 	const state: PageState = { tab: 0 };
-
-	if (
+	const isWidget =
 		interaction.type === "page_load" &&
 		typeof interaction.page === "string" &&
-		interaction.page.startsWith("widget:")
-	) {
+		interaction.page.startsWith("widget:");
+	// Settings an earlier release saved are copied forward by the Admin's page only.
+	const data = await load(ctx, { copy: admin && !isWidget });
+
+	if (isWidget) {
 		await nudge(ctx, data, counter, now);
 		return widget(data, admin, ctx.site.url, !!ctx.email);
 	}
