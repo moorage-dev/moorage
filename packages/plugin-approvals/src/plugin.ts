@@ -3,10 +3,18 @@
 import type { PluginContext } from "emdash";
 import type { SandboxedPlugin } from "emdash/plugin";
 
-import { ask, MAIL_TASK, REMIND_TASK, runMailTask } from "./actions.js";
+import {
+	ask,
+	MAIL_TASK,
+	missingChecks,
+	REMIND_TASK,
+	runMailTask,
+	runRemindTask,
+} from "./actions.js";
 import { handleAdmin } from "./admin.js";
 import { approverRole, isHeldRole, loadConfig } from "./config.js";
-import { emailReminder } from "./notify.js";
+import { meter } from "./meter.js";
+import { deliver, queueMail, readJobs, SEND_TASK } from "./notify.js";
 import { handlePanel } from "./panel.js";
 import { gate } from "./policy.js";
 import {
@@ -20,9 +28,9 @@ import {
 } from "./requests.js";
 import { changedFields, fieldHashes } from "./text.js";
 
-// After "Approve and publish" the request is already marked published; the hook that
-// follows the publish must not add a second line.
-const SAME_PUBLISH_MS = 60_000;
+// "Approve and publish" leaves a note on the request; the publish hook that follows finishes
+// it. A note older than this is stale (its publish failed) and ignored.
+const SAME_PUBLISH_MS = 5 * 60_000;
 
 function entryId(content: unknown): string | null {
 	const id = (content as { id?: unknown } | null)?.id;
@@ -62,7 +70,19 @@ async function afterSave(
 	}
 	if (request?.status !== "waiting") return;
 	const draft = await readDraft(ctx, collection, id);
-	if (!draft || draft.fingerprint === request.fingerprint) return;
+	if (!draft) return;
+	if (draft.fingerprint === request.fingerprint) {
+		// Only the SEO panel may have changed: keep the list's "things to check" current.
+		// EmDash sends the SEO panel with the page only when its type has one.
+		const checks = missingChecks(draft, draft.item.seo !== undefined);
+		if (
+			checks.description === request.checks?.description &&
+			checks.picture === request.checks?.picture
+		)
+			return;
+		await store.put(key, { ...request, checks });
+		return;
+	}
 	const config = await loadConfig(ctx);
 	const info = await collectionInfo(ctx, collection);
 	const hashes = fieldHashes(draft.data);
@@ -70,7 +90,12 @@ async function afterSave(
 	const labels = slugs.map((slug) => info.fields.find((f) => f.slug === slug)?.label ?? slug);
 	const fieldText = labels.length > 0 ? labels.join(", ") : "the page";
 	const now = new Date().toISOString();
-	const updated: ApprovalRequest = { ...request, fingerprint: draft.fingerprint, fields: hashes };
+	const updated: ApprovalRequest = {
+		...request,
+		fingerprint: draft.fingerprint,
+		fields: hashes,
+		checks: missingChecks(draft, info.hasSeo),
+	};
 	if (
 		actor &&
 		config &&
@@ -109,14 +134,30 @@ const plugin: SandboxedPlugin = {
 				const request = await store.get(key);
 				if (!request) return;
 				const now = new Date().toISOString();
-				if (
-					request.status === "published" &&
-					request.publishedAt &&
-					Date.parse(now) - Date.parse(request.publishedAt) < SAME_PUBLISH_MS
-				) {
+				const recent = (at: string | undefined) =>
+					Boolean(at) && Date.parse(now) - Date.parse(at!) < SAME_PUBLISH_MS;
+				// Marked published by the action itself (releases up to 0.1.6).
+				if (request.status === "published" && recent(request.publishedAt)) return;
+				const pending = request.publishing;
+				if (request.status === "approved" && pending && recent(pending.at)) {
+					// "Approve and publish": queue its emails first, so none is lost if the
+					// write after it fails, then record who published.
+					if (pending.jobs.length > 0) await queueMail(ctx, pending.jobs);
+					const updated: ApprovalRequest = {
+						...request,
+						status: "published",
+						publishedAt: now,
+						approval: request.approval
+							? { ...request.approval, published: true }
+							: request.approval,
+					};
+					delete updated.publishing;
+					addHistory(updated, now, `Published by ${pending.by.name}`);
+					await store.put(key, updated);
 					return;
 				}
 				const updated: ApprovalRequest = { ...request, status: "published", publishedAt: now };
+				delete updated.publishing;
 				addHistory(
 					updated,
 					now,
@@ -141,21 +182,23 @@ const plugin: SandboxedPlugin = {
 				ctx.log.warn("could not close a request", { error: String(error) });
 			}
 		},
-		cron: async (event, ctx) => {
+		// Emails: each run sends what fits in its calls and queues the rest (notify.ts).
+		cron: async (event, raw) => {
+			const m = meter(raw);
 			const data = event.data ?? {};
+			if (event.name.startsWith(`${SEND_TASK}-`)) {
+				await deliver(m, readJobs(data.jobs));
+				return;
+			}
 			const key = typeof data.key === "string" ? data.key : null;
 			if (!key) return;
-			const config = await loadConfig(ctx);
+			const config = await loadConfig(m.ctx);
 			if (event.name.startsWith(`${MAIL_TASK}-`)) {
-				await runMailTask(ctx, config, key);
+				await runMailTask(m, config, key, data);
 				return;
 			}
 			if (event.name.startsWith(`${REMIND_TASK}-`)) {
-				if (!config?.remind) return;
-				const request = await requests(ctx).get(key);
-				// Only the request this reminder was set for, still waiting.
-				if (request?.status !== "waiting" || request.requestedAt !== data.requestedAt) return;
-				await emailReminder(ctx, config, request);
+				await runRemindTask(m, config, key, data.requestedAt);
 			}
 		},
 	},
@@ -164,12 +207,12 @@ const plugin: SandboxedPlugin = {
 		// the handler shows each person only their part.
 		admin: {
 			permission: "content:read_drafts",
-			handler: async (routeCtx, ctx) => handleAdmin(routeCtx.input, routeCtx.user, ctx),
+			handler: async (routeCtx, ctx) => handleAdmin(routeCtx.input, routeCtx.user, meter(ctx)),
 		},
 		"editor/panel": {
 			permission: "content:read_drafts",
 			handler: async (routeCtx, ctx) =>
-				handlePanel(routeCtx.input, routeCtx.ui?.entry, routeCtx.user, ctx),
+				handlePanel(routeCtx.input, routeCtx.ui?.entry, routeCtx.user, meter(ctx)),
 		},
 		"editor/ask": {
 			permission: "content:read_drafts",

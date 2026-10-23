@@ -74,11 +74,14 @@ async function held(s: Site): Promise<boolean> {
 }
 
 describe("settings saved by 0.1.5 under the plain `config` key", () => {
-	it("still hold publishing, are copied to `settings:config`, and the old key is kept", async () => {
+	it("still hold publishing, are copied to `settings:config` once an Admin opens Approvals, and the old key is kept", async () => {
 		const s = await site();
 		await s.host.fixtures.plugin.kv("config", HELD);
 
 		expect(await held(s)).toBe(true);
+		// One kv.list() reads both places; a publish has no call to spare for the copy.
+		expect(await s.host.inspect.setting("config")).toBeNull();
+		await s.host.admin.loadPage("/overview", { user: s.admin });
 		expect(await s.host.inspect.setting("config")).toEqual(HELD);
 		expect(await s.host.inspect.kv.get("config")).toEqual(HELD);
 	});

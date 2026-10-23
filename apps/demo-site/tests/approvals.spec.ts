@@ -285,6 +285,9 @@ test.describe.serial("Content Approval", () => {
 		await page.getByRole("button", { name: "Publish without review" }).click();
 		await expect(page.getByText("Published without review. It's live now.")).toBeVisible();
 		await expect.poll(() => status(ellen, hours)).toBe("published");
+		// A decision ends on a short confirmation; the list is one click away.
+		await page.getByRole("button", { name: "‹ Back to the list" }).click();
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible();
 
 		await saveSettings({
 			collections: ["pages"],
@@ -427,6 +430,21 @@ test.describe.serial("Content Approval", () => {
 		await page.getByRole("button", { name: "Approve and publish" }).click();
 		await expect(page.getByText(/^Approved and published\. It's live now\./)).toBeVisible();
 		await expect.poll(() => status(ellen, menu)).toBe("published");
+		// Sam's email goes out from a background task a moment later.
+		await expect
+			.poll(
+				async () => {
+					const mail = await page.request.get(`${API}/dev/emails`, { headers: HEADERS });
+					const body = (await mail.json()) as {
+						data: { items: Array<{ message: { subject: string; to: string } }> };
+					};
+					return body.data.items
+						.filter((m) => m.message.to === "sam@bakery.test")
+						.map((m) => m.message.subject);
+				},
+				{ timeout: 90_000 },
+			)
+			.toContainEqual(expect.stringMatching(/: Approved and published: "Summer menu"$/));
 		await leave(ellen);
 	});
 

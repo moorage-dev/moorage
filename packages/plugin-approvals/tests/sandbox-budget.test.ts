@@ -1,12 +1,13 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-// Pins how many host calls (subrequests) each sandboxed invocation of Content Approval makes
-// today, per hook, route and admin interaction, in the states that cost the most (B39). On
+// Pins how many host calls (subrequests) each sandboxed invocation of Content Approval makes,
+// per hook, route, admin interaction and cron run, in the states that cost the most (B39). On
 // Cloudflare one invocation may make at most 10; the 11th call and every one after it throw.
+// The plugin keeps every path to 9 or fewer, whatever the number of pages waiting or people
+// who approve: emails go out from cron runs that each send what fits and queue the rest.
 // Each count is measured on a cold isolate (host.restart() first) and pinned exactly, so any
-// change in cost shows up here. Counts at or over the limit carry a TODO(B39) and stay pinned
-// until the plugin is changed; the enforced tests at the end show what happens on Cloudflare
-// today on each path that goes over.
+// change in cost shows up here; pin() also checks the limit. The enforced tests at the end run
+// the paths that once went over with Cloudflare's limit, and follow their emails to the inbox.
 //
 // Pages are saved twice before they are measured, so they have a draft revision: reading what
 // would go live then costs contentGet + contentGetRevision, the worst case.
@@ -18,19 +19,26 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ApprovalRequest } from "../src/requests.js";
 import { describeCalls, measure, SANDBOX_SUBREQUESTS, type Measured } from "./bridge-budget.js";
 
+/** The plugin's own ceiling per invocation: one call below Cloudflare's limit. */
+const BUDGET = SANDBOX_SUBREQUESTS - 1;
+
 // Host calls a test can make fail, to reach the plugin's error paths (a failed email, a failed
 // publish, a failed write). Patched before bridge-budget installs its counter, so the failing
 // call still counts.
 const failing = new Set<string>();
+/** Host calls that fail this many more times, then work again. */
+const failTimes = new Map<string, number>();
 {
 	const proto = PluginBridge.prototype as unknown as Record<
 		string,
 		(...args: unknown[]) => unknown
 	>;
-	for (const name of ["emailSend", "contentPublish", "storagePut"]) {
+	for (const name of ["emailSend", "contentPublish", "storagePut", "cronSchedule"]) {
 		const original = proto[name]!;
 		proto[name] = function (this: unknown, ...args: unknown[]) {
-			if (failing.has(name)) return Promise.reject(new Error(`${name} failed (test)`));
+			const times = failTimes.get(name) ?? 0;
+			if (times > 0) failTimes.set(name, times - 1);
+			if (failing.has(name) || times > 0) return Promise.reject(new Error(`${name} failed (test)`));
 			return original.apply(this, args);
 		};
 	}
@@ -40,6 +48,7 @@ let host: PluginRuntimeTestHost | undefined;
 
 afterEach(async () => {
 	failing.clear();
+	failTimes.clear();
 	await drain();
 	await host?.dispose();
 	host = undefined;
@@ -220,30 +229,42 @@ async function toLegacy(s: Site, config: object = HELD): Promise<void> {
 	expect(await s.host.inspect.setting("config")).toBeNull();
 }
 
-/** Pin the count of one invocation and log its calls. */
+/** Pin the count of one invocation, check it is within the plugin's budget, log its calls. */
 function pin(label: string, m: Measured<unknown>, count: number): void {
 	console.info(describeCalls(label, m));
 	expect(m.calls.length, label).toBe(count);
+	expect(m.calls.length, `${label}: within ${BUDGET} calls`).toBeLessThanOrEqual(BUDGET);
 }
 
 /**
  * After a publish from a route, EmDash runs this plugin's content:afterPublish hook deferred
- * (after()), so its first call (storageGet, which then finds the request already published)
- * lands at the end of the route's window. It is a separate invocation with its own budget.
+ * (after()), as a separate invocation with its own budget, once the route has returned. Its
+ * calls land in the route's window after the route's last call, the publish. This waits for
+ * it inside the window and splits the two.
  */
-function measureWithDeferred<T>(invoke: () => Promise<T>): Promise<Measured<T>> {
-	// Wait for the deferred hook inside the window, so its first call always lands there.
-	return measure(async () => {
+async function measureWithDeferred<T>(
+	invoke: () => Promise<T>,
+): Promise<{ route: Measured<T>; deferred: string[] }> {
+	const m = await measure(async () => {
 		const result = await invoke();
 		await drain();
 		return result;
 	});
+	const end = m.calls.indexOf("contentPublish") + 1;
+	expect(end, "the route publishes").toBeGreaterThan(0);
+	return { route: { ...m, calls: m.calls.slice(0, end) }, deferred: m.calls.slice(end) };
 }
 
-function expectDeferredAfterPublish(m: Measured<unknown>): void {
-	expect(m.calls.at(-1)).toBe("storageGet");
-	// The content-policy hook during the publish: settingsGet storageGet, its own invocation.
-	expect(m.nested).toEqual(["settingsGet", "storageGet"]);
+/** The afterPublish hook after "Approve and publish": queue the emails, record "Published by". */
+function expectDeferredAfterPublish(
+	{ route, deferred }: { route: Measured<unknown>; deferred: string[] },
+	queued = true,
+): void {
+	expect(deferred).toEqual(
+		queued ? ["storageGet", "cronSchedule", "storagePut"] : ["storageGet", "storagePut"],
+	);
+	// The content-policy hook during the publish: kvList storageGet, its own invocation.
+	expect(route.nested).toEqual(["kvList", "storageGet"]);
 }
 
 function text(value: unknown): string {
@@ -257,7 +278,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await cold(s);
 		const event = await policyEvent(s, id, s.editor);
 		const m = await measure(() => s.host.transport.invokeHook("content:beforePublish", event));
-		pin("beforePublish, settings never saved", m, 2);
+		pin("beforePublish, settings never saved", m, 1);
 		expect(m.error).toBeUndefined();
 		expect(m.result ?? undefined).toBeUndefined();
 	});
@@ -292,7 +313,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await cold(s);
 		// A refused publish runs only this one hook of the plugin.
 		const m = await measure(() => s.host.actions.content.publish("pages", id, actor(s.editor)));
-		pin("beforePublish, held, new request (action)", m, 7);
+		pin("beforePublish, held, new request (action)", m, 6);
 		expect(m.result?.success).toBe(false);
 		expect((await request(s, id))?.status).toBe("waiting");
 	});
@@ -303,7 +324,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await cold(s);
 		const event = await policyEvent(s, id, s.editor);
 		const m = await measure(() => s.host.transport.invokeHook("content:beforePublish", event));
-		pin("beforePublish, held, new request (hook)", m, 7);
+		pin("beforePublish, held, new request (hook)", m, 6);
 		expect(text(m.result)).toContain("Sent for approval");
 	});
 
@@ -313,10 +334,11 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await toLegacy(s);
 		await cold(s);
 		const m = await measure(() => s.host.actions.content.publish("pages", id, actor(s.editor)));
-		pin("beforePublish, held, new request, migrated settings", m, 9);
+		pin("beforePublish, held, new request, migrated settings", m, 6);
 		expect(m.result?.success).toBe(false);
 		expect((await request(s, id))?.status).toBe("waiting");
-		expect(await s.host.inspect.setting("config")).toMatchObject({ collections: ["pages"] });
+		// One kv.list() reads both places; the copy forward is left to the Approvals page.
+		expect(await s.host.inspect.setting("config")).toBeNull();
 	});
 
 	it("holds an AI tool's publish on a type that is off", async () => {
@@ -326,7 +348,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		const m = await measure(() =>
 			s.host.actions.content.publish("pages", id, actor(admin(s), "mcp")),
 		);
-		pin("beforePublish, held, AI tool", m, 7);
+		pin("beforePublish, held, AI tool", m, 6);
 		expect(m.result?.success).toBe(false);
 	});
 
@@ -346,7 +368,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await cold(s);
 		const event = await policyEvent(s, id, null, "scheduler");
 		const m = await measure(() => s.host.transport.invokeHook("content:beforePublish", event));
-		pin("beforePublish, scheduled run held", m, 5);
+		pin("beforePublish, scheduled run held", m, 4);
 		expect(text(m.result)).toContain("needs approval first");
 		expect((await request(s, id))?.status).toBe("waiting");
 	});
@@ -386,7 +408,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		const at = new Date(Date.now() + 3_600_000).toISOString();
 		const event = await policyEvent(s, id, admin(s), "api", "pages", { scheduledAt: at });
 		const m = await measure(() => s.host.transport.invokeHook("content:beforeSchedule", event));
-		pin("beforeSchedule, admin cleared, migrated settings", m, 6);
+		pin("beforeSchedule, admin cleared, migrated settings", m, 4);
 		expect((await request(s, id))?.status).toBe("approved");
 	});
 
@@ -397,7 +419,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		const at = new Date(Date.now() + 3_600_000).toISOString();
 		const event = await policyEvent(s, id, s.editor, "api", "pages", { scheduledAt: at });
 		const m = await measure(() => s.host.transport.invokeHook("content:beforeSchedule", event));
-		pin("beforeSchedule, editor held", m, 7);
+		pin("beforeSchedule, editor held", m, 6);
 		expect(text(m.result)).toContain("Sent for approval");
 		expect((await request(s, id))?.wants).toBe("schedule");
 	});
@@ -442,7 +464,7 @@ describe("content:afterSave, afterPublish, afterDelete", () => {
 		await cold(s);
 		const event = await saveEvent(s, id, admin(s));
 		const m = await measure(() => s.host.transport.invokeHook("content:afterSave", event));
-		pin("afterSave, approver edits waiting page, migrated settings", m, 9);
+		pin("afterSave, approver edits waiting page, migrated settings", m, 7);
 		expect((await request(s, id))?.history[0]?.text).toContain("Edited by Ellen Marsh");
 	});
 
@@ -510,11 +532,11 @@ describe("content:afterSave, afterPublish, afterDelete", () => {
 });
 
 /** One run of the one-shot task that emails the approvers after a held publish. */
-function mailTask(s: Site, id: string) {
+function mailTask(s: Site, id: string, extra: Record<string, unknown> = {}) {
 	const key = `pages:${id}`;
 	return s.host.transport.invokeHook("cron", {
 		name: `mail-${key}`.replace(/[^a-zA-Z0-9_-]/g, "_"),
-		data: { key, kind: "asked" },
+		data: { key, kind: "asked", ...extra },
 		scheduledAt: new Date().toISOString(),
 	});
 }
@@ -523,9 +545,71 @@ async function emails(s: Site): Promise<number> {
 	return (await s.host.inspect.email()).length;
 }
 
+async function inbox(s: Site): Promise<Array<{ to: string; subject: string }>> {
+	return (await s.host.inspect.email()).map((sent) => {
+		const message = (sent.message ?? sent) as { to: string; subject: string };
+		return { to: message.to, subject: message.subject };
+	});
+}
+
+interface Task {
+	name: string;
+	nextRunAt: string;
+}
+
+/** Email tasks (mail-, send-) due by `at`. Reminders (two days on) are left alone. */
+async function dueMail(s: Site, at: Date): Promise<Task[]> {
+	const tasks = (await s.host.inspect.scheduledTasks()) as unknown as Task[];
+	return tasks.filter(
+		(t) =>
+			(t.name.startsWith("mail-") || t.name.startsWith("send-")) &&
+			Date.parse(t.nextRunAt) <= at.getTime(),
+	);
+}
+
+async function mailTasks(s: Site): Promise<Task[]> {
+	const tasks = (await s.host.inspect.scheduledTasks()) as unknown as Task[];
+	return tasks.filter((t) => t.name.startsWith("mail-") || t.name.startsWith("send-"));
+}
+
+/**
+ * Run the email tasks as EmDash's scheduler does (CronExecutor.tick), one run per tick, each
+ * with Cloudflare's limit enforced, until none is due. `later` moves the clock on that far
+ * first (failed emails are tried again after 5 minutes). Returns each run's call count.
+ */
+async function runMail(s: Site, { later = 0, max = 40 } = {}): Promise<number[]> {
+	const counts: number[] = [];
+	for (let run = 0; run < max; run++) {
+		await drain();
+		const at = new Date(Date.now() + later);
+		const due = await dueMail(s, at);
+		if (due.length === 0) return counts;
+		// One task per tick, so each window is one invocation.
+		expect(due, "one email task due at a time").toHaveLength(1);
+		s.host.scheduled.setTime(at);
+		const m = await measure(() => s.host.scheduled.run(), { enforce: true });
+		console.info(describeCalls(`cron ${due[0]!.name.split("-")[0]} run ${run + 1}`, m));
+		expect(m.error).toBeUndefined();
+		expect(m.refused).toEqual([]);
+		expect(m.calls.length).toBeLessThanOrEqual(BUDGET);
+		counts.push(m.calls.length);
+	}
+	throw new Error(`still sending after ${max} runs`);
+}
+
+/** Run whatever email tasks seeding left (the request emails), outside any measurement. */
+async function flushMail(s: Site): Promise<void> {
+	for (let run = 0; run < 40; run++) {
+		await drain();
+		const at = new Date();
+		if ((await dueMail(s, at)).length === 0) return;
+		s.host.scheduled.setTime(at);
+		await s.host.scheduled.run();
+	}
+}
+
 describe("cron", () => {
-	// 3 + approvers (settingsGet storageGet userList, one emailSend each); +2 on a migrated site.
-	// Over the limit from 8 approvers (6 on a migrated site).
+	// kvList storageGet userList, then one emailSend each, up to 4; more go to a new task.
 	for (const [admins, count] of [
 		[1, 4],
 		[3, 6],
@@ -541,6 +625,16 @@ describe("cron", () => {
 		});
 	}
 
+	it("sets the two-day reminder from the email task", async () => {
+		const s = await site({ admins: 3 });
+		const id = await waiting(s);
+		await cold(s);
+		const stored = await request(s, id);
+		const m = await measure(() => mailTask(s, id, { remind: stored?.requestedAt }));
+		pin("cron mail, 3 approvers, sets the reminder", m, 7);
+		expect(text(await s.host.inspect.scheduledTasks())).toContain("remind-");
+	});
+
 	it("emails 3 approvers on a migrated site", async () => {
 		const s = await site({ admins: 3 });
 		const id = await waiting(s);
@@ -548,33 +642,44 @@ describe("cron", () => {
 		await cold(s);
 		const before = await emails(s);
 		const m = await measure(() => mailTask(s, id));
-		pin("cron mail, 3 approvers, migrated settings", m, 8);
+		pin("cron mail, 3 approvers, migrated settings", m, 6);
 		expect((await emails(s)) - before).toBe(3);
 	});
 
-	// When sending fails, 3 + 2 x approvers: each failure is logged.
-	it("logs each failed email to 3 approvers", async () => {
-		const s = await site({ admins: 3 });
+	it("emails 12 approvers over three runs, at most 9 calls each", async () => {
+		const s = await site({ admins: 12 });
 		const id = await waiting(s);
+		// The request email the publish queued goes first; this run sends it again.
+		await flushMail(s);
 		await cold(s);
-		failing.add("emailSend");
+		const before = await emails(s);
 		const m = await measure(() => mailTask(s, id));
-		pin("cron mail, 3 approvers, every email fails", m, 9);
-		expect(m.calls.filter((c) => c === "log")).toHaveLength(3);
+		// kvList storageGet userList, the rest queued (cronSchedule), then 3 emails.
+		pin("cron mail, 12 approvers, first run", m, 7);
+		expect((await emails(s)) - before).toBe(3);
+		expect(await runMail(s)).toEqual([7, 3]);
+		const sent = (await inbox(s)).slice(before);
+		expect(new Set(sent.map((e) => e.to)).size).toBe(12);
+		expect(sent).toHaveLength(12);
 	});
 
-	it("logs each failed email to 4 approvers", async () => {
+	it("tries failed emails again later, and logs once", async () => {
 		const s = await site({ admins: 4 });
 		const id = await waiting(s);
+		await flushMail(s);
 		await cold(s);
 		failing.add("emailSend");
 		const m = await measure(() => mailTask(s, id));
-		// TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-		pin("cron mail, 4 approvers, every email fails", m, 11);
-		expect(m.calls.filter((c) => c === "log")).toHaveLength(4);
+		// kvList storageGet userList, 4 emailSend that fail, cronSchedule (again later), log.
+		pin("cron mail, 4 approvers, every email fails", m, 9);
+		expect(m.calls.filter((c) => c === "log")).toHaveLength(1);
+		failing.clear();
+		const before = await emails(s);
+		expect(await runMail(s, { later: 6 * 60_000 })).toEqual([4]);
+		expect((await emails(s)) - before).toBe(4);
 	});
 
-	it("reminds 3 approvers after two days (3 + approvers)", async () => {
+	it("reminds 3 approvers after two days", async () => {
 		const s = await site({ admins: 3 });
 		const id = await waiting(s);
 		const stored = await request(s, id);
@@ -598,34 +703,28 @@ describe("the Approvals page (route admin)", () => {
 		const s = await site({ settings: "none" });
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
-		pin("page load, admin, settings never saved", m, 6);
+		pin("page load, admin, settings never saved", m, 4);
 		expect(text(m.result)).toContain("Approval is off until you save these settings");
 	});
 
-	it("opens for an admin on a migrated site with nothing waiting", async () => {
+	it("opens for an admin on a migrated site with nothing waiting, copying the settings forward", async () => {
 		const s = await site({ settings: "legacy" });
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
-		pin("page load, admin, migrated settings, nothing waiting", m, 8);
+		pin("page load, admin, migrated settings, nothing waiting", m, 5);
 		expect(text(m.result)).toContain("For you to approve");
+		expect(await s.host.inspect.setting("config")).toMatchObject({ collections: ["pages"] });
 	});
 
-	// 6 + 3 per page waiting for this approver (contentGet contentGetRevision schemaGetCollection
-	// for its "things to check" count, up to 20 pages), +1 when History has an approved copy, +2 on
-	// a migrated site. Over the limit from 2 pages waiting.
-	for (const [count, calls] of [
-		[1, 9],
-		// TODO(B39): 12 calls, over Cloudflare's sandbox limit of 10 -- see report
-		[2, 12],
-		// TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-		[5, 21],
-	] as const) {
+	// kvList storageQuery schemaListCollections userList, however many pages wait: each row's
+	// "things to check" is noted on the request when the page is held or saved.
+	for (const count of [1, 2, 25]) {
 		it(`lists ${count} waiting page(s) for an admin`, async () => {
 			const s = await site();
 			for (let i = 0; i < count; i++) await waiting(s, `Page ${i + 1}`);
 			await cold(s);
 			const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
-			pin(`page load, admin, ${count} waiting`, m, calls);
+			pin(`page load, admin, ${count} waiting`, m, 4);
 			expect(text(m.result)).toContain(`"label":"Waiting for you","value":${count}`);
 		});
 	}
@@ -640,8 +739,8 @@ describe("the Approvals page (route admin)", () => {
 		});
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
-		// TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 -- see report
-		pin("page load, admin, 1 waiting + 1 approved", m, 10);
+		// + storageGetMany for the approved text copies.
+		pin("page load, admin, 1 waiting + 1 approved", m, 5);
 		expect(text(m.result)).toContain("Show the approved text");
 	});
 
@@ -654,13 +753,38 @@ describe("the Approvals page (route admin)", () => {
 		expect(text(m.result)).toContain("Yours waiting");
 	});
 
-	it("lists a Contributor's drafts (+2 per content type that needs approval)", async () => {
+	it("lists a Contributor's drafts (+1 per content type that needs approval)", async () => {
 		const s = await site();
 		await page(s, s.contributor);
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: s.contributor }));
-		pin("page load, contributor with a draft", m, 6);
+		pin("page load, contributor with a draft", m, 4);
 		expect(text(m.result)).toContain("Your drafts");
+	});
+
+	it("reads a Contributor's drafts from 3 content types at most", async () => {
+		const types = ["posts", "news", "events", "recipes"];
+		const s = await site({ config: { ...HELD, collections: ["pages", ...types] } });
+		for (const slug of types) {
+			await s.host.fixtures.collection({
+				slug,
+				label: slug.charAt(0).toUpperCase() + slug.slice(1),
+				supports: ["drafts", "revisions"],
+				fields: [{ slug: "title", label: "Title", type: "string" }],
+			});
+		}
+		const mine = await waiting(s, "Mine", s.contributor);
+		await s.host.admin.act("/overview", "approve", {
+			user: admin(s),
+			value: { key: `pages:${mine}` },
+		});
+		await waiting(s, "Mine too", s.contributor);
+		await page(s, s.contributor, "Draft");
+		await cold(s);
+		const m = await measure(() => s.host.admin.loadPage("/overview", { user: s.contributor }));
+		// kvList storageQuery schemaListCollections userList storageGetMany + 3 contentList.
+		pin("page load, contributor, 5 types, waiting and approved", m, 8);
+		expect(text(m.result)).toContain("aren't listed here");
 	});
 
 	it("shows the dashboard widget", async () => {
@@ -678,20 +802,19 @@ describe("the Approvals page (route admin)", () => {
 		const m = await measure(() =>
 			s.host.admin.submit("/overview", "save_settings", HELD, { user: admin(s) }),
 		);
-		pin("save settings, first time", m, 9);
+		pin("save settings, first time", m, 6);
 		expect(m.result?.toast?.type).toBe("success");
 		expect(await s.host.inspect.setting("config")).toMatchObject({ collections: ["pages"] });
 	});
 
-	it("saves the settings with a page waiting", async () => {
+	it("saves the settings with pages waiting", async () => {
 		const s = await site();
-		await waiting(s);
+		for (let i = 0; i < 3; i++) await waiting(s, `Page ${i + 1}`);
 		await cold(s);
 		const m = await measure(() =>
 			s.host.admin.submit("/overview", "save_settings", HELD, { user: admin(s) }),
 		);
-		// TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-		pin("save settings, 1 waiting", m, 11);
+		pin("save settings, 3 waiting", m, 6);
 		expect(m.result?.toast?.type).toBe("success");
 	});
 
@@ -701,7 +824,7 @@ describe("the Approvals page (route admin)", () => {
 		const m = await measure(() =>
 			s.host.admin.submit("/overview", "save_settings", { collections: [] }, { user: s.editor }),
 		);
-		pin("save settings, editor refused", m, 4);
+		pin("save settings, editor refused", m, 3);
 		expect(m.result?.toast?.type).toBe("error");
 	});
 
@@ -716,16 +839,33 @@ describe("the Approvals page (route admin)", () => {
 		expect(text(m.result)).toContain("Approve and publish");
 	});
 
-	it("approves from the page", async () => {
+	it("approves from the page, and offers the way back to the list", async () => {
 		const s = await site();
 		const id = await waiting(s);
 		await cold(s);
 		const m = await measure(() =>
 			s.host.admin.act("/overview", "approve", { user: admin(s), value: { key: `pages:${id}` } }),
 		);
-		// TODO(B39): 15 calls, over Cloudflare's sandbox limit of 10 -- see report
-		pin("page approve", m, 15);
+		// kvList storageGet contentGet contentGetRevision schemaGetCollection storagePut (text
+		// copy) storagePut cronSchedule (the writer's email).
+		pin("page approve", m, 8);
 		expect(m.result?.toast).toEqual({ type: "success", message: "Approved. Sam has been told." });
+		expect(text(m.result)).toContain("Back to the list");
+	});
+
+	it("shows the review again when the page changed while the approver looked", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.act("/overview", "approve", {
+				user: admin(s),
+				value: { key: `pages:${id}`, seen: "an older version" },
+			}),
+		);
+		pin("page approve, page changed meanwhile", m, 6);
+		expect(m.result?.toast?.message).toContain("This page changed while you were looking");
+		expect(text(m.result)).toContain("Approve and publish");
 	});
 
 	it("approves and publishes from the page", async () => {
@@ -738,14 +878,19 @@ describe("the Approvals page (route admin)", () => {
 				value: { key: `pages:${id}` },
 			}),
 		);
-		// TODO(B39): 18 calls, over Cloudflare's sandbox limit of 10 -- see report
-		// (19 measured: the last is the deferred afterPublish hook's own storageGet.)
-		pin("page approve and publish", m, 19);
+		// kvList storageGet contentGetVersioned contentGetRevision schemaGetCollection
+		// storagePut storagePut contentPublish; the emails and "Published by" follow in
+		// content:afterPublish.
+		pin("page approve and publish", m.route, 8);
 		expectDeferredAfterPublish(m);
-		expect(m.result?.toast?.message).toBe(
+		expect(m.route.result?.toast?.message).toBe(
 			"Approved and published. It's live now. Sam has been told.",
 		);
 		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+		const stored = await request(s, id);
+		expect(stored?.status).toBe("published");
+		expect(stored?.history[0]?.text).toBe("Published by Ellen Marsh");
+		expect(stored?.publishing).toBeUndefined();
 	});
 
 	it("approves but cannot publish from the page", async () => {
@@ -759,51 +904,15 @@ describe("the Approvals page (route admin)", () => {
 				value: { key: `pages:${id}` },
 			}),
 		);
-		// TODO(B39): 17 calls, over Cloudflare's sandbox limit of 10 -- see report
-		pin("page approve and publish, publish fails", m, 17);
+		// The 8 above, then the failure logged.
+		pin("page approve and publish, publish fails", m, 9);
 		expect(m.result?.toast?.message).toBe(
 			"Approved, but it could not be published just now. Press Publish on the page.",
 		);
+		expect((await request(s, id))?.status).toBe("approved");
 	});
 
-	it("sends back from the page", async () => {
-		const s = await site();
-		const id = await waiting(s);
-		await cold(s);
-		const m = await measure(() =>
-			s.host.admin.submit(
-				"/overview",
-				"send_back",
-				{ note: "Iced coffee is £3.40" },
-				{ user: admin(s), blockId: `sb:pages:${id}` },
-			),
-		);
-		// TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 -- see report
-		pin("page send back", m, 10);
-		expect(m.result?.toast?.message).toBe("Sent back to Sam with your note.");
-	});
-
-	it("publishes without review from the page, telling the other approvers", async () => {
-		const s = await site({ admins: 3 });
-		const id = await waiting(s);
-		await cold(s);
-		const m = await measureWithDeferred(() =>
-			s.host.admin.submit(
-				"/overview",
-				"override_publish",
-				{ reason: "Price list must go out today" },
-				{ user: admin(s), blockId: `ov:pages:${id}` },
-			),
-		);
-		// TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-		// (22 measured: the last is the deferred afterPublish hook's own storageGet.)
-		// 19 + other approvers (one emailSend each).
-		pin("page publish without review, 3 approvers", m, 22);
-		expectDeferredAfterPublish(m);
-		expect(m.result?.toast?.message).toContain("Published without review.");
-	});
-
-	it("sends back from the page with another page still waiting", async () => {
+	it("sends back from the page, and lists what still waits", async () => {
 		const s = await site();
 		await waiting(s, "Page 1");
 		const id = await waiting(s, "Page 2");
@@ -816,13 +925,30 @@ describe("the Approvals page (route admin)", () => {
 				{ user: admin(s), blockId: `sb:pages:${id}` },
 			),
 		);
-		// TODO(B39): 13 calls, over Cloudflare's sandbox limit of 10 -- see report
-		// The list shown afterwards costs 3 more per page still waiting.
-		pin("page send back, 1 other waiting", m, 13);
+		// kvList storageGet storagePut cronSchedule, then the list (4).
+		pin("page send back, 1 other waiting", m, 7);
 		expect(m.result?.toast?.message).toBe("Sent back to Sam with your note.");
+		expect(text(m.result)).toContain(`"label":"Waiting for you","value":1`);
 	});
 
-	it("approves without review from the page, telling the other approvers", async () => {
+	it("publishes without review from the page", async () => {
+		const s = await site({ admins: 3 });
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measureWithDeferred(() =>
+			s.host.admin.submit(
+				"/overview",
+				"override_publish",
+				{ reason: "Price list must go out today" },
+				{ user: admin(s), blockId: `ov:pages:${id}` },
+			),
+		);
+		pin("page publish without review, 3 approvers", m.route, 8);
+		expectDeferredAfterPublish(m);
+		expect(m.route.result?.toast?.message).toContain("Published without review.");
+	});
+
+	it("approves without review from the page", async () => {
 		const s = await site({ admins: 3 });
 		const id = await waiting(s);
 		await cold(s);
@@ -834,9 +960,8 @@ describe("the Approvals page (route admin)", () => {
 				{ user: admin(s), blockId: `ov:pages:${id}` },
 			),
 		);
-		// TODO(B39): 18 calls, over Cloudflare's sandbox limit of 10 -- see report
-		// 16 + other approvers (one emailSend each).
-		pin("page approve without review, 3 approvers", m, 18);
+		// One task carries both emails: to the other approvers and to the writer.
+		pin("page approve without review, 3 approvers", m, 8);
 		expect(m.result?.toast?.type).toBe("success");
 		expect((await request(s, id))?.status).toBe("approved");
 	});
@@ -851,10 +976,11 @@ describe("the Approvals page (route admin)", () => {
 				value: { collection: "pages", id },
 			}),
 		);
-		// TODO(B39): 16 calls, over Cloudflare's sandbox limit of 10 -- see report
-		// 14 + approvers (one emailSend each).
-		pin("page ask, contributor, 2 approvers", m, 16);
+		// kvList schemaGetCollection storageGet contentGet contentGetRevision storagePut
+		// cronSchedule userList.
+		pin("page ask, contributor, 2 approvers", m, 8);
 		expect(m.result?.toast?.type).toBe("success");
+		expect(text(m.result)).toContain("Back to the list");
 	});
 });
 
@@ -894,7 +1020,7 @@ describe("the Approval panel (route editor/panel)", () => {
 		const m = await measure(() =>
 			s.host.admin.loadEditorPanel("approval", "pages", id, { user: s.editor }),
 		);
-		pin("panel load, changed since approval, migrated settings", m, 8);
+		pin("panel load, changed since approval, migrated settings", m, 6);
 		expect(text(m.result)).toContain("Changed since Ellen Marsh approved it");
 	});
 
@@ -908,9 +1034,9 @@ describe("the Approval panel (route editor/panel)", () => {
 				value: { key: `pages:${id}` },
 			}),
 		);
-		// TODO(B39): 13 calls, over Cloudflare's sandbox limit of 10 -- see report
-		pin("panel approve", m, 13);
+		pin("panel approve", m, 8);
 		expect(m.result?.toast).toEqual({ type: "success", message: "Approved. Sam has been told." });
+		expect(text(m.result)).toContain("Approved by Ellen Marsh");
 	});
 
 	it("approves and publishes", async () => {
@@ -923,14 +1049,27 @@ describe("the Approval panel (route editor/panel)", () => {
 				value: { key: `pages:${id}` },
 			}),
 		);
-		// TODO(B39): 15 calls, over Cloudflare's sandbox limit of 10 -- see report
-		// (16 measured: the last is the deferred afterPublish hook's own storageGet.)
-		pin("panel approve and publish", m, 16);
+		pin("panel approve and publish", m.route, 8);
 		expectDeferredAfterPublish(m);
-		expect(m.result?.toast?.message).toBe(
+		expect(m.route.result?.toast?.message).toBe(
 			"Approved and published. It's live now. Sam has been told.",
 		);
 		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+	});
+
+	it("approves and publishes under the 'require' checks", async () => {
+		const s = await site({ config: { ...HELD, checks: "require" } });
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measureWithDeferred(() =>
+			s.host.admin.actEditorPanel("approval", "pages", id, "approve_publish", {
+				user: admin(s),
+				value: { key: `pages:${id}` },
+			}),
+		);
+		// + contentGet: the page read for publishing comes without its SEO panel.
+		pin("panel approve and publish, require checks", m.route, 9);
+		expectDeferredAfterPublish(m);
 	});
 
 	it("sends back with a note", async () => {
@@ -947,15 +1086,15 @@ describe("the Approval panel (route editor/panel)", () => {
 				{ user: admin(s), blockId: `sb:pages:${id}` },
 			),
 		);
-		pin("panel send back", m, 9);
+		pin("panel send back", m, 5);
 		expect(m.result?.toast?.message).toBe("Sent back to Sam with your note.");
 	});
 
-	it("sends back with a note when the email fails", async () => {
+	it("sends back with a note when the email cannot be queued, and logs it", async () => {
 		const s = await site();
 		const id = await waiting(s);
 		await cold(s);
-		failing.add("emailSend");
+		failing.add("cronSchedule");
 		const m = await measure(() =>
 			s.host.admin.submitEditorPanel(
 				"approval",
@@ -966,9 +1105,10 @@ describe("the Approval panel (route editor/panel)", () => {
 				{ user: admin(s), blockId: `sb:pages:${id}` },
 			),
 		);
-		// TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 -- see report
-		pin("panel send back, email fails", m, 10);
+		pin("panel send back, email not queued", m, 6);
+		expect(m.calls.at(-1)).toBe("log");
 		expect(m.result?.toast?.message).toBe("Sent back to Sam with your note.");
+		expect((await request(s, id))?.status).toBe("sent_back");
 	});
 
 	it("saves the writer's note", async () => {
@@ -985,11 +1125,11 @@ describe("the Approval panel (route editor/panel)", () => {
 				{ user: s.editor, blockId: `note:pages:${id}` },
 			),
 		);
-		pin("panel save note", m, 8);
+		pin("panel save note", m, 7);
 		expect(m.result?.toast?.type).toBe("success");
 	});
 
-	it("publishes without review, telling the other approvers", async () => {
+	it("publishes without review", async () => {
 		const s = await site({ admins: 3 });
 		const id = await waiting(s);
 		await cold(s);
@@ -1003,25 +1143,16 @@ describe("the Approval panel (route editor/panel)", () => {
 				{ user: admin(s), blockId: `ov:pages:${id}` },
 			),
 		);
-		// TODO(B39): 18 calls, over Cloudflare's sandbox limit of 10 -- see report
-		// (19 measured: the last is the deferred afterPublish hook's own storageGet.)
-		// 16 + other approvers (one emailSend each).
-		pin("panel publish without review, 3 approvers", m, 19);
+		pin("panel publish without review, 3 approvers", m.route, 8);
 		expectDeferredAfterPublish(m);
-		expect(m.result?.toast?.message).toContain("Published without review.");
+		expect(m.route.result?.toast?.message).toContain("Published without review.");
 	});
 });
 
 describe("Ask for approval (route editor/ask)", () => {
-	// 9 + approvers (one emailSend each), +2 on a migrated site. Over the limit from 2 approvers.
-	for (const [admins, count] of [
-		// TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 -- see report
-		[1, 10],
-		// TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-		[2, 11],
-		// TODO(B39): 12 calls, over Cloudflare's sandbox limit of 10 -- see report
-		[3, 12],
-	] as const) {
+	// kvList schemaGetCollection storageGet contentGet contentGetRevision storagePut
+	// cronSchedule userList, however many approvers: the emails go from a cron task.
+	for (const admins of [1, 3, 12]) {
 		it(`asks ${admins} approver(s)`, async () => {
 			const s = await site({ admins });
 			const id = await page(s);
@@ -1029,7 +1160,7 @@ describe("Ask for approval (route editor/ask)", () => {
 			const m = await measure(() =>
 				s.host.admin.invokeEditorAction("ask", "pages", id, { user: s.editor }),
 			);
-			pin(`editor ask, ${admins} approver(s)`, m, count);
+			pin(`editor ask, ${admins} approver(s)`, m, 8);
 			expect(m.result?.toast?.type).toBe("success");
 			expect((await request(s, id))?.status).toBe("waiting");
 		});
@@ -1042,403 +1173,272 @@ describe("Ask for approval (route editor/ask)", () => {
 		const m = await measure(() =>
 			s.host.admin.invokeEditorAction("ask", "pages", id, { user: s.editor }),
 		);
-		// TODO(B39): 12 calls, over Cloudflare's sandbox limit of 10 -- see report
-		pin("editor ask, 1 approver, migrated settings", m, 12);
+		pin("editor ask, 1 approver, migrated settings", m, 8);
 		expect(m.result?.toast?.type).toBe("success");
 	});
 });
 
+async function enforced<T>(label: string, invoke: () => Promise<T>): Promise<Measured<T>> {
+	const m = await measure(invoke, { enforce: true });
+	console.info(describeCalls(`enforced ${label}`, m));
+	expect(m.error).toBeUndefined();
+	expect(m.refused).toEqual([]);
+	expect(m.calls.length).toBeLessThanOrEqual(BUDGET);
+	return m;
+}
+
+/** A site with pages waiting, their request emails already sent. */
+async function seeded(options: Parameters<typeof site>[0] = {}, count = 1) {
+	const s = await site(options);
+	let id = "";
+	for (let i = 0; i < count; i++) id = await waiting(s, count > 1 ? `Page ${i + 1}` : DATA.title);
+	await flushMail(s);
+	await cold(s);
+	return { s, id, before: await emails(s) };
+}
+
+async function newMail(s: Site, before: number) {
+	return (await inbox(s)).slice(before);
+}
+
 /**
- * What each path over the limit does on Cloudflare today: every call after the 10th is
- * refused. Outcome: whether it threw (the person sees an error, not the plugin's message),
- * the toast shown, whether the page is live, the request's status, how many emails went out.
+ * The paths that went over the limit up to 0.1.6, run with Cloudflare's limit: nothing is
+ * refused, the decision is stored, and every email it queued reaches its inbox in later cron
+ * runs, each within the limit too.
  */
-describe(`enforced: paths over ${SANDBOX_SUBREQUESTS} calls`, () => {
-	interface Outcome {
-		threw: boolean;
-		toast: string | null;
-		live: string | null;
-		request: string | null;
-		emails: number;
-		/** A two-day reminder is scheduled. */
-		reminder: boolean;
-		refused: string[];
-	}
-
-	const base = { threw: true, toast: null, emails: 0, reminder: true } as const;
-	// After a publish the refused "storageGet log" at the end are the deferred afterPublish
-	// hook's, which shares the test's window; outcome() runs it again as its own invocation.
-	const OUTCOMES: Record<string, Outcome> = {
-		// The fourth failure is not logged; nothing else changes.
-		"cron mail, 4 approvers, every email fails: the last failure is not logged": {
-			...base,
-			threw: false,
-			live: "draft",
-			request: "waiting",
-			refused: ["log"],
-		},
-		// The Approvals page does not open for an admin once 2 pages wait.
-		"page load, admin, 2 waiting": {
-			...base,
-			live: "draft",
-			request: "waiting",
-			refused: ["schemaListCollections"],
-		},
-		"page load, admin, 5 waiting": {
-			...base,
-			live: "draft",
-			request: "waiting",
-			refused: ["contentGetRevision", "contentGet", "contentGet", "userList"],
-		},
-		// Saved, but the admin sees an error.
-		"save settings, 1 waiting": {
-			...base,
-			live: "draft",
-			request: "waiting",
-			refused: ["userList"],
-		},
-		// Approved and the writer emailed, but the approver sees an error.
-		"page approve": {
-			...base,
-			live: "draft",
-			request: "approved",
-			emails: 1,
-			refused: ["schemaListCollections"],
-		},
-		// Live, but the writer is never told and the approver sees an error.
-		"page approve_publish": {
-			...base,
-			live: "published",
-			request: "published",
-			refused: ["userGet", "storageGet", "log"],
-		},
-		"page approve_publish, publish fails": {
-			...base,
-			live: "draft",
-			request: "approved",
-			refused: ["storageGet"],
-		},
-		// Live, but neither the other approvers nor the writer are told.
-		"page override_publish, 3 approvers": {
-			...base,
-			live: "published",
-			request: "published",
-			refused: ["userList", "storageGet", "log"],
-		},
-		// Asked and emailed, but the Contributor sees an error.
-		// Sent back and the writer emailed, but the approver sees an error.
-		"page send back, 1 other waiting": {
-			...base,
-			live: "draft",
-			request: "sent_back",
-			emails: 1,
-			refused: ["userList"],
-		},
-		// Approved and the other approvers emailed, but the writer is never told and the approver
-		// sees an error.
-		"page override, 3 approvers": {
-			...base,
-			live: "draft",
-			request: "approved",
-			emails: 2,
-			refused: ["userGet"],
-		},
-		"page ask, contributor, 2 approvers": {
-			...base,
-			live: "draft",
-			request: "waiting",
-			emails: 2,
-			refused: ["userList"],
-		},
-		"panel approve": {
-			...base,
-			live: "draft",
-			request: "approved",
-			emails: 1,
-			refused: ["storageGet"],
-		},
-		// Live; "Published by" is never recorded (afterPublish records "Published" instead), the
-		// writer is never told and the approver sees an error.
-		"panel approve_publish": {
-			...base,
-			live: "published",
-			request: "published",
-			refused: ["storagePut", "storageGet", "log"],
-		},
-		"panel override_publish, 3 approvers": {
-			...base,
-			live: "published",
-			request: "published",
-			refused: ["storagePut", "storageGet", "log"],
-		},
-		// Asked and emailed, but the writer sees an error.
-		"editor ask, 2 approver(s), saved settings": {
-			...base,
-			live: "draft",
-			request: "waiting",
-			emails: 2,
-			refused: ["userList"],
-		},
-		// Emailed, but no two-day reminder is scheduled, and the writer sees an error.
-		"editor ask, 3 approver(s), saved settings": {
-			...base,
-			live: "draft",
-			request: "waiting",
-			emails: 3,
-			reminder: false,
-			refused: ["cronSchedule"],
-		},
-		"editor ask, 1 approver(s), legacy settings": {
-			...base,
-			live: "draft",
-			request: "waiting",
-			emails: 1,
-			reminder: false,
-			refused: ["cronSchedule"],
-		},
-	};
-
-	async function outcome(
-		s: Site,
-		id: string,
-		m: Measured<unknown>,
-		emailsBefore: number,
-	): Promise<Outcome> {
-		await drain();
-		const item = await s.host.inspect.content.get("pages", id);
-		if (item?.status === "published") {
-			// After a publish EmDash runs content:afterPublish deferred, as its own invocation with
-			// its own budget. In the test it shares this window and is refused, so run it again as
-			// Cloudflare would.
-			await s.host.transport.invokeHook("content:afterPublish", {
-				content: item,
-				collection: "pages",
-			});
-		}
-		const result = m.result as { toast?: { message?: string } } | undefined;
-		const out: Outcome = {
-			threw: m.error !== undefined,
-			toast: result?.toast?.message ?? null,
-			live: item?.status ?? null,
-			request: (await request(s, id))?.status ?? null,
-			emails: (await emails(s)) - emailsBefore,
-			reminder: text(await s.host.inspect.scheduledTasks()).includes("remind-"),
-			refused: m.refused,
-		};
-		console.info(describeCalls("enforced", m), text(out));
-		return out;
-	}
-
-	/** The pinned outcome of the running test, by its name. */
-	function expected(): Outcome {
-		const name = expect.getState().currentTestName?.split(" > ").at(-1) ?? "";
-		const found = OUTCOMES[name];
-		if (!found) throw new Error(`no pinned outcome for "${name}"`);
-		return found;
-	}
-
-	it("cron mail, 4 approvers, every email fails: the last failure is not logged", async () => {
-		const s = await site({ admins: 4 });
-		const id = await waiting(s);
-		await cold(s);
-		failing.add("emailSend");
-		const before = await emails(s);
-		const m = await measure(() => mailTask(s, id), { enforce: true });
-		expect(await outcome(s, id, m, before)).toEqual(expected());
-	});
-
-	for (const count of [2, 5]) {
+describe(`enforced: Cloudflare's limit of ${SANDBOX_SUBREQUESTS} calls`, () => {
+	for (const count of [2, 25]) {
 		it(`page load, admin, ${count} waiting`, async () => {
-			const s = await site();
-			let id = "";
-			for (let i = 0; i < count; i++) id = await waiting(s, `Page ${i + 1}`);
-			await cold(s);
-			const before = await emails(s);
-			const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }), {
-				enforce: true,
-			});
-			expect(await outcome(s, id, m, before)).toEqual(expected());
+			const { s } = await seeded({}, count);
+			const m = await enforced("page load", () =>
+				s.host.admin.loadPage("/overview", { user: admin(s) }),
+			);
+			expect(text(m.result)).toContain(`"label":"Waiting for you","value":${count}`);
 		});
 	}
 
 	it("save settings, 1 waiting", async () => {
-		const s = await site({ config: { ...HELD, checks: "off" } });
-		const id = await waiting(s);
-		await cold(s);
-		const before = await emails(s);
-		const m = await measure(
-			() => s.host.admin.submit("/overview", "save_settings", HELD, { user: admin(s) }),
-			{ enforce: true },
+		const { s } = await seeded({ config: { ...HELD, checks: "off" } });
+		const m = await enforced("save settings", () =>
+			s.host.admin.submit("/overview", "save_settings", HELD, { user: admin(s) }),
 		);
-		expect(await outcome(s, id, m, before)).toEqual(expected());
+		expect(m.result?.toast?.type).toBe("success");
 		expect(await s.host.inspect.setting("config")).toMatchObject({ checks: "remind" });
 	});
 
-	for (const action of ["approve", "approve_publish"]) {
-		it(`page ${action}`, async () => {
-			const s = await site();
-			const id = await waiting(s);
-			await cold(s);
-			const before = await emails(s);
-			const m = await measure(
-				() =>
-					s.host.admin.act("/overview", action, {
-						user: admin(s),
-						value: { key: `pages:${id}` },
-					}),
-				{ enforce: true },
-			);
-			expect(await outcome(s, id, m, before)).toEqual(expected());
-		});
-	}
+	it("page approve: approved, and the writer's email follows", async () => {
+		const { s, id, before } = await seeded();
+		await enforced("page approve", () =>
+			s.host.admin.act("/overview", "approve", { user: admin(s), value: { key: `pages:${id}` } }),
+		);
+		expect((await request(s, id))?.status).toBe("approved");
+		expect(await emails(s)).toBe(before);
+		expect(await mailTasks(s)).toHaveLength(1);
+		await runMail(s);
+		expect(await newMail(s, before)).toEqual([
+			{ to: "sam@bakery.test", subject: 'Harbour Street Bakery: Approved: "Summer menu"' },
+		]);
+	});
 
-	it("page approve_publish, publish fails", async () => {
-		const s = await site();
-		const id = await waiting(s);
-		await cold(s);
+	it("page approve and publish: live, recorded, and the writer's email follows", async () => {
+		const { s, id, before } = await seeded();
+		// The publish runs content:afterPublish as its own invocation once the route returns;
+		// in the test it shares the window, so the two are counted apart rather than enforced.
+		const m = await measureWithDeferred(() =>
+			s.host.admin.act("/overview", "approve_publish", {
+				user: admin(s),
+				value: { key: `pages:${id}` },
+			}),
+		);
+		expect(m.route.calls.length).toBeLessThanOrEqual(BUDGET);
+		expect(m.deferred.length).toBeLessThanOrEqual(BUDGET);
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+		expect((await request(s, id))?.history[0]?.text).toBe("Published by Ellen Marsh");
+		await runMail(s);
+		expect(await newMail(s, before)).toEqual([
+			{
+				to: "sam@bakery.test",
+				subject: 'Harbour Street Bakery: Approved and published: "Summer menu"',
+			},
+		]);
+	});
+
+	it("page approve and publish, publish fails: approved, the approver told", async () => {
+		const { s, id, before } = await seeded();
 		failing.add("contentPublish");
-		const before = await emails(s);
-		const m = await measure(
-			() =>
-				s.host.admin.act("/overview", "approve_publish", {
-					user: admin(s),
-					value: { key: `pages:${id}` },
-				}),
-			{ enforce: true },
+		const m = await enforced("page approve and publish, publish fails", () =>
+			s.host.admin.act("/overview", "approve_publish", {
+				user: admin(s),
+				value: { key: `pages:${id}` },
+			}),
 		);
-		// The failed publish's log is not awaited, so whether it or the next read takes the 10th
-		// call varies from run to run; which calls are refused varies with it, the outcome does not.
-		const { refused, ...rest } = await outcome(s, id, m, before);
-		const { refused: _expected, ...want } = expected();
-		expect(rest).toEqual(want);
-		expect(refused.length).toBeGreaterThan(0);
-		for (const name of refused) expect(["log", "storageGet", "storageQuery"]).toContain(name);
+		failing.clear();
+		expect(m.result?.toast?.message).toBe(
+			"Approved, but it could not be published just now. Press Publish on the page.",
+		);
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+		expect((await request(s, id))?.status).toBe("approved");
+		expect(await runMail(s)).toEqual([]);
+		expect(await emails(s)).toBe(before);
 	});
 
-	it("page override_publish, 3 approvers", async () => {
-		const s = await site({ admins: 3 });
-		const id = await waiting(s);
-		await cold(s);
-		const before = await emails(s);
-		const m = await measure(
-			() =>
-				s.host.admin.submit(
-					"/overview",
-					"override_publish",
-					{ reason: "Price list must go out today" },
-					{ user: admin(s), blockId: `ov:pages:${id}` },
-				),
-			{ enforce: true },
+	it("page publish without review, 3 approvers: the other two and the writer are told", async () => {
+		const { s, id, before } = await seeded({ admins: 3 });
+		const m = await measureWithDeferred(() =>
+			s.host.admin.submit(
+				"/overview",
+				"override_publish",
+				{ reason: "Price list must go out today" },
+				{ user: admin(s), blockId: `ov:pages:${id}` },
+			),
 		);
-		expect(await outcome(s, id, m, before)).toEqual(expected());
+		expect(m.route.calls.length).toBeLessThanOrEqual(BUDGET);
+		expect((await request(s, id))?.status).toBe("published");
+		await runMail(s);
+		const sent = await newMail(s, before);
+		expect(sent.map((e) => e.to).sort()).toEqual([
+			"admin1@agency.test",
+			"admin2@agency.test",
+			"sam@bakery.test",
+		]);
+		expect(
+			sent.filter((e) => e.subject.includes('published "Summer menu" without review')),
+		).toHaveLength(2);
 	});
 
-	it("page send back, 1 other waiting", async () => {
-		const s = await site();
-		await waiting(s, "Page 1");
-		const id = await waiting(s, "Page 2");
-		await cold(s);
-		const before = await emails(s);
-		const m = await measure(
-			() =>
-				s.host.admin.submit(
-					"/overview",
-					"send_back",
-					{ note: "Iced coffee is £3.40" },
-					{ user: admin(s), blockId: `sb:pages:${id}` },
-				),
-			{ enforce: true },
+	it("page send back, 1 other waiting: sent back, and the writer's email follows", async () => {
+		const { s, before } = await seeded({}, 2);
+		const pages = await s.host.inspect.content.list("pages");
+		const id = pages.find((p) => (p.data as { title?: string }).title === "Page 2")!.id;
+		await enforced("page send back", () =>
+			s.host.admin.submit(
+				"/overview",
+				"send_back",
+				{ note: "Iced coffee is £3.40" },
+				{ user: admin(s), blockId: `sb:pages:${id}` },
+			),
 		);
-		expect(await outcome(s, id, m, before)).toEqual(expected());
+		expect((await request(s, id))?.status).toBe("sent_back");
+		await runMail(s);
+		expect(await newMail(s, before)).toEqual([
+			{ to: "sam@bakery.test", subject: 'Harbour Street Bakery: Ellen Marsh sent back "Page 2"' },
+		]);
 	});
 
-	it("page override, 3 approvers", async () => {
-		const s = await site({ admins: 3 });
-		const id = await waiting(s);
-		await cold(s);
-		const before = await emails(s);
-		const m = await measure(
-			() =>
-				s.host.admin.submit(
-					"/overview",
-					"override",
-					{ reason: "Price list must go out today" },
-					{ user: admin(s), blockId: `ov:pages:${id}` },
-				),
-			{ enforce: true },
+	it("page approve without review, 3 approvers: the other two and the writer are told", async () => {
+		const { s, id, before } = await seeded({ admins: 3 });
+		await enforced("page approve without review", () =>
+			s.host.admin.submit(
+				"/overview",
+				"override",
+				{ reason: "Price list must go out today" },
+				{ user: admin(s), blockId: `ov:pages:${id}` },
+			),
 		);
-		expect(await outcome(s, id, m, before)).toEqual(expected());
+		expect((await request(s, id))?.status).toBe("approved");
+		await runMail(s);
+		expect((await newMail(s, before)).map((e) => e.to).sort()).toEqual([
+			"admin1@agency.test",
+			"admin2@agency.test",
+			"sam@bakery.test",
+		]);
 	});
 
-	it("page ask, contributor, 2 approvers", async () => {
+	it("page ask, a Contributor: waiting, both approvers emailed, a reminder set", async () => {
 		const s = await site();
 		const id = await page(s, s.contributor);
 		await cold(s);
 		const before = await emails(s);
-		const m = await measure(
-			() =>
-				s.host.admin.act("/overview", "ask", {
-					user: s.contributor,
-					value: { collection: "pages", id },
-				}),
-			{ enforce: true },
+		await enforced("page ask", () =>
+			s.host.admin.act("/overview", "ask", {
+				user: s.contributor,
+				value: { collection: "pages", id },
+			}),
 		);
-		expect(await outcome(s, id, m, before)).toEqual(expected());
+		expect((await request(s, id))?.status).toBe("waiting");
+		await runMail(s);
+		expect((await newMail(s, before)).map((e) => e.to).sort()).toEqual([
+			"admin0@agency.test",
+			"admin1@agency.test",
+		]);
+		expect(text(await s.host.inspect.scheduledTasks())).toContain("remind-");
 	});
 
-	for (const action of ["approve", "approve_publish"]) {
-		it(`panel ${action}`, async () => {
-			const s = await site();
-			const id = await waiting(s);
-			await cold(s);
-			const before = await emails(s);
-			const m = await measure(
-				() =>
-					s.host.admin.actEditorPanel("approval", "pages", id, action, {
-						user: admin(s),
-						value: { key: `pages:${id}` },
-					}),
-				{ enforce: true },
+	it("panel approve: approved, and the writer's email follows", async () => {
+		const { s, id, before } = await seeded();
+		await enforced("panel approve", () =>
+			s.host.admin.actEditorPanel("approval", "pages", id, "approve", {
+				user: admin(s),
+				value: { key: `pages:${id}` },
+			}),
+		);
+		expect((await request(s, id))?.status).toBe("approved");
+		await runMail(s);
+		expect((await newMail(s, before)).map((e) => e.to)).toEqual(["sam@bakery.test"]);
+	});
+
+	for (const action of ["approve_publish", "override_publish"]) {
+		it(`panel ${action}, 3 approvers: live, and the emails follow`, async () => {
+			const { s, id, before } = await seeded({ admins: 3 });
+			const m = await measureWithDeferred(() =>
+				action === "approve_publish"
+					? s.host.admin.actEditorPanel("approval", "pages", id, action, {
+							user: admin(s),
+							value: { key: `pages:${id}` },
+						})
+					: s.host.admin.submitEditorPanel(
+							"approval",
+							"pages",
+							id,
+							action,
+							{ reason: "Price list must go out today" },
+							{ user: admin(s), blockId: `ov:pages:${id}` },
+						),
 			);
-			expect(await outcome(s, id, m, before)).toEqual(expected());
+			expect(m.route.calls.length).toBeLessThanOrEqual(BUDGET);
+			expect(m.deferred.length).toBeLessThanOrEqual(BUDGET);
+			expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+			expect((await request(s, id))?.status).toBe("published");
+			await runMail(s);
+			const to = (await newMail(s, before)).map((e) => e.to).sort();
+			expect(to).toEqual(
+				action === "approve_publish"
+					? ["sam@bakery.test"]
+					: ["admin1@agency.test", "admin2@agency.test", "sam@bakery.test"],
+			);
 		});
 	}
 
-	it("panel override_publish, 3 approvers", async () => {
-		const s = await site({ admins: 3 });
-		const id = await waiting(s);
+	it("editor ask, 25 approvers: one email each, every run within the limit", async () => {
+		const s = await site({ admins: 25 });
+		const id = await page(s);
 		await cold(s);
 		const before = await emails(s);
-		const m = await measure(
-			() =>
-				s.host.admin.submitEditorPanel(
-					"approval",
-					"pages",
-					id,
-					"override_publish",
-					{ reason: "Price list must go out today" },
-					{ user: admin(s), blockId: `ov:pages:${id}` },
-				),
-			{ enforce: true },
+		await enforced("editor ask, 25 approvers", () =>
+			s.host.admin.invokeEditorAction("ask", "pages", id, { user: s.editor }),
 		);
-		expect(await outcome(s, id, m, before)).toEqual(expected());
+		expect((await request(s, id))?.status).toBe("waiting");
+		const runs = await runMail(s);
+		expect(runs.length).toBeGreaterThan(1);
+		const sent = await newMail(s, before);
+		expect(sent).toHaveLength(25);
+		expect(new Set(sent.map((e) => e.to)).size).toBe(25);
+		expect(text(await s.host.inspect.scheduledTasks())).toContain("remind-");
 	});
 
-	for (const [admins, settings] of [
-		[2, "saved"],
-		[3, "saved"],
-		[1, "legacy"],
-	] as const) {
-		it(`editor ask, ${admins} approver(s), ${settings} settings`, async () => {
-			const s = await site({ admins, settings });
-			const id = await page(s);
-			await cold(s);
-			const before = await emails(s);
-			const m = await measure(
-				() => s.host.admin.invokeEditorAction("ask", "pages", id, { user: s.editor }),
-				{ enforce: true },
-			);
-			expect(await outcome(s, id, m, before)).toEqual(expected());
-		});
-	}
+	it("an email that fails mid-run is sent later, once", async () => {
+		const s = await site({ admins: 6 });
+		const id = await waiting(s);
+		await cold(s);
+		// The first two sends fail, the rest go through.
+		failTimes.set("emailSend", 2);
+		const before = await emails(s);
+		await runMail(s);
+		expect(await emails(s)).toBe(before + 4);
+		await runMail(s, { later: 6 * 60_000 });
+		const sent = await newMail(s, before);
+		expect(sent).toHaveLength(6);
+		expect(new Set(sent.map((e) => e.to)).size).toBe(6);
+		expect(id).not.toBe("");
+	});
 });
