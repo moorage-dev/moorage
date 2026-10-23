@@ -36,6 +36,9 @@ const BATCH = 20;
 const TITLE_PAGE = 100;
 // Records read per request when looking for records whose entry is gone.
 const SWEEP_PAGE = 100;
+// Entries looked up per request to confirm they are gone (normally there are none). One keeps
+// a step at 7 operations on a site that never saved settings, which costs a second read.
+const SWEEP_CONFIRM = 1;
 // Statuses of published pages, the only records a check rewrites.
 const LIVE: string[] = ["ready", "look", "fix", "hidden"];
 // Collections without published pages that one request may pass over.
@@ -60,7 +63,11 @@ export interface ScanState {
 	 * Present once every entry has been read: records of pages in `scope` that this check did not
 	 * write are then removed, before the title pass, in steps of their own.
 	 */
-	sweep?: { cursor?: string };
+	sweep?: {
+		cursor?: string;
+		/** Records the check did not write whose page still exists and is published. */
+		kept?: string[];
+	};
 	/** Running totals, so a check never has to recount what it just wrote. */
 	tally: Stats;
 	startedAt: string;
@@ -200,31 +207,63 @@ async function entriesStep(ctx: PluginContext, state: ScanState, config: SeoConf
 }
 
 /**
- * Remove records of published pages this check did not write: their entry was deleted, or
- * unpublished, without the record going too. This happens when a page is deleted after a check
- * read it and before the check wrote its record: the delete hook ran once, in between, and the
- * check wrote the record back. A record written since the check started (a page created or saved
- * meanwhile) is newer than the check and stays. Read in the order records were created, so
- * removing rows already read never moves the cursor.
+ * Settle records of published pages this check did not write. Usually their entry was deleted
+ * after the check read it and before it wrote the record: the delete hook ran once, in between,
+ * and the check wrote the record back. A record written since the check started (a page created
+ * or saved meanwhile) is newer than the check and is not looked at.
+ *
+ * Each one is confirmed with EmDash first, a few per request: a page that is gone loses its
+ * record; one that is no longer published becomes a draft record, keeping the page type an admin
+ * picked; one still published (its record written back by a page view, say) stays as it is.
+ * Read in the order records were created, so removing rows already read never moves the cursor.
  */
-async function sweepStep(ctx: PluginContext, state: ScanState) {
+async function sweepStep(ctx: PluginContext, state: ScanState, config: SeoConfig) {
 	const scope = new Set(state.scope ?? []);
 	const store = entryStore(ctx);
+	const cursor = state.sweep?.cursor;
+	const kept = new Set(state.sweep?.kept ?? []);
 	const page =
-		scope.size > 0
-			? await store.query({
-					where: { status: { in: LIVE } },
-					limit: SWEEP_PAGE,
-					cursor: state.sweep?.cursor,
-				})
+		scope.size > 0 && ctx.content
+			? await store.query({ where: { status: { in: LIVE } }, limit: SWEEP_PAGE, cursor })
 			: { items: [], hasMore: false, cursor: undefined };
-	const gone = page.items
-		.filter(
-			({ data }) => scope.has(data.collection ?? "") && (data.checkedAt ?? "") < state.startedAt,
-		)
-		.map(({ id }) => id);
+	const stale = page.items.filter(
+		({ id, data }) =>
+			!kept.has(id) &&
+			scope.has(data.collection ?? "") &&
+			(data.entryId ?? "") !== "" &&
+			(data.checkedAt ?? "") < state.startedAt,
+	);
+	const confirm = stale.slice(0, SWEEP_CONFIRM);
+	const entries = await Promise.all(
+		confirm.map(({ data }) => ctx.content?.get(data.collection ?? "", data.entryId ?? "")),
+	);
+	const gone: string[] = [];
+	const drafts: Array<{ id: string; data: EntryRecord }> = [];
+	confirm.forEach(({ id, data }, index) => {
+		const entry = entries[index];
+		if (!entry) gone.push(id);
+		else if (entry.status !== "published") {
+			drafts.push({
+				id,
+				data: makeRecord({
+					hasPages: true,
+					collection: data.collection ?? "",
+					entry,
+					authors: data.authors,
+					previous: data,
+					config,
+					siteUrl: ctx.site.url,
+					duplicateTitle: false,
+				}),
+			});
+		} else kept.add(id);
+	});
 	if (gone.length > 0) await store.deleteMany(gone);
-	if (page.hasMore && page.cursor) state.sweep = { cursor: page.cursor };
+	if (drafts.length > 0) await store.putMany(drafts);
+	const keptIds = kept.size > 0 ? { kept: [...kept] } : {};
+	// After confirming any, read the same page again next time: the step has spent its budget.
+	if (confirm.length > 0) state.sweep = { ...(cursor ? { cursor } : {}), ...keptIds };
+	else if (page.hasMore && page.cursor) state.sweep = { cursor: page.cursor, ...keptIds };
 	else delete state.sweep;
 }
 
@@ -354,7 +393,7 @@ export async function scanStep(
 	};
 	if (state.status === "done" && !state.sweep) return state;
 
-	if (state.sweep) await sweepStep(ctx, state);
+	if (state.sweep) await sweepStep(ctx, state, config);
 	else if (state.phase === "entries") {
 		// An empty collection costs one read, so several can be passed in one
 		// request; the first one with pages uses up the rest of the budget.

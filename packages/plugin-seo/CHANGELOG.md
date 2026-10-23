@@ -12,6 +12,8 @@
 
 - A page deleted while "Check my pages" was running no longer lingers in the SEO page's counts, and no longer keeps another page flagged for sharing its title. At the end of each full check, the plugin now removes what it kept about pages the check did not find, then settles the title warnings; pages created or saved during the check are left alone. This only ever showed in the admin, never on the public site.
 - The Google preview panel no longer risks hitting Cloudflare's limit of 10 operations per request when a page's title and its page type are changed together. The panel now leaves moving the "same title" warning between pages to the save itself (or the next check), as it already did in the usual case.
+- The end-of-check cleanup above now asks EmDash about each page before removing what the plugin kept about it. A page that was unpublished, or whose record a page view wrote back, while the check ran keeps its record and the page type an admin picked; an unpublished one is simply counted as a draft.
+- Saving a page that moves it from one shared title to another could take 11 operations on a site whose SEO settings were never saved, over Cloudflare's limit of 10 per request, so the "same title" warnings were not updated for that save. Such a save now reads both titles at once and stays at 9 at most.
 
 ## 0.1.7
 

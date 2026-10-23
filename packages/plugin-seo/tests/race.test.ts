@@ -120,8 +120,14 @@ class World {
 			created.delete(id);
 			return records.delete(id);
 		};
-		const matches = (data: EntryRecord, where?: { titleKey?: string; status?: { in: string[] } }) =>
-			(where?.titleKey === undefined || data.titleKey === where.titleKey) &&
+		const matches = (
+			data: EntryRecord,
+			where?: { titleKey?: string | { in: string[] }; status?: { in: string[] } },
+		) =>
+			(where?.titleKey === undefined ||
+				(typeof where.titleKey === "string"
+					? data.titleKey === where.titleKey
+					: where.titleKey.in.includes(data.titleKey ?? ""))) &&
 			(where?.status === undefined || where.status.in.includes(data.status ?? ""));
 		const ordered = () =>
 			[...records]
@@ -154,7 +160,7 @@ class World {
 			deleteMany: (ids: string[]) =>
 				step("write", "deleteMany", () => ids.filter((id) => remove(id)).length),
 			query: (options: {
-				where?: { titleKey?: string; status?: { in: string[] } };
+				where?: { titleKey?: string | { in: string[] }; status?: { in: string[] } };
 				orderBy?: { titleKey: "asc" };
 				limit?: number;
 				cursor?: string;
@@ -413,7 +419,75 @@ describe("the same-title flag when a save and a check overlap", () => {
 const opsOf = (world: World, actor: string) =>
 	world.ops.filter((op) => op.startsWith(`${actor}:`)).map((op) => op.slice(actor.length + 1));
 
+const afterSave = plugin.hooks?.["content:afterSave"] as unknown as (
+	event: { collection: string; content: { id: string } },
+	ctx: PluginContext,
+) => Promise<void>;
+
 describe("operations a save costs", () => {
+	// Cloudflare allows a sandboxed hook 10 operations (see SANDBOX_OPERATIONS); a save must
+	// stay at 9 at most, its read of the settings included.
+	it("stays at 9 at most on the costliest save, moving a page between titles", async () => {
+		// No settings saved yet: reading them costs two operations, the most it can.
+		const world = new World();
+		world.page("a", "Our services");
+		world.page("b", "Our services");
+		world.page("c", "Weddings");
+		for (const id of ["a", "b", "c"]) await save(world, id);
+		const stale = { ...world.record("b")!, title: "Catering", titleKey: "catering" };
+
+		// b moves to c's title; a check's older copy of b (another title) lands right after the
+		// save's write, so its read-back finds b in neither title.
+		world.rename("b", "Weddings");
+		await afterSave(
+			{ collection: "pages", content: { id: "b" } },
+			world.ctx("move", [
+				{
+					when: "after",
+					op: "put",
+					run: async () => {
+						world.records.set("pages:b", { ...stale, updatedAt: "2026-10-01T00:00:00.000Z" });
+					},
+				},
+			]),
+		);
+		expect(opsOf(world, "move").length).toBeLessThanOrEqual(9);
+		// a is alone with its title now. b's own record (the older copy) is left to the next
+		// save or check, which a further read would have cost.
+		expect(world.flagged("a")).toBe(false);
+		await fullCheck(world);
+		expect(world.record("b")?.title).toBe("Weddings");
+		expect(world.flagged("b") && world.flagged("c")).toBe(true);
+	});
+
+	it("stays at 9 at most when a save keeps its title and its record was overwritten", async () => {
+		const world = new World();
+		world.page("a", "Our services");
+		world.page("b", "Our services");
+		await save(world, "a");
+		await save(world, "b");
+		const stale = { ...world.record("b")!, title: "Catering", titleKey: "catering" };
+
+		world.rename("b", "Our services");
+		await afterSave(
+			{ collection: "pages", content: { id: "b" } },
+			world.ctx("keep", [
+				{
+					when: "after",
+					op: "put",
+					run: async () => {
+						world.records.set("pages:b", { ...stale, updatedAt: "2026-10-01T00:00:00.000Z" });
+					},
+				},
+			]),
+		);
+		expect(opsOf(world, "keep").length).toBeLessThanOrEqual(9);
+		// The older copy, with a title the save did not read, is left to the next check.
+		await fullCheck(world);
+		expect(world.record("b")?.title).toBe("Our services");
+		expect(world.flagged("a") && world.flagged("b")).toBe(true);
+	});
+
 	it("stays within the sandbox's operations per request", async () => {
 		const world = new World();
 		world.page("a", "Our services");
@@ -542,6 +616,62 @@ describe("records of pages deleted during a check", () => {
 		expect(world.record("new")?.title).toBe("Opening hours");
 		// The check never wrote it: the sweep is what left it alone.
 		expect(world.record("new")?.checkedAt).toBe(written);
+	});
+
+	it("keeps a page unpublished while a check ran, with its page type, as a draft", async () => {
+		const world = new World();
+		world.page("a", "Our services");
+		world.page("b", "Catering");
+		await save(world, "a");
+		await save(world, "b");
+		world.records.set("pages:a", { ...world.record("a")!, type: "AboutPage" });
+		// a was unpublished in the gap between a check's list and its write: the check wrote
+		// a's published record over the one the unpublish hook had just written.
+		const entry = world.entries.get("a")!;
+		entry.status = "draft";
+
+		await fullCheck(world);
+
+		expect(world.record("a")?.type).toBe("AboutPage");
+		expect(world.record("a")?.status).toBe("draft");
+		expect(world.record("a")?.titleKey).toBe("");
+	});
+
+	it("keeps a published page whose record a page view wrote back during the check", async () => {
+		const world = new World();
+		world.page("a", "Our services");
+		await save(world, "a");
+		world.records.set("pages:a", { ...world.record("a")!, type: "AboutPage" });
+		const before = world.record("a")!;
+
+		// A page view read a's record before the check rewrote it and wrote it back after (the
+		// picture-for-shared-links write), so a's record is older than the check.
+		await fullCheck(world, [
+			{
+				when: "after",
+				op: "putMany",
+				run: async () => {
+					world.records.set("pages:a", before);
+				},
+			},
+		]);
+
+		expect(world.record("a")?.type).toBe("AboutPage");
+		expect(world.record("a")?.status).toBe("ready");
+	});
+
+	it("confirms many left-over records a few per request, within the budget", async () => {
+		const world = new World();
+		for (let index = 0; index < 30; index += 1) world.page(`p${index}`, `Page number ${index}`);
+		for (const id of world.entries.keys()) await save(world, id);
+		for (const id of ["p1", "p4", "p9", "p16", "p25"]) world.entries.delete(id);
+		for (const id of ["p2", "p3", "p20"]) world.entries.get(id)!.status = "draft";
+
+		const ticks = await fullCheck(world);
+
+		for (const id of ["p1", "p4", "p9", "p16", "p25"]) expect(world.record(id)).toBeUndefined();
+		for (const id of ["p2", "p3", "p20"]) expect(world.record(id)?.status).toBe("draft");
+		for (const ops of ticks) expect(ops.length).toBeLessThanOrEqual(8);
 	});
 
 	it("keeps drafts and pages of collections the check does not cover", async () => {
