@@ -104,6 +104,8 @@ Each run stays within the EmDash sandbox's limits of 10 calls (it makes at most 
 
 **Does it send anything anywhere?** Only to the websites your pages link to (to check them) and the email addresses you list.
 
+**Why do the checks and emails use the site's old address?** Plugins keep the site address EmDash had when the server started; Site Health uses it to open your own pages, to tell your links from other sites' and in its emails and instructions. After changing the site's address, restart the site.
+
 ## Changelog
 
 - **0.1.0:** first version.
