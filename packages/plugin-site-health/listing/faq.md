@@ -21,3 +21,7 @@ Partly. Links inside your pages that point to one of your pages or posts are che
 ### Who gets the emails?
 
 The first Admin who opens Site Health, plus anyone you add under Checklist, Options. Your site needs an email service for EmDash; the Checklist's "Send a test email" tells you whether it has one.
+
+## Why do the checks and emails use the site's old address?
+
+Plugins keep the site address EmDash had when the server started. After changing the site's address, restart the site.
