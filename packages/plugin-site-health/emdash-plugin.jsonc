@@ -28,10 +28,10 @@
 			// Cover at the top of the listing and its share image: 3:1, from banner.svg (scripts/render-banners.mjs in apps/demo-site).
 			"banner": { "file": "./images/banner.png" },
 			"screenshots": [
-				{ "file": "./images/problems.png", "lang": "en" },
-				{ "file": "./images/fix.png", "lang": "en" },
-				{ "file": "./images/checklist.png", "lang": "en" },
-				{ "file": "./images/problems-phone.png", "lang": "en" },
+				{ "file": "./images/problems-0-1-5.png", "lang": "en" },
+				{ "file": "./images/fix-0-1-5.png", "lang": "en" },
+				{ "file": "./images/checklist-0-1-5.png", "lang": "en" },
+				{ "file": "./images/problems-0-1-5-phone.png", "lang": "en" },
 			],
 		},
 	},

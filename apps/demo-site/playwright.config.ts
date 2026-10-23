@@ -52,7 +52,8 @@ export default defineConfig({
 		reuseExistingServer: false,
 		timeout: 120_000,
 		env: {
-			EMDASH_SITE_URL: BASE_URL,
+			// DEMO_SITE_PUBLIC_URL (screenshots only): the address the plugins print, instead of localhost.
+			EMDASH_SITE_URL: process.env.DEMO_SITE_PUBLIC_URL || BASE_URL,
 			DEMO_SITE_DB: `file:./${DB}`,
 			DEMO_SITE_SEO: process.env.DEMO_SITE_SEO ?? "",
 			DEMO_SITE_SITE_HEALTH: process.env.DEMO_SITE_SITE_HEALTH ?? "",

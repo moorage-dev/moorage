@@ -9,6 +9,9 @@ import {
 	type Page,
 } from "@playwright/test";
 
+import { growToContent } from "./full-shot.js";
+import { helpLinks } from "./help-line.js";
+
 // Lead Delivery's README and registry pictures, on a site set up as a bakery's (no test names):
 //   DEMO_SITE_PORT=4499 DEMO_SITE_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-screenshots.spec.ts
 // Skipped otherwise. Run it on its own: it names the site and the admin, and makes its own deliveries.
@@ -18,7 +21,7 @@ import {
 // host, and email goes to the dev console provider (`/_emdash/api/dev/emails`).
 
 const SHOTS = process.env.DEMO_SITE_SCREENSHOTS === "1";
-const VERSION = "0-4-0";
+const VERSION = "0-4-1";
 const API = "/_emdash/api/plugins/lead-delivery";
 const PAGE = "/_emdash/admin/plugins/lead-delivery/enquiries";
 const FORM = "cake-order";
@@ -243,13 +246,12 @@ test("screenshots", async ({ browser }) => {
 		});
 		const page = await context.newPage();
 		const base = { width, height: width > 400 ? 900 : 844 };
-		const shot = async (name: string) => {
+		const shot = async (name: string, foot = true) => {
 			await page.waitForTimeout(500);
 			// The admin scrolls inside its own panel, so a full-page shot needs a viewport as tall as it.
-			const tallest = await page.evaluate(() =>
-				Math.max(...[...document.querySelectorAll("body *")].map((el) => el.scrollHeight)),
-			);
-			await page.setViewportSize({ width, height: Math.min(Math.max(tallest, base.height), 5000) });
+			await growToContent(page, width, base.height);
+			// Admins see the help line at the foot of each screen of the plugin's page.
+			if (foot) await expect(helpLinks(page)).toHaveCount(3);
 			await page.waitForTimeout(300);
 			await page.screenshot({ path: `${dir}/${name}-${VERSION}${suffix}.png`, fullPage: true });
 			await page.setViewportSize(base);
@@ -281,7 +283,7 @@ test("screenshots", async ({ browser }) => {
 			<div style="color:#71717a;font-size:13px;margin:4px 0 12px">To: ${escape(sam.to)}${sam.cc?.length ? ` · Copy: ${escape(sam.cc.join(", "))}` : ""}</div>
 			<pre style="white-space:pre-wrap;font:inherit;margin:0">${escape(sam.text)}</pre></div></body>`,
 		);
-		await shot("email");
+		await shot("email", false);
 		await context.close();
 	}
 });

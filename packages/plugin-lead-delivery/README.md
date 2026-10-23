@@ -2,7 +2,7 @@
 
 Lead Delivery for [EmDash](https://emdashcms.com) sends every enquiry from your forms where you work: your inbox, HubSpot, or another app such as Zapier, Make or n8n. Each enquiry is logged and tried again if it does not get through. If one cannot be delivered, everyone who looks after the site hears about it. It works with the official forms plugin, on any EmDash site, with no account and no key.
 
-![Lead delivery: counters, deliveries and the latest enquiries](images/home-0-4-0.png)
+![Lead delivery: counters, deliveries and the latest enquiries](images/home-0-4-1.png)
 
 ## How it works
 
@@ -16,7 +16,7 @@ Everything is on one page, **Lead delivery** under Marketing:
 - **Edit**: the name, the address or HubSpot form, which forms it takes (one form usually; several, or all forms including new ones, for an inbox that gets everything), on or off, and HubSpot field matching.
 - **Enquiries**: the whole log, or one delivery's, with Send again.
 
-![A delivery's page](images/delivery-0-4-0.png)
+![A delivery's page](images/delivery-0-4-1.png)
 
 ## What it does
 

@@ -23,10 +23,10 @@
 			// Cover at the top of the listing and its share image: 3:1, from banner.svg (scripts/render-banners.mjs in apps/demo-site).
 			"banner": { "file": "./images/banner.png" },
 			"screenshots": [
-				{ "file": "./images/review-panel-0-2-0.png", "lang": "en" },
-				{ "file": "./images/waiting-0-2-0.png", "lang": "en" },
-				{ "file": "./images/settings-0-2-0.png", "lang": "en" },
-				{ "file": "./images/held-publish-0-2-0.png", "lang": "en" },
+				{ "file": "./images/review-panel-0-2-1.png", "lang": "en" },
+				{ "file": "./images/waiting-0-2-1.png", "lang": "en" },
+				{ "file": "./images/settings-0-2-1.png", "lang": "en" },
+				{ "file": "./images/held-publish-0-2-1.png", "lang": "en" },
 			],
 		},
 	},
