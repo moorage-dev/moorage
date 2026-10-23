@@ -29,11 +29,11 @@ async function start(name = "Crumb & Co.") {
 type Admin = Awaited<ReturnType<PluginRuntimeTestHost["fixtures"]["user"]>>;
 
 async function key(runtime: PluginRuntimeTestHost) {
-	return (await runtime.inspect.kv.get<Config>("config"))!.key;
+	return (await runtime.inspect.setting<Config>("config"))!.key;
 }
 
 async function addApp(runtime: PluginRuntimeTestHost, _admin: Admin, url: string, name: string) {
-	const config = (await runtime.inspect.kv.get<Config>("config"))!;
+	const config = (await runtime.inspect.setting<Config>("config"))!;
 	const app: Delivery = {
 		id: "app0000001",
 		kind: "app",
@@ -47,7 +47,7 @@ async function addApp(runtime: PluginRuntimeTestHost, _admin: Admin, url: string
 		url,
 		secret: "whsec_c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0",
 	};
-	await runtime.fixtures.plugin.kv("config", { ...config, deliveries: [app] });
+	await runtime.fixtures.plugin.setting("config", { ...config, deliveries: [app] });
 }
 
 async function inbound(runtime: PluginRuntimeTestHost, id: string) {

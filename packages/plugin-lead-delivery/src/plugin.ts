@@ -71,15 +71,21 @@ const plugin: SandboxedPlugin = {
 					const to = message.to.trim().toLowerCase();
 					if (event.source === FORMS_PLUGIN && to === privateEmail(config.key).toLowerCase()) {
 						// A changed email format is still recorded, as text, and the admin says so.
+						const forms = await loadForms(ctx);
 						const received =
-							(await fromEmail(message.subject, message.text, await loadForms(ctx))) ??
+							(await fromEmail(message.subject, message.text, forms)) ??
 							(await fromUnreadableEmail(message.subject, message.text));
 						if (received.enquiry.unreadable) await noteUnreadable(ctx, received.enquiry.formName);
 						// Delivered by the every-minute run: forms waits for this email before answering
 						// the visitor, and EmDash refuses a second email from inside this one. Nothing is
 						// scheduled from here either: run in the site's process, a task scheduled inside
 						// the email pipeline would carry it along and hit the same refusal.
-						await receive(ctx, received.id, received.enquiry, { inline: false, schedule: false });
+						await receive(ctx, received.id, received.enquiry, {
+							inline: false,
+							schedule: false,
+							config,
+							forms,
+						});
 					}
 				} catch (error) {
 					ctx.log.error("could not record an enquiry from its email", { error: String(error) });
@@ -120,7 +126,11 @@ const plugin: SandboxedPlugin = {
 				const received = fromWebhook(payload, forms[formId]);
 				if (!received) return text(400, "This is not a form enquiry.");
 				await rememberOrigin(ctx, routeCtx.request.url);
-				const result = await receive(ctx, received.id, received.enquiry, { inline: true });
+				const result = await receive(ctx, received.id, received.enquiry, {
+					inline: true,
+					config,
+					forms,
+				});
 				await ensureSchedule(ctx);
 				await alertIfStuck(ctx, config);
 				return text(200, result.duplicate ? "Already received." : "Received.");

@@ -76,13 +76,13 @@ async function start(reach: "self" | "email" = "self", url = ORIGIN) {
 		role: "admin",
 	});
 	await runtime.admin.loadPage(PAGE, { user: admin });
-	const config = (await runtime.inspect.kv.get<Config>("config"))!;
-	await runtime.fixtures.plugin.kv("config", {
+	const config = (await runtime.inspect.setting<Config>("config"))!;
+	await runtime.fixtures.plugin.setting("config", {
 		...config,
 		deliveries: [D],
 		reach: { result: reach, at: new Date().toISOString() },
 	});
-	await runtime.fixtures.plugin.kv("forms", { contact: CONTACT });
+	await runtime.fixtures.plugin.setting("forms", { contact: CONTACT });
 	return { runtime, admin, key: config.key };
 }
 
@@ -176,6 +176,8 @@ async function expectNoSecrets(runtime: PluginRuntimeTestHost, responses: BlockR
 	const seen = [
 		JSON.stringify(responses),
 		JSON.stringify((await runtime.inspect.kv.list()).filter((e) => !e.id.startsWith("approval:"))),
+		JSON.stringify(await runtime.inspect.setting("config")),
+		JSON.stringify(await runtime.inspect.setting("forms")),
 		JSON.stringify(await runtime.inspect.storage.list("deliveries")),
 		JSON.stringify(await runtime.inspect.storage.list("enquiries")),
 		JSON.stringify(await runtime.inspect.email()),
@@ -296,12 +298,12 @@ describe("one-click connect: Done, connect", () => {
 		expect(revokes).toHaveLength(1);
 		expect(bodyOf(revokes[0]!)).toEqual({ token: REFRESH });
 
-		const forms = (await runtime.inspect.kv.get<Record<string, KnownForm>>("forms"))!;
+		const forms = (await runtime.inspect.setting<Record<string, KnownForm>>("forms"))!;
 		expect(forms.contact).toMatchObject({ connectedWay: "straight", source: "definition" });
 		expect(forms.contact!.fields.map((f) => f.key)).toEqual(["name", "email"]);
 		expect(forms["wedding-cakes"]).toMatchObject({ name: "Wedding cakes" });
 		expect(await approvalEntries(runtime)).toEqual([]);
-		expect((await runtime.inspect.kv.get<Config>("config"))!.accessLeft).toBeUndefined();
+		expect((await runtime.inspect.setting<Config>("config"))!.accessLeft).toBeUndefined();
 		await expectNoSecrets(runtime, [opened, done]);
 
 		// Used once: pressed again, it starts over with a new code.
@@ -378,7 +380,11 @@ describe("one-click connect: Done, connect", () => {
 			deny: "Keep it",
 		});
 		// The other address itself is never kept or shown: only its host.
-		const kept = JSON.stringify(await runtime.inspect.kv.list());
+		const kept = JSON.stringify([
+			await runtime.inspect.kv.list(),
+			await runtime.inspect.setting("config"),
+			await runtime.inspect.setting("forms"),
+		]);
 		expect(kept).not.toContain("secretpath");
 		expect(text(asked)).not.toContain("secretpath");
 
@@ -472,7 +478,7 @@ describe("one-click connect: Done, connect", () => {
 		});
 		expect(requests(runtime, REVOKE)).toHaveLength(1);
 		expect(instructionsOpen(failed)).toBe(true);
-		const forms = (await runtime.inspect.kv.get<Record<string, KnownForm>>("forms"))!;
+		const forms = (await runtime.inspect.setting<Record<string, KnownForm>>("forms"))!;
 		expect(forms.contact!.connectedAt).toBeUndefined();
 		await expectNoSecrets(runtime, [failed]);
 	});
@@ -544,7 +550,7 @@ describe("one-click connect: Done, connect", () => {
 			expect(alert.text).toContain("while connecting the Contact form");
 			expect(alert.text).not.toContain("Lead delivery connected");
 			expect(
-				(await runtime.inspect.kv.get<Record<string, KnownForm>>("forms"))!.contact!.connectedAt,
+				(await runtime.inspect.setting<Record<string, KnownForm>>("forms"))!.contact!.connectedAt,
 			).toBeUndefined();
 			await expectNoSecrets(runtime, [screen, home]);
 		},
