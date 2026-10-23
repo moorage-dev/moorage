@@ -4,8 +4,8 @@ import { pluginResponse, type SandboxedPlugin } from "emdash/plugin";
 
 import { handleAdmin } from "./admin.js";
 import {
-	loadConfig,
-	loadForms,
+	ensureConfig,
+	loadState,
 	PING_KEY,
 	PRIVATE_DOMAIN,
 	privateEmail,
@@ -13,14 +13,19 @@ import {
 } from "./config.js";
 import {
 	alertIfStuck,
-	DELIVER_TASK,
+	DAILY_TASK,
+	daily,
+	deliverRun,
 	ensureSchedule,
+	isDeliverTask,
 	MAINTENANCE_TASK,
 	maintenance,
 	receive,
-	runDue,
+	scheduleDelivery,
+	tickFresh,
 } from "./deliver.js";
 import { fromEmail, fromUnreadableEmail, fromWebhook, noteUnreadable } from "./enquiry.js";
+import { meter } from "./meter.js";
 
 const FORMS_PLUGIN = "emdash-forms";
 
@@ -41,15 +46,26 @@ export function sameKey(a: string, b: string): boolean {
 	return diff === 0;
 }
 
+/**
+ * Every hook and route counts its calls to the site (meter.ts): sandboxed on Cloudflare a run may
+ * make only 10. Each reads the plugin's KV and settings once, with `ctx.kv.list()`.
+ */
 const plugin: SandboxedPlugin = {
 	hooks: {
 		"plugin:activate": async (_event, ctx) => {
-			await loadConfig(ctx);
-			await ensureSchedule(ctx, true);
+			const state = await loadState(ctx, { copy: true });
+			await ensureConfig(ctx, state);
+			await ensureSchedule(ctx, state, true);
 		},
 		cron: async (event, ctx) => {
-			if (event.name === DELIVER_TASK) await runDue(ctx);
-			else if (event.name === MAINTENANCE_TASK) await maintenance(ctx);
+			const isOurs =
+				isDeliverTask(event.name) || event.name === MAINTENANCE_TASK || event.name === DAILY_TASK;
+			if (!isOurs) return;
+			const m = meter(ctx);
+			const state = await loadState(m.ctx);
+			if (isDeliverTask(event.name)) await deliverRun(m, state, event.data);
+			else if (event.name === MAINTENANCE_TASK) await maintenance(m, state);
+			else await daily(m, state);
 		},
 		// The email way: a form's notification email to the private address carries the
 		// enquiry. It is recorded here and that one email is cancelled; nothing is sent there.
@@ -66,29 +82,27 @@ const plugin: SandboxedPlugin = {
 					if (!message.cc?.some(isPrivate)) return message;
 					return { ...message, cc: message.cc.filter((address) => !isPrivate(address)) };
 				}
+				const m = meter(ctx);
 				try {
-					const config = await loadConfig(ctx);
+					if (event.source !== FORMS_PLUGIN) return false;
+					const state = await loadState(m.ctx);
 					const to = message.to.trim().toLowerCase();
-					if (event.source === FORMS_PLUGIN && to === privateEmail(config.key).toLowerCase()) {
+					if (state.config.key && to === privateEmail(state.config.key).toLowerCase()) {
 						// A changed email format is still recorded, as text, and the admin says so.
-						const forms = await loadForms(ctx);
 						const received =
-							(await fromEmail(message.subject, message.text, forms)) ??
+							(await fromEmail(message.subject, message.text, state.forms)) ??
 							(await fromUnreadableEmail(message.subject, message.text));
-						if (received.enquiry.unreadable) await noteUnreadable(ctx, received.enquiry.formName);
-						// Delivered by the every-minute run: forms waits for this email before answering
-						// the visitor, and EmDash refuses a second email from inside this one. Nothing is
-						// scheduled from here either: run in the site's process, a task scheduled inside
-						// the email pipeline would carry it along and hit the same refusal.
-						await receive(ctx, received.id, received.enquiry, {
-							inline: false,
-							schedule: false,
-							config,
-							forms,
-						});
+						if (received.enquiry.unreadable) await noteUnreadable(m.ctx, received.enquiry.formName);
+						// Stored with its log rows (at most 7 calls); the every-minute run delivers it.
+						// Nothing is scheduled from here: forms waits for this email before answering the
+						// visitor, EmDash refuses a second email from inside this one, and run in the site's
+						// process, a task scheduled inside the email pipeline would carry it along and hit
+						// the same refusal.
+						await receive(m.ctx, state, received.id, received.enquiry);
 					}
 				} catch (error) {
-					ctx.log.error("could not record an enquiry from its email", { error: String(error) });
+					if (m.left() > 0)
+						m.ctx.log.error("could not record an enquiry from its email", { error: String(error) });
 				}
 				// Every email to the private domain is cancelled: an old address, another sender, anything.
 				return false;
@@ -99,11 +113,8 @@ const plugin: SandboxedPlugin = {
 		// The Lead delivery page and its dashboard widget. Editors see the log; only admins change anything.
 		admin: {
 			permission: "plugins:read",
-			handler: async (routeCtx, ctx) => {
-				await ensureSchedule(ctx);
-				await rememberOrigin(ctx, routeCtx.request.url);
-				return handleAdmin(routeCtx.input, routeCtx.user, routeCtx.request.url, ctx);
-			},
+			handler: async (routeCtx, ctx) =>
+				handleAdmin(routeCtx.input, routeCtx.user, routeCtx.request.url, ctx),
 		},
 		// The way straight from a form: the forms plugin's webhook posts each enquiry here.
 		inbound: {
@@ -112,28 +123,32 @@ const plugin: SandboxedPlugin = {
 			request: { body: "json" },
 			response: "raw",
 			handler: async (routeCtx, ctx) => {
-				const config = await loadConfig(ctx);
+				const m = meter(ctx);
+				const state = await loadState(m.ctx);
 				const key = new URL(routeCtx.request.url).searchParams.get("key") ?? "";
-				if (!sameKey(key, config.key)) {
+				if (!state.config.key || !sameKey(key, state.config.key)) {
 					return text(
 						401,
 						"This address's private key is wrong or was reset. Copy the address again: in Lead delivery open the form's delivery and press Connect this form.",
 					);
 				}
 				const payload = routeCtx.input as { formId?: unknown } | null;
-				const forms = await loadForms(ctx);
 				const formId = typeof payload?.formId === "string" ? payload.formId : "";
-				const received = fromWebhook(payload, forms[formId]);
+				const received = fromWebhook(payload, state.forms[formId]);
 				if (!received) return text(400, "This is not a form enquiry.");
-				await rememberOrigin(ctx, routeCtx.request.url);
-				const result = await receive(ctx, received.id, received.enquiry, {
-					inline: true,
-					config,
-					forms,
-				});
-				await ensureSchedule(ctx);
-				await alertIfStuck(ctx, config);
-				return text(200, result.duplicate ? "Already received." : "Received.");
+				// Stored with its log rows first (at most 6 calls with the read above); then, with the
+				// calls left, what keeps it moving: the every-minute task if it is missing, a delivery
+				// run now, or (when the every-minute task has stopped) the alert that says so.
+				const result = await receive(m.ctx, state, received.id, received.enquiry);
+				if (result.duplicate) return text(200, "Already received.");
+				if (m.left() >= 2) await ensureSchedule(m.ctx, state);
+				if (tickFresh(state)) {
+					if (result.queued > 0 && m.left() >= 1) await scheduleDelivery(m.ctx);
+				} else {
+					await alertIfStuck(m, state);
+				}
+				if (m.left() >= 1) await rememberOrigin(m.ctx, state, routeCtx.request.url);
+				return text(200, "Received.");
 			},
 		},
 		// "Check this site": answers with the one-time code only this site knows.

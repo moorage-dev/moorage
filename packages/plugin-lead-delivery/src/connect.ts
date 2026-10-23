@@ -6,14 +6,16 @@ import {
 	type AdminCall,
 	cancelApproval,
 	type Intent,
+	type Known,
 	peekApproval,
 	type Shown,
 	startApproval,
 	withApproval,
 } from "./approval.js";
-import { loadConfig, routeUrl, saveConfig, siteLabel } from "./config.js";
-import { markConnected, rememberListed } from "./forms.js";
+import { routeUrl, saveConfig, saveForms, siteLabel, type State } from "./config.js";
+import { withConnected, withListed } from "./forms.js";
 import { accessAlert } from "./messages.js";
+import type { Meter } from "./meter.js";
 
 /**
  * One-click connect: connect a form the webhook way with a one-time admin access the admin
@@ -45,9 +47,10 @@ export async function offerApproval(
 	key: string,
 	intent: Intent,
 	fresh = false,
+	known?: Known,
 ): Promise<Offer> {
 	if (!fresh) {
-		const live = await peekApproval(ctx, key);
+		const live = await peekApproval(ctx, key, known);
 		if (live && sameIntent(live.intent, intent)) return { kind: "code", shown: live };
 	}
 	const started = await startApproval(ctx, origin, key, intent);
@@ -126,48 +129,96 @@ async function listForms(call: AdminCall): Promise<Listed[]> {
 }
 
 type Work =
-	| { kind: "connected"; name: string; already: boolean }
-	| { kind: "conflict"; host: string; hash: string };
+	| { kind: "connected"; name: string; already: boolean; listed: Listed[] }
+	| { kind: "conflict"; host: string; hash: string; listed: Listed[] };
 
 /**
  * "Done, connect": exchange the approved code once, set the form's webhook to `inbound`, and
  * throw the access away. A different address already on the form is never overwritten unless
  * the admin agreed to replace that very address (`intent.replace`).
+ *
+ * The access is revoked before anything is saved (see withApproval). Then, while calls are left:
+ * the access left behind is reported (it could not be revoked), every listed form is remembered
+ * and the form marked connected, in one save. With the run at its 10-call limit on Cloudflare
+ * the order matters: the revoke comes first, whatever follows.
  */
 export async function finishConnect(
-	ctx: PluginContext,
+	m: Meter,
+	state: State,
 	origin: string,
 	key: string,
 	inbound: string,
-	keySetAt: string | undefined,
+	stored: unknown,
+	/** The form's short name, as the screen knows it (the code carries it too). */
+	formSlug: string,
+	/** Calls to keep for the screen that follows: it depends on whether the access was revoked. */
+	reserve: (revoked: boolean) => number,
 ): Promise<ConnectOutcome> {
-	let slug = "";
-	const result = await withApproval<Work>(ctx, origin, key, async (call, intent) => {
-		slug = intent.form;
-		const items = await listForms(call);
-		// Remember every form while the list is here, so "Which form?" lists them from now on.
-		await rememberListed(ctx, items);
-		const form = items.find((item) => item.slug === intent.form);
-		if (!form) {
-			throw new Error(
-				`There is no form called "${intent.form}" any more. Check its short name in Forms.`,
-			);
-		}
-		const previous = typeof form.settings?.webhookUrl === "string" ? form.settings.webhookUrl : "";
-		if (previous === inbound) return { kind: "connected", name: form.name, already: true };
-		if (previous && !isOurs(previous, origin)) {
-			const hash = await addressHash(previous);
-			const agreed = intent.replace?.hash === hash;
-			if (!agreed) return { kind: "conflict", host: hostOf(previous), hash };
-		}
-		const updated = await call(UPDATE, {
-			body: { id: form.id, settings: { webhookUrl: inbound } },
-		});
-		if (!updated.ok) {
-			throw new Error(`EmDash's forms did not accept the change (${updated.status}).`);
-		}
-		return { kind: "connected", name: form.name, already: false };
-	});
+	const ctx = m.ctx;
+	let slug = formSlug;
+	let listed: Listed[] = [];
+	let connects = false;
+	/** The forms with what one-click learned, once it is known. */
+	const learned = () => {
+		let forms = withListed(state.forms, listed);
+		if (connects) forms = withConnected(forms, slug, state.config.keySetAt, "straight");
+		return forms;
+	};
+	const changes = () => JSON.stringify(learned()) !== JSON.stringify(state.forms);
+	const result = await withApproval<Work>(
+		ctx,
+		origin,
+		key,
+		async (call, intent) => {
+			slug = intent.form;
+			const items = await listForms(call);
+			listed = items;
+			const form = items.find((item) => item.slug === intent.form);
+			if (!form) {
+				throw new Error(
+					`There is no form called "${intent.form}" any more. Check its short name in Forms.`,
+				);
+			}
+			const previous =
+				typeof form.settings?.webhookUrl === "string" ? form.settings.webhookUrl : "";
+			if (previous === inbound) {
+				connects = true;
+				return { kind: "connected", name: form.name, already: true, listed: items };
+			}
+			if (previous && !isOurs(previous, origin)) {
+				const hash = await addressHash(previous);
+				const agreed = intent.replace?.hash === hash;
+				if (!agreed) return { kind: "conflict", host: hostOf(previous), hash, listed: items };
+			}
+			const updated = await call(UPDATE, {
+				body: { id: form.id, settings: { webhookUrl: inbound } },
+			});
+			if (!updated.ok) {
+				throw new Error(`EmDash's forms did not accept the change (${updated.status}).`);
+			}
+			connects = true;
+			return { kind: "connected", name: form.name, already: false, listed: items };
+		},
+		{
+			stored,
+			// The used code goes only when the writes below still fit: the report of an access left
+			// behind (the setup, the email), then the forms.
+			canForget: (revoked) => m.left() > reserve(revoked) + (revoked ? 0 : 2) + (changes() ? 1 : 0),
+		},
+	);
+	// Used, refused or gone: never shown again, even when there was no call left to delete it.
+	if (result.kind !== "pending" && result.kind !== "busy") state.entries.delete(`approval:${key}`);
+	const revoked = "revoked" in result && result.revoked === false ? false : true;
+	const keep = reserve(revoked);
+	const forms = learned();
+	const formsChanged = changes();
+	if (!revoked) {
+		await reportAccessLeft(m, state, formNameOf(state, slug), keep + (formsChanged ? 1 : 0));
+	}
+	if (formsChanged && m.left() > keep) {
+		state.forms = forms;
+		await saveForms(ctx, forms, { mirror: m.left() > keep + 1 });
+	}
 	if (result.kind !== "done") return result;
 	const work = result.value;
 	if (work.kind === "conflict") {
@@ -179,7 +230,6 @@ export async function finishConnect(
 			revoked: result.revoked,
 		};
 	}
-	await markConnected(ctx, slug, keySetAt, "straight");
 	return {
 		kind: "connected",
 		form: slug,
@@ -189,25 +239,31 @@ export async function finishConnect(
 	};
 }
 
+function formNameOf(state: State, slug: string): string {
+	return state.forms[slug]?.name ?? slug;
+}
+
 /**
- * The access could not be thrown away: say so on the page until dismissed, and email the
- * alert list. Not limited to once a day: each one is a separate access.
+ * The access could not be thrown away: say so on the page until dismissed (one call, two with
+ * the copy for 0.3.0 when there is room), and email the alert list (one call), keeping `reserve`
+ * calls for what follows. Not limited to once a day: each one is a separate access.
  */
-export async function reportAccessLeft(ctx: PluginContext, formName: string) {
-	const config = await loadConfig(ctx);
-	await saveConfig(ctx, {
-		...config,
-		accessLeft: { at: new Date().toISOString(), form: formName },
-	});
-	if (!ctx.email || config.alertTo.length === 0) return;
-	const [to, ...cc] = config.alertTo;
+export async function reportAccessLeft(m: Meter, state: State, formName: string, reserve = 0) {
+	const ctx = m.ctx;
+	state.config = { ...state.config, accessLeft: { at: new Date().toISOString(), form: formName } };
+	const email = Boolean(ctx.email) && state.config.alertTo.length > 0;
+	if (m.left() < 1) return;
+	await saveConfig(ctx, state.config, { mirror: m.left() > reserve + (email ? 2 : 1) });
+	if (!ctx.email || !email || m.left() <= reserve) return;
+	const [to, ...cc] = state.config.alertTo;
 	try {
 		await ctx.email.send({
 			to: to!,
 			...(cc.length ? { cc } : {}),
-			...accessAlert(await siteLabel(ctx), formName),
+			...accessAlert(siteLabel(ctx, state), formName),
 		});
 	} catch (error) {
-		ctx.log.warn("could not send the access alert", { error: String(error) });
+		if (m.left() > reserve)
+			ctx.log.warn("could not send the access alert", { error: String(error) });
 	}
 }

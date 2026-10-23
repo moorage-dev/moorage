@@ -5,6 +5,7 @@ import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, Send } from "../src/types.js";
+import { runQueued } from "./queue.js";
 
 // What the coordinator review asked for: a site with no name, and proof that the email way never sends anything to the private address.
 
@@ -81,6 +82,7 @@ describe("a site with no name", () => {
 		await addApp(runtime, admin, HOOK, "Zapier");
 		await runtime.http.respond(HOOK, new Response("", { status: 404 }));
 		await inbound(runtime, "01N");
+		await runQueued(runtime);
 		const emails = JSON.stringify(await runtime.inspect.email());
 		expect(emails).toContain("crumb.test: an enquiry could not be delivered");
 		expect(emails).not.toContain("Your website");

@@ -7,11 +7,13 @@
 // included, is one. The 11th and every later call throw "Too many subrequests by single Worker
 // invocation". Nothing enforces this locally, so bridge-budget.ts counts the RPCs.
 //
-// These tests PIN the current exact count of every hook and route path in its worst realistic
-// state (cold isolate: host.restart() before each measure), so any change shows up. They are not
-// a target: a path pinned above 10 fails on Cloudflare today and carries a TODO(B39). The
-// enforced tests show what happens there when the limit is hit (what was written, what is lost).
-// tests/budget.test.ts is the older fake-ctx counter (no logging, no real wrapper).
+// Every hook and route path is PINNED at its exact count in its worst realistic state (cold
+// isolate: host.restart() before each measure), and every pin is also checked to be 9 or fewer:
+// one call is always spare. `before` is what 0.3.1 made on the same path (B39 audit). The
+// enforced section runs paths with Cloudflare's limit on, to show that nothing is refused:
+// the access of one-click connect is always revoked before anything is written, every enquiry
+// is stored with its log rows, and a backlog is delivered once, a few per run, every run within
+// the limit.
 //
 // Not reached: a failing ctx.email.send. The test host's email transport never fails, and a send
 // this plugin's own email:beforeSend cancels resolves without an error.
@@ -20,13 +22,7 @@ import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, Enquiry, KnownForm, Send } from "../src/types.js";
-import {
-	describeCalls,
-	measure,
-	SANDBOX_SUBREQUESTS,
-	TOO_MANY,
-	type Measured,
-} from "./bridge-budget.js";
+import { describeCalls, measure, SANDBOX_SUBREQUESTS, type Measured } from "./bridge-budget.js";
 
 type Host = PluginRuntimeTestHost;
 type User = Awaited<ReturnType<Host["fixtures"]["user"]>>;
@@ -142,7 +138,10 @@ async function newHost(): Promise<Host> {
 	return host;
 }
 
-/** A site that has been running this release: settings saved, mirrored to the old KV keys. */
+/**
+ * A site that has been running this release: settings saved, mirrored to the old KV keys, and
+ * the every-minute task running (it ran a minute ago).
+ */
 async function running(
 	deliveries: Delivery[] = [zap],
 	extra: Partial<Config> = {},
@@ -156,6 +155,7 @@ async function running(
 	await h.fixtures.plugin.kv("forms", forms);
 	await h.fixtures.plugin.kv("schedule", "* * * * *");
 	await h.fixtures.plugin.kv("origin", ORIGIN);
+	await h.fixtures.plugin.kv("tick", ago(60_000));
 	return h;
 }
 
@@ -166,6 +166,7 @@ async function justUpdated(deliveries: Delivery[] = [zap]): Promise<Host> {
 	await h.fixtures.plugin.kv("forms", { contact: CONTACT });
 	await h.fixtures.plugin.kv("schedule", "* * * * *");
 	await h.fixtures.plugin.kv("origin", ORIGIN);
+	await h.fixtures.plugin.kv("tick", ago(60_000));
 	return h;
 }
 
@@ -264,8 +265,6 @@ const emailWay =
 	() =>
 		h.transport.invokeHook("email:beforeSend", { source, message });
 
-const cron = (h: Host, name: string) => () => h.transport.invokeHook("cron", { name, data: null });
-
 const page = (h: Host, user: User) => () => h.admin.loadPage(PAGE, { user });
 
 type Invoke = () => Promise<unknown>;
@@ -281,61 +280,21 @@ function log(label: string, m: Measured<unknown>) {
 	console.info(`${describeCalls(label, m)}${error}`);
 }
 
-/** What a run left behind, in one line: pinned for each path run with the limit enforced. */
-async function outcome(
-	h: Host,
-	m: Measured<unknown>,
-	more: { http: number; settings: string; extra?: string },
-): Promise<string> {
-	const all = (await h.inspect.storage.list<Send>("deliveries")).map((r) => r.data);
-	const real = all.filter((r) => !r.test).map((r) => r.status);
-	const tests = all.filter((r) => r.test).map((r) => r.status);
-	const kept = (await h.inspect.storage.list<Enquiry>("enquiries")).map((e) =>
-		e.data.cleared ? "cleared" : "kept",
-	);
-	const emails = (await h.inspect.email()).length;
-	const result = m.result as
-		| { status?: number; toast?: { type: string } }
-		| boolean
-		| null
-		| undefined;
-	let answer: string;
-	if (m.error) {
-		const text = String(m.error);
-		answer = `throws${text.includes(TOO_MANY) ? " (too many subrequests)" : `: ${text.slice(0, 80)}`}`;
-	} else if (typeof result === "boolean" || result === null || result === undefined) {
-		answer = `answers ${String(result)}`;
-	} else if (typeof result.status === "number") {
-		answer = `answers ${result.status}`;
-	} else {
-		answer = `answers ${result.toast?.type ?? "a page"}`;
-	}
-	return [
-		answer,
-		`refused ${m.refused.length}`,
-		`log [${real.sort().join(",")}]`,
-		...(tests.length ? [`tests [${tests.join(",")}]`] : []),
-		`enquiries [${kept.sort().join(",")}]`,
-		`emails ${emails}`,
-		`requests ${more.http}`,
-		`settings ${more.settings}`,
-		...(more.extra ? [more.extra] : []),
-	].join("; ");
-}
+/** Calls a path may make: Cloudflare allows 10, and the plugin keeps one spare. */
+const BUDGET = SANDBOX_SUBREQUESTS - 1;
 
 interface Case {
 	/** The path and the state it runs in. */
 	name: string;
 	setup: () => Promise<{ h: Host; invoke: Invoke }>;
-	/** What the path did (limit not enforced). */
+	/** What the path did. */
 	did?: (h: Host, m: Measured<unknown>) => Promise<void>;
 	/** Calls to the host in that one invocation, cold isolate. */
 	count: number;
+	/** What 0.3.1 made on the same path (B39 audit), where it was measured. */
+	before?: number;
 	/** Calls made by this plugin's own hooks the host ran meanwhile (separate invocations). */
 	nested?: number;
-	/** With the limit enforced as on Cloudflare: what the run did and left behind. */
-	onCloudflare?: string;
-	extra?: (h: Host) => Promise<string>;
 }
 
 function run(cases: Case[]) {
@@ -343,37 +302,37 @@ function run(cases: Case[]) {
 		it(c.name, async () => {
 			const { h, invoke } = await c.setup();
 			const m = await cold(h, invoke);
-			log(c.name, m);
+			log(`${c.name}${c.before !== undefined ? ` (0.3.1: ${c.before})` : ""}`, m);
 			await c.did?.(h, m);
 			expect(m.nested.length).toBe(c.nested ?? 0);
 			expect(m.calls.length).toBe(c.count);
-		});
-		if (c.count < SANDBOX_SUBREQUESTS) continue;
-		it(`${c.name}, on Cloudflare (limit enforced)`, async () => {
-			const { h, invoke } = await c.setup();
-			const saved = () => Promise.all([h.inspect.setting("config"), h.inspect.setting("forms")]);
-			const before = JSON.stringify(await saved());
-			const fetched = h.http.requests().length;
-			const m = await cold(h, invoke, true);
-			const changed = JSON.stringify(await saved()) !== before;
-			const seen = await outcome(h, m, {
-				http: h.http.requests().length - fetched,
-				settings: changed ? "changed" : "unchanged",
-				...(c.extra ? { extra: await c.extra(h) } : {}),
-			});
-			console.info(`on Cloudflare: ${c.name}: ${seen}`);
-			expect(seen).toBe(c.onCloudflare);
+			expect(m.calls.length).toBeLessThanOrEqual(BUDGET);
 		});
 	}
 }
 
 const statuses = async (h: Host) => (await sendRows(h)).map((r) => r.status).sort();
-const daily = async (h: Host) =>
-	`daily ${(await h.inspect.kv.get("daily")) ? "marked" : "not marked"}`;
-const settingsCopied = async (h: Host) =>
-	`settings ${(await h.inspect.setting("config")) ? "copied" : "not copied"}`;
-
 const formEmail = { to: PRIVATE, subject: "New submission: Contact us", text: FORM_EMAIL };
+
+/** Run each one-shot task as EmDash's scheduler does, one per tick, until none is due. */
+async function runQueued(h: Host, { enforce = false, max = 40 } = {}): Promise<number[]> {
+	const counts: number[] = [];
+	for (let n = 0; n < max; n++) {
+		const at = new Date(Date.now() + 5_000);
+		const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string; nextRunAt: string }>;
+		const due = tasks.filter((t) => Date.parse(t.nextRunAt) <= at.getTime());
+		if (due.length === 0) return counts;
+		expect(due, "one task due at a time").toHaveLength(1);
+		h.scheduled.setTime(at);
+		const m = await measure(() => h.scheduled.run(), { enforce });
+		log(`run ${n + 1} (${due[0]!.name.split("-")[0]})`, m);
+		expect(m.error).toBeUndefined();
+		expect(m.refused).toEqual([]);
+		expect(m.calls.length).toBeLessThanOrEqual(BUDGET);
+		counts.push(m.calls.length);
+	}
+	throw new Error(`still running after ${max} runs`);
+}
 
 // ─── Hooks ───────────────────────────────────────────────────────────
 
@@ -389,7 +348,8 @@ describe("plugin:activate", () => {
 				expect((await h.inspect.setting<Config>("config"))?.key).toHaveLength(32);
 				expect(await h.inspect.kv.get("schedule")).toBe("* * * * *");
 			},
-			count: 9,
+			count: 5,
+			before: 9,
 		},
 		{
 			name: "activate, just updated from 0.3.0",
@@ -399,9 +359,17 @@ describe("plugin:activate", () => {
 			},
 			did: async (h) => expect((await h.inspect.setting<Config>("config"))?.key).toBe(KEY),
 			count: 5,
+			before: 5,
 		},
 	]);
 });
+
+/** The enquiry arrived and is waiting for a run: stored, with its log rows. */
+async function isStored(h: Host, rows: string[]) {
+	expect(await statuses(h)).toEqual(rows);
+	const kept = (await h.inspect.storage.list<Enquiry>("enquiries")).filter((e) => !e.data.cleared);
+	expect(kept.length).toBeGreaterThan(0);
+}
 
 describe("email:beforeSend", () => {
 	run([
@@ -413,6 +381,7 @@ describe("email:beforeSend", () => {
 			},
 			did: async (_h, m) => expect(m.result).toMatchObject({ to: "anna@crumb.test" }),
 			count: 0,
+			before: 0,
 		},
 		{
 			name: "beforeSend, an email copied to the private domain",
@@ -423,6 +392,7 @@ describe("email:beforeSend", () => {
 			},
 			did: async (_h, m) => expect(m.result).toMatchObject({ cc: [] }),
 			count: 0,
+			before: 0,
 		},
 		{
 			name: "beforeSend, a stray email to the private domain",
@@ -432,7 +402,8 @@ describe("email:beforeSend", () => {
 				return { h, invoke: emailWay(h, stray, "someone") };
 			},
 			did: async (_h, m) => expect(m.result).toBe(false),
-			count: 1,
+			count: 0,
+			before: 1,
 		},
 		{
 			name: "beforeSend, the email way, running site, one email delivery",
@@ -442,11 +413,10 @@ describe("email:beforeSend", () => {
 			},
 			did: async (h, m) => {
 				expect(m.result).toBe(false);
-				expect(await statuses(h)).toEqual(["retrying"]);
+				await isStored(h, ["retrying"]);
 			},
-			count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers false; refused 2; log [retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
+			count: 6,
+			before: 11,
 		},
 		{
 			name: "beforeSend, the email way, three deliveries for the form",
@@ -454,10 +424,9 @@ describe("email:beforeSend", () => {
 				const h = await running([mail, zap, hub]);
 				return { h, invoke: emailWay(h, formEmail) };
 			},
-			did: async (h) => expect(await statuses(h)).toEqual(["retrying", "retrying", "retrying"]),
-			count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers false; refused 2; log [retrying,retrying,retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
+			did: async (h) => isStored(h, ["retrying", "retrying", "retrying"]),
+			count: 6,
+			before: 11,
 		},
 		{
 			name: "beforeSend, the email way, first enquiry after updating from 0.3.0",
@@ -465,13 +434,13 @@ describe("email:beforeSend", () => {
 				const h = await justUpdated([mail]);
 				return { h, invoke: emailWay(h, formEmail) };
 			},
-			did: async (h) => expect(await statuses(h)).toEqual(["retrying"]),
-			count: 15, // TODO(B39): 15 calls, over Cloudflare's sandbox limit of 10 -- see report
-			// Lost: the enquiry is stored but has no log row, so no run ever delivers it, and the
-			// email is cancelled. The error is caught, and its ctx.log.error is refused too.
-			onCloudflare:
-				"answers false; refused 2; log []; enquiries [kept]; emails 0; requests 0; settings changed; settings copied",
-			extra: settingsCopied,
+			// Stored with its log row (0.3.1 lost it here); the settings are copied by the admin page.
+			did: async (h) => {
+				await isStored(h, ["retrying"]);
+				expect(await h.inspect.setting("config")).toBeNull();
+			},
+			count: 6,
+			before: 15,
 		},
 		{
 			name: "beforeSend, the email way, fields cannot be read",
@@ -480,10 +449,12 @@ describe("email:beforeSend", () => {
 				return { h, invoke: emailWay(h, { ...formEmail, text: "garbled" }) };
 			},
 			// Recorded as text under a form id of its own, so no delivery takes it: "Not sent".
-			did: async (h) => expect(await statuses(h)).toEqual(["skipped"]),
-			count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers false; refused 2; log [skipped]; enquiries [kept]; emails 0; requests 0; settings changed",
+			did: async (h) => {
+				await isStored(h, ["skipped"]);
+				expect(await h.inspect.kv.get("unreadable")).toBeTruthy();
+			},
+			count: 6,
+			before: 11,
 		},
 		{
 			name: "beforeSend, the email way, the same person again within 7 days",
@@ -497,123 +468,194 @@ describe("email:beforeSend", () => {
 				return { h, invoke: emailWay(h, formEmail) };
 			},
 			did: async (h) => expect(await statuses(h)).toEqual(["delivered", "retrying"]),
-			count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers false; refused 2; log [delivered,retrying]; enquiries [kept,kept]; emails 0; requests 0; settings changed",
+			count: 6,
+			before: 11,
 		},
 	]);
 });
 
 /** A running site with `n` enquiries waiting for a try through `delivery`, due now. */
-async function due(
+async function dueRows(
 	delivery: Delivery,
 	n: number,
 	answer?: () => Response,
 	extra: Partial<Send> = {},
+	deliveries: Delivery[] = [delivery],
 ) {
-	const h = await running([delivery]);
+	const h = await running(deliveries);
 	for (let i = 1; i <= n; i++) {
-		await row(h, `s${i}`, delivery.id, extra);
+		await row(h, `s${i}`, delivery.id, extra, { rows: deliveries.map((d) => d.id) });
 		if (answer) await h.http.respond(delivery.kind === "hubspot" ? HUBSPOT : HOOK, answer());
 	}
 	return h;
 }
 
+const DELIVER = { name: "deliver", data: null };
+const deliverRun =
+	(h: Host, event: { name: string; data: unknown } = DELIVER) =>
+	() =>
+		h.transport.invokeHook("cron", event);
+
 describe("cron deliver", () => {
-	const deliver = (h: Host) => ({ h, invoke: cron(h, "deliver") });
+	const deliver = (h: Host) => ({ h, invoke: deliverRun(h) });
 	run([
 		{
 			name: "deliver, nothing due",
 			setup: async () => deliver(await running()),
-			count: 3,
+			count: 2,
+			before: 3,
 		},
 		{
 			name: "deliver, one due try, delivered",
-			setup: async () => deliver(await due(zap, 1, ok)),
-			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
-			count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [delivered]; enquiries [cleared]; emails 0; requests 1; settings unchanged",
+			setup: async () => deliver(await dueRows(zap, 1, ok)),
+			did: async (h) => {
+				expect(await statuses(h)).toEqual(["delivered"]);
+				const [e] = await h.inspect.storage.list<Enquiry>("enquiries");
+				expect(e?.data).toMatchObject({ cleared: true, counted: true });
+			},
+			// kvList storageQuery storageGetMany httpFetch storagePutMany storagePutMany kvSet
+			count: 7,
+			before: 11,
 		},
 		{
-			name: "deliver, three due tries, delivered",
-			setup: async () => deliver(await due(zap, 3, ok)),
-			did: async (h) => expect(await statuses(h)).toEqual(["delivered", "delivered", "delivered"]),
-			count: 27, // TODO(B39): 27 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [delivered,retrying,retrying]; enquiries [cleared,kept,kept]; emails 0; requests 1; settings unchanged",
+			name: "deliver, three due tries, two sent, one left for a follow-up run",
+			setup: async () => deliver(await dueRows(zap, 3, ok)),
+			did: async (h) => {
+				expect(await statuses(h)).toEqual(["delivered", "delivered", "retrying"]);
+				const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
+				expect(tasks.map((t) => t.name.split("-")[0])).toEqual(["deliver"]);
+			},
+			count: 9,
+			before: 27,
 		},
 		{
 			name: "deliver, three due tries, the app answers 500",
-			setup: async () => deliver(await due(zap, 3, fails)),
+			setup: async () => deliver(await dueRows(zap, 3, fails)),
 			did: async (h) => expect(await statuses(h)).toEqual(["retrying", "retrying", "retrying"]),
-			count: 13, // TODO(B39): 13 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [retrying,retrying,retrying]; enquiries [kept,kept,kept]; emails 0; requests 3; settings unchanged",
+			count: 7,
+			before: 13,
 		},
 		{
 			name: "deliver, three due tries, no answer (fetch throws)",
-			setup: async () => deliver(await due(zap, 3)),
+			setup: async () => deliver(await dueRows(zap, 3)),
 			did: async (h) => expect(await statuses(h)).toEqual(["retrying", "retrying", "retrying"]),
-			count: 13, // TODO(B39): 13 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [retrying,retrying,retrying]; enquiries [kept,kept,kept]; emails 0; requests 3; settings unchanged",
+			count: 7,
+			before: 13,
 		},
 		{
 			name: "deliver, last try fails: gives up and alerts",
-			setup: async () => deliver(await due(zap, 1, fails, { attempts: 7 })),
-			did: async (h) => {
+			setup: async () => deliver(await dueRows(zap, 1, fails, { attempts: 7 })),
+			did: async (h, m) => {
 				expect(await statuses(h)).toEqual(["gaveup"]);
 				expect(await h.inspect.email()).toHaveLength(1);
+				expect(await h.inspect.kv.get("alerts")).toMatchObject({ failure: today() });
+				// Sent first, then marked: a send that fails is tried again by a later run.
+				expect(m.calls.slice(-2)).toEqual(["emailSend", "kvSet"]);
 			},
-			count: 12, // TODO(B39): 12 calls, over Cloudflare's sandbox limit of 10 -- see report
-			// The alert is marked sent for today (kvSet) but its email is refused: nobody hears.
-			onCloudflare:
-				"throws (too many subrequests); refused 3; log [gaveup]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+			count: 7,
+			before: 12,
 		},
 		{
 			name: "deliver, HubSpot refuses: needs fixing and alerts",
-			setup: async () => deliver(await due(hub, 1, refused)),
+			setup: async () => deliver(await dueRows(hub, 1, refused)),
 			did: async (h) => {
 				expect(await statuses(h)).toEqual(["fixing"]);
 				expect(await h.inspect.email()).toHaveLength(1);
 			},
-			count: 12, // TODO(B39): 12 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 3; log [fixing]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+			count: 7,
+			before: 12,
 		},
 		{
 			name: "deliver, three HubSpot refusals",
-			setup: async () => deliver(await due(hub, 3, refused)),
-			did: async (h) => expect(await statuses(h)).toEqual(["fixing", "fixing", "fixing"]),
-			count: 26, // TODO(B39): 26 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 3; log [fixing,retrying,retrying]; enquiries [kept,kept,kept]; emails 0; requests 1; settings unchanged",
+			setup: async () => deliver(await dueRows(hub, 3, refused)),
+			did: async (h) => expect(await statuses(h)).toEqual(["fixing", "fixing", "retrying"]),
+			count: 9,
+			before: 26,
 		},
 		{
 			name: "deliver, one email delivery due",
-			setup: async () => deliver(await due(mail, 1)),
+			setup: async () => deliver(await dueRows(mail, 1)),
 			did: async (h) => {
 				expect(await statuses(h)).toEqual(["delivered"]);
 				expect(await h.inspect.email()).toHaveLength(1);
 			},
-			count: 12, // TODO(B39): 12 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [delivered]; enquiries [kept]; emails 1; requests 0; settings unchanged",
+			count: 7,
+			before: 12,
+			nested: 0,
 		},
 		{
 			name: "deliver, three email deliveries due",
-			setup: async () => deliver(await due(mail, 3)),
-			did: async (h) => expect(await h.inspect.email()).toHaveLength(3),
-			count: 30, // TODO(B39): 30 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [delivered,retrying,retrying]; enquiries [kept,kept,kept]; emails 1; requests 0; settings unchanged",
+			setup: async () => deliver(await dueRows(mail, 3)),
+			did: async (h) => expect(await h.inspect.email()).toHaveLength(2),
+			count: 9,
+			before: 30,
+		},
+		{
+			name: "deliver, a retry whose enquiry has another delivery (its row is read)",
+			setup: async () => {
+				const h = await dueRows(zap, 1, ok, {}, [zap, mail]);
+				await h.fixtures.plugin.storage("deliveries", `s1~${mail.id}`, {
+					enquiryId: "s1",
+					formId: "contact",
+					formName: "Contact us",
+					who: "Tom Reyes",
+					destination: mail.id,
+					status: "delivered",
+					nextAt: "",
+					attempts: 1,
+					createdAt: now(),
+					notes: [],
+				} satisfies Send);
+				return deliver(h);
+			},
+			did: async (h) => {
+				expect(await statuses(h)).toEqual(["delivered", "delivered"]);
+				const [e] = await h.inspect.storage.list<Enquiry>("enquiries");
+				expect(e?.data.cleared).toBe(true);
+			},
+			count: 8,
+		},
+		{
+			name: "deliver, an enquiry from before 0.4 (no list of its rows)",
+			setup: async () => {
+				const h = await dueRows(zap, 1, ok);
+				const e = (await h.inspect.storage.get<Enquiry>("enquiries", "s1"))!;
+				const { rows: _rows, ...old } = e;
+				await h.fixtures.plugin.storage("enquiries", "s1", old);
+				return deliver(h);
+			},
+			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
+			count: 8,
+		},
+		{
+			name: "deliver, a follow-up run with the failure alert left over",
+			setup: async () => {
+				const h = await dueRows(zap, 1, ok);
+				await row(h, "f1", zap.id, { status: "fixing", nextAt: "", plain: "Refused." });
+				return { h, invoke: deliverRun(h, { name: "deliver-x1", data: { alert: true } }) };
+			},
+			did: async (h) => {
+				expect(await h.inspect.email()).toHaveLength(1);
+				expect(await statuses(h)).toEqual(["fixing", "retrying"]);
+			},
+			// kvList storageQuery emailSend kvSet, then storageQuery storageGetMany: no room to send,
+			// so a follow-up.
+			count: 7,
 		},
 	]);
 });
 
-describe("cron maintenance", () => {
-	const maintenance = (h: Host) => ({ h, invoke: cron(h, "maintenance") });
+describe("cron maintenance and the daily run", () => {
+	const maintenance = (h: Host) => ({
+		h,
+		invoke: deliverRun(h, { name: "maintenance", data: null }),
+	});
+	const dailyRun = (h: Host) => ({ h, invoke: deliverRun(h, { name: "daily", data: null }) });
+	const quiet: KnownForm = {
+		...CONTACT,
+		lastAt: ago(5 * DAY),
+		days: [9, 7, 5].map((d) => ago(d * DAY).slice(0, 10)),
+	};
 	run([
 		{
 			name: "maintenance, idle minute (already ran today, nothing due)",
@@ -622,54 +664,44 @@ describe("cron maintenance", () => {
 				await h.fixtures.plugin.kv("daily", today());
 				return maintenance(h);
 			},
-			count: 6,
+			count: 3,
+			before: 6,
 		},
 		{
-			name: "maintenance, first run of the day, nothing due",
+			name: "maintenance, first run of the day, nothing due: asks for the daily run",
 			setup: async () => maintenance(await running()),
-			did: async (h) => expect(await h.inspect.kv.get("daily")).toBe(today()),
-			count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-			// The day is marked done before the quiet check and cleanup, which are then refused:
-			// the 30-day cleanup and the quiet-form alert never run.
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 0; settings unchanged; daily marked",
-			extra: daily,
-		},
-		{
-			name: "maintenance, first run of the day, one due try",
-			setup: async () => maintenance(await due(zap, 1, ok)),
-			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
-			count: 19, // TODO(B39): 19 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [delivered]; enquiries [kept]; emails 0; requests 1; settings unchanged; daily not marked",
-			extra: daily,
+			did: async (h) => {
+				const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
+				expect(tasks.map((t) => t.name)).toEqual(["daily"]);
+				expect(await h.inspect.kv.get("daily")).toBeNull();
+			},
+			count: 4,
+			before: 11,
 		},
 		{
 			name: "maintenance, any minute, one due try",
 			setup: async () => {
-				const h = await due(zap, 1, ok);
+				const h = await dueRows(zap, 1, ok);
 				await h.fixtures.plugin.kv("daily", today());
 				return maintenance(h);
 			},
 			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
-			count: 14, // TODO(B39): 14 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [delivered]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+			count: 8,
+			before: 14,
 		},
 		{
-			name: "maintenance, worst day (3 due, quiet form, 2 expired codes, old rows)",
+			name: "maintenance, first run of the day, one due try: left for a follow-up run",
+			setup: async () => maintenance(await dueRows(zap, 1, ok)),
+			did: async (h) => expect(await statuses(h)).toEqual(["retrying"]),
+			count: 6,
+			before: 19,
+		},
+		{
+			name: "maintenance, five expired approval codes, nothing due",
 			setup: async () => {
-				const quiet: KnownForm = {
-					...CONTACT,
-					lastAt: ago(5 * DAY),
-					days: [9, 7, 5].map((d) => ago(d * DAY).slice(0, 10)),
-				};
-				const h = await running([zap], {}, { contact: quiet });
-				for (const id of ["s1", "s2", "s3"]) {
-					await row(h, id, zap.id);
-					await h.http.respond(HOOK, ok());
-				}
-				for (const k of ["a", "b"]) {
+				const h = await running();
+				await h.fixtures.plugin.kv("daily", today());
+				for (const k of ["a", "b", "c", "d", "e"]) {
 					await h.fixtures.plugin.kv(`approval:${k}`, {
 						deviceCode: "x",
 						userCode: "AB",
@@ -678,34 +710,61 @@ describe("cron maintenance", () => {
 						intent: { form: "contact" },
 					});
 				}
-				const old = ago(40 * DAY);
-				await row(
-					h,
-					"old",
-					zap.id,
-					{ status: "delivered", nextAt: "", createdAt: old },
-					{
-						receivedAt: old,
-					},
-				);
 				return maintenance(h);
 			},
-			did: async (h) => {
-				expect(await statuses(h)).toEqual(["delivered", "delivered", "delivered"]);
-				expect(await h.inspect.email()).toHaveLength(1);
+			did: async (h) =>
+				expect((await h.inspect.kv.list()).filter((e) => e.id.startsWith("approval:"))).toEqual([]),
+			count: 8,
+		},
+		{
+			name: "daily, nothing to do",
+			setup: async () => dailyRun(await running()),
+			did: async (h) => expect(await h.inspect.kv.get("daily")).toBe(today()),
+			count: 4,
+		},
+		{
+			name: "daily, already done today",
+			setup: async () => {
+				const h = await running();
+				await h.fixtures.plugin.kv("daily", today());
+				return dailyRun(h);
 			},
-			count: 45, // TODO(B39): 45 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log [delivered,delivered,retrying,retrying]; enquiries [kept,kept,kept,kept]; emails 0; requests 1; settings unchanged; daily not marked",
-			extra: daily,
+			count: 1,
+		},
+		{
+			name: "daily, worst day (a quiet form to alert, old rows and enquiries to delete)",
+			setup: async () => {
+				const h = await running([zap], {}, { contact: quiet });
+				const old = ago(40 * DAY);
+				for (const id of ["o1", "o2"])
+					await row(
+						h,
+						id,
+						zap.id,
+						{ status: "delivered", nextAt: "", createdAt: old },
+						{ receivedAt: old },
+					);
+				return dailyRun(h);
+			},
+			did: async (h) => {
+				expect(await h.inspect.email()).toHaveLength(1);
+				expect(await h.inspect.storage.list("deliveries")).toEqual([]);
+				expect(await h.inspect.storage.list("enquiries")).toEqual([]);
+				expect(
+					(await h.inspect.setting<Record<string, KnownForm>>("forms"))?.contact?.quietAlertedFor,
+				).toBe(quiet.lastAt);
+				expect(await h.inspect.kv.get("daily")).toBe(today());
+			},
+			count: 9,
 		},
 		{
 			name: "cron, a task with another name",
 			setup: async () => {
 				const h = await running();
-				return { h, invoke: cron(h, "other") };
+				return { h, invoke: deliverRun(h, { name: "other", data: null }) };
 			},
 			count: 0,
+			before: 0,
 		},
 	]);
 });
@@ -717,18 +776,26 @@ describe("inbound", () => {
 		h,
 		invoke: inbound(h, body, key),
 	});
+	/** Stored and waiting for a run, and a run asked for. */
+	const queued = async (h: Host, rows: string[]) => {
+		await isStored(h, rows);
+		const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
+		expect(tasks.map((t) => t.name)).toEqual(["deliver"]);
+	};
 	run([
 		{
 			name: "inbound, wrong key",
 			setup: async () => arrive(await running(), payload("01A"), "x".repeat(32)),
 			did: async (_h, m) => expect(m.result).toMatchObject({ status: 401 }),
 			count: 1,
+			before: 1,
 		},
 		{
 			name: "inbound, not an enquiry",
 			setup: async () => arrive(await running(), { hello: "world" }),
 			did: async (_h, m) => expect(m.result).toMatchObject({ status: 400 }),
-			count: 2,
+			count: 1,
+			before: 2,
 		},
 		{
 			name: "inbound, already received",
@@ -738,7 +805,8 @@ describe("inbound", () => {
 				return arrive(h);
 			},
 			did: async (_h, m) => expect(m.result).toMatchObject({ text: "Already received." }),
-			count: 7,
+			count: 3,
+			before: 7,
 		},
 		{
 			name: "inbound, fresh site, no delivery takes the form",
@@ -747,107 +815,57 @@ describe("inbound", () => {
 				await h.fixtures.plugin.setting("config", { ...CONFIG });
 				return arrive(h);
 			},
-			did: async (h) => expect(await statuses(h)).toEqual(["skipped"]),
-			count: 18, // TODO(B39): 18 calls, over Cloudflare's sandbox limit of 10 -- see report
-			// The enquiry is stored without its "Not sent" row; a resend gets "Already received".
-			onCloudflare:
-				"answers 400; refused 1; log []; enquiries [kept]; emails 0; requests 0; settings changed",
-		},
-		{
-			name: "inbound, one app delivery, delivered",
-			setup: async () => {
-				const h = await running();
-				await h.http.respond(HOOK, ok());
-				return arrive(h);
+			did: async (h) => {
+				await isStored(h, ["skipped"]);
+				expect(await h.inspect.kv.get("schedule")).toBe("* * * * *");
 			},
-			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
-			count: 21, // TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
+			count: 9,
+			before: 18,
 		},
 		{
-			name: "inbound, one email delivery, delivered",
-			setup: async () => arrive(await running([mail])),
-			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
-			count: 22, // TODO(B39): 22 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
-		},
-		{
-			name: "inbound, three deliveries (app, HubSpot, email), delivered",
-			setup: async () => {
-				const h = await running([zap, hub, mail]);
-				await h.http.respond(HOOK, ok());
-				await h.http.respond(HUBSPOT, ok());
-				return arrive(h);
-			},
-			did: async (h) => expect(await statuses(h)).toEqual(["delivered", "delivered", "delivered"]),
-			count: 32, // TODO(B39): 32 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying,retrying,retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
-		},
-		{
-			name: "inbound, four deliveries (three now, one scheduled)",
-			setup: async () => {
-				const h = await running([zap, make, hub, mail]);
-				await h.http.respond(HOOK, ok());
-				await h.http.respond(HOOK2, ok());
-				await h.http.respond(HUBSPOT, ok());
-				return arrive(h);
-			},
-			did: async (h) =>
-				expect(await statuses(h)).toEqual(["delivered", "delivered", "delivered", "retrying"]),
-			count: 31, // TODO(B39): 31 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying,retrying,retrying,retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
-		},
-		{
-			name: "inbound, the app answers 500",
-			setup: async () => {
-				const h = await running();
-				await h.http.respond(HOOK, fails());
-				return arrive(h);
-			},
-			did: async (h) => expect(await statuses(h)).toEqual(["retrying"]),
-			count: 17, // TODO(B39): 17 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
-		},
-		{
-			name: "inbound, no answer (fetch throws)",
+			name: "inbound, one app delivery",
 			setup: async () => arrive(await running()),
-			did: async (h) => expect(await statuses(h)).toEqual(["retrying"]),
-			count: 17, // TODO(B39): 17 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
+			did: async (h, m) => {
+				expect(m.result).toMatchObject({ status: 200, text: "Received." });
+				await queued(h, ["retrying"]);
+			},
+			count: 7,
+			before: 21,
 		},
 		{
-			name: "inbound, HubSpot refuses: needs fixing and alerts",
+			name: "inbound, one email delivery",
+			setup: async () => arrive(await running([mail])),
+			did: async (h) => queued(h, ["retrying"]),
+			count: 7,
+			before: 22,
+		},
+		{
+			name: "inbound, four deliveries (app, app, HubSpot, email)",
+			setup: async () => arrive(await running([zap, make, hub, mail])),
+			did: async (h) => queued(h, ["retrying", "retrying", "retrying", "retrying"]),
+			count: 7,
+			before: 31,
+		},
+		{
+			name: "inbound, no email address in the enquiry",
+			setup: async () => arrive(await running(), payload("01A", { email: "" })),
+			did: async (h) => queued(h, ["retrying"]),
+			count: 6,
+		},
+		{
+			name: "inbound, the every-minute task stopped and tries are overdue: scheduler alert",
 			setup: async () => {
-				const h = await running([hub]);
-				await h.http.respond(HUBSPOT, refused());
+				const h = await running();
+				await h.fixtures.plugin.kv("tick", ago(60 * 60_000));
+				await row(h, "old1", zap.id, { nextAt: ago(30 * 60_000) });
 				return arrive(h);
 			},
 			did: async (h) => {
-				expect(await statuses(h)).toEqual(["fixing"]);
 				expect(await h.inspect.email()).toHaveLength(1);
+				expect(await statuses(h)).toEqual(["retrying", "retrying"]);
 			},
-			count: 23, // TODO(B39): 23 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying]; enquiries [kept]; emails 0; requests 0; settings changed",
-		},
-		{
-			name: "inbound, retries stuck: scheduler alert",
-			setup: async () => {
-				const h = await running();
-				await row(h, "old1", zap.id, { nextAt: ago(30 * 60_000) });
-				await h.http.respond(HOOK, ok());
-				return arrive(h);
-			},
-			did: async (h) => expect(await h.inspect.email()).toHaveLength(1),
-			count: 26, // TODO(B39): 26 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [retrying,retrying]; enquiries [kept,kept]; emails 0; requests 0; settings changed",
+			count: 9,
+			before: 26,
 		},
 		{
 			name: "inbound, the same person again, repeats held",
@@ -860,24 +878,21 @@ describe("inbound", () => {
 				});
 				return arrive(h);
 			},
+			// Nothing to send, so no run is asked for.
 			did: async (h) => expect(await statuses(h)).toEqual(["delivered", "skipped"]),
-			count: 14, // TODO(B39): 14 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"answers 400; refused 1; log [delivered,skipped]; enquiries [kept,kept]; emails 0; requests 0; settings changed",
+			count: 6,
+			before: 14,
 		},
 		{
 			name: "inbound, first enquiry after updating from 0.3.0",
-			setup: async () => {
-				const h = await justUpdated();
-				await h.http.respond(HOOK, ok());
-				return arrive(h);
+			setup: async () => arrive(await justUpdated()),
+			// Stored with its log row (0.3.1 lost it here); the settings are copied by the admin page.
+			did: async (h) => {
+				await queued(h, ["retrying"]);
+				expect(await h.inspect.setting("config")).toBeNull();
 			},
-			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
-			count: 25, // TODO(B39): 25 calls, over Cloudflare's sandbox limit of 10 -- see report
-			// Lost: stored with no log row, so nothing delivers it; a resend gets "Already received".
-			onCloudflare:
-				"answers 400; refused 3; log []; enquiries [kept]; emails 0; requests 0; settings changed; settings copied",
-			extra: settingsCopied,
+			count: 7,
+			before: 25,
 		},
 	]);
 });
@@ -900,22 +915,7 @@ describe("ping", () => {
 			},
 			did: async (_h, m) => expect(m.result).toEqual({ status: 200 }),
 			count: 1,
-		},
-		{
-			name: "ping, no code waiting",
-			setup: async () => {
-				const h = await running();
-				const invoke = async () => {
-					const r = await h.actions.routes.request("ping", {
-						method: "GET",
-						url: `${PING}?code=abc`,
-					});
-					return { status: r.status };
-				};
-				return { h, invoke };
-			},
-			did: async (_h, m) => expect(m.result).toEqual({ status: 404 }),
-			count: 1,
+			before: 1,
 		},
 	]);
 });
@@ -933,44 +933,47 @@ describe("admin page and widget", () => {
 			setup: async () => home(await newHost()),
 			did: async (h) =>
 				expect((await h.inspect.setting<Config>("config"))?.alertTo).toEqual(["anna@crumb.test"]),
-			count: 16, // TODO(B39): 16 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 0; settings unchanged; settings not copied",
-			extra: settingsCopied,
+			count: 6,
+			before: 16,
 		},
 		{
 			name: "admin home, first visit after updating from 0.3.0",
 			setup: async () => home(await justUpdated()),
-			count: 21, // TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed; settings copied",
-			extra: settingsCopied,
+			did: async (h) => {
+				expect((await h.inspect.setting<Config>("config"))?.key).toBe(KEY);
+				expect(await h.inspect.setting("forms")).toBeTruthy();
+			},
+			count: 6,
+			before: 21,
 		},
 		{
 			name: "admin home, 1 delivery",
 			setup: async () => home(await running([zap])),
-			count: 17, // TODO(B39): 17 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 4; log []; enquiries []; emails 0; requests 0; settings unchanged",
-		},
-		{
-			name: "admin home, 2 deliveries",
-			setup: async () => home(await running([zap, hub])),
-			count: 21, // TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings unchanged",
+			count: 4,
+			before: 17,
 		},
 		{
 			name: "admin home, 3 deliveries",
 			setup: async () => home(await running([zap, hub, mail])),
-			count: 25, // TODO(B39): 25 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings unchanged",
+			count: 4,
+			before: 25,
+		},
+		{
+			name: "admin home, 3 deliveries, failures, retries, enquiries no delivery took",
+			setup: async () => {
+				const h = await running([zap, hub, mail]);
+				await row(h, "f1", hub.id, { status: "fixing", nextAt: "" });
+				await row(h, "r1", zap.id);
+				await row(h, "n1", "none", { status: "skipped", nextAt: "", held: true });
+				return home(h);
+			},
+			count: 4,
 		},
 		{
 			name: "admin home, no deliveries yet",
 			setup: async () => home(await running([])),
-			count: 4,
+			count: 1,
+			before: 4,
 		},
 		{
 			name: "admin home, first visit after install (plugin:activate ran)",
@@ -981,29 +984,14 @@ describe("admin page and widget", () => {
 			},
 			did: async (h) =>
 				expect((await h.inspect.setting<Config>("config"))?.alertTo).toEqual(["anna@crumb.test"]),
-			count: 8,
-		},
-		{
-			name: "admin home, fresh site, the visit after a first visit cut off by the limit",
-			setup: async () => {
-				// What the cut-off first visit wrote: the schedule and the origin, nothing else.
-				const h = await newHost();
-				await h.fixtures.plugin.kv("schedule", "* * * * *");
-				await h.fixtures.plugin.kv("origin", ORIGIN);
-				return home(h);
-			},
-			count: 13, // TODO(B39): 13 calls, over Cloudflare's sandbox limit of 10 -- see report
-			// The settings are saved at call 10, so the third visit works.
-			onCloudflare:
-				"throws (too many subrequests); refused 3; log []; enquiries []; emails 0; requests 0; settings changed; settings copied",
-			extra: settingsCopied,
+			count: 4,
+			before: 8,
 		},
 		{
 			name: "admin home as an editor, 1 delivery",
 			setup: async () => home(await running([zap]), "editor"),
-			count: 17, // TODO(B39): 17 calls, over Cloudflare's sandbox limit of 10 -- see report
-			onCloudflare:
-				"throws (too many subrequests); refused 4; log []; enquiries []; emails 0; requests 0; settings unchanged",
+			count: 4,
+			before: 17,
 		},
 		{
 			name: "dashboard widget",
@@ -1012,11 +1000,11 @@ describe("admin page and widget", () => {
 				const { admin } = await people(h);
 				return { h, invoke: () => h.admin.loadWidget("enquiries", { user: admin }) };
 			},
-			count: 7,
+			count: 2,
+			before: 7,
 		},
 	]);
 });
-
 interface ActionCase {
 	action: string;
 	label?: string;
@@ -1030,9 +1018,12 @@ interface ActionCase {
 	editor?: boolean;
 	/** The action answers with an error toast (a test that did not arrive). */
 	failToast?: boolean;
+	/** The action answers with a short screen, not the full page it came from. */
+	light?: boolean;
+	did?: (h: Host, m: Measured<unknown>) => Promise<void>;
 	count: number;
+	before?: number;
 	nested?: number;
-	onCloudflare?: string;
 }
 
 const connectable: Partial<Config> = { reach: { result: "self", at: now() } };
@@ -1066,79 +1057,167 @@ const formsList = () =>
 const notReachable = () => new Response("nope", { status: 404 });
 const gaveUp: Partial<Send> = { status: "gaveup", nextAt: "", attempts: 8 };
 
+const conflictList = () =>
+	Response.json({
+		data: {
+			items: [
+				{
+					id: "f1",
+					slug: "contact",
+					name: "Contact us",
+					pages: [],
+					settings: { webhookUrl: "https://other.test/hook" },
+				},
+			],
+		},
+	});
+/** One-click connect waiting for "Done, connect": the code stored, EmDash's answers queued. */
+const approving =
+	(...answers: Array<[string, () => Response]>) =>
+	async (h: Host, admin: User) => {
+		await h.fixtures.plugin.kv(`approval:${zap.id}:${admin.id}`, approvalCode());
+		for (const [url, answer] of answers) await h.http.respond(url, answer());
+	};
+const lookup = `${ORIGIN}/_emdash/api/plugins/emdash-forms/definition`;
+const definition = () =>
+	Response.json({
+		data: {
+			slug: "quote",
+			name: "Quote",
+			pages: [{ fields: [{ name: "name", label: "Your name", type: "text" }] }],
+		},
+	});
+
 const ACTIONS: ActionCase[] = [
-	{ action: "see_all", count: 7 },
-	{ action: "open_log", value: zap.id, count: 7 },
-	{ action: "filter_log", values: { delivery: zap.id }, count: 7 },
+	{ action: "see_all", count: 3, before: 7 },
+	{ action: "open_log", value: zap.id, count: 3, before: 7 },
+	{ action: "filter_log", values: { delivery: zap.id }, count: 3, before: 7 },
 	{
 		action: "log_page",
 		label: "log_page, a delivery's log",
 		blockId: `log:delivery:${zap.id}`,
 		value: { cursor: "" },
-		count: 10, // TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"answers a page; refused 0; log []; enquiries []; emails 0; requests 0; settings unchanged",
+		count: 4,
+		before: 10,
 	},
 	{
 		action: "send_again",
 		seed: async (h) => {
-			await row(h, "s1", zap.id, gaveUp);
+			await row(h, "s1", zap.id, gaveUp, { rows: [zap.id] });
 			await h.http.respond(HOOK, ok());
 		},
 		value: { row: `s1~${zap.id}`, from: { screen: "home" } },
-		count: 29, // TODO(B39): 29 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log [delivered]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+		light: true,
+		did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
+		count: 7,
+		before: 29,
 	},
 	{
 		action: "send_again",
 		label: "send_again, as an editor",
 		editor: true,
 		seed: async (h) => {
-			await row(h, "s1", zap.id, gaveUp);
+			await row(h, "s1", zap.id, gaveUp, { rows: [zap.id] });
 			await h.http.respond(HOOK, ok());
 		},
 		value: { row: `s1~${zap.id}`, from: { screen: "home" } },
-		count: 29, // TODO(B39): 29 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log [delivered]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+		light: true,
+		count: 7,
+		before: 29,
+	},
+	{
+		action: "send_again",
+		label: "send_again, an enquiry with two deliveries (the other row is read)",
+		deliveries: [zap, mail],
+		seed: async (h) => {
+			await row(h, "s1", zap.id, gaveUp, { rows: [zap.id, mail.id] });
+			await h.fixtures.plugin.storage("deliveries", `s1~${mail.id}`, {
+				enquiryId: "s1",
+				formId: "contact",
+				formName: "Contact us",
+				who: "Tom Reyes",
+				destination: mail.id,
+				status: "delivered",
+				nextAt: "",
+				attempts: 1,
+				createdAt: now(),
+				notes: [],
+			} satisfies Send);
+			await h.http.respond(HOOK, ok());
+		},
+		value: { row: `s1~${zap.id}`, from: { screen: "delivery", id: zap.id } },
+		light: true,
+		count: 8,
+	},
+	{
+		action: "send_again",
+		label: "send_again, refused again: alerts",
+		deliveries: [hub],
+		seed: async (h) => {
+			await row(h, "s1", hub.id, gaveUp, { rows: [hub.id] });
+			await h.http.respond(HUBSPOT, refused());
+		},
+		value: { row: `s1~${hub.id}`, from: { screen: "home" } },
+		light: true,
+		failToast: true,
+		did: async (h) => expect(await h.inspect.email()).toHaveLength(1),
+		count: 7,
 	},
 	{
 		action: "send_now",
 		seed: async (h) => {
-			await row(h, "s1", zap.id);
+			await row(h, "s1", zap.id, {}, { rows: [zap.id] });
 			await h.http.respond(HOOK, ok());
 		},
 		value: { row: `s1~${zap.id}`, from: { screen: "delivery", id: zap.id } },
-		count: 22, // TODO(B39): 22 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log [delivered]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+		light: true,
+		count: 7,
+		before: 22,
 	},
 	{
 		action: "send_all",
-		label: "send_all, 3 failed",
+		label: "send_all, 3 failed: queued",
 		seed: async (h) => {
-			for (const id of ["s1", "s2", "s3"]) {
-				await row(h, id, zap.id, gaveUp);
-				await h.http.respond(HOOK, ok());
-			}
+			for (const id of ["s1", "s2", "s3"]) await row(h, id, zap.id, gaveUp);
 		},
 		value: { delivery: zap.id, from: { screen: "home" } },
-		count: 51, // TODO(B39): 51 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log [gaveup,gaveup,gaveup]; enquiries [kept,kept,kept]; emails 0; requests 1; settings unchanged",
+		did: async (h) => expect(await statuses(h)).toEqual(["retrying", "retrying", "retrying"]),
+		count: 7,
+		before: 51,
 	},
-	{ action: "new", value: {}, count: 4 },
-	{ action: "new_continue", values: { form: "contact", kind: "app" }, count: 4 },
+	{ action: "new", value: {}, count: 1, before: 4 },
+	{
+		action: "new_continue",
+		label: "new_continue, a known form, site not checked yet (checked here)",
+		values: { form: "contact", kind: "app" },
+		seed: async (h) => h.http.respond(PING, notReachable()),
+		count: 6,
+		before: 4,
+	},
+	{
+		action: "new_continue",
+		label: "new_continue, a form typed by its short name, site not checked yet",
+		values: { form: "__other", short_name: "quote", kind: "app" },
+		seed: async (h) => {
+			await h.http.respond(lookup, definition());
+			await h.http.respond(PING, notReachable());
+		},
+		did: async (h) => {
+			expect((await h.inspect.setting<Record<string, KnownForm>>("forms"))?.quote?.name).toBe(
+				"Quote",
+			);
+			expect((await h.inspect.setting<Config>("config"))?.reach?.result).toBe("email");
+		},
+		count: 9,
+	},
 	{
 		action: "new_save",
 		label: "new_save, app, form connected (sends a test)",
 		blockId: "new2:app:contact",
 		values: { url: HOOK2, app: "make", name: "" },
 		seed: async (h) => h.http.respond(HOOK2, ok()),
-		count: 32, // TODO(B39): 32 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 0; settings changed",
+		count: 8,
+		before: 32,
 	},
 	{
 		action: "new_save",
@@ -1147,9 +1226,8 @@ const ACTIONS: ActionCase[] = [
 		blockId: "new2:email:contact",
 		values: { to: "shop@crumb.test", name: "" },
 		seed: async (h) => h.http.respond(PING, notReachable()),
-		count: 34, // TODO(B39): 34 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 0; settings changed",
+		count: 8,
+		before: 34,
 	},
 	{
 		action: "new_save",
@@ -1162,35 +1240,41 @@ const ACTIONS: ActionCase[] = [
 			await h.http.respond(HOOK2, ok());
 			await h.http.respond(CODE, codeAnswer());
 		},
-		count: 30, // TODO(B39): 30 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 0; settings changed",
+		did: async (_h, m) => expect(JSON.stringify(m.result)).toContain("ABCD-EFGH"),
+		count: 7,
+		before: 30,
 	},
 	{
-		action: "open",
-		value: zap.id,
-		count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 0; settings unchanged",
+		action: "new_save",
+		label: "new_save, a typed form the site cannot look up, one-click site",
+		forms: {},
+		extra: connectable,
+		blockId: "new2:app:quote",
+		values: { url: HOOK2, app: "make", name: "" },
+		seed: async (h) => {
+			await h.http.respond(lookup, new Response("down", { status: 500 }));
+			await h.http.respond(HOOK2, ok());
+			await h.http.respond(CODE, codeAnswer());
+		},
+		count: 9,
 	},
-	{ action: "edit", value: zap.id, count: 4 },
+	{ action: "open", value: zap.id, count: 4, before: 11 },
+	{ action: "edit", value: zap.id, count: 1, before: 4 },
 	{
 		action: "test",
 		label: "test, app",
 		value: zap.id,
 		seed: async (h) => h.http.respond(HOOK, ok()),
-		count: 26, // TODO(B39): 26 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; tests [retrying]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+		count: 8,
+		before: 26,
 	},
 	{
 		action: "test",
 		label: "test, email",
 		deliveries: [mail],
 		value: mail.id,
-		count: 27, // TODO(B39): 27 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; tests [retrying]; enquiries [kept]; emails 0; requests 0; settings unchanged",
+		count: 8,
+		before: 27,
 	},
 	{
 		action: "test",
@@ -1198,32 +1282,18 @@ const ACTIONS: ActionCase[] = [
 		value: zap.id,
 		seed: async (h) => h.http.respond(HOOK, fails()),
 		failToast: true,
-		count: 25, // TODO(B39): 25 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; tests [retrying]; enquiries [kept]; emails 0; requests 1; settings unchanged",
+		count: 8,
+		before: 25,
 	},
-	{
-		action: "toggle",
-		value: zap.id,
-		count: 14, // TODO(B39): 14 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
-	},
+	{ action: "toggle", value: zap.id, count: 6, before: 14 },
 	{
 		action: "save_repeats",
 		blockId: `repeats:${zap.id}`,
 		values: { repeat: "24h", hold_spam: true },
-		count: 14, // TODO(B39): 14 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
+		count: 6,
+		before: 14,
 	},
-	{
-		action: "new_secret",
-		value: zap.id,
-		count: 14, // TODO(B39): 14 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
-	},
+	{ action: "new_secret", value: zap.id, count: 6, before: 14 },
 	{
 		action: "delete",
 		label: "delete, with enquiries still on their way",
@@ -1233,17 +1303,16 @@ const ACTIONS: ActionCase[] = [
 			await row(h, "s3", zap.id, { status: "gaveup", nextAt: "" });
 		},
 		value: zap.id,
-		count: 14, // TODO(B39): 14 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log [skipped,skipped,skipped]; enquiries [kept,kept,kept]; emails 0; requests 0; settings unchanged",
+		did: async (h) => expect(await statuses(h)).toEqual(["skipped", "skipped", "skipped"]),
+		count: 5,
+		before: 14,
 	},
 	{
 		action: "save_edit",
 		blockId: `edit:${zap.id}`,
 		values: { forms: ["contact"], url: HOOK, app: "zapier", name: "Renamed", on: true },
-		count: 14, // TODO(B39): 14 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
+		count: 6,
+		before: 14,
 	},
 	{
 		action: "save_edit",
@@ -1256,23 +1325,22 @@ const ACTIONS: ActionCase[] = [
 			name: "x",
 			on: true,
 		},
-		seed: async (h) =>
-			h.http.respond(`${ORIGIN}/_emdash/api/plugins/emdash-forms/definition`, notReachable()),
-		count: 16, // TODO(B39): 16 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 4; log []; enquiries []; emails 0; requests 1; settings changed",
+		seed: async (h) => h.http.respond(lookup, notReachable()),
+		count: 7,
+		before: 16,
 	},
 	{
 		action: "save_matching",
 		deliveries: [hub],
 		blockId: `matching:${hub.id}:contact`,
 		values: { "f:name": "firstname", "f:email": "email" },
-		count: 8,
+		count: 3,
+		before: 8,
 	},
-	{ action: "adopt_choose", value: "other", count: 5 },
+	{ action: "adopt_choose", value: "other", count: 2, before: 5 },
 	{
 		action: "adopt",
-		label: "adopt, 3 held enquiries",
+		label: "adopt, 3 held enquiries: queued",
 		seed: async (h) => {
 			for (const id of ["h1", "h2", "h3"]) {
 				const held = {
@@ -1282,14 +1350,14 @@ const ACTIONS: ActionCase[] = [
 					nextAt: "",
 					held: true,
 				};
-				await row(h, id, "none", held as Partial<Send>, { formId: "other" });
-				await h.http.respond(HOOK, ok());
+				await row(h, id, "none", held as Partial<Send>, { formId: "other", rows: ["none"] });
 			}
 		},
 		value: { form: "other", delivery: zap.id },
-		count: 51, // TODO(B39): 51 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log [retrying,retrying,retrying,skipped,skipped,skipped]; enquiries [kept,kept,kept]; emails 0; requests 0; settings changed",
+		light: true,
+		did: async (h) => expect(await statuses(h)).toEqual(["retrying", "retrying", "retrying"]),
+		count: 8,
+		before: 51,
 	},
 	{
 		action: "connect",
@@ -1298,9 +1366,8 @@ const ACTIONS: ActionCase[] = [
 		extra: connectable,
 		seed: async (h) => h.http.respond(CODE, codeAnswer()),
 		value: { id: zap.id, form: "contact" },
-		count: 10, // TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"answers a page; refused 0; log []; enquiries []; emails 0; requests 1; settings unchanged",
+		count: 3,
+		before: 10,
 	},
 	{
 		action: "connect",
@@ -1308,61 +1375,116 @@ const ACTIONS: ActionCase[] = [
 		forms: unconnected,
 		seed: async (h) => h.http.respond(PING, notReachable()),
 		value: { id: zap.id, form: "contact" },
-		count: 11, // TODO(B39): 11 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 1; settings changed",
+		count: 6,
+		before: 11,
 	},
 	{
 		action: "connect_finish",
 		label: "connect_finish, not approved yet",
 		forms: unconnected,
 		extra: connectable,
-		seed: async (h, admin) => {
-			await h.fixtures.plugin.kv(`approval:${zap.id}:${admin.id}`, approvalCode());
-			await h.http.respond(
-				TOKEN,
-				Response.json({ error: "authorization_pending" }, { status: 400 }),
-			);
-		},
+		seed: approving([
+			TOKEN,
+			() => Response.json({ error: "authorization_pending" }, { status: 400 }),
+		]),
 		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
-		count: 10, // TODO(B39): 10 calls, at Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"answers info; refused 0; log []; enquiries []; emails 0; requests 1; settings unchanged",
+		count: 2,
+		before: 10,
 	},
 	{
 		action: "connect_finish",
 		label: "connect_finish, connected",
 		forms: unconnected,
 		extra: connectable,
-		seed: async (h, admin) => {
-			await h.fixtures.plugin.kv(`approval:${zap.id}:${admin.id}`, approvalCode());
-			await h.http.respond(TOKEN, tokens());
-			await h.http.respond(LIST, formsList());
-			await h.http.respond(UPDATE, Response.json({ data: {} }));
-			await h.http.respond(REVOKE, ok());
-		},
+		seed: approving(
+			[TOKEN, tokens],
+			[LIST, formsList],
+			[UPDATE, () => Response.json({ data: {} })],
+			[REVOKE, ok],
+		),
 		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
-		count: 25, // TODO(B39): 25 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 4; log []; enquiries []; emails 0; requests 2; settings unchanged",
+		did: async (h) => {
+			expect(
+				(await h.inspect.setting<Record<string, KnownForm>>("forms"))?.contact?.connectedWay,
+			).toBe("straight");
+			expect((await h.inspect.kv.list()).filter((e) => e.id.startsWith("approval:"))).toEqual([]);
+		},
+		count: 9,
+		before: 25,
+	},
+	{
+		action: "connect_finish",
+		label: "connect_finish, connected, the revoke works at the second try",
+		forms: unconnected,
+		extra: connectable,
+		seed: approving(
+			[TOKEN, tokens],
+			[LIST, formsList],
+			[UPDATE, () => Response.json({ data: {} })],
+			[REVOKE, fails],
+			[REVOKE, ok],
+		),
+		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
+		did: async (h) =>
+			expect(
+				(await h.inspect.setting<Record<string, KnownForm>>("forms"))?.contact?.connectedWay,
+			).toBe("straight"),
+		count: 9,
 	},
 	{
 		action: "connect_finish",
 		label: "connect_finish, connected but the access could not be revoked",
 		forms: unconnected,
 		extra: connectable,
-		seed: async (h, admin) => {
-			await h.fixtures.plugin.kv(`approval:${zap.id}:${admin.id}`, approvalCode());
-			await h.http.respond(TOKEN, tokens());
-			await h.http.respond(LIST, formsList());
-			await h.http.respond(UPDATE, Response.json({ data: {} }));
-			await h.http.respond(REVOKE, fails());
-			await h.http.respond(REVOKE, fails());
-		},
+		seed: approving(
+			[TOKEN, tokens],
+			[LIST, formsList],
+			[UPDATE, () => Response.json({ data: {} })],
+			[REVOKE, fails],
+			[REVOKE, fails],
+		),
 		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
-		count: 32, // TODO(B39): 32 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 4; log []; enquiries []; emails 0; requests 2; settings unchanged",
+		light: true,
+		did: async (h) => {
+			expect((await h.inspect.setting<Config>("config"))?.accessLeft?.form).toBe("Contact us");
+			expect(await h.inspect.email()).toHaveLength(1);
+			expect(
+				(await h.inspect.setting<Record<string, KnownForm>>("forms"))?.contact?.connectedWay,
+			).toBe("straight");
+		},
+		count: 9,
+		before: 32,
+	},
+	{
+		action: "connect_finish",
+		label: "connect_finish, the form sends somewhere else",
+		forms: unconnected,
+		extra: connectable,
+		seed: approving([TOKEN, tokens], [LIST, conflictList], [REVOKE, ok]),
+		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
+		did: async (_h, m) => expect(JSON.stringify(m.result)).toContain("Replace it"),
+		count: 5,
+	},
+	{
+		action: "connect_finish",
+		label: "connect_finish, the change is refused and the access could not be revoked",
+		forms: unconnected,
+		extra: connectable,
+		seed: approving(
+			[TOKEN, tokens],
+			[LIST, formsList],
+			[UPDATE, () => new Response("no", { status: 403 })],
+			[REVOKE, fails],
+			[REVOKE, fails],
+		),
+		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
+		light: true,
+		failToast: true,
+		did: async (h) => {
+			expect((await h.inspect.setting<Config>("config"))?.accessLeft).toBeTruthy();
+			expect(await h.inspect.email()).toHaveLength(1);
+		},
+		count: 9,
 	},
 	{
 		action: "connect_finish",
@@ -1374,9 +1496,8 @@ const ACTIONS: ActionCase[] = [
 			await h.http.respond(CODE, codeAnswer());
 		},
 		value: { id: zap.id, form: "contact" },
-		count: 12, // TODO(B39): 12 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 1; settings unchanged",
+		count: 5,
+		before: 12,
 	},
 	{
 		action: "connect_replace",
@@ -1384,64 +1505,52 @@ const ACTIONS: ActionCase[] = [
 		extra: connectable,
 		seed: async (h) => h.http.respond(CODE, codeAnswer()),
 		value: { id: zap.id, form: "contact", host: "other.test", hash: "a".repeat(64) },
-		count: 7,
+		count: 3,
+		before: 7,
 	},
 	{
 		action: "connect_keep",
 		forms: unconnected,
 		value: { id: zap.id, form: "contact", host: "other.test" },
-		count: 4,
+		count: 1,
+		before: 4,
 	},
 	{
 		action: "dismiss_access",
 		extra: { accessLeft: { at: now(), form: "Contact us" } },
-		count: 21, // TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
+		count: 6,
+		before: 21,
 	},
 	{
 		action: "connected",
 		label: "connected (I have done this)",
 		forms: unconnected,
 		value: { id: zap.id, form: "contact" },
-		count: 16, // TODO(B39): 16 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 4; log []; enquiries []; emails 0; requests 0; settings changed",
+		count: 6,
+		before: 16,
 	},
 	{
 		action: "email_instructions",
 		forms: unconnected,
 		blockId: `instructions:${zap.id}:contact`,
 		values: { to: "web@pixel.dev" },
-		count: 5,
+		count: 2,
+		before: 5,
 	},
-	{
-		action: "dismiss_notice",
-		extra: { notice: true },
-		count: 21, // TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
-	},
+	{ action: "dismiss_notice", extra: { notice: true }, count: 6, before: 21 },
 	{
 		action: "save_alerts",
 		values: { alert_to: "anna@crumb.test, sam@pixel.dev" },
-		count: 21, // TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
+		count: 6,
+		before: 21,
 	},
 	{
 		action: "check_reach",
 		seed: async (h) => h.http.respond(PING, notReachable()),
-		count: 24, // TODO(B39): 24 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 1; log []; enquiries []; emails 0; requests 1; settings changed",
+		count: 9,
+		before: 24,
 	},
-	{
-		action: "reset_address",
-		count: 21, // TODO(B39): 21 calls, over Cloudflare's sandbox limit of 10 -- see report
-		onCloudflare:
-			"throws (too many subrequests); refused 2; log []; enquiries []; emails 0; requests 0; settings changed",
-	},
+	{ action: "reset_address", count: 6, before: 21 },
 ];
 
 describe("admin actions, on a running site with one delivery", () => {
@@ -1468,15 +1577,285 @@ describe("admin actions, on a running site with one delivery", () => {
 							});
 				return { h, invoke };
 			},
-			did: async (_h: Host, m: Measured<unknown>) => {
+			did: async (h: Host, m: Measured<unknown>) => {
 				expect(m.error).toBeUndefined();
-				const toast = (m.result as { toast?: { type: string; message: string } }).toast;
+				const result = m.result as { blocks: unknown[]; toast?: { type: string; message: string } };
+				const toast = result.toast;
 				if (toast) console.info(`  toast: ${toast.type}: ${toast.message}`);
 				expect(toast?.type === "error").toBe(c.failToast === true);
+				// A short screen has a way back and no tables.
+				const tables = JSON.stringify(result.blocks).includes('"type":"table"');
+				if (c.light) expect(tables).toBe(false);
+				await c.did?.(h, m);
 			},
 			count: c.count,
+			...(c.before !== undefined ? { before: c.before } : {}),
 			...(c.nested ? { nested: c.nested } : {}),
-			...(c.onCloudflare !== undefined ? { onCloudflare: c.onCloudflare } : {}),
 		})),
 	);
+});
+
+// ─── With Cloudflare's limit enforced ────────────────────────────────
+
+const WRITES = new Set([
+	"kvSet",
+	"kvDelete",
+	"settingsSet",
+	"storagePut",
+	"storagePutMany",
+	"storageDelete",
+	"storageDeleteMany",
+	"storageCompareAndSet",
+	"cronSchedule",
+	"emailSend",
+]);
+
+describe("one-click connect with the limit enforced: the access is always revoked first", () => {
+	const cases: Array<[string, Array<[string, () => Response]>]> = [
+		[
+			"connected",
+			[
+				[TOKEN, tokens],
+				[LIST, formsList],
+				[UPDATE, () => Response.json({ data: {} })],
+				[REVOKE, ok],
+			],
+		],
+		[
+			"connected, the revoke fails twice",
+			[
+				[TOKEN, tokens],
+				[LIST, formsList],
+				[UPDATE, () => Response.json({ data: {} })],
+				[REVOKE, fails],
+				[REVOKE, fails],
+			],
+		],
+		[
+			"the form sends somewhere else",
+			[
+				[TOKEN, tokens],
+				[LIST, conflictList],
+				[REVOKE, ok],
+			],
+		],
+		[
+			"the change is refused",
+			[
+				[TOKEN, tokens],
+				[LIST, formsList],
+				[UPDATE, () => new Response("no", { status: 403 })],
+				[REVOKE, ok],
+			],
+		],
+		[
+			"the forms cannot be listed",
+			[
+				[TOKEN, tokens],
+				[LIST, () => new Response("down", { status: 500 })],
+				[REVOKE, ok],
+			],
+		],
+	];
+	for (const [label, answers] of cases) {
+		it(label, async () => {
+			const h = await running([zap], connectable, unconnected);
+			const { admin } = await people(h);
+			await approving(...answers)(h, admin);
+			await h.restart();
+			const from = h.http.requests().length;
+			const m = await measure(
+				() =>
+					h.admin.act(PAGE, "connect_finish", {
+						user: admin,
+						value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
+					}),
+				{ enforce: true },
+			);
+			log(`connect_finish, enforced, ${label}`, m);
+			expect(m.error).toBeUndefined();
+			expect(m.refused).toEqual([]);
+			const requests = h.http.requests().slice(from);
+			const revokes = requests.filter((r) => r.url === REVOKE);
+			expect(revokes.length).toBeGreaterThan(0);
+			// The k-th httpFetch in the calls is the k-th request: find the first revoke's place.
+			const first = requests.findIndex((r) => r.url === REVOKE);
+			let fetches = -1;
+			const at = m.calls.findIndex((call) => call === "httpFetch" && ++fetches === first);
+			expect(at).toBeGreaterThan(0);
+			expect(m.calls.slice(0, at).filter((call) => WRITES.has(call))).toEqual([]);
+			// Only the revoke and its one retry came after the token.
+			expect(requests.at(-1)!.url === REVOKE || requests.at(-2)!.url === REVOKE).toBe(true);
+		});
+	}
+});
+
+describe("arriving enquiries with the limit enforced: none is lost", () => {
+	const paths: Array<[string, () => Promise<{ h: Host; invoke: Invoke }>]> = [
+		[
+			"inbound, running site, four deliveries",
+			async () => {
+				const h = await running([zap, make, hub, mail]);
+				return { h, invoke: inbound(h, payload("01A")) };
+			},
+		],
+		[
+			"inbound, fresh site, no delivery",
+			async () => {
+				const h = await newHost();
+				await h.fixtures.plugin.setting("config", { ...CONFIG });
+				return { h, invoke: inbound(h, payload("01A")) };
+			},
+		],
+		[
+			"inbound, first after updating from 0.3.0",
+			async () => {
+				const h = await justUpdated();
+				return { h, invoke: inbound(h, payload("01A")) };
+			},
+		],
+		[
+			"inbound, scheduler stopped, overdue tries",
+			async () => {
+				const h = await running();
+				await h.fixtures.plugin.kv("tick", ago(60 * 60_000));
+				await row(h, "old1", zap.id, { nextAt: ago(30 * 60_000) });
+				return { h, invoke: inbound(h, payload("01A")) };
+			},
+		],
+		[
+			"email way, running site, three deliveries",
+			async () => {
+				const h = await running([mail, zap, hub]);
+				return { h, invoke: emailWay(h, formEmail) };
+			},
+		],
+		[
+			"email way, first after updating from 0.3.0",
+			async () => {
+				const h = await justUpdated([mail]);
+				return { h, invoke: emailWay(h, formEmail) };
+			},
+		],
+		[
+			"email way, fields cannot be read",
+			async () => {
+				const h = await running([mail]);
+				return { h, invoke: emailWay(h, { ...formEmail, text: "garbled" }) };
+			},
+		],
+	];
+	for (const [label, setup] of paths) {
+		it(label, async () => {
+			const { h, invoke } = await setup();
+			const m = await cold(h, invoke, true);
+			log(`${label}, enforced`, m);
+			expect(m.error).toBeUndefined();
+			expect(m.refused).toEqual([]);
+			const enquiries = await h.inspect.storage.list<Enquiry>("enquiries");
+			const id = label.startsWith("email")
+				? enquiries.find((e) => e.id.startsWith("m"))?.id
+				: "01A";
+			expect(id).toBeTruthy();
+			const rows = (await sendRows(h)).filter((r) => r.enquiryId === id);
+			expect(rows.length).toBeGreaterThan(0);
+			expect(
+				enquiries
+					.find((e) => e.id === id)
+					?.data.rows?.slice()
+					.sort(),
+			).toEqual(rows.map((r) => r.destination).sort());
+		});
+	}
+});
+
+describe("a backlog with the limit enforced", () => {
+	it("10 enquiries through 3 deliveries: each sent once, every run within the limit", async () => {
+		const h = await running([zap, make, hub]);
+		for (let i = 0; i < 10; i++) {
+			await h.http.respond(HOOK, ok());
+			await h.http.respond(HOOK2, ok());
+			await h.http.respond(HUBSPOT, ok());
+			await h.restart();
+			const m = await measure(inbound(h, payload(`01B${i}`, { email: `p${i}@example.com` })), {
+				enforce: true,
+			});
+			expect(m.refused).toEqual([]);
+			expect(m.calls.length).toBeLessThanOrEqual(BUDGET);
+		}
+		const counts = await runQueued(h, { enforce: true });
+		console.info(`backlog: ${counts.length} runs: ${counts.join(" ")}`);
+		const hits = (url: string) => h.http.requests().filter((r) => r.url === url).length;
+		expect([hits(HOOK), hits(HOOK2), hits(HUBSPOT)]).toEqual([10, 10, 10]);
+		expect(await statuses(h)).toEqual(Array(30).fill("delivered"));
+		const kept = await h.inspect.storage.list<Enquiry>("enquiries");
+		expect(kept.every((e) => e.data.cleared && e.data.counted)).toBe(true);
+		const stats = (await h.inspect.kv.get<Record<string, { r: number; d: number }>>("stats"))!;
+		expect(stats[today()]).toEqual({ r: 10, d: 10 });
+		expect(await h.inspect.scheduledTasks()).toEqual([]);
+	});
+
+	it("Send all failed again, pressed twice: each sent once", async () => {
+		const h = await running();
+		const { admin } = await people(h);
+		for (const id of ["s1", "s2", "s3"]) {
+			await row(h, id, zap.id, gaveUp, { rows: [zap.id] });
+			await h.http.respond(HOOK, ok());
+		}
+		const press = () =>
+			h.admin.act(PAGE, "send_all", {
+				user: admin,
+				value: { delivery: zap.id, from: { screen: "home" } },
+			});
+		await press();
+		await press();
+		await runQueued(h, { enforce: true });
+		await press();
+		await runQueued(h, { enforce: true });
+		expect(h.http.requests().filter((r) => r.url === HOOK)).toHaveLength(3);
+		expect(await statuses(h)).toEqual(["delivered", "delivered", "delivered"]);
+	});
+
+	it("adding a form to a delivery, pressed again after its enquiries went: each sent once", async () => {
+		const h = await running();
+		const { admin } = await people(h);
+		for (const id of ["h1", "h2", "h3"]) {
+			const held = {
+				formId: "other",
+				formName: "Other",
+				status: "skipped",
+				nextAt: "",
+				held: true,
+			};
+			await row(h, id, "none", held as Partial<Send>, { formId: "other", rows: ["none"] });
+			await h.http.respond(HOOK, ok());
+		}
+		const adopt = () =>
+			h.admin.act(PAGE, "adopt", { user: admin, value: { form: "other", delivery: zap.id } });
+		await adopt();
+		await runQueued(h, { enforce: true });
+		// An answer lost on the way: the held rows came back from a backup, the press is repeated.
+		for (const id of ["h1", "h2", "h3"]) {
+			const held = {
+				formId: "other",
+				formName: "Other",
+				status: "skipped",
+				nextAt: "",
+				held: true,
+			};
+			await h.fixtures.plugin.storage("deliveries", `${id}~none`, {
+				enquiryId: id,
+				who: "Tom Reyes",
+				destination: "none",
+				attempts: 0,
+				createdAt: now(),
+				notes: [],
+				...held,
+			});
+		}
+		await adopt();
+		await runQueued(h, { enforce: true });
+		expect(h.http.requests().filter((r) => r.url === HOOK)).toHaveLength(3);
+		expect(await statuses(h)).toEqual(["delivered", "delivered", "delivered"]);
+	});
 });

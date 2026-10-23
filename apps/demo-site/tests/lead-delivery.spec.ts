@@ -305,7 +305,11 @@ test("an app that cannot be reached is tried again, never shown in red; marks ar
 	const zap = row(page, /Ben Ode · Lead test → Zapier/);
 	await expect(zap).toBeVisible();
 	await expect(zap.getByRole("cell", { name: "Trying again" })).toBeVisible();
-	await expect(zap.getByText(/try 2 of 8, next in/)).toBeVisible();
+	// Stored on arrival, first tried by the run that follows within a minute or so.
+	await expect(async () => {
+		await page.reload();
+		await expect(zap.getByText(/try 2 of 8, next in/)).toBeVisible({ timeout: 5_000 });
+	}).toPass({ timeout: 100_000, intervals: [2_000] });
 	await expect(zap.getByRole("button", { name: "Send now" })).toBeVisible();
 	// A possibly fake address and possibly spam are marked, not dropped.
 	await expect(
@@ -511,8 +515,10 @@ test("enquiries from a form no delivery takes: a banner, then one choice adds th
 	await page.getByRole("radio", { name: "Lead test → Zapier" }).click();
 	await page.getByRole("button", { name: "Add and send" }).click();
 	await expect(
-		page.getByText('"Lead test → Zapier" now takes Other form. Sending its enquiry.'),
+		page.getByText('"Lead test → Zapier" now takes Other form. Sending its enquiry.').first(),
 	).toBeVisible({ timeout: 30_000 });
+	await page.getByRole("button", { name: "← Back to Lead delivery" }).click();
+	await expect(page.getByRole("heading", { name: "Deliveries" })).toBeVisible();
 	await expect(page.getByText(/was not sent: no delivery takes this form/)).toHaveCount(0);
 	await expect(row(page, /Kim Lee · Lead test → Zapier \(Other form\)/)).toBeVisible();
 	await page.close();

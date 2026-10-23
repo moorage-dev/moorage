@@ -1,4 +1,4 @@
-Install it in code, in `plugins` (not `sandboxed`, for now: on Cloudflare a sandboxed plugin may make only 10 calls to the site per request, and delivering an enquiry needs more):
+Install it in code, in `plugins` or, from 0.4.0, in `sandboxed` (on Cloudflare a sandboxed plugin may make only 10 calls to the site per request; from 0.4.0 Lead Delivery stays within that, and up to 0.3.1 it belongs in `plugins`):
 
 ```sh
 npm install @moorage/plugin-lead-delivery

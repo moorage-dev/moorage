@@ -2,7 +2,7 @@
 
 import type { PluginContext } from "emdash";
 
-import { loadForms, PING_KEY, randomString, routeUrl, saveForms } from "./config.js";
+import { PING_KEY, randomString, routeUrl } from "./config.js";
 import type { FieldInfo, KnownForm, ReachResult } from "./types.js";
 
 export type Lookup =
@@ -94,37 +94,40 @@ export async function findForm(
 	return { slug, name: slug, fields: [], checked: false };
 }
 
-/** Remember a form named in New delivery, so "Which form?" lists it from then on. */
-export async function rememberForm(
-	ctx: PluginContext,
+type Forms = Record<string, KnownForm>;
+
+/** The forms with one named in New delivery remembered, so "Which form?" lists it from then on. */
+export function withForm(
+	forms: Forms,
 	form: { slug: string; name: string; fields: FieldInfo[] },
-) {
-	const forms = await loadForms(ctx);
-	if (forms[form.slug]) return;
-	forms[form.slug] = {
-		slug: form.slug,
-		name: form.name,
-		fields: form.fields,
-		source: form.fields.length ? "definition" : "enquiry",
-		addedAt: new Date().toISOString(),
-		days: [],
+): Forms {
+	if (forms[form.slug]) return forms;
+	return {
+		...forms,
+		[form.slug]: {
+			slug: form.slug,
+			name: form.name,
+			fields: form.fields,
+			source: form.fields.length ? "definition" : "enquiry",
+			addedAt: new Date().toISOString(),
+			days: [],
+		},
 	};
-	await saveForms(ctx, forms);
 }
 
 /**
- * Remember every form EmDash listed (one-click connect), so "Which form?" lists them from then
- * on. Names and fields are refreshed; nothing else about a known form changes.
+ * The forms with every form EmDash listed (one-click connect) remembered, so "Which form?" lists
+ * them from then on. Names and fields are refreshed; nothing else about a known form changes.
  */
-export async function rememberListed(
-	ctx: PluginContext,
+export function withListed(
+	forms: Forms,
 	items: Array<{ slug: string; name: string; pages?: unknown }>,
-) {
-	const forms = await loadForms(ctx);
+): Forms {
+	const out = { ...forms };
 	for (const item of items) {
 		const fields = fieldsFromPages(item.pages);
-		const have = forms[item.slug];
-		forms[item.slug] = have
+		const have = out[item.slug];
+		out[item.slug] = have
 			? { ...have, name: item.name, ...(fields.length ? { fields, source: "definition" } : {}) }
 			: {
 					slug: item.slug,
@@ -135,43 +138,55 @@ export async function rememberListed(
 					days: [],
 				};
 	}
-	await saveForms(ctx, forms);
+	return out;
 }
 
-/** Mark a form connected: by hand from the Connect step, or straight by one-click connect. */
-export async function markConnected(
-	ctx: PluginContext,
+/** The forms with one marked connected: by hand from the Connect step, or by one-click connect. */
+export function withConnected(
+	forms: Forms,
 	slug: string,
 	keySetAt?: string,
 	way: "by hand" | "straight" = "by hand",
-) {
-	const forms = await loadForms(ctx);
+): Forms {
 	const form = forms[slug];
-	if (!form) return;
+	if (!form) return forms;
 	const at = [form.connectedAt, form.lastAt]
 		.filter((x): x is string => Boolean(x))
 		.sort()
 		.at(-1);
-	if (at && (!keySetAt || at > keySetAt)) return;
-	forms[slug] = { ...form, connectedAt: new Date().toISOString(), connectedWay: way };
-	await saveForms(ctx, forms);
+	if (at && (!keySetAt || at > keySetAt)) return forms;
+	return {
+		...forms,
+		[slug]: { ...form, connectedAt: new Date().toISOString(), connectedWay: way },
+	};
 }
 
-/** Refresh every form's fields from its definition, when the site can look them up. */
-export async function refreshDefinitions(ctx: PluginContext, origin: string) {
-	const forms = await loadForms(ctx);
+/**
+ * The forms with fields refreshed from their definitions, at most `lookups` of them (one call
+ * each), stopping at the first the site cannot look up.
+ */
+export async function refreshDefinitions(
+	ctx: PluginContext,
+	origin: string,
+	forms: Forms,
+	lookups: number,
+): Promise<{ forms: Forms; changed: boolean }> {
+	const out = { ...forms };
 	let changed = false;
+	let left = lookups;
 	for (const form of Object.values(forms)) {
 		if (form.slug.includes(" ")) continue;
+		if (left < 1) break;
+		left -= 1;
 		const found = await lookUpForm(ctx, origin, form.slug);
-		if (found.kind !== "found") return;
-		forms[form.slug] = { ...form, name: found.name, fields: found.fields, source: "definition" };
+		if (found.kind !== "found") break;
+		out[form.slug] = { ...form, name: found.name, fields: found.fields, source: "definition" };
 		changed = true;
 	}
-	if (changed) await saveForms(ctx, forms);
+	return { forms: out, changed };
 }
 
-/** Can this site call its own address? Asks its own ping route for a one-time code. */
+/** Can this site call its own address? Asks its own ping route for a one-time code. Three calls. */
 export async function checkReach(ctx: PluginContext, origin: string): Promise<ReachResult> {
 	const code = randomString(24);
 	await ctx.kv.set(PING_KEY, code);

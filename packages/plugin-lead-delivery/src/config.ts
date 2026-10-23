@@ -3,7 +3,7 @@
 import type { PluginContext } from "emdash";
 
 import { generatedName } from "./names.js";
-import { readSettings, type SettingsKeys, writeSettings } from "./settings-store.js";
+import { pickSettings, type SettingsKeys, writeSettings } from "./settings-store.js";
 import type { Config, Delivery, DeliveryKind, KnownForm, Repeat } from "./types.js";
 
 export const CONFIG_KEY = "config";
@@ -12,7 +12,8 @@ export const FORMS_KEY = "forms";
  * The setup and the known forms live in `ctx.settings`, the one place EmDash keeps for a plugin
  * both in-process and sandboxed (see settings-store.ts). 0.3.0 and earlier kept them under the
  * plain KV keys `config` and `forms`; those are read when the settings are empty and written on
- * every save, kept for rollback until a later release. Everything else this plugin keeps in KV
+ * every save an admin makes, kept for rollback until a later release (an arriving enquiry
+ * updates the known forms in the settings only). Everything else this plugin keeps in KV
  * (approval codes, the site's origin, stats, alert days, the scheduler's tick and schedule, the
  * daily mark, the ping code, the unreadable-email note) is rebuilt or short-lived, so it stays
  * there.
@@ -159,56 +160,122 @@ export function migrate(raw: unknown, forms: Record<string, KnownForm>): Config 
 	};
 }
 
+/** The every-minute task's schedule, as `ensureSchedule` records it. */
+export const SCHEDULE_KEY = "schedule";
+export const STATS_KEY = "stats";
+export const DAILY_KEY = "daily";
+
+export type Stats = Record<string, { r: number; d: number }>;
+
 /**
- * The config, moved to deliveries on first read after the update to 0.2, with a private key made
- * on first use. The settings are read first, then the plain key 0.3.0 and earlier used (copied
- * forward and kept); a new private key is made only when neither has one. A key made while an
- * old one is still waiting would change every form's address and the private email address.
+ * Everything this plugin keeps in KV and settings, read with one `ctx.kv.list()`: on Cloudflare a
+ * sandboxed plugin may make only 10 calls to the site per run (see meter.ts), so no path reads a
+ * key on its own. The list holds the settings (`settings:config`, `settings:forms`), the plain
+ * keys earlier releases used, and the short-lived keys (schedule, tick, origin, stats, alerts,
+ * daily mark, unreadable note, approval codes).
  */
-export async function loadConfig(ctx: PluginContext): Promise<Config> {
-	const raw = await readSettings(ctx, CONFIG_SETTINGS);
+export interface State {
+	entries: Map<string, unknown>;
+	/** The setup. Its `key` is "" when none was ever made: only the admin page and activation make one. */
+	config: Config;
+	/** The setup changed on reading (moved from 0.1, or its key found under the plain key): save it. */
+	dirty: boolean;
+	forms: Record<string, KnownForm>;
+}
+
+export async function loadState(
+	ctx: PluginContext,
+	{ copy = false }: { copy?: boolean } = {},
+): Promise<State> {
+	const entries = new Map((await ctx.kv.list()).map((entry) => [entry.key, entry.value]));
+	const rawForms = await pickSettings(ctx, entries, FORMS_SETTINGS, { copy });
+	const forms = isRecord(rawForms) ? (rawForms as Record<string, KnownForm>) : {};
+	const raw = await pickSettings(ctx, entries, CONFIG_SETTINGS, { copy });
 	let config: Config;
-	let changed = false;
+	let dirty = false;
 	if (isRecord(raw) && raw.version === 2) {
 		config = normalizeConfig(raw);
 	} else {
-		let forms: Record<string, KnownForm> = {};
-		try {
-			forms = await loadForms(ctx);
-		} catch {
-			// Names fall back to short names.
-		}
 		config = migrate(raw, forms);
-		changed = raw !== null && raw !== undefined;
+		dirty = raw !== null && raw !== undefined;
 	}
 	if (!config.key) {
-		// The settings had no usable key: check the plain key before making one. A read the
-		// settings answered never looked there. Costs one read, only on a site with no key yet.
-		const plain = await ctx.kv.get<unknown>(CONFIG_KEY);
+		// The settings had no usable key: the plain key may still have one. A key made while an old
+		// one is waiting would change every form's address and the private email address.
+		const plain = entries.get(CONFIG_KEY);
 		const kept = isRecord(plain) ? siteParts(plain) : null;
 		if (kept?.key) {
 			config.key = kept.key;
 			if (kept.keySetAt) config.keySetAt = kept.keySetAt;
-		} else {
-			config.key = newKey();
+			dirty = true;
 		}
+	}
+	return { entries, config, dirty, forms };
+}
+
+/** A value from the state's KV entries. */
+export function kvOf<T>(state: State, key: string): T | undefined {
+	const value = state.entries.get(key);
+	return value === null || value === undefined ? undefined : (value as T);
+}
+
+/**
+ * The setup with a private key, saved when reading changed it or a key had to be made. For the
+ * admin page and activation only: the hot paths (an arriving enquiry, the scheduled runs) never
+ * write the setup and never make a key (without one, nothing can arrive anyway).
+ */
+export async function ensureConfig(ctx: PluginContext, state: State): Promise<boolean> {
+	let changed = state.dirty;
+	if (!state.config.key) {
+		state.config.key = newKey();
 		changed = true;
 	}
-	if (changed) await saveConfig(ctx, config);
-	return config;
+	if (changed) await saveConfig(ctx, state.config);
+	state.dirty = false;
+	return changed;
 }
 
-export async function saveConfig(ctx: PluginContext, config: Config): Promise<void> {
-	await writeSettings(ctx, CONFIG_SETTINGS, config);
+/** The setup, with a private key made on first use (see ensureConfig). */
+export async function loadConfig(ctx: PluginContext): Promise<Config> {
+	const state = await loadState(ctx, { copy: true });
+	await ensureConfig(ctx, state);
+	return state.config;
 }
 
-export async function loadForms(ctx: PluginContext): Promise<Record<string, KnownForm>> {
-	const raw = await readSettings(ctx, FORMS_SETTINGS);
-	return isRecord(raw) ? (raw as Record<string, KnownForm>) : {};
+export interface SaveOptions {
+	/**
+	 * Also write the plain key 0.3.0 reads (kept for rollback): one more call. Admin saves do,
+	 * unless the run has no call to spare for it.
+	 */
+	mirror?: boolean;
 }
 
-export async function saveForms(ctx: PluginContext, forms: Record<string, KnownForm>) {
-	await writeSettings(ctx, FORMS_SETTINGS, forms);
+/** An admin's save of the setup. One call, two with the copy for 0.3.0. */
+export async function saveConfig(
+	ctx: PluginContext,
+	config: Config,
+	{ mirror = true }: SaveOptions = {},
+): Promise<void> {
+	if (mirror) await writeSettings(ctx, CONFIG_SETTINGS, config);
+	else await ctx.settings.set(CONFIG_SETTINGS.name, config);
+}
+
+/** An admin's save of the known forms. One call, two with the copy for 0.3.0. */
+export async function saveForms(
+	ctx: PluginContext,
+	forms: Record<string, KnownForm>,
+	{ mirror = true }: SaveOptions = {},
+) {
+	if (mirror) await writeSettings(ctx, FORMS_SETTINGS, forms);
+	else await ctx.settings.set(FORMS_SETTINGS.name, forms);
+}
+
+/**
+ * The known forms, saved from a hot path (an arriving enquiry, the daily check): the settings
+ * only, one call. 0.3.1 reads the settings first; 0.3.0 keeps the forms as an admin last saved them.
+ */
+export async function saveFormsQuietly(ctx: PluginContext, forms: Record<string, KnownForm>) {
+	await ctx.settings.set(FORMS_SETTINGS.name, forms);
 }
 
 /** The private email address the email way uses. */
@@ -316,14 +383,15 @@ export function day(iso: string): string {
 	return iso.slice(0, 10);
 }
 
-/** Remember the site's address from a request, for runs that have none (scheduled tasks). */
-export async function rememberOrigin(ctx: PluginContext, requestUrl: string) {
-	const origin = siteOrigin(ctx, requestUrl);
-	if (origin && (await ctx.kv.get<string>(ORIGIN_KEY)) !== origin)
-		await ctx.kv.set(ORIGIN_KEY, origin);
+/** `siteName` for runs without a request: the address remembered from the last admin visit or enquiry. */
+export function siteLabel(ctx: PluginContext, state: State): string {
+	return siteName(ctx, kvOf<string>(state, ORIGIN_KEY));
 }
 
-/** `siteName` for code that runs without a request. */
-export async function siteLabel(ctx: PluginContext): Promise<string> {
-	return siteName(ctx, (await ctx.kv.get<string>(ORIGIN_KEY)) ?? undefined);
+/** Remember the site's address from a request, for runs that have none. One call, only when it changed. */
+export async function rememberOrigin(ctx: PluginContext, state: State, requestUrl: string) {
+	const origin = siteOrigin(ctx, requestUrl);
+	if (!origin || kvOf<string>(state, ORIGIN_KEY) === origin) return;
+	await ctx.kv.set(ORIGIN_KEY, origin);
+	state.entries.set(ORIGIN_KEY, origin);
 }

@@ -3,49 +3,50 @@
 import type { Block, BlockResponse, ButtonElement, FormField } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
+import { APPROVAL_PREFIX } from "./approval.js";
 import {
 	ago,
 	configuredOrigin,
+	ensureConfig,
 	inboundUrl,
 	inTime,
-	loadConfig,
-	loadForms,
+	kvOf,
+	loadState,
 	newId,
 	newKey,
 	parseAddresses,
 	plural,
+	rememberOrigin,
 	saveConfig,
+	saveForms,
 	since,
 	siteName,
 	siteOrigin,
+	type State,
 } from "./config.js";
+import { approvalKey, finishConnect, offerApproval, peekApproval } from "./connect.js";
 import {
-	approvalKey,
-	cancelApproval,
-	finishConnect,
-	offerApproval,
-	peekApproval,
-	reportAccessLeft,
-} from "./connect.js";
-import {
+	adoptHeld,
 	deliveryName,
+	ensureSchedule,
 	isConnected,
 	MAX_ATTEMPTS,
 	needsFixing,
+	notSentForms,
+	queueFailed,
 	quietForms,
-	receive,
 	schedulerStuck,
 	sendAgain,
 	sends,
+	sendTo,
 	servesForm,
 	weekCounts,
-	adoptForm,
-	notSentForms,
 } from "./deliver.js";
 import { UNREADABLE_KEY } from "./enquiry.js";
-import { checkReach, findForm, markConnected, refreshDefinitions, rememberForm } from "./forms.js";
+import { checkReach, findForm, refreshDefinitions, withConnected, withForm } from "./forms.js";
 import { CHOICES, choiceFor, matchedCount, parseHubSpot, UNMATCHED } from "./hubspot.js";
 import { ACCESS_LEFT_WHAT_TO_DO, instructions } from "./messages.js";
+import { type Meter, meter } from "./meter.js";
 import {
 	APPS,
 	appLabel,
@@ -95,7 +96,14 @@ type View = (
 			draft?: Record<string, unknown>;
 			duplicate?: Delivery;
 	  }
-	| { screen: "delivery"; id: string; cursor?: string; secret?: string }
+	| {
+			screen: "delivery";
+			id: string;
+			cursor?: string;
+			secret?: string;
+			/** Leave out the hint about a form that never sent (one read): just connected, nothing could have. */
+			noHints?: boolean;
+	  }
 	| { screen: "edit"; id: string; draft?: Record<string, unknown> }
 	| { screen: "log"; filter: string; cursor?: string }
 	| {
@@ -115,6 +123,9 @@ type View = (
 
 interface Data {
 	ctx: PluginContext;
+	/** Counts the calls to the site: sandboxed on Cloudflare a run may make only 10. */
+	m: Meter;
+	state: State;
 	config: Config;
 	forms: Record<string, KnownForm>;
 	origin: string;
@@ -189,24 +200,54 @@ interface Status {
 	fixing: Array<{ id: string; data: Send }>;
 }
 
-/** The first match wins: Turned off, Needs fixing, Trying again, Working, Not sending yet. Tests never count. */
-async function statusOf(ctx: PluginContext, delivery: Delivery): Promise<Status> {
-	const [fixing, retrying, delivered] = await Promise.all([
-		needsFixing(ctx, 20, delivery.id),
-		sends(ctx).query({ where: { destination: delivery.id, status: "retrying" }, limit: 20 }),
-		sends(ctx).query({
-			where: { destination: delivery.id, status: "delivered" },
-			orderBy: { createdAt: "desc" },
-			limit: 20,
-		}),
-	]);
-	const last = delivered.items.find((item) => !item.data.test)?.data;
+type Row = { id: string; data: Send };
+
+/**
+ * Log rows read once for a whole screen: the open ones (trying again, needs fixing, gave up),
+ * newest first, and the latest rows. Statuses come from these, so a screen costs the same
+ * however many deliveries there are.
+ */
+interface Rows {
+	open: Row[];
+	recent: Row[];
+	/** More rows than `recent` holds exist. */
+	more: boolean;
+}
+
+const OPEN: SendStatus[] = ["retrying", "fixing", "gaveup"];
+/** Rows read for statuses on home; the table shows the first HOME_ROWS. */
+const RECENT_ROWS = 100;
+
+async function openRows(ctx: PluginContext, destination?: string): Promise<Row[]> {
+	const result = await sends(ctx).query({
+		where: { status: { in: OPEN }, ...(destination ? { destination } : {}) },
+		orderBy: { createdAt: "desc" },
+		limit: 100,
+	});
+	return result.items;
+}
+
+/**
+ * The first match wins: Turned off, Needs fixing, Trying again, Working, Not sending yet. Tests
+ * never count. A delivery with no delivered row among the rows read, while older rows exist,
+ * is Working when one of its forms sent after it was made.
+ */
+function statusOf(data: Data, delivery: Delivery, rows: Rows): Status {
+	const mine = (list: Row[]) =>
+		list.filter((item) => item.data.destination === delivery.id && !item.data.test);
+	const open = mine(rows.open);
+	const fixing = open.filter((i) => i.data.status === "fixing" || i.data.status === "gaveup");
+	const last = mine(rows.recent).find((item) => item.data.status === "delivered")?.data;
 	const base = { fixing, ...(last ? { last } : {}) };
 	if (!delivery.on) return { ...base, kind: "off", label: "Turned off" };
 	if (fixing.length > 0) return { ...base, kind: "fixing", label: "Needs fixing" };
-	if (retrying.items.some((item) => !item.data.test))
+	if (open.some((item) => item.data.status === "retrying"))
 		return { ...base, kind: "retrying", label: "Trying again" };
 	if (last) return { ...base, kind: "working", label: `Working, last ${shortAgo(last.createdAt)}` };
+	const sentSince = servedForms(data, delivery).some(
+		(f) => data.forms[f.slug]?.lastAt && data.forms[f.slug]!.lastAt! > delivery.createdAt,
+	);
+	if (rows.more && sentSince) return { ...base, kind: "working", label: "Working" };
 	return { ...base, kind: "waiting", label: "Not sending yet" };
 }
 
@@ -259,7 +300,8 @@ type From =
 	| { screen: "log"; filter: string };
 
 function rowAction(id: string, s: Send, from: From) {
-	if (s.destination === NO_DELIVERY) return null;
+	// A test is answered at once or not at all, and its contents are not kept.
+	if (s.destination === NO_DELIVERY || s.test) return null;
 	const value = { row: id, from };
 	if (s.status === "fixing" || s.status === "gaveup" || (s.status === "skipped" && s.held)) {
 		return button("send_again", "Send again", { value });
@@ -268,16 +310,29 @@ function rowAction(id: string, s: Send, from: From) {
 	return null;
 }
 
-async function logTable(
+/** A page of the log: one call. */
+async function logPage(
 	data: Data,
-	opts: { destination?: string; limit: number; cursor?: string; from: From; empty: string },
-): Promise<Block> {
+	opts: { destination?: string; limit: number; cursor?: string },
+): Promise<{ items: Row[]; hasMore: boolean; cursor?: string }> {
 	const page = await sends(data.ctx).query({
 		...(opts.destination ? { where: { destination: opts.destination } } : {}),
 		orderBy: { createdAt: "desc" },
 		limit: opts.limit,
 		...(opts.cursor ? { cursor: opts.cursor } : {}),
 	});
+	return {
+		items: page.items,
+		hasMore: page.hasMore,
+		...(page.cursor ? { cursor: page.cursor } : {}),
+	};
+}
+
+function logTable(
+	data: Data,
+	page: { items: Row[]; hasMore: boolean; cursor?: string },
+	opts: { from: From; empty: string },
+): Block {
 	const paged = opts.from.screen !== "home";
 	return {
 		type: "table",
@@ -437,16 +492,28 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 		return blocks;
 	}
 
+	// Three reads, however many deliveries: open rows, latest rows, enquiries no delivery took.
+	const [open, recent, notSent] = await Promise.all([
+		openRows(ctx),
+		logPage(data, { limit: RECENT_ROWS }),
+		notSentForms(ctx),
+	]);
+	const rows: Rows = { open, recent: recent.items, more: recent.hasMore };
 	const statuses = new Map<string, Status>();
 	for (const delivery of config.deliveries)
-		statuses.set(delivery.id, await statusOf(ctx, delivery));
-	const [counts, retrying, fixing, stuck, retryingCount] = await Promise.all([
-		weekCounts(ctx),
-		sends(ctx).query({ where: { status: "retrying" }, orderBy: { nextAt: "asc" }, limit: 1 }),
-		needsFixing(ctx, 20),
-		schedulerStuck(ctx),
-		sends(ctx).count({ status: "retrying" }),
-	]);
+		statuses.set(delivery.id, statusOf(data, delivery, rows));
+	const counts = weekCounts(data.state);
+	const real = open.filter((item) => !item.data.test);
+	const retryingRows = real.filter((item) => item.data.status === "retrying");
+	const fixing = real.filter((item) => item.data.status !== "retrying");
+	const stuck = schedulerStuck(
+		data.state,
+		retryingRows.map((item) => item.data),
+	);
+	const retryingCount = retryingRows.length;
+	const retrying = {
+		items: [...retryingRows].sort((a, b) => a.data.nextAt.localeCompare(b.data.nextAt)),
+	};
 	const nextAt = retrying.items[0]?.data.nextAt;
 	blocks.push({
 		type: "stats",
@@ -512,7 +579,7 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 				"Some enquiries did not get through at the first try. Lead delivery tries them again, but scheduled tasks are not running on this site, so it cannot. Ask your web person to check the site's scheduled tasks. Until then, press Send now.",
 		});
 	}
-	const unreadable = await ctx.kv.get<{ formName: string; at: string }>(UNREADABLE_KEY);
+	const unreadable = kvOf<{ formName: string; at: string }>(data.state, UNREADABLE_KEY);
 	if (unreadable && Date.now() - Date.parse(unreadable.at) < 7 * 86_400_000) {
 		blocks.push({
 			type: "banner",
@@ -522,7 +589,7 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 				"Lead delivery could not read its fields one by one, usually because EmDash's forms changed how they write their emails. Nothing was lost. Check for an update to Lead delivery, or reconnect the form from its delivery's page.",
 		});
 	}
-	for (const group of await notSentForms(ctx)) {
+	for (const group of notSent) {
 		blocks.push({
 			type: "banner",
 			variant: "alert",
@@ -583,11 +650,14 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 
 	blocks.push(
 		header("Latest enquiries"),
-		await logTable(data, {
-			limit: HOME_ROWS,
-			from: { screen: "home" },
-			empty: "No enquiries yet. They appear here as soon as someone sends one of your forms.",
-		}),
+		logTable(
+			data,
+			{ items: recent.items.slice(0, HOME_ROWS), hasMore: false },
+			{
+				from: { screen: "home" },
+				empty: "No enquiries yet. They appear here as soon as someone sends one of your forms.",
+			},
+		),
 		actions([button("see_all", "See all enquiries")]),
 	);
 	if (admin) blocks.push(settingsAccordion(data, view.settingsOpen === true));
@@ -599,7 +669,14 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 
 async function allEnquiries(data: Data, view: Extract<View, { screen: "log" }>): Promise<Block[]> {
 	const filter = findDelivery(data, view.filter) ? view.filter : "";
-	const fixing = await needsFixing(data.ctx, 1, filter || undefined);
+	const [fixing, page] = await Promise.all([
+		needsFixing(data.ctx, 1, filter || undefined),
+		logPage(data, {
+			...(filter ? { destination: filter } : {}),
+			limit: LOG_ROWS,
+			...(view.cursor ? { cursor: view.cursor } : {}),
+		}),
+	]);
 	return [
 		back(),
 		header("Enquiries"),
@@ -629,10 +706,7 @@ async function allEnquiries(data: Data, view: Extract<View, { screen: "log" }>):
 					]),
 				]
 			: []),
-		await logTable(data, {
-			...(filter ? { destination: filter } : {}),
-			limit: LOG_ROWS,
-			...(view.cursor ? { cursor: view.cursor } : {}),
+		logTable(data, page, {
 			from: { screen: "log", filter },
 			empty: filter
 				? "No enquiries through this delivery in the last 30 days."
@@ -957,7 +1031,16 @@ async function deliveryPage(
 	d: Delivery,
 	view: Extract<View, { screen: "delivery" }>,
 ): Promise<Block[]> {
-	const status = await statusOf(data.ctx, d);
+	// Two reads: this delivery's open rows and a page of its log (three with the hint below).
+	const [open, page] = await Promise.all([
+		openRows(data.ctx, d.id),
+		logPage(data, {
+			destination: d.id,
+			limit: LOG_ROWS,
+			...(view.cursor ? { cursor: view.cursor } : {}),
+		}),
+	]);
+	const status = statusOf(data, d, { open, recent: view.cursor ? [] : page.items, more: true });
 	const real = realText(data, d, status);
 	const blocks: Block[] = [back()];
 	if (view.secret && d.kind === "app") blocks.push(secretAccordion(view.secret, d));
@@ -1004,7 +1087,7 @@ async function deliveryPage(
 		]),
 	);
 	// A typed short name that never received anything, while another form's enquiries went nowhere.
-	const silent = silentForms(data, d)[0];
+	const silent = view.noHints ? undefined : silentForms(data, d)[0];
 	const arrived = silent
 		? (await notSentForms(data.ctx)).find((g) => !servesForm(d, g.formId))
 		: undefined;
@@ -1063,10 +1146,7 @@ async function deliveryPage(
 			'Marked enquiries (possibly fake address, same address again, possibly spam) are still sent, with the marks at the top of each email. Turn on "Don\'t send possibly spam" to hold those. Every enquiry is also in Forms → Submissions.',
 		),
 		header("Enquiries through this delivery"),
-		await logTable(data, {
-			destination: d.id,
-			limit: LOG_ROWS,
-			...(view.cursor ? { cursor: view.cursor } : {}),
+		logTable(data, page, {
 			from: { screen: "delivery", id: d.id },
 			empty: "No enquiries through this delivery yet.",
 		}),
@@ -1309,7 +1389,7 @@ async function connectPage(
 	const userId = oneClick(data);
 	const live =
 		userId && !view.note && !view.conflict && !view.kept
-			? await peekApproval(ctx, approvalKey(d.id, userId))
+			? await peekApproval(ctx, approvalKey(d.id, userId), knownCode(data, d.id, userId))
 			: undefined;
 	const code = live?.intent.form === view.form ? live : undefined;
 	const blocks: Block[] = [back(`Back to ${d.name}`, "open", d.id)];
@@ -1461,16 +1541,43 @@ async function openConnect(
 ): Promise<BlockResponse> {
 	const userId = oneClick(data);
 	if (!userId) return render(data, view);
+	// Asking EmDash for a code takes two calls; without them, the screen offers the button.
+	if (data.m.left() < 2) return render(data, view);
+	const key = approvalKey(view.id, userId);
 	const offer = await offerApproval(
 		data.ctx,
 		configuredOrigin(data.ctx),
-		approvalKey(view.id, userId),
+		key,
 		{ form: view.form, ...(opts.replace ? { replace: opts.replace } : {}) },
 		opts.fresh,
+		knownCode(data, view.id, userId),
 	);
 	if (offer.kind === "busy") return render(data, { ...view, note: ONE_CLICK_BUSY });
 	if (offer.kind === "unavailable") return render(data, { ...view, note: ONE_CLICK_OFF });
+	// The page reads the code it just got, not the one listed before.
+	data.state.entries.set(`${APPROVAL_PREFIX}${key}`, codeRecord(offer.shown));
 	return render(data, view);
+}
+
+/** The approval code stored for a delivery and admin, from the one KV read. */
+function knownCode(data: Data, deliveryId: string, userId: string): { stored: unknown } {
+	return { stored: data.state.entries.get(`${APPROVAL_PREFIX}${approvalKey(deliveryId, userId)}`) };
+}
+
+/** What a shown code looks like when stored (its device code stays out of the page's data). */
+function codeRecord(shown: {
+	userCode: string;
+	approveUrl: string;
+	expiresAt: string;
+	intent: unknown;
+}) {
+	return {
+		deviceCode: "-",
+		userCode: shown.userCode,
+		approveUrl: shown.approveUrl,
+		expiresAt: Date.parse(shown.expiresAt),
+		intent: shown.intent,
+	};
 }
 
 // ─── Page ───────────────────────────────────────────────────────────
@@ -1493,7 +1600,7 @@ async function render(data: Data, view: View = { screen: "home" }): Promise<Bloc
 }
 
 async function widget(data: Data): Promise<BlockResponse> {
-	const counts = await weekCounts(data.ctx);
+	const counts = weekCounts(data.state);
 	const fixing = await needsFixing(data.ctx, 20);
 	const blocks: Block[] = [
 		{
@@ -1626,43 +1733,78 @@ function testEnquiry(data: Data, d: Delivery): Enquiry {
 	};
 }
 
-/** Send a test through one delivery (even when it is off), and remember how it went. */
-async function sendTest(data: Data, d: Delivery): Promise<{ ok: boolean; message: string }> {
+/**
+ * Send a test through one delivery (even when it is off): one call. It is logged as a test row
+ * when a call is left for it (never tried again), and the caller saves the result with the
+ * delivery (`testedAt`, `testResult`).
+ */
+async function sendTest(
+	data: Data,
+	d: Delivery,
+	reserve: number,
+): Promise<{ ok: boolean; message: string; delivery: Delivery }> {
 	const id = `test-${newId()}`;
 	const enquiry = testEnquiry(data, d);
 	const { ctx } = data;
-	await receive(ctx, id, enquiry, { inline: true, only: d });
-	const row = await sends(ctx).get(`${id}~${d.id}`);
+	const outcome = await sendTo(ctx, data.state, d, id, enquiry, true);
 	const label = d.kind === "hubspot" ? "HubSpot" : d.kind === "app" ? appLabel(d.app) : "Email";
 	const result: Delivery["testResult"] =
-		row?.status === "delivered"
+		outcome.kind === "delivered"
 			? { ok: true }
-			: row?.status === "retrying"
-				? { ok: false, plain: `${label} did not answer. It is tried again.` }
+			: outcome.kind === "retry"
+				? {
+						ok: false,
+						// A test is answered now or not at all: it is never tried again.
+						plain: `${d.kind === "email" ? "The email service" : label} did not answer.`,
+						...(outcome.raw ? { raw: outcome.raw } : {}),
+					}
 				: {
 						ok: false,
-						plain: row?.plain ?? `${label} did not accept it.`,
-						...(row?.raw ? { raw: row.raw } : {}),
+						plain: outcome.plain ?? `${label} did not accept it.`,
+						...(outcome.raw ? { raw: outcome.raw } : {}),
 					};
-	const config = await loadConfig(ctx);
-	await saveConfig(ctx, {
-		...config,
-		deliveries: config.deliveries.map((x) =>
-			x.id === d.id ? { ...x, testedAt: new Date().toISOString(), testResult: result } : x,
-		),
-	});
-	if (!result.ok) return { ok: false, message: result.plain ?? "" };
+	const now = new Date().toISOString();
+	if (data.m.left() > reserve) {
+		const row: Send = {
+			enquiryId: id,
+			destination: d.id,
+			formId: enquiry.formId,
+			formName: enquiry.formName,
+			who: enquiry.name ?? enquiry.email ?? "Someone",
+			...(enquiry.email ? { email: enquiry.email } : {}),
+			status:
+				outcome.kind === "delivered"
+					? "delivered"
+					: outcome.kind === "fixing"
+						? "fixing"
+						: "gaveup",
+			attempts: 1,
+			nextAt: "",
+			createdAt: now,
+			...(outcome.kind === "delivered" ? { deliveredAt: now } : {}),
+			...(result.plain && !result.ok ? { plain: result.plain } : {}),
+			...(outcome.raw ? { raw: outcome.raw } : {}),
+			notes: ["Test"],
+			test: true,
+			ms: outcome.ms,
+		};
+		await sends(ctx).put(`${id}~${d.id}`, row);
+	}
+	const delivery = { ...d, testedAt: now, testResult: result };
+	if (!result.ok) return { ok: false, message: result.plain ?? "", delivery };
 	if (d.kind === "email")
 		return {
 			ok: true,
 			message: `A test went to ${(d.to ?? []).join(", ")}: check the inbox, and the spam folder.`,
+			delivery,
 		};
 	if (d.kind === "hubspot")
 		return {
 			ok: true,
 			message: `HubSpot accepted the test. Look for ${enquiry.name} in HubSpot → Contacts.`,
+			delivery,
 		};
-	return { ok: true, message: `${label} accepted the test.` };
+	return { ok: true, message: `${label} accepted the test.`, delivery };
 }
 
 function valueOf(value: unknown): Record<string, unknown> {
@@ -1676,37 +1818,66 @@ function fromView(from: unknown): View {
 	return { screen: "home" };
 }
 
+/** A short screen after an action that used most of the run's calls: what happened, and the way back. */
+function lightView(returnTo: View, title: string, text: string, data: Data): Block[] {
+	const delivery = returnTo.screen === "delivery" ? findDelivery(data, returnTo.id) : undefined;
+	const way =
+		delivery && returnTo.screen === "delivery"
+			? back(`Back to ${delivery.name}`, "open", delivery.id)
+			: returnTo.screen === "log"
+				? back("Back to Enquiries", "open_log", returnTo.filter)
+				: back();
+	return [way, header(title), section(text)];
+}
+
 export async function handleAdmin(
 	input: unknown,
 	user: User | undefined,
 	requestUrl: string,
-	ctx: PluginContext,
+	rawCtx: PluginContext,
 ): Promise<BlockResponse> {
-	const config = await loadConfig(ctx);
+	// Every call to the site is counted: sandboxed on Cloudflare a run may make only 10. One read
+	// (the plugin's KV and settings) serves the whole request; settings found only where 0.3.0
+	// kept them are copied to their new place here, on the admin page, and nowhere else.
+	const m = meter(rawCtx);
+	const ctx = m.ctx;
+	const state = await loadState(ctx, { copy: true });
 	const admin = (user?.role ?? 0) >= ADMIN_ROLE;
 	// Alerts go to the admin who first opens the page until someone changes the list.
-	if (admin && user?.email && config.alertTo.length === 0) {
-		config.alertTo = [user.email.toLowerCase()];
-		await saveConfig(ctx, config);
+	if (admin && user?.email && state.config.alertTo.length === 0) {
+		state.config.alertTo = [user.email.toLowerCase()];
+		state.dirty = true;
 	}
+	// A key made, or the setup moved from 0.1 or from the plain key: one save for all of it.
+	await ensureConfig(ctx, state);
+	await ensureSchedule(ctx, state);
+	await rememberOrigin(ctx, state, requestUrl);
 	const data: Data = {
 		ctx,
-		config,
-		forms: await loadForms(ctx),
+		m,
+		state,
+		config: state.config,
+		forms: state.forms,
 		origin: siteOrigin(ctx, requestUrl),
 		...(user ? { user } : {}),
 		admin,
+	};
+	/** Save the setup (and keep `data` on it): two calls, the second the copy for 0.3.0. */
+	const save = async (config: Config, mirror = true) => {
+		state.config = config;
+		data.config = config;
+		await saveConfig(ctx, config, { mirror });
+	};
+	const keepForms = async (forms: Record<string, KnownForm>, mirror = true) => {
+		state.forms = forms;
+		data.forms = forms;
+		await saveForms(ctx, forms, { mirror });
 	};
 	const interaction = isRecord(input) ? input : {};
 	const action = str(interaction.action_id);
 	const value = interaction.value;
 	const values = isRecord(interaction.values) ? interaction.values : {};
 	const blockId = str(interaction.block_id);
-	const fresh = async (): Promise<Data> => ({
-		...data,
-		config: await loadConfig(ctx),
-		forms: await loadForms(ctx),
-	});
 
 	if (interaction.type === "page_load" && str(interaction.page) === "widget:enquiries")
 		return widget(data);
@@ -1724,8 +1895,10 @@ export async function handleAdmin(
 		return render(data, { screen: "log", filter: ref ?? "", ...(cursor ? { cursor } : {}) });
 	}
 	if (action === "send_again" || action === "send_now") {
+		// Sent now, so a site whose scheduled tasks stopped can still deliver. That takes most of
+		// the run's calls, so a short screen says what happened, with the way back.
 		const v = valueOf(value);
-		const row = await sendAgain(ctx, str(v.row) || str(value));
+		const row = await sendAgain(m, state, str(v.row) || str(value));
 		const name = row ? deliveryName(data.config, row.destination) : "";
 		const toast =
 			row?.status === "delivered"
@@ -1733,25 +1906,30 @@ export async function handleAdmin(
 				: row?.status === "retrying"
 					? info(`"${name}" did not answer. It is tried again ${inTime(row.nextAt)}.`)
 					: fail(row?.plain ?? "That enquiry is no longer here.");
-		const returnTo = fromView(v.from);
-		return render(await fresh(), {
-			...(returnTo.screen === "delivery" && !admin ? { screen: "home" } : returnTo),
-			toast,
-		});
+		const from = fromView(v.from);
+		const returnTo = from.screen === "delivery" && !admin ? ({ screen: "home" } as View) : from;
+		const title =
+			row?.status === "delivered"
+				? "Sent again"
+				: row?.status === "retrying"
+					? "Not sent yet"
+					: "Not sent";
+		return { blocks: lightView(returnTo, title, toast!.message, data), toast };
 	}
 	if (action === "send_all") {
+		// Queued: a run sends them within a minute or so. Pressing twice sends nothing twice.
 		const v = valueOf(value);
 		const only = str(v.delivery);
-		const rows = await needsFixing(ctx, 10, only || undefined);
-		let sent = 0;
-		for (const row of rows) if ((await sendAgain(ctx, row.id))?.status === "delivered") sent += 1;
+		const queued = await queueFailed(ctx, only || undefined);
 		const returnTo = fromView(v.from);
-		return render(await fresh(), {
+		return render(data, {
 			...(returnTo.screen === "delivery" && !admin ? { screen: "home" } : returnTo),
 			toast:
-				sent === rows.length
-					? ok(`Sent again: ${plural(sent, "enquiry", "enquiries")}.`)
-					: fail(`${sent} of ${rows.length} sent. The rest still need fixing.`),
+				queued === 0
+					? info("Nothing needs sending again.")
+					: ok(
+							`Sending again: ${plural(queued, "enquiry", "enquiries")}. They show as Delivered here within a minute or so.`,
+						),
 		});
 	}
 	if (!admin)
@@ -1779,6 +1957,13 @@ export async function handleAdmin(
 			data.forms,
 		);
 		if ("error" in form) return again(form.error);
+		// Work for the save step done here, where calls are to spare: remember a form EmDash knows,
+		// and check whether the site can call its own address (it decides how a form is connected).
+		if (form.checked && !data.forms[form.slug]) await keepForms(withForm(data.forms, form));
+		if (!data.config.reach && m.left() >= 5) {
+			const result = await checkReach(ctx, data.origin);
+			await save({ ...data.config, reach: { result, at: new Date().toISOString() } });
+		}
 		return render(data, { screen: "new2", form, kind });
 	}
 	if (action === "new_save") {
@@ -1817,13 +2002,12 @@ export async function handleAdmin(
 						: "that address";
 			return again(`${form.name} already goes to ${where} (${duplicate.name}).`, duplicate);
 		}
-		await rememberForm(ctx, form);
-		const forms = await loadForms(ctx);
+		if (!data.forms[form.slug]) await keepForms(withForm(data.forms, form));
 		const typed = str(values.name).trim().slice(0, 100);
 		const prefilled = `${form.name} → ${kindWord(kind)}`;
 		const name =
-			!typed || typed === prefilled ? generatedName([form.slug], draftDelivery, forms) : typed;
-		const delivery: Delivery = {
+			!typed || typed === prefilled ? generatedName([form.slug], draftDelivery, data.forms) : typed;
+		let delivery: Delivery = {
 			id: newId(),
 			kind,
 			name,
@@ -1845,15 +2029,18 @@ export async function handleAdmin(
 					}
 				: {}),
 		};
-		await saveConfig(ctx, { ...data.config, deliveries: [...data.config.deliveries, delivery] });
-		let saved = await fresh();
+		const connected = isConnected(data.forms[form.slug], data.config.keySetAt);
+		// What follows the save: a form's delivery page (three reads), or Connect this form, where
+		// one-click asks EmDash for a code (two calls).
+		const after = () => (connected ? 3 : oneClick(data) || !data.config.reach ? 2 : 0);
 		let toast: BlockResponse["toast"];
 		if (kind !== "hubspot" || values.test_now === true) {
-			const test = await sendTest(saved, delivery);
+			// The save (one call) and what follows it stay; the test's log row only if a call is left.
+			const test = await sendTest(data, delivery, 1 + after() + 1);
+			delivery = test.delivery;
 			toast = test.ok
 				? ok(`Saved as "${name}". ${test.message}`)
 				: fail(`Saved, but the test did not arrive: ${test.message}`);
-			saved = await fresh();
 		} else {
 			toast = ok(
 				`Saved as "${name}". Found HubSpot account ${delivery.portalId}. Press Send a test when you are ready: it adds a contact to HubSpot.`,
@@ -1864,14 +2051,16 @@ export async function handleAdmin(
 				`${toast.message} This site could not look the form up, so its fields will be learned from its first enquiry.`,
 			);
 		}
+		let config: Config = { ...data.config, deliveries: [...data.config.deliveries, delivery] };
+		if (!connected && !config.reach && m.left() >= 3 + 1) {
+			const result = await checkReach(ctx, data.origin);
+			config = { ...config, reach: { result, at: new Date().toISOString() } };
+		}
+		data.config = config;
+		await save(config, m.left() > 1 + after());
 		const secret = parsed.secret ? { secret: parsed.secret } : {};
-		if (!isConnected(saved.forms[form.slug], saved.config.keySetAt)) {
-			if (!saved.config.reach) {
-				const result = await checkReach(ctx, data.origin);
-				await saveConfig(ctx, { ...saved.config, reach: { result, at: new Date().toISOString() } });
-				saved = await fresh();
-			}
-			return openConnect(saved, {
+		if (!connected) {
+			return openConnect(data, {
 				screen: "connect",
 				id: delivery.id,
 				form: form.slug,
@@ -1879,20 +2068,24 @@ export async function handleAdmin(
 				toast,
 			});
 		}
-		return render(saved, { screen: "delivery", id: delivery.id, ...secret, toast });
+		return render(data, { screen: "delivery", id: delivery.id, ...secret, toast });
 	}
 
 	// A delivery. Leaving Connect this form throws its unused code away.
 	if (action === "open") {
-		if (data.user?.id) await cancelApproval(ctx, approvalKey(str(value), data.user.id));
+		if (data.user?.id) await forgetCode(data, str(value), data.user.id);
 		return render(data, { screen: "delivery", id: str(value) });
 	}
 	if (action === "edit") return render(data, { screen: "edit", id: str(value) });
 	if (action === "test") {
 		const d = findDelivery(data, str(value));
 		if (!d) return render(data);
-		const test = await sendTest(data, d);
-		return render(await fresh(), {
+		const test = await sendTest(data, d, 2 + 3);
+		await save({
+			...data.config,
+			deliveries: data.config.deliveries.map((x) => (x.id === d.id ? test.delivery : x)),
+		});
+		return render(data, {
 			screen: "delivery",
 			id: d.id,
 			toast: test.ok ? ok(test.message) : fail(`The test did not arrive: ${test.message}`),
@@ -1902,9 +2095,9 @@ export async function handleAdmin(
 		const deliveries = data.config.deliveries.map((d) =>
 			d.id === str(value) ? { ...d, on: !d.on } : d,
 		);
-		await saveConfig(ctx, { ...data.config, deliveries });
+		await save({ ...data.config, deliveries });
 		const d = deliveries.find((x) => x.id === str(value));
-		return render(await fresh(), {
+		return render(data, {
 			screen: "delivery",
 			id: str(value),
 			toast: ok(d?.on ? "Turned on." : "Turned off. Nothing is sent until you turn it on."),
@@ -1913,22 +2106,22 @@ export async function handleAdmin(
 	if (action === "save_repeats") {
 		const id = blockId.slice("repeats:".length);
 		const repeat = (["off", "24h", "7d"] as Repeat[]).find((r) => r === values.repeat) ?? "off";
-		await saveConfig(ctx, {
+		await save({
 			...data.config,
 			deliveries: data.config.deliveries.map((d) =>
 				d.id === id ? { ...d, repeat, holdSpam: values.hold_spam === true } : d,
 			),
 		});
-		return render(await fresh(), { screen: "delivery", id, toast: ok("Saved.") });
+		return render(data, { screen: "delivery", id, toast: ok("Saved.") });
 	}
 	if (action === "new_secret") {
 		const id = str(value);
 		const secret = newSecret();
-		await saveConfig(ctx, {
+		await save({
 			...data.config,
 			deliveries: data.config.deliveries.map((d) => (d.id === id ? { ...d, secret } : d)),
 		});
-		return render(await fresh(), {
+		return render(data, {
 			screen: "delivery",
 			id,
 			secret,
@@ -1939,11 +2132,10 @@ export async function handleAdmin(
 		const id = str(value);
 		const d = findDelivery(data, id);
 		// Enquiries still on their way here stay in the log as Not sent.
-		for (const status of ["retrying", "fixing", "gaveup"]) {
-			const open = await sends(ctx).query({ where: { destination: id, status }, limit: 100 });
-			if (open.items.length === 0) continue;
+		const open = await openRows(ctx, id);
+		if (open.length > 0) {
 			await sends(ctx).putMany(
-				open.items.map((item) => ({
+				open.map((item) => ({
 					id: item.id,
 					data: {
 						...item.data,
@@ -1955,11 +2147,8 @@ export async function handleAdmin(
 				})),
 			);
 		}
-		await saveConfig(ctx, {
-			...data.config,
-			deliveries: data.config.deliveries.filter((x) => x.id !== id),
-		});
-		return render(await fresh(), {
+		await save({ ...data.config, deliveries: data.config.deliveries.filter((x) => x.id !== id) });
+		return render(data, {
 			screen: "home",
 			toast: ok(`Deleted ${d?.name ?? "the delivery"}.`),
 		});
@@ -1981,12 +2170,10 @@ export async function handleAdmin(
 			str(values.name).trim().slice(0, 100) ||
 			generatedName(forms, { ...d, ...parsed.details }, data.forms);
 		const updated: Delivery = { ...d, ...parsed.details, name, forms, on: values.on !== false };
-		await saveConfig(ctx, {
+		await save({
 			...data.config,
 			deliveries: data.config.deliveries.map((x) => (x.id === id ? updated : x)),
 		});
-		if (d.kind === "hubspot" && data.origin) await refreshDefinitions(ctx, data.origin);
-		const saved = await fresh();
 		const message =
 			forms === "all" && picked.length > 1
 				? "Saved. It takes all forms, including new ones, so the other ticks were not needed."
@@ -1994,11 +2181,22 @@ export async function handleAdmin(
 		const newForm =
 			forms === "all"
 				? undefined
-				: forms.find((slug) => !isConnected(saved.forms[slug], saved.config.keySetAt));
-		if (newForm && (d.forms === "all" || !d.forms.includes(newForm))) {
-			return openConnect(saved, { screen: "connect", id, form: newForm, toast: ok(message) });
+				: forms.find((slug) => !isConnected(data.forms[slug], data.config.keySetAt));
+		const connecting = newForm && (d.forms === "all" || !d.forms.includes(newForm));
+		// HubSpot matches fields by name: refresh them from the forms' definitions with the calls
+		// the next screen leaves (one per form, then the save).
+		if (d.kind === "hubspot" && data.origin) {
+			const lookups = m.left() - (connecting ? 2 : 3) - 2;
+			if (lookups > 0) {
+				const refreshed = await refreshDefinitions(ctx, data.origin, data.forms, lookups);
+				if (refreshed.changed)
+					await keepForms(refreshed.forms, m.left() > (connecting ? 2 : 3) + 1);
+			}
 		}
-		return render(saved, { screen: "delivery", id, toast: ok(message) });
+		if (connecting) {
+			return openConnect(data, { screen: "connect", id, form: newForm!, toast: ok(message) });
+		}
+		return render(data, { screen: "delivery", id, toast: ok(message) });
 	}
 	if (action === "save_matching") {
 		const [, id, form] = blockId.split(":");
@@ -2024,11 +2222,11 @@ export async function handleAdmin(
 					? str(values.throwaway_field).trim() || "possibly_fake_email"
 					: "",
 		};
-		await saveConfig(ctx, {
+		await save({
 			...data.config,
 			deliveries: data.config.deliveries.map((x) => (x.id === d.id ? updated : x)),
 		});
-		return render(await fresh(), { screen: "edit", id: d.id, toast: ok("Matching saved.") });
+		return render(data, { screen: "edit", id: d.id, toast: ok("Matching saved.") });
 	}
 
 	// Enquiries from a form no delivery took
@@ -2037,22 +2235,35 @@ export async function handleAdmin(
 		const v = valueOf(value);
 		const form = blockId.startsWith("adopt:") ? blockId.slice("adopt:".length) : str(v.form);
 		const deliveryId = blockId.startsWith("adopt:") ? str(values.delivery) : str(v.delivery);
-		const group = (await notSentForms(ctx)).find((g) => g.formId === form);
-		const result = await adoptForm(ctx, form, deliveryId);
-		if (!result) return render(data, { screen: "home", toast: fail("Choose a delivery.") });
-		const name = group?.formName ?? formName(form, data.forms);
-		return render(await fresh(), {
-			screen: "home",
-			toast: ok(
-				`"${result.delivery.name}" now takes ${name}. ${
-					result.count === 0
-						? ""
-						: result.count === 1
-							? "Sending its enquiry."
-							: `Sending its ${result.count} enquiries.`
-				}`.trim(),
+		const delivery = findDelivery(data, deliveryId);
+		if (!delivery || !form)
+			return render(data, { screen: "home", toast: fail("Choose a delivery.") });
+		if (delivery.forms !== "all" && !delivery.forms.includes(form)) {
+			const updated = { ...delivery, forms: [...delivery.forms, form] };
+			await save({
+				...data.config,
+				deliveries: data.config.deliveries.map((d) => (d.id === delivery.id ? updated : d)),
+			});
+		}
+		// Queued: a run sends them within a minute or so (four calls, five with the run).
+		const result = await adoptHeld(ctx, form, delivery);
+		const name = result.formName ?? formName(form, data.forms);
+		const message = `"${delivery.name}" now takes ${name}. ${
+			result.count === 0
+				? ""
+				: result.count === 1
+					? "Sending its enquiry."
+					: `Sending its ${result.count} enquiries.`
+		}`.trim();
+		return {
+			blocks: lightView(
+				{ screen: "home" },
+				`Sending the enquiries from ${name}`,
+				`${message} They show in the log as Delivered within a minute or so.`,
+				data,
 			),
-		});
+			toast: ok(message),
+		};
 	}
 
 	// Connect this form
@@ -2061,17 +2272,18 @@ export async function handleAdmin(
 		const id = str(v.id);
 		if (!data.config.reach) {
 			const result = await checkReach(ctx, data.origin);
-			await saveConfig(ctx, { ...data.config, reach: { result, at: new Date().toISOString() } });
+			await save({ ...data.config, reach: { result, at: new Date().toISOString() } });
 		}
-		return openConnect(await fresh(), { screen: "connect", id, form: str(v.form) });
+		return openConnect(data, { screen: "connect", id, form: str(v.form) });
 	}
 	if (action === "connect_finish") {
 		const v = valueOf(value);
 		const view = { screen: "connect", id: str(v.id), form: str(v.form) } as const;
 		const userId = oneClick(data);
 		if (!userId || !findDelivery(data, view.id)) return render(data, view);
+		const key = approvalKey(view.id, userId);
 		// A screen left open in another tab: its code was replaced by a newer one.
-		const live = await peekApproval(ctx, approvalKey(view.id, userId));
+		const live = await peekApproval(ctx, key, knownCode(data, view.id, userId));
 		if (live && str(v.code) && live.userCode !== str(v.code)) {
 			return render(data, {
 				...view,
@@ -2082,28 +2294,51 @@ export async function handleAdmin(
 		}
 		const self = configuredOrigin(ctx);
 		const outcome = await finishConnect(
-			ctx,
+			m,
+			state,
 			self,
-			approvalKey(view.id, userId),
+			key,
 			inboundUrl(self, data.config.key),
-			data.config.keySetAt,
+			knownCode(data, view.id, userId).stored ?? null,
+			view.form,
+			// The delivery's page after a connection (two reads); a short screen when the access
+			// was left behind.
+			(revoked) => (revoked ? 2 : 0),
 		);
-		if ("revoked" in outcome && !outcome.revoked) {
-			await reportAccessLeft(ctx, formName(view.form, await loadForms(ctx)));
-		}
-		const now = await fresh();
+		data.config = state.config;
+		data.forms = state.forms;
 		const again = (message: string) =>
-			openConnect(now, { ...view, toast: info(message) }, { fresh: true });
+			openConnect(data, { ...view, toast: info(message) }, { fresh: true });
+		if ("revoked" in outcome && outcome.revoked === false) {
+			const name = outcome.kind === "connected" ? outcome.name : formName(view.form, data.forms);
+			const connected = outcome.kind === "connected";
+			return {
+				blocks: [
+					...lightView(
+						{ screen: "delivery", id: view.id },
+						connected ? `${name} is connected` : `${name} is not connected`,
+						connected
+							? `${name} is connected. Send yourself an enquiry through it on your site to check.`
+							: "Nothing was changed on the form.",
+						data,
+					),
+					...accessLeftBanner(data),
+				],
+				toast: connected
+					? ok(`${name} is connected. Send yourself an enquiry through it on your site to check.`)
+					: fail("Not connected, and the one-time access could not be thrown away. See below."),
+			};
+		}
 		switch (outcome.kind) {
 			case "pending":
-				return render(now, {
+				return render(data, {
 					...view,
 					toast: info(
 						"EmDash has not been approved yet. Type the code on EmDash's approval page and press Authorize, then press Done, connect again.",
 					),
 				});
 			case "busy":
-				return render(now, {
+				return render(data, {
 					...view,
 					toast: info("EmDash is busy. Wait a minute, then press Done, connect again."),
 				});
@@ -2116,15 +2351,16 @@ export async function handleAdmin(
 			case "missing":
 				return again("That code was already used or ran out. Here is a new one.");
 			case "unavailable":
-				return render(now, { ...view, note: ONE_CLICK_OFF });
+				return render(data, { ...view, note: ONE_CLICK_OFF });
 			case "conflict":
-				return render(now, { ...view, conflict: { host: outcome.host, hash: outcome.hash } });
+				return render(data, { ...view, conflict: { host: outcome.host, hash: outcome.hash } });
 			case "failed":
-				return render(now, { ...view, toast: fail(`Not connected: ${outcome.reason}`) });
+				return render(data, { ...view, toast: fail(`Not connected: ${outcome.reason}`) });
 			case "connected":
-				return render(now, {
+				return render(data, {
 					screen: "delivery",
 					id: view.id,
+					noHints: true,
 					toast: ok(
 						`${outcome.name} is connected. Send yourself an enquiry through it on your site to check.`,
 					),
@@ -2150,14 +2386,15 @@ export async function handleAdmin(
 	}
 	if (action === "dismiss_access") {
 		const { accessLeft: _left, ...rest } = data.config;
-		await saveConfig(ctx, rest);
-		return render(await fresh());
+		await save(rest);
+		return render(data);
 	}
 	if (action === "connected") {
 		const v = valueOf(value);
-		if (data.user?.id) await cancelApproval(ctx, approvalKey(str(v.id), data.user.id));
-		await markConnected(ctx, str(v.form), data.config.keySetAt);
-		return render(await fresh(), {
+		if (data.user?.id) await forgetCode(data, str(v.id), data.user.id);
+		const forms = withConnected(data.forms, str(v.form), data.config.keySetAt);
+		if (forms !== data.forms) await keepForms(forms);
+		return render(data, {
 			screen: "delivery",
 			id: str(v.id),
 			toast: ok(
@@ -2208,8 +2445,8 @@ export async function handleAdmin(
 	// Settings for the whole site
 	if (action === "dismiss_notice") {
 		const { notice: _notice, ...rest } = data.config;
-		await saveConfig(ctx, rest);
-		return render(await fresh());
+		await save(rest);
+		return render(data);
 	}
 	if (action === "save_alerts") {
 		const settings: View = { screen: "home", settingsOpen: true };
@@ -2221,14 +2458,21 @@ export async function handleAdmin(
 				...settings,
 				toast: fail("Add at least one address, so someone hears when an enquiry does not arrive."),
 			});
-		await saveConfig(ctx, { ...data.config, alertTo: parsed.list });
-		return render(await fresh(), { ...settings, toast: ok("Saved.") });
+		await save({ ...data.config, alertTo: parsed.list });
+		return render(data, { ...settings, toast: ok("Saved.") });
 	}
 	if (action === "check_reach") {
 		const result = await checkReach(ctx, data.origin);
-		await saveConfig(ctx, { ...data.config, reach: { result, at: new Date().toISOString() } });
-		if (result === "self") await refreshDefinitions(ctx, data.origin);
-		return render(await fresh(), {
+		await save({ ...data.config, reach: { result, at: new Date().toISOString() } });
+		// Field names from the forms' definitions, with the calls the page leaves (it reads three).
+		if (result === "self") {
+			const lookups = m.left() - 3 - 2;
+			if (lookups > 0) {
+				const refreshed = await refreshDefinitions(ctx, data.origin, data.forms, lookups);
+				if (refreshed.changed) await keepForms(refreshed.forms, m.left() > 4);
+			}
+		}
+		return render(data, {
 			screen: "home",
 			settingsOpen: true,
 			toast:
@@ -2236,8 +2480,8 @@ export async function handleAdmin(
 		});
 	}
 	if (action === "reset_address") {
-		await saveConfig(ctx, { ...data.config, key: newKey(), keySetAt: new Date().toISOString() });
-		return render(await fresh(), {
+		await save({ ...data.config, key: newKey(), keySetAt: new Date().toISOString() });
+		return render(data, {
 			screen: "home",
 			settingsOpen: true,
 			toast: ok(
@@ -2246,4 +2490,12 @@ export async function handleAdmin(
 		});
 	}
 	return render(data);
+}
+
+/** Throw away the unused code of a delivery and admin, when there is one: one call. */
+async function forgetCode(data: Data, deliveryId: string, userId: string) {
+	const key = `${APPROVAL_PREFIX}${approvalKey(deliveryId, userId)}`;
+	if (!data.state.entries.has(key)) return;
+	await data.ctx.kv.delete(key);
+	data.state.entries.delete(key);
 }

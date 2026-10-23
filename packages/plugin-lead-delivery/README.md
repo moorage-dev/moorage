@@ -27,7 +27,7 @@ Everything is on one page, **Lead delivery** under Marketing:
   - Consent goes to HubSpot only when someone ticked a consent box, or when you say your HubSpot account has its privacy (GDPR) settings on.
   - Possibly fake email addresses can be marked in a HubSpot field you choose.
 - **Another app (Zapier, Make, n8n or your own).** Each enquiry is sent as flat JSON, signed with the [Standard Webhooks](https://www.standardwebhooks.com/) headers, with one secret for each delivery. The JSON has a `marks` list (`throwaway`, `repeat`, `spam`) and, for a repeat, `repeatAfterMinutes`.
-- **A delivery log** that Editors (usually your client) can read. It shows who sent the enquiry, through which delivery, and whether it arrived, with a Send again button.
+- **A delivery log** that Editors (usually your client) can read. It shows who sent the enquiry, through which delivery, and whether it arrived, with a Send again button. Each enquiry is sent by the scheduled run that follows its arrival, usually within a minute.
 - **Retries.** An enquiry that gets no answer is tried 8 times over about two days. When a service refuses an enquiry for a reason that would fail the same way again, it is not retried. Instead, the page says in plain words what to fix, with the service's own words beneath. A test is never retried.
 - **Alerts by email** to several addresses. The subject starts with the site's name, and each kind of alert is sent at most once a day. There are three kinds:
   - an enquiry could not be delivered;
@@ -65,9 +65,11 @@ emdash({
 });
 ```
 
-Run it in `plugins`, as above, for now. On Cloudflare a sandboxed plugin may make only 10 calls to the site per request, and receiving or retrying an enquiry needs more, so under `sandboxed` an enquiry can be stored but not delivered straight away. A later version will fit the limit.
+From 0.4.0 it also runs in `sandboxed`. On Cloudflare a sandboxed plugin may make only 10 calls to the site per request, and from 0.4.0 every page, button, arriving enquiry and scheduled run stays within that, however many deliveries and enquiries you have. To do so, an arriving enquiry is stored with its log rows and sent by the scheduled run that follows, usually within a minute; when many arrive at once, each run sends a few and the next run carries on.
 
-It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin 0.2.11 or later: earlier versions save a ticked single checkbox, such as a consent box, as unticked, so the enquiry arrives without consent. Retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one). Since 0.3.1 your deliveries, private address and forms are kept where both `plugins` and `sandboxed` find them; when updating from an earlier version, update first and open Lead delivery once.
+Up to 0.3.1, run it in `plugins`, as above: under `sandboxed` an enquiry could be stored but not delivered, and one-click connect could leave its one-time access in place. If you cannot update yet, keep it in `plugins`.
+
+It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin 0.2.11 or later: earlier versions save a ticked single checkbox, such as a consent box, as unticked, so the enquiry arrives without consent. Deliveries, retries and alerts need scheduled tasks: on Cloudflare, a Cron Trigger every minute (the EmDash templates have one). If scheduled tasks stop, enquiries are still stored, Send again in the log still sends at once, and the alert list hears about it. Since 0.3.1 your deliveries, private address and forms are kept where both `plugins` and `sandboxed` find them; when updating from an earlier version, update first and open Lead delivery once.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
