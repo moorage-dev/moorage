@@ -1,4 +1,4 @@
-Install it in code, in `plugins` or, from 0.4.0, in `sandboxed` (on Cloudflare a sandboxed plugin may make only 10 calls to the site per request; from 0.4.0 Lead Delivery stays within that, and up to 0.3.1 it belongs in `plugins`):
+Install from **Plugins** in your EmDash admin (it runs sandboxed there; use 0.4.0 or later), or pin it in code, in `plugins` or, from 0.4.0, in `sandboxed` (on Cloudflare a sandboxed plugin may make only 10 calls to the site per request; from 0.4.0 Lead Delivery stays within that, and up to 0.3.1 it belongs in `plugins`):
 
 ```sh
 npm install @moorage/plugin-lead-delivery

@@ -12,11 +12,14 @@
 		"description": { "file": "listing/description.md" },
 		"installation": { "file": "listing/installation.md" },
 		"faq": { "file": "listing/faq.md" },
+		"security": { "file": "listing/security.md" },
 	},
 	// Registry listing only: the EmDash version a site needs, and the gallery.
 	"release": {
 		"requires": { "env:emdash": ">=1.3.0" },
 		"artifacts": {
+			// The Moorage cleat (moorage.dev/logo.png), the same on every plugin.
+			"icon": { "file": "./images/icon.png" },
 			"screenshots": [
 				{ "file": "./images/review-panel.png", "lang": "en" },
 				{ "file": "./images/waiting-0-1-4.png", "lang": "en" },
@@ -28,7 +31,7 @@
 	"publisher": "did:plc:cus3srdqglppyowqrw3hvjfj",
 
 	"license": "MIT",
-	"author": { "name": "Moorage" },
+	"author": { "name": "Moorage", "url": "https://moorage.dev" },
 	"security": { "email": "security@moorage.dev" },
 
 	// Trust contract. Holding a publish needs the content-policy hook; reading the saved
