@@ -104,6 +104,19 @@ jobs:
             shard: 3/3
             in_process: "1"
             specs: tests/seo.spec.ts tests/site-health.spec.ts tests/restore.spec.ts
+          # Lead Delivery's one-click connect needs a site that can call itself, which localhost
+          # never can: DEMO_SITE_SELF_ALIAS serves the site under a made-up name it can call
+          # (apps/demo-site/self-alias.mjs). It changes the site's address, so it gets its own server.
+          - mode: sandboxed
+            shard: self-alias
+            in_process: ""
+            self_alias: "1"
+            specs: tests/lead-delivery-connect.spec.ts
+          - mode: in-process
+            shard: self-alias
+            in_process: "1"
+            self_alias: "1"
+            specs: tests/lead-delivery-connect.spec.ts
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -122,6 +135,7 @@ jobs:
       - name: Playwright (${{ matrix.mode }} ${{ matrix.shard }})
         env:
           DEMO_SITE_IN_PROCESS: ${{ matrix.in_process }}
+          DEMO_SITE_SELF_ALIAS: ${{ matrix.self_alias }}
         run: pnpm --filter demo-site exec playwright test ${{ matrix.specs }}
       - name: Name the report artifact
         if: failure()

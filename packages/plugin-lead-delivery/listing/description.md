@@ -19,8 +19,8 @@ Every enquiry sent through your EmDash forms goes where you work: your inbox, Hu
 
 ## Connecting a form
 
-EmDash's form editor cannot yet be pointed at another plugin, so someone who looks after the site's code connects each form once. New delivery shows the instructions and can email them.
+Where the site can call its own address, an admin connects a form in one step: type the code shown on EmDash's approval page, press Authorize, then Done, connect. The access is used once and thrown away. Elsewhere, someone who looks after the site's code connects each form once; New delivery shows the instructions and can email them.
 
 ## Permissions
 
-Send web requests to the addresses you enter. Send email (Email deliveries and alerts). Read the forms' notification emails to its private address, and cancel those.
+Send web requests to the addresses you enter, and to the site itself (to connect a form in one step, with the access you approve). Send email (Email deliveries and alerts). Read the forms' notification emails to its private address, and cancel those.

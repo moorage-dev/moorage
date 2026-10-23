@@ -141,6 +141,23 @@ export function schedulerAlert(site: string) {
 	};
 }
 
+/** What to do when a one-time access could not be thrown away (the banner says the same). */
+export const ACCESS_LEFT_WHAT_TO_DO =
+	"Nobody can use it: it was kept only in Lead delivery's memory for that one step, never saved or shown, and it is gone now. EmDash ends it by itself within 90 days, so you need not do anything. To end it now, ask another admin to open Users, disable your account and enable it again: that ends every approval your account has given, so an emdash login on a computer must sign in again.";
+
+export function accessAlert(site: string, form: string) {
+	return {
+		subject: `${site}: a one-time access could not be thrown away`,
+		text: [
+			`Lead delivery used the one-time admin access you approved in EmDash while connecting the ${formWords(form)}. Afterwards it tried twice to throw that access away, and EmDash did not confirm it.`,
+			"",
+			ACCESS_LEFT_WHAT_TO_DO,
+			"",
+			"If you did not connect a form in Lead delivery just now, tell whoever looks after the site.",
+		].join("\n"),
+	};
+}
+
 /** The written step for whoever looks after the site's code. */
 export function instructions(opts: {
 	site: string;
@@ -148,6 +165,8 @@ export function instructions(opts: {
 	key: string;
 	form: { slug: string; name: string };
 	reach: ReachResult | undefined;
+	/** The form's webhookUrl goes elsewhere and stays: the email way only, never replacing it. */
+	keepsWebhook?: boolean;
 }): string {
 	const { origin, key } = opts;
 	const host = origin ? new URL(origin).host : "this site";
@@ -155,7 +174,8 @@ export function instructions(opts: {
 	const mail = privateEmail(key);
 	const list = `${origin}/_emdash/api/plugins/emdash-forms/forms/list`;
 	const update = `${origin}/_emdash/api/plugins/emdash-forms/forms/update`;
-	const viaEmail = opts.reach === "email" || opts.reach === "none";
+	const keeps = opts.keepsWebhook === true;
+	const viaEmail = keeps || opts.reach === "email" || opts.reach === "none";
 	const lines = [
 		`Connecting the ${formWords(opts.form.name)} on ${opts.site} (${host}) to Lead Delivery`,
 		"",
@@ -164,8 +184,16 @@ export function instructions(opts: {
 	];
 	if (viaEmail) {
 		lines.push(
-			"This site cannot call its own address, so the form hands its enquiries",
-			"over through a private email address. Nobody receives that email.",
+			...(keeps
+				? [
+						"The form's webhookUrl already sends each enquiry somewhere else, and that",
+						"stays as it is. The form hands its enquiries to Lead Delivery as well,",
+						"through a private email address. Nobody receives that email.",
+					]
+				: [
+						"This site cannot call its own address, so the form hands its enquiries",
+						"over through a private email address. Nobody receives that email.",
+					]),
 			"",
 			"For the form, once:",
 			"1. Make an API token with Admin scope: Settings → API tokens.",
@@ -182,10 +210,14 @@ export function instructions(opts: {
 			"If Lead Delivery is ever removed, take the private address out of notifyEmails too:",
 			"the .invalid domain can never receive mail, so your email provider would only",
 			"report it as undeliverable.",
-			"",
-			"If the site can call itself (Cloudflare: compatibility flag",
-			"global_fetch_strictly_public), set the form's webhookUrl instead:",
-			address,
+			...(keeps
+				? []
+				: [
+						"",
+						"If the site can call itself (Cloudflare: compatibility flag",
+						"global_fetch_strictly_public), set the form's webhookUrl instead:",
+						address,
+					]),
 		);
 	} else {
 		lines.push(

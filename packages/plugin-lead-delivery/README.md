@@ -11,7 +11,7 @@ A **delivery** is one form and where its enquiries go: an inbox (or several), a 
 Everything is on one page, **Lead delivery** under Marketing:
 
 - **Home**: this week's counters (received, delivered, trying again, needs fixing), a red notice for each delivery that needs fixing, the list of deliveries with **Open** on each row (Editors get **Enquiries**), the latest enquiries, and the **Settings for the whole site** (folded away).
-- **New delivery**: choose the form and where to send, then the details. A test is sent when you save (for HubSpot only when you ask, because a test adds a contact). If the form has never been connected, the instructions to connect it come next.
+- **New delivery**: choose the form and where to send, then the details. A test is sent when you save (for HubSpot only when you ask, because a test adds a contact). If the form has never been connected, Connect this form comes next: in one step with EmDash's approval where the site can call itself, otherwise with written instructions.
 - **A delivery's page**: its two checks (did the test arrive; are real enquiries arriving), Send a test, Edit, Turn off, the repeat and spam choices, its own enquiries, and Delete.
 - **Edit**: the name, the address or HubSpot form, which forms it takes (one form usually; several, or all forms including new ones, for an inbox that gets everything), on or off, and HubSpot field matching.
 - **Enquiries**: the whole log, or one delivery's, with Send again.
@@ -72,7 +72,17 @@ It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin
 
 ## Connecting a form
 
-EmDash's form editor cannot yet be pointed at another plugin. Until it can, someone who looks after the site's code connects each form once. When you make a form's first delivery, **Connect this form** shows the instructions for that form and can email them to your web person. Press **I have done this** once they have, or **Skip for now**: the delivery's page says "Not sending yet: … is not connected" with a **Connect this form** button until the form is connected.
+EmDash's form editor cannot yet be pointed at another plugin. When you make a form's first delivery, **Connect this form** comes next. It works one of two ways.
+
+**In one step, with EmDash's approval** (only when the site can call its own address, see below, and only for admins):
+
+1. Connect this form shows a code, for example `ABCD-EFGH`, and **Open the approval page**. The page is EmDash's own, opens in a new tab, and opens empty.
+2. Type the code in its Device code box. EmDash's page says "Authorize Device" and asks for full admin access: that is Lead Delivery asking. Press **Authorize** only if you opened that page from Lead delivery just now. If someone sent you a link or a code, press **Deny**.
+3. Come back and press **Done, connect**. Lead Delivery uses that access once: it lists your forms (so "Which form?" knows them from then on), sets the form's `webhookUrl` to its private address, and throws the access away. It keeps nothing. The code works for 15 minutes; leaving the screen throws it away.
+
+If the form already sends to another address (Zapier, for example), nothing is changed: Lead Delivery names that address's host and asks first. **Replace it** takes one more approval; **Keep it** shows the instructions for the email way, which keeps that address. If EmDash answers in any way Lead Delivery does not expect (a later EmDash may change its approval page), the screen falls back to the written instructions with a short note. In the rare case that throwing the access away fails twice, the page and an email to the alert list say so: nobody holds it (it was only in memory for that one step), EmDash ends it by itself within 90 days, and another admin can end it now by disabling your account under Users and enabling it again.
+
+**By hand, with written instructions** (every other site, and always available under "Instructions for your web person"): someone who looks after the site's code connects each form once. The screen shows the instructions for that form and can email them to your web person. Press **I have done this** once they have, or **Skip for now**: the delivery's page says "Not sending yet: … is not connected" with a **Connect this form** button until the form is connected.
 
 In **New delivery**, "Which form?" lists the forms Lead Delivery already knows (from enquiries, and from forms named before). For another form, choose **Another form** and type its short name: Forms lists it under each form's name.
 
@@ -122,13 +132,17 @@ Nothing to do. On the first run after the update, each inbox, HubSpot form or ap
 
 **How does my app check an enquiry came from my site?** Check the `webhook-signature` header with the secret shown when you saved the delivery. Any Standard Webhooks library does it.
 
+**Why does one-step connecting ask for full admin access?** EmDash has no narrower access for this yet. Lead Delivery uses it for two calls (list the forms, set one form's address) and throws it away straight after; it never stores it. You type the code yourself on EmDash's page, so a link someone sends you cannot approve anything on its own.
+
+**Why is there no one-step connecting on my site?** It needs the site to call its own address (on Cloudflare: the compatibility flag `global_fetch_strictly_public`). Press Check again under Settings for the whole site after changing that. Editors never see it: only an admin can approve.
+
 **Can my clients change it?** No. Editors see the counters, the deliveries and the log, and can press Send again; only admins add or change deliveries.
 
 **Is it free?** Yes, on any number of sites, your own or your clients', with no account and no key. It is open source under the MIT License.
 
 ## Changelog
 
-0.2.0: deliveries, one page, repeats for 24 hours or 7 days, the possibly spam mark, marks at the top of each email. 0.1.0: the first version. Every change is listed in CHANGELOG.md.
+0.3.0: connect a form in one step with EmDash's approval, where the site can call itself. 0.2.0: deliveries, one page, repeats for 24 hours or 7 days, the possibly spam mark, marks at the top of each email. 0.1.0: the first version. Every change is listed in CHANGELOG.md.
 
 ## Develop
 
@@ -137,6 +151,9 @@ pnpm --filter @moorage/plugin-lead-delivery test     # validate, then unit tests
 pnpm --filter @moorage/plugin-lead-delivery build
 DEMO_SITE_PORT=4401 pnpm --filter demo-site exec playwright test tests/lead-delivery.spec.ts
 DEMO_SITE_PORT=4401 DEMO_SITE_LEAD_DELIVERY=in-process pnpm --filter demo-site exec playwright test tests/lead-delivery.spec.ts
+# One-step connect needs a site that can call itself; localhost cannot, so this test-only switch
+# serves the demo site under a made-up name that it can call (apps/demo-site/self-alias.mjs):
+DEMO_SITE_PORT=4401 DEMO_SITE_SELF_ALIAS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-connect.spec.ts
 DEMO_SITE_PORT=4401 DEMO_SITE_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery.spec.ts   # refresh images/
 ```
 

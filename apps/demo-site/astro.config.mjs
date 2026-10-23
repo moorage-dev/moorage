@@ -13,6 +13,7 @@ import { defineConfig, fontProviders } from "astro/config";
 import emdash, { local } from "emdash/astro";
 import { sqlite } from "emdash/db";
 
+import { parseSelfAlias, selfAlias } from "./self-alias.mjs";
 import { simulateCloudflare } from "./simulated-cloudflare.mjs";
 
 // Web fonts are downloaded from Google at build time, which fails a build whenever
@@ -34,6 +35,10 @@ const healthInProcess = inProcess("DEMO_SITE_SITE_HEALTH");
 const restoreInProcess = inProcess("DEMO_SITE_RESTORE");
 const databaseUrl = process.env.DEMO_SITE_DB ?? "file:./data.db";
 simulateCloudflare(databaseUrl);
+// Test fixture, off by default: lets the site call its own address under a made-up public
+// name, for Lead Delivery's one-click connect (see self-alias.mjs).
+const alias = parseSelfAlias(process.env.DEMO_SITE_SELF_ALIAS);
+selfAlias(process.env.DEMO_SITE_SELF_ALIAS);
 // The same for Content Approval (DEMO_SITE_APPROVALS=in-process).
 const approvalsInProcess = inProcess("DEMO_SITE_APPROVALS");
 // The same for Lead Delivery (DEMO_SITE_LEAD_DELIVERY=in-process).
@@ -114,4 +119,5 @@ export default defineConfig({
 			]
 		: [],
 	devToolbar: { enabled: false },
+	...(alias ? { server: { allowedHosts: [alias.host] } } : {}),
 });

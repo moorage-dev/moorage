@@ -153,9 +153,14 @@ test("New delivery: a form by its short name, an inbox, a test, then Connect thi
 		),
 	).toBeVisible({ timeout: 30_000 });
 
-	// The form was never connected: the instructions for the web person come next.
+	// The form was never connected: the instructions for the web person come next. On localhost
+	// the site cannot call itself, so one-click connect is not offered: written instructions only.
 	await expect(page.getByRole("heading", { name: `Connect ${FORM}` })).toBeVisible();
 	await expect(page.getByText(/notifyEmails/).first()).toBeVisible();
+	await expect(page.getByText("Your code")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Done, connect" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Connect in one step" })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Open the approval page" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "I have done this" })).toBeVisible();
 	await page.getByRole("button", { name: "Skip for now" }).click();
 	await expect(page.getByRole("heading", { name: `${FORM} → 2 inboxes` })).toBeVisible();

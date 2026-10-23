@@ -6,9 +6,9 @@ Install this plugin, open Lead delivery, press New delivery, choose your form an
 
 In New delivery choose "Another app" and paste the address the app gave you: in Zapier "Webhooks by Zapier" (a paid Zapier plan), in Make a Custom webhook, in n8n a Webhook node. Each request is signed, so the app can check it came from your site.
 
-## Why does connecting a form need a web person?
+## Does connecting a form need a web person?
 
-EmDash's form editor has no box for it yet. Until it does, someone who can call the site's API sets it once per form; New delivery shows the instructions for that form and can email them.
+Not where the site can call its own address (on Cloudflare: the compatibility flag `global_fetch_strictly_public`): an admin connects it in one step by typing a code on EmDash's approval page. Lead Delivery uses that access once and throws it away. Elsewhere EmDash's form editor has no box for it yet, so someone who can call the site's API sets it once per form; New delivery shows the instructions for that form and can email them.
 
 ## What if HubSpot or Zapier is down?
 

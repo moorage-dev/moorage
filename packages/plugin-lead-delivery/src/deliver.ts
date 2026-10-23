@@ -2,6 +2,7 @@
 
 import type { PluginContext, StorageCollection } from "emdash";
 
+import { sweepApprovals } from "./approval.js";
 import {
 	ALERTS_KEY,
 	day,
@@ -591,10 +592,14 @@ export async function ensureSchedule(ctx: PluginContext, force = false) {
 	await ctx.kv.set(SCHEDULE_KEY, SCHEDULE);
 }
 
-/** Every minute: catch up, and once a day check for quiet forms and clean up. */
+/**
+ * Every minute: catch up, throw away approval codes that ran out (a code waits 15 minutes at
+ * most), and once a day check for quiet forms and clean up.
+ */
 export async function maintenance(ctx: PluginContext) {
 	await ctx.kv.set(TICK_KEY, new Date().toISOString());
 	await runDue(ctx);
+	await sweepApprovals(ctx);
 	const today = day(new Date().toISOString());
 	if ((await ctx.kv.get<string>(DAILY_KEY)) === today) return;
 	await ctx.kv.set(DAILY_KEY, today);
