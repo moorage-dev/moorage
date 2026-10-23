@@ -1306,7 +1306,13 @@ describe(`enforced: paths over ${SANDBOX_SUBREQUESTS} calls`, () => {
 				}),
 			{ enforce: true },
 		);
-		expect(await outcome(s, id, m, before)).toEqual(expected());
+		// The failed publish's log is not awaited, so whether it or the next read takes the 10th
+		// call varies from run to run; which calls are refused varies with it, the outcome does not.
+		const { refused, ...rest } = await outcome(s, id, m, before);
+		const { refused: _expected, ...want } = expected();
+		expect(rest).toEqual(want);
+		expect(refused.length).toBeGreaterThan(0);
+		for (const name of refused) expect(["log", "storageGet", "storageQuery"]).toContain(name);
 	});
 
 	it("page override_publish, 3 approvers", async () => {
