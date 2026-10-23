@@ -3,15 +3,21 @@
 import type { PluginContext } from "emdash";
 
 /**
- * A sandboxed run may make about 10 calls to the host (storage, KV, content,
- * fetch, email) and use about 50 ms of CPU. Every run goes through `counted`,
- * so each step can see what it has spent and record it; the tests read the
- * record and fail when a run goes over.
+ * A sandboxed run may make 10 calls to the host and use about 50 ms of CPU.
+ * Every `ctx.*` call is one, `ctx.log` included; the 11th throws. A run here
+ * makes at most `OPS_LIMIT`, one to spare. Every run goes through `counted`,
+ * so each step can see what it has spent: work that would not fit is left
+ * to the next run.
  */
-export const OPS_LIMIT = 10;
+export const OPS_LIMIT = 9;
 
 export interface Counter {
 	ops: number;
+}
+
+/** Can `calls` more host calls still be made in this run? */
+export function fits(counter: Counter, calls: number): boolean {
+	return counter.ops + calls <= OPS_LIMIT;
 }
 
 const SERVICES = [
@@ -23,6 +29,7 @@ const SERVICES = [
 	"http",
 	"email",
 	"cron",
+	"log",
 ] as const;
 
 function countMethods<T extends object>(target: T, counter: Counter): T {

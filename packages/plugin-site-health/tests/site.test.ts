@@ -160,7 +160,7 @@ describe("a full check of a public site", () => {
 		expect(text(first)).not.toContain('Pages checked","value');
 
 		const most = await finish(runtime);
-		expect(most).toBeLessThanOrEqual(10);
+		expect(most).toBeLessThanOrEqual(9);
 
 		const result = await summary(runtime);
 		expect(result.live).toBe("ok");
@@ -200,42 +200,49 @@ describe("a full check of a public site", () => {
 
 		runtime.http.clear();
 		await runtime.http.respond("https://gone.example/rye", new Response(null, { status: 404 }));
-		// HEAD turned away, so it asks again with GET: turned away again.
 		await runtime.http.respond(
 			"https://linkedin.com/company/acme",
 			new Response(null, { status: 403 }),
-		);
-		await runtime.http.respond(
-			"https://linkedin.com/company/acme",
-			new Response("no", { status: 403 }),
 		);
 		await runtime.http.respond("https://instagram.com/acme", new Response(null, { status: 200 }));
 		for (let run = 0; run < 3; run += 1) await cron(runtime);
 
 		const gone = idFor("external", "https://gone.example/rye");
 		const linkedin = idFor("external", "https://linkedin.com/company/acme");
-		expect(await runtime.inspect.storage.get<LinkRow>("links", linkedin)).toMatchObject({
-			state: "unknown",
-			reason: "refuses",
-		});
-		// Three sites, one request each, and one second try: the budget is spent, so
-		// gone.example waits its turn and is asked with GET next time.
+		// Three sites, one request each: no call to spare for a second try in the same run,
+		// so the two that turned HEAD away wait their turn and are asked with GET next time.
 		const asked = runtime.http.requests().map((r) => `${r.method} ${r.url}`);
 		expect(asked.sort()).toEqual(
 			[
 				"HEAD https://gone.example/rye",
 				"HEAD https://instagram.com/acme",
 				"HEAD https://linkedin.com/company/acme",
-				"GET https://linkedin.com/company/acme",
 			].sort(),
 		);
 		expect(runtime.http.requests()[0]?.headers["user-agent"]).toMatch(
 			/^EmDash-SiteHealth\/0\.1 \(\+https:\/\/acme\.test\)/,
 		);
-		expect((await runtime.inspect.kv.get<Queue>("queue"))?.ops ?? 0).toBeLessThanOrEqual(10);
-		expect(await runtime.inspect.storage.get<LinkRow>("links", gone)).toMatchObject({
-			state: "pending",
-			get: true,
+		expect((await runtime.inspect.kv.get<Queue>("queue"))?.ops ?? 0).toBeLessThanOrEqual(9);
+		for (const id of [gone, linkedin])
+			expect(await runtime.inspect.storage.get<LinkRow>("links", id)).toMatchObject({
+				state: "pending",
+				get: true,
+			});
+
+		// A minute later LinkedIn is asked with GET: turned away again.
+		await moveOn(runtime, linkedin, 0);
+		runtime.http.clear();
+		await runtime.http.respond(
+			"https://linkedin.com/company/acme",
+			new Response("no", { status: 403 }),
+		);
+		await cron(runtime);
+		expect(runtime.http.requests().map((r) => `${r.method} ${r.url}`)).toEqual([
+			"GET https://linkedin.com/company/acme",
+		]);
+		expect(await runtime.inspect.storage.get<LinkRow>("links", linkedin)).toMatchObject({
+			state: "unknown",
+			reason: "refuses",
 		});
 
 		// A minute later: one GET, "removed". Not counted yet.
@@ -455,7 +462,7 @@ describe("a site that cannot open its own pages", () => {
 		const runtime = await start("");
 		await runtime.transport.invokeHook("plugin:activate", {});
 		const most = await finish(runtime);
-		expect(most).toBeLessThanOrEqual(10);
+		expect(most).toBeLessThanOrEqual(9);
 		const result = await summary(runtime);
 		expect(result.live).toBe("not-public");
 		expect(result.rows.site).toEqual([]);

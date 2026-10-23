@@ -90,7 +90,7 @@ Then open **Tools > Site Health** in the admin sidebar.
 
 The numbers on the page are always a finished check. A check that is still running never changes them.
 
-Each run stays within the EmDash sandbox's limits of about 10 calls and 50 ms of CPU. The scheduled task runs every minute.
+Each run stays within the EmDash sandbox's limits of 10 calls (it makes at most 9) and about 50 ms of CPU. The scheduled task runs every minute.
 
 **If the site cannot open its own pages** (not public yet, bot protection, or a host that blocks a site from fetching itself), it says so in one banner. If your site is in the middle of an update and shows every visitor an error page, it says that instead, and emails at once. Links inside your content are still checked, and anything that needed the live page is listed as "could not check", never as broken.
 

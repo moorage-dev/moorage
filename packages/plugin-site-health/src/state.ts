@@ -70,6 +70,12 @@ export interface ScanState {
 	/** Pages are kept ready for visitors (home page caching headers). */
 	caching?: "ok" | "no";
 	counts?: Omit<Summary, "rows" | "lookRows" | "unknownRows" | "pass" | "finishedAt" | "live">;
+	/**
+	 * Rows to look at and rows that could not be checked, kept by the first half
+	 * of "freeze" for the check numbered `pass` (one left by an earlier check,
+	 * after going back to 0.1.3 and forward again, is not used).
+	 */
+	lists?: Pick<Summary, "lookRows" | "unknownRows" | "pass">;
 	startedAt: string;
 	finishedAt?: string;
 	lastStepAt?: string;
@@ -176,11 +182,19 @@ export interface Loaded {
 
 export const ROWS_PER_GROUP = 10;
 
-/** One read for everything kept in KV. */
-export async function load(ctx: PluginContext): Promise<Loaded> {
+/**
+ * One read for everything kept in KV. Settings an earlier release saved under
+ * the plain key are copied to `ctx.settings` only when `copy` is set: by the
+ * Admin's own page, which has a call to spare for it. The scheduled task, the
+ * hooks and the widget read them where they are.
+ */
+export async function load(ctx: PluginContext, { copy = false } = {}): Promise<Loaded> {
 	const items = await ctx.kv.list();
 	const kv = new Map(items.map((item) => [item.key, item.value as unknown]));
-	const options = ((await pickSettings(ctx, kv, OPTIONS)) as Partial<Options> | null) ?? {};
+	const saved = copy
+		? await pickSettings(ctx, kv, OPTIONS)
+		: (kv.get(`settings:${OPTIONS.name}`) ?? kv.get(OPTIONS.legacy) ?? null);
+	const options = (saved as Partial<Options> | null) ?? {};
 	const alerts = (kv.get(KEY.alerts) as Partial<Alerts> | undefined) ?? {};
 	const queue = (kv.get(KEY.queue) as Partial<Queue> | undefined) ?? {};
 	const checklist = (kv.get(KEY.checklist) as Partial<ChecklistState> | undefined) ?? {};
