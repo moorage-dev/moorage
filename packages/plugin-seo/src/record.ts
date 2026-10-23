@@ -274,13 +274,23 @@ export async function buildEntryRecord(
 	return (await rebuildEntry(ctx, collection, id, config))?.record ?? null;
 }
 
-/** As buildEntryRecord, also returning the entry it read, to save a second read. */
-export async function rebuildEntry(
+/** An entry's record rebuilt from the saved entry, not yet written. */
+interface Rebuilt {
+	entry: ContentEntry;
+	previous: EntryRecord | null;
+	/** Keeps the stored flag while the title stays the same; off otherwise. */
+	record: EntryRecord;
+	newKey: string;
+	oldKey: string;
+}
+
+/** Read an entry and what is needed to rebuild its record: five operations, no writes. */
+async function prepareEntry(
 	ctx: PluginContext,
 	collection: string,
 	id: string,
 	config: SeoConfig,
-): Promise<{ record: EntryRecord; entry: ContentEntry } | null> {
+): Promise<Rebuilt | null> {
 	const entry = await ctx.content?.get(collection, id);
 	if (!entry) return null;
 
@@ -314,6 +324,21 @@ export async function rebuildEntry(
 		draft,
 		newKey !== "" && newKey === oldKey && previous !== null && isDuplicate(previous),
 	);
+	return { entry, previous, record, newKey, oldKey };
+}
+
+/** As buildEntryRecord, also returning the entry it read, to save a second read. */
+export async function rebuildEntry(
+	ctx: PluginContext,
+	collection: string,
+	id: string,
+	config: SeoConfig,
+): Promise<{ record: EntryRecord; entry: ContentEntry } | null> {
+	const prepared = await prepareEntry(ctx, collection, id, config);
+	if (!prepared) return null;
+	const { entry, record, newKey, oldKey } = prepared;
+	const store = entryStore(ctx);
+	const key = entryKey(collection, id);
 
 	// Write first, then read the pages with the new and the old title. A save and a check
 	// (or two saves) running at the same time each write before they read, so at least one
@@ -347,6 +372,31 @@ export async function rebuildEntry(
 	if (writes.size > 0)
 		await store.putMany([...writes].map(([itemId, data]) => ({ id: itemId, data })));
 	return { record: writes.get(key) ?? record, entry };
+}
+
+/**
+ * The record for the editor panel: rebuilt from the saved entry, with `change` (the page
+ * type an admin picked) applied, and written in one operation. The panel never moves a page
+ * between titles, which costs up to five more operations: on Cloudflare a sandboxed route may
+ * make only ten (Worker Loader's subrequest limit; see SANDBOX_OPERATIONS in scan.ts). When the title changed since the record was written, the save hook
+ * that follows every save, or the next full check, settles the flags; the panel then keeps the
+ * stored record as it is, only with `change` applied, so that hook still sees the old title.
+ */
+export async function refreshForPanel(
+	ctx: PluginContext,
+	collection: string,
+	id: string,
+	config: SeoConfig,
+	change?: (record: EntryRecord) => EntryRecord,
+): Promise<{ record: EntryRecord; entry: ContentEntry } | null> {
+	const prepared = await prepareEntry(ctx, collection, id, config);
+	if (!prepared) return null;
+	const { entry, previous, newKey, oldKey } = prepared;
+	const record = change ? change(prepared.record) : prepared.record;
+	const key = entryKey(collection, id);
+	if (previous === null || newKey === oldKey) await entryStore(ctx).put(key, record);
+	else if (change) await entryStore(ctx).put(key, change(previous));
+	return { record, entry };
 }
 
 /** Whether a stored record describes an older version of the entry than `than`. */

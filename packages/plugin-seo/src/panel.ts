@@ -7,7 +7,7 @@ import { excerptOf, truncateTitle } from "./checks.js";
 import { defaultTypeForCollection, loadConfig, type PageSchemaType } from "./config.js";
 import { buildGraph } from "./graph.js";
 import { PAGE_TYPES, typeLabel } from "./page-types.js";
-import { entryKey, entryStore, rebuildEntry } from "./record.js";
+import { refreshForPanel, type EntryRecord } from "./record.js";
 import { parseUrl } from "./url.js";
 
 const ADMIN_ROLE = 50;
@@ -47,30 +47,31 @@ export async function handlePanel(
 	const admin = (role ?? 0) >= ADMIN_ROLE;
 	const interaction = isRecord(input) ? input : {};
 	const config = await loadConfig(ctx);
-	const store = entryStore(ctx);
-	const key = entryKey(entry.collection, entry.id);
-	let toast: BlockResponse["toast"];
 
 	// A menu, not a form: the panel sits inside the editor's own form, and a form
 	// cannot be nested in another.
 	const savingType =
 		admin && interaction.type === "block_action" && interaction.action_id === "set_type";
 
-	// Always rebuilt from the saved entry, so the panel never shows stale checks.
+	const chosen = typeof interaction.value === "string" ? interaction.value : SAME_AS_OTHERS;
+	const picked = PAGE_TYPES.find((option) => option.value === chosen)?.value;
+	const setType = (data: EntryRecord): EntryRecord => {
+		const { type: _previous, ...rest } = data;
+		return picked ? { ...rest, type: picked } : rest;
+	};
+
+	// Always rebuilt from the saved entry, so the panel never shows stale checks. The chosen
+	// type is written with it, in the same operation.
 	const [rebuilt, publicUrl] = await Promise.all([
-		rebuildEntry(ctx, entry.collection, entry.id, config),
+		refreshForPanel(ctx, entry.collection, entry.id, config, savingType ? setType : undefined),
 		ctx.content?.getPublicUrl?.(entry.collection, entry.id),
 	]);
-	let record = rebuilt?.record;
+	const record = rebuilt?.record;
 	const item = rebuilt?.entry;
-	if (record && savingType) {
-		const chosen = typeof interaction.value === "string" ? interaction.value : SAME_AS_OTHERS;
-		const type = PAGE_TYPES.find((option) => option.value === chosen)?.value;
-		const { type: _previous, ...rest } = record;
-		record = type ? { ...rest, type } : rest;
-		await store.put(key, record);
-		toast = { type: "success", message: "Saved. Google will pick this up next time it visits." };
-	}
+	const toast: BlockResponse["toast"] =
+		record && savingType
+			? { type: "success", message: "Saved. Google will pick this up next time it visits." }
+			: undefined;
 	if (!record || !item) {
 		return {
 			blocks: [{ type: "context", text: "Save this page to see how it may look on Google." }],

@@ -4,8 +4,10 @@ import type { PluginContext } from "emdash";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_CONFIG } from "../src/config.js";
+import { handlePanel } from "../src/panel.js";
+import plugin from "../src/plugin.js";
 import { rebuildEntry, removeEntryRecord, type EntryRecord } from "../src/record.js";
-import { scanStep, startScan, type ScanState } from "../src/scan.js";
+import { loadScan, SCAN_TASK, scanStep, startScan, type ScanState } from "../src/scan.js";
 
 // A save hook and the site-wide check can run at the same time: EmDash runs save hooks
 // after answering the save, and the check continues in the background. Neither has a
@@ -33,6 +35,9 @@ const clone = <T>(value: T): T => structuredClone(value);
 
 class World {
 	records = new Map<string, EntryRecord>();
+	/** Order rows were created in, as the host's created_at; a row put again keeps its place. */
+	created = new Map<string, number>();
+	private rows = 0;
 	entries = new Map<string, Entry>();
 	kv = new Map<string, unknown>();
 	ops: string[] = [];
@@ -106,6 +111,18 @@ class World {
 			return result;
 		};
 		const records = this.records;
+		const created = this.created;
+		const write = (id: string, data: EntryRecord) => {
+			if (!created.has(id)) created.set(id, (this.rows += 1));
+			records.set(id, clone(data));
+		};
+		const remove = (id: string) => {
+			created.delete(id);
+			return records.delete(id);
+		};
+		const matches = (data: EntryRecord, where?: { titleKey?: string; status?: { in: string[] } }) =>
+			(where?.titleKey === undefined || data.titleKey === where.titleKey) &&
+			(where?.status === undefined || where.status.in.includes(data.status ?? ""));
 		const ordered = () =>
 			[...records]
 				.map(([id, data]) => ({ id, data }))
@@ -127,26 +144,42 @@ class World {
 				}),
 			put: (id: string, data: EntryRecord) =>
 				step("write", "put", () => {
-					records.set(id, clone(data));
+					write(id, data);
 				}),
 			putMany: (items: Array<{ id: string; data: EntryRecord }>) =>
 				step("write", "putMany", () => {
-					for (const { id, data } of items) records.set(id, clone(data));
+					for (const { id, data } of items) write(id, data);
 				}),
-			delete: (id: string) => step("write", "delete", () => records.delete(id)),
+			delete: (id: string) => step("write", "delete", () => remove(id)),
+			deleteMany: (ids: string[]) =>
+				step("write", "deleteMany", () => ids.filter((id) => remove(id)).length),
 			query: (options: {
-				where?: { titleKey?: string };
+				where?: { titleKey?: string; status?: { in: string[] } };
 				orderBy?: { titleKey: "asc" };
 				limit?: number;
 				cursor?: string;
 			}) =>
 				step("read", "query", () => {
-					const where = options.where?.titleKey;
-					const all = ordered().filter(
-						(item) => where === undefined || item.data.titleKey === where,
-					);
-					const start = Number(options.cursor ?? 0);
 					const limit = options.limit ?? 50;
+					if (!options.orderBy) {
+						// As the host: in creation order, continuing after the last row read, so
+						// deleting rows already read never skips one.
+						const after = Number(options.cursor ?? 0);
+						const rows = [...records]
+							.map(([id, data]) => ({ id, data, at: created.get(id) ?? 0 }))
+							.filter((item) => item.at > after && matches(item.data, options.where))
+							.sort((a, b) => a.at - b.at);
+						const page = rows.slice(0, limit);
+						const more = rows.length > limit;
+						const last = page.at(-1);
+						return {
+							items: page.map(({ id, data }) => ({ id, data })),
+							hasMore: more,
+							...(more && last ? { cursor: String(last.at) } : {}),
+						};
+					}
+					const all = ordered().filter((item) => matches(item.data, options.where));
+					const start = Number(options.cursor ?? 0);
 					const items = all.slice(start, start + limit);
 					const hasMore = start + limit < all.length;
 					return { items, hasMore, ...(hasMore ? { cursor: String(start + limit) } : {}) };
@@ -160,6 +193,8 @@ class World {
 			content: {
 				get: async (_collection: string, id: string) =>
 					step("read", "content.get", () => entries.get(id) ?? null),
+				getPublicUrl: async (_collection: string, id: string) =>
+					step("read", "content.getPublicUrl", () => `https://acme.test/${id}`),
 				list: async (_collection: string, options: { limit: number; cursor?: string }) =>
 					step("read", "content.list", () => {
 						const all = [...entries.values()].filter((entry) => entry.status === "published");
@@ -181,13 +216,25 @@ class World {
 				),
 			},
 			kv: {
-				get: async (key: string) => clone(kv.get(key) ?? null),
-				set: async (key: string, value: unknown) => {
-					kv.set(key, clone(value));
-				},
-				delete: async (key: string) => kv.delete(key),
+				get: async (key: string) => step("read", "kv.get", () => kv.get(key) ?? null),
+				set: async (key: string, value: unknown) =>
+					step("write", "kv.set", () => {
+						kv.set(key, clone(value));
+					}),
+				delete: async (key: string) => step("write", "kv.delete", () => kv.delete(key)),
 			},
-			cron: { schedule: async () => {}, cancel: async () => {} },
+			settings: {
+				get: async (key: string) =>
+					step("read", "settings.get", () => kv.get(`settings:${key}`) ?? null),
+				set: async (key: string, value: unknown) =>
+					step("write", "settings.set", () => {
+						kv.set(`settings:${key}`, clone(value));
+					}),
+			},
+			cron: {
+				schedule: async () => step("write", "cron.schedule", () => {}),
+				cancel: async () => step("write", "cron.cancel", () => {}),
+			},
 			log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
 		} as unknown as PluginContext;
 	}
@@ -389,5 +436,185 @@ describe("operations a save costs", () => {
 		await save(world, "b", [], "leave");
 		expect(world.flagged("a") || world.flagged("b")).toBe(false);
 		expect(opsOf(world, "leave").length).toBeLessThanOrEqual(8);
+	});
+});
+
+const cronTick = plugin.hooks?.cron as unknown as (
+	event: { name: string },
+	ctx: PluginContext,
+) => Promise<void>;
+
+/**
+ * Run a whole check: started as a visit to the SEO page would, then continued by the background
+ * task, one tick per request as on the host. Returns the operations of each tick.
+ */
+async function fullCheck(world: World, gates: Gate[] = []): Promise<string[][]> {
+	const ticks: string[][] = [];
+	// Records are stamped to the millisecond; let the saves above be older than the check.
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	let state: ScanState | null = await startScan(
+		world.ctx("start", gates),
+		["pages"],
+		DEFAULT_CONFIG,
+	);
+	for (let index = 1; state && (state.status !== "done" || state.sweep); index += 1) {
+		if (index > 100) throw new Error("the check never finished");
+		await cronTick({ name: SCAN_TASK }, world.ctx(`tick ${index}`));
+		ticks.push(opsOf(world, `tick ${index}`));
+		state = await loadScan(world.ctx("look"));
+	}
+	return ticks;
+}
+
+describe("records of pages deleted during a check", () => {
+	it("removes the record a check wrote back for a deleted page, and its twin's flag", async () => {
+		const world = new World();
+		world.page("a", "Our services");
+		world.page("b", "Our services");
+		await save(world, "a");
+		await save(world, "b");
+
+		// b is deleted after the check listed it and before the check wrote: the check writes
+		// b's record back after the delete hook removed it.
+		await fullCheck(world, [
+			{
+				when: "after",
+				op: "content.list",
+				run: async () => {
+					world.entries.delete("b");
+					await removeEntryRecord(world.ctx("delete b"), "pages", "b");
+				},
+			},
+		]);
+		// The next full check does not see b, so its record goes and a is alone again.
+		await fullCheck(world);
+
+		expect(world.record("b")).toBeUndefined();
+		expect(world.flagged("a")).toBe(false);
+		expect(world.record("a")?.status).toBe("ready");
+		// A later save of a does not find b's record either.
+		await save(world, "a");
+		expect(world.flagged("a")).toBe(false);
+	});
+
+	it("removes left-over records on a site checked in several batches, within the budget", async () => {
+		const world = new World();
+		for (let index = 0; index < 45; index += 1) world.page(`p${index}`, `Page number ${index}`);
+		world.page("a", "Our services");
+		world.page("b", "Our services");
+		world.page("c", "Contact us");
+		for (const id of world.entries.keys()) await save(world, id);
+		expect(world.flagged("a")).toBe(true);
+		// Left over from deletes that raced earlier checks.
+		world.entries.delete("b");
+		world.entries.delete("p7");
+
+		const steps = await fullCheck(world);
+
+		expect(world.record("b")).toBeUndefined();
+		expect(world.record("p7")).toBeUndefined();
+		expect(world.flagged("a")).toBe(false);
+		expect(world.record("c")).toBeDefined();
+		expect(world.records.size).toBe(world.entries.size);
+		// Each tick of the background task, its own reads of the check and settings included.
+		expect(steps.length).toBeGreaterThan(3);
+		for (const ops of steps) expect(ops.length).toBeLessThanOrEqual(8);
+	});
+
+	it("keeps the record of a page created after the check read its list", async () => {
+		const world = new World();
+		for (let index = 0; index < 25; index += 1) world.page(`p${index}`, `Page number ${index}`);
+		for (const id of world.entries.keys()) await save(world, id);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+
+		// EmDash lists the newest entries first, so a page created during a check is never
+		// listed by it. Here it is created once every entry has been read.
+		let state = await startScan(world.ctx("step 0"), ["pages"], DEFAULT_CONFIG);
+		while (!state.sweep) state = await scanStep(world.ctx("step"), state, DEFAULT_CONFIG);
+		world.page("new", "Opening hours");
+		await save(world, "new");
+		const written = world.record("new")?.checkedAt;
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		while (state.status !== "done" || state.sweep) {
+			state = await scanStep(world.ctx("step"), state, DEFAULT_CONFIG);
+		}
+
+		expect(world.record("new")?.title).toBe("Opening hours");
+		// The check never wrote it: the sweep is what left it alone.
+		expect(world.record("new")?.checkedAt).toBe(written);
+	});
+
+	it("keeps drafts and pages of collections the check does not cover", async () => {
+		const world = new World();
+		world.page("a", "Our services");
+		await save(world, "a");
+		const draft = world.page("d", "Coming soon");
+		draft.status = "draft";
+		await save(world, "d");
+		world.records.set("posts:x", { ...world.record("a")!, collection: "posts", entryId: "x" });
+		world.created.set("posts:x", 999);
+
+		await fullCheck(world);
+
+		expect(world.record("d")?.status).toBe("draft");
+		expect(world.records.has("posts:x")).toBe(true);
+	});
+});
+
+describe("operations the Google preview panel costs", () => {
+	const ADMIN = 50;
+	const setType = { type: "block_action", action_id: "set_type", value: "AboutPage" };
+	const openPanel = (world: World, id: string, actor: string, input: unknown = setType) =>
+		handlePanel(input, { collection: "pages", id }, ADMIN, world.ctx(actor));
+
+	it("stays within the budget when a page joins another's title and its type changes", async () => {
+		const world = new World();
+		world.kv.set("settings:config", DEFAULT_CONFIG);
+		world.page("a", "Our services");
+		world.page("b", "Catering");
+		await save(world, "a");
+		await save(world, "b");
+
+		// b takes a's title; the panel is opened and the type changed before the save hook runs.
+		world.rename("b", "Our services");
+		await openPanel(world, "b", "panel");
+		expect(opsOf(world, "panel").length).toBeLessThanOrEqual(8);
+		expect(world.record("b")?.type).toBe("AboutPage");
+
+		// The save hook moves b between titles as usual.
+		await save(world, "b");
+		expect(world.flagged("a") && world.flagged("b")).toBe(true);
+		expect(world.record("b")?.type).toBe("AboutPage");
+	});
+
+	it("stays within the budget when a page leaves a shared title and its type changes", async () => {
+		const world = new World();
+		world.kv.set("settings:config", DEFAULT_CONFIG);
+		world.page("a", "Our services");
+		world.page("b", "Our services");
+		await save(world, "a");
+		await save(world, "b");
+
+		world.rename("b", "Weddings");
+		await openPanel(world, "b", "panel");
+		expect(opsOf(world, "panel").length).toBeLessThanOrEqual(8);
+
+		await save(world, "b");
+		expect(world.flagged("a") || world.flagged("b")).toBe(false);
+		expect(world.record("b")?.type).toBe("AboutPage");
+		expect(world.record("b")?.title).toBe("Weddings");
+	});
+
+	it("keeps an ordinary open as cheap as before", async () => {
+		const world = new World();
+		world.kv.set("settings:config", DEFAULT_CONFIG);
+		world.page("a", "Our services");
+		world.page("b", "Our services");
+		await save(world, "a");
+		await save(world, "b");
+
+		await openPanel(world, "b", "open", { type: "page_load" });
+		expect(opsOf(world, "open").length).toBeLessThanOrEqual(8);
+		expect(world.flagged("a") && world.flagged("b")).toBe(true);
 	});
 });

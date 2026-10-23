@@ -10,6 +10,9 @@
 
 - a9004ee: The warning that two pages share a title no longer disappears by itself. When a page was saved while "Check my pages" was running, or two pages with the same title were saved at the same moment, one of them could lose the warning (or keep it after a rename) until the next check. A save now reads the pages with its title after writing, and a check no longer writes over a page saved after it read that page, so the warning ends up on exactly the pages that share a title.
 
+- A page deleted while "Check my pages" was running no longer lingers in the SEO page's counts, and no longer keeps another page flagged for sharing its title. At the end of each full check, the plugin now removes what it kept about pages the check did not find, then settles the title warnings; pages created or saved during the check are left alone. This only ever showed in the admin, never on the public site.
+- The Google preview panel no longer risks hitting Cloudflare's limit of 10 operations per request when a page's title and its page type are changed together. The panel now leaves moving the "same title" warning between pages to the save itself (or the next check), as it already did in the usual case.
+
 ## 0.1.7
 
 ### Patch Changes
