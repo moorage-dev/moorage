@@ -461,9 +461,11 @@ test.describe("admin", () => {
 		const high = await make(button("Cake of the month", "Order"));
 		// Counted the way a visitor's browser does: 120 views and 6 clicks, 100 views and 10 clicks.
 		const count = async (p: string, e: string, n: number) => {
-			for (let i = 0; i < n; i++) {
-				const r = await admin.post(`${API}/count`, { data: { p, e, m: false } });
-				expect(r.status()).toBe(200);
+			for (let i = 0; i < n; i += 20) {
+				const batch = Array.from({ length: Math.min(20, n - i) }, () =>
+					admin.post(`${API}/count`, { data: { p, e, m: false } }),
+				);
+				for (const r of await Promise.all(batch)) expect(r.status()).toBe(200);
 			}
 		};
 		await count(low, "seen", 120);
@@ -483,11 +485,15 @@ test.describe("admin", () => {
 			.getByRole("button", { name: "Edit", exact: true })
 			.click();
 		await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
+		// Something typed and not saved yet stays through a change of period.
+		const heading = page.getByLabel(/^Heading/);
+		await heading.fill("Typed, not saved yet");
 		// Pick This month: applied at once, no Show button.
 		await page.getByRole("combobox", { name: "Period" }).click();
 		await page.getByRole("option", { name: "This month" }).click();
 		await expect(page.getByRole("combobox", { name: "Period" })).toHaveText(/This month/);
 		await expect(page.getByText("120", { exact: true })).toBeVisible();
+		await expect(heading).toHaveValue("Typed, not saved yet");
 		await expect(page.getByText("5%", { exact: true })).toBeVisible();
 		await expect(page.getByText("Button clicks", { exact: true })).toBeVisible();
 		// The daily bars.
