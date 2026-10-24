@@ -107,7 +107,40 @@ export const HALF_HOURS: string[] = Array.from(
 	(_, i) => `${pad(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`,
 );
 
-/** The UTC day "2026-11-01" of a moment, used for count rows. */
+/** The UTC day "2026-11-01" of a moment: the one-email-a-day mark for alerts. */
 export function utcDay(ms: number): string {
 	return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * The day "2026-11-01" of a moment in the site's time zone. Count rows are kept
+ * by this day from 0.2.0 on; earlier rows were kept by the UTC day.
+ */
+export function zoneDay(ms: number, zone: string): string {
+	return fromMoment(ms, zone).date;
+}
+
+/** "2026-11-01" plus some days ("2026-10-30" for -2): calendar days, no clocks involved. */
+export function addDays(day: string, days: number): string {
+	const [y, m, d] = day.split("-").map(Number);
+	return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+}
+
+/** How many days from one day to another, both counted: 1 for the same day. */
+export function daysFrom(from: string, to: string): number {
+	const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`);
+	return Math.round(ms / 86_400_000) + 1;
+}
+
+/** The last day of the month a day is in. */
+export function monthEnd(day: string): string {
+	const [y, m] = day.split("-").map(Number);
+	return new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
+}
+
+/** "3 Oct" for a day "2026-10-03", or "3 Oct 2025" when it is not the year of `today`. */
+export function shortDay(day: string, today: string): string {
+	const [y, m, d] = day.split("-").map(Number);
+	const year = day.slice(0, 4) === today.slice(0, 4) ? "" : ` ${y}`;
+	return `${d} ${MONTHS[(m ?? 1) - 1]}${year}`;
 }

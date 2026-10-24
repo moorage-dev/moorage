@@ -18,7 +18,11 @@ describe("signed download link", () => {
 		const { kv, query } = await signed();
 		expect(Number(query.get("expires"))).toBe(NOW + EXPORT_LINK_MS);
 		expect(EXPORT_LINK_MS).toBeLessThanOrEqual(10 * 60 * 1000);
-		expect(await checkExport(kv, query, NOW)).toEqual({ from: "2026-10-01", to: "2026-10-07" });
+		expect(await checkExport(kv, query, NOW)).toEqual({
+			from: "2026-10-01",
+			to: "2026-10-07",
+			popup: "",
+		});
 		expect(await checkExport(kv, query, NOW + EXPORT_LINK_MS)).not.toBeNull();
 		expect(await checkExport(kv, query, NOW + EXPORT_LINK_MS + 1)).toBeNull();
 	});
@@ -27,7 +31,7 @@ describe("signed download link", () => {
 		const { kv, query } = await signed({ from: "", to: "" });
 		expect(query.has("from")).toBe(false);
 		expect(query.has("to")).toBe(false);
-		expect(await checkExport(kv, query, NOW)).toEqual({ from: "", to: "" });
+		expect(await checkExport(kv, query, NOW)).toEqual({ from: "", to: "", popup: "" });
 	});
 
 	it("refuses changed dates, a changed expiry, a changed or missing signature", async () => {
@@ -53,6 +57,30 @@ describe("signed download link", () => {
 		}
 	});
 
+	it("signs a link for one popup, which cannot be turned into another popup's or all of them", async () => {
+		const fake = fakeContext();
+		const kv = fake.ctx.kv;
+		const range = { from: "2026-10-01", to: "2026-10-07", popup: "abcd1234" };
+		const query = new URLSearchParams(await signExport(kv, range, NOW));
+		expect(query.get("popup")).toBe("abcd1234");
+		expect(await checkExport(kv, query, NOW)).toEqual(range);
+		for (const change of [
+			(q: URLSearchParams) => q.set("popup", "efgh5678"),
+			(q: URLSearchParams) => q.delete("popup"),
+			(q: URLSearchParams) => q.set("popup", "../x"),
+		]) {
+			const copy = new URLSearchParams(query);
+			change(copy);
+			expect(await checkExport(kv, copy, NOW), copy.toString()).toBeNull();
+		}
+		// And a link for every popup cannot be narrowed to one.
+		const every = new URLSearchParams(
+			await signExport(kv, { from: "2026-10-01", to: "2026-10-07" }, NOW),
+		);
+		every.set("popup", "abcd1234");
+		expect(await checkExport(kv, every, NOW)).toBeNull();
+	});
+
 	it("refuses a link that claims to last longer than ten minutes", async () => {
 		const { kv, query } = await signed();
 		// Signed at NOW, checked a minute before it was made: expires is now 11 minutes away.
@@ -69,10 +97,12 @@ describe("signed download link", () => {
 		expect(await checkExport(kv, new URLSearchParams(a), NOW)).toEqual({
 			from: "2026-10-01",
 			to: "",
+			popup: "",
 		});
 		expect(await checkExport(kv, new URLSearchParams(b), NOW)).toEqual({
 			from: "",
 			to: "2026-10-07",
+			popup: "",
 		});
 		expect(typeof fake.kv.get("export-secret")).toBe("string");
 	});

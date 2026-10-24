@@ -621,6 +621,16 @@ export function boot(c: ClientConfig): void {
 					data[key] =
 						had === undefined ? value : Array.isArray(had) ? [...had, value] : [had, value];
 				}
+				// The form's own hidden campaign fields, if it has them and they are empty: the same
+				// tags as the popup's button links, so Forms, its emails and Lead Delivery show the popup.
+				const tags: Record<string, string> = {
+					utm_source: "popups",
+					utm_medium: item.k === "bar" ? "top-bar" : item.k === "slide" ? "slide-in" : "popup",
+					utm_campaign: item.n,
+					page_url: w.location.origin + w.location.pathname,
+				};
+				for (const f of form.pages.flatMap((page) => page.fields))
+					if (f.type === "hidden" && tags[f.name] && !data[f.name]) data[f.name] = tags[f.name];
 				try {
 					const response = await w.fetch(c.forms + "submit", {
 						method: "POST",

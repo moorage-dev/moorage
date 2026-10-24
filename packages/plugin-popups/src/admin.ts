@@ -23,13 +23,34 @@ import {
 	type Popup,
 	type Store,
 } from "./config.js";
+import type { ExportRange } from "./export-link.js";
 import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
 import { hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
-import { rate, totals as sumRows, type CountRow, type Totals } from "./stats.js";
-import { describeMoment, fromMoment, HALF_HOURS, toMoment } from "./time.js";
+import {
+	compare,
+	COMPARE_PERIOD,
+	daysText,
+	ENOUGH_VIEWS,
+	isForm,
+	isPeriod,
+	parseSort,
+	PERIODS,
+	periodDays,
+	periodLabel,
+	POPUP_PERIOD,
+	popupTiles,
+	responseBars,
+	startedOn,
+	sum,
+	type Period,
+	type Sort,
+	type Tile,
+} from "./results.js";
+import type { CountRow, RowQuery } from "./stats.js";
+import { describeMoment, fromMoment, HALF_HOURS, toMoment, zoneDay } from "./time.js";
 
 /**
- * The one admin page, as Block Kit: Popups, Numbers, Settings, and the four
+ * The one admin page, as Block Kit: Popups, Results, Settings, and the four
  * steps of a popup. Pure apart from the form check, which is handed in, so it
  * is tested without a running site.
  */
@@ -63,13 +84,11 @@ export interface PageState {
 	now: number;
 	/** The site's address (https://example.com), for preview and download links. */
 	origin?: string;
-	/** The signed query string for the spreadsheet download of the dates on screen. */
-	exportQuery?: string;
 	pluginId: string;
-	totals: Map<string, Totals>;
-	/** Rows for the chosen dates on the Numbers tab. */
-	rows: CountRow[];
-	range: { from: string; to: string };
+	/** The period picked for results, kept while moving between a popup's page and Results. */
+	period?: Period;
+	/** How "How your popups compare" is sorted, when someone sorted it. */
+	sort?: Sort | null;
 	problems: Problems;
 	media: MediaOption[];
 	/** The site's forms for step 2's dropdown; absent when Forms could not list them. */
@@ -84,6 +103,7 @@ export interface PageState {
 	toast?: BlockResponse["toast"];
 }
 
+// "numbers" is the Results tab: the old name stays in action values so nothing breaks.
 const TAB = { popups: 0, numbers: 1, settings: 2 } as const;
 const STEPS = ["What kind", "What it says", "When and where", "Dates and turn on"];
 
@@ -149,64 +169,235 @@ function showsOnText(popup: Popup, state: PageState): string {
 	return popup.exclude.length ? `${where}, except ${popup.exclude.join(", ")}` : where;
 }
 
-function responsesText(popup: Popup, totals: Totals | undefined): string {
-	if (!totals || totals.seen === 0) return "–";
-	const form = popup.contains === "form" && popup.kind !== "bar";
-	const n = form ? totals.sent : totals.clicked;
-	const word = form ? (n === 1 ? "sign-up" : "sign-ups") : n === 1 ? "click" : "clicks";
-	const r = rate(n, totals.seen);
-	return `${n.toLocaleString("en")} ${word}${r === null ? "" : ` (${r}%)`}`;
-}
-
-const num = (n: number | undefined) => (n ? n.toLocaleString("en") : "–");
+// ── Results ─────────────────────────────────────────────────
 
 /**
- * One popup's numbers, as words: the Numbers tab's row and the stats on the
- * popup's own page, so both always say the same. "–" where nothing was counted.
+ * Results are drawn in two passes. The screens put a placeholder where results
+ * go (`resultsSlot`); once the screen is known, the route reads the count rows
+ * for exactly that popup and period, once, and `fillResults` puts the blocks
+ * in. So a screen without results (a step, a preview) reads no rows at all.
  */
-export function numberCells(popup: Popup, t: Totals | undefined) {
-	const responses = responsesText(popup, t);
-	const seen = t?.seen ?? 0;
+const SLOT = "results-slot";
+
+interface SlotRequest {
+	/** A popup's id, or "" for every popup (the Results tab). */
+	popup: string;
+	period: Period;
+	sort: Sort | null;
+}
+
+function resultsSlot(request: SlotRequest): Block {
+	return { type: "context", block_id: SLOT, text: JSON.stringify(request) };
+}
+
+/** What `fillResults` needs: the screen's facts, a way to read rows and to sign a download. */
+export interface ResultsSource {
+	store: Store;
+	zone: string;
+	now: number;
+	origin?: string;
+	pluginId: string;
+	rows(query: RowQuery): Promise<CountRow[]>;
+	sign(range: ExportRange): Promise<string | undefined>;
+}
+
+function findSlot(blocks: Block[]): SlotRequest | null {
+	for (const block of blocks) {
+		if (block.type === "context" && block.block_id === SLOT) return JSON.parse(block.text);
+		if (block.type === "tab")
+			for (const panel of block.panels) {
+				const found = findSlot(panel.blocks);
+				if (found) return found;
+			}
+	}
+	return null;
+}
+
+function replaceSlot(blocks: Block[], filled: Block[]): Block[] {
+	return blocks.flatMap((block): Block[] => {
+		if (block.type === "context" && block.block_id === SLOT) return filled;
+		if (block.type === "tab")
+			return [
+				{
+					...block,
+					panels: block.panels.map((p) => ({ ...p, blocks: replaceSlot(p.blocks, filled) })),
+				},
+			];
+		return [block];
+	});
+}
+
+/** Puts the results into a drawn screen, reading only the rows it shows. */
+export async function fillResults(
+	response: BlockResponse,
+	source: ResultsSource,
+): Promise<BlockResponse> {
+	const request = findSlot(response.blocks);
+	if (!request) return response;
+	const popup = request.popup ? source.store.popups.find((p) => p.id === request.popup) : undefined;
+	const filled =
+		request.popup && popup
+			? await popupResults(popup, request.period, source)
+			: request.popup
+				? []
+				: await compareResults(request.period, request.sort, source);
+	return { ...response, blocks: replaceSlot(response.blocks, filled) };
+}
+
+type SelectElement = Extract<
+	Extract<Block, { type: "actions" }>["elements"][number],
+	{ type: "select" }
+>;
+
+function periodPicker(scope: string, period: Period, one: boolean): SelectElement {
 	return {
-		seen: num(seen),
-		responses: seen < 100 && seen > 0 ? `${responses} (not enough visitors yet)` : responses,
-		closed: popup.kind === "inline" ? "–" : num(t?.closed),
-		phones: seen ? `${Math.round(((t?.phone ?? 0) / seen) * 100)}%` : "–",
-		since: t?.since ? shortDay(t.since) : "–",
+		type: "select",
+		action_id: "period",
+		label: "Period",
+		// The select tells the page only its value, so the value says which screen it is on.
+		options: PERIODS.map((p) => ({ label: periodLabel(p, one), value: `${scope}:${p}` })),
+		initial_value: `${scope}:${period}`,
 	};
 }
 
-/** Under a finished popup's status line: its numbers since it started, as on the Numbers tab. */
-function ownNumbers(popup: Popup, state: PageState): Block[] {
-	const cells = numberCells(popup, state.totals.get(popup.id));
-	// Two by two: EmDash lays a stats block out in one line that never wraps, and four boxes
-	// run off a 390 px phone.
+const statsRow = (tiles: Tile[]): Block => ({ type: "stats", items: tiles });
+
+function downloadLink(source: ResultsSource, query: string | undefined, label: string): Block[] {
+	if (!source.origin || !query) return [];
 	return [
-		{
-			type: "stats",
-			items: [
-				{ label: "Seen", value: cells.seen },
-				{ label: "Responses", value: cells.responses },
-			],
-		},
-		{
-			type: "stats",
-			items: [
-				{ label: "Closed", value: cells.closed },
-				{ label: "On phones", value: cells.phones },
-			],
-		},
 		{
 			type: "actions",
 			elements: [
 				{
+					type: "link",
+					label,
+					target: {
+						kind: "external",
+						url: `${source.origin}/_emdash/api/plugins/${source.pluginId}/export?${query}`,
+					},
+					appearance: "secondary",
+				},
+			],
+		},
+	];
+}
+
+/** A finished popup's results: the period, four tiles, a bar a day, and its own download. */
+async function popupResults(popup: Popup, period: Period, source: ResultsSource): Promise<Block[]> {
+	const today = zoneDay(source.now, source.zone);
+	const days = periodDays(period, source.now, source.zone, startedOn(popup, source.zone));
+	const first = days.before && days.before.from < days.from ? days.before.from : days.from;
+	const [rows, query] = await Promise.all([
+		source.rows({ from: first, to: days.to, popup: popup.id }),
+		source.sign({ from: days.from, to: days.to, popup: popup.id }),
+	]);
+	const current = sum(rows, days);
+	const before = days.before ? sum(rows, days.before) : null;
+	const tiles = popupTiles(popup, current, before);
+	const compared = tiles.some((t) => t.description?.includes(" from "));
+	const when = [
+		daysText(days, today),
+		days.cut ? " (counts are kept for 400 days)" : "",
+		compared && days.before ? `, compared with ${daysText(days.before, today)}` : "",
+	].join("");
+	const blocks: Block[] = [
+		{ type: "header", text: "Results" },
+		{
+			type: "actions",
+			// The period in the id: arriving from another screen draws the picker afresh, showing it.
+			block_id: `period:p:${popup.id}:${period}`,
+			elements: [
+				periodPicker(`p:${popup.id}`, period, true),
+				{
 					type: "button",
 					action_id: "nav",
-					label: "See all numbers",
-					value: "numbers",
+					label: "Compare with other popups",
+					value: `numbers:${period}`,
 					style: "secondary",
 				},
 			],
+		},
+		{ type: "context", text: `${when}.` },
+		// Two by two: EmDash lays a stats block out in one line that never wraps, and four boxes
+		// run off a 390 px phone.
+		statsRow(tiles.slice(0, 2)),
+		statsRow(tiles.slice(2)),
+	];
+	if (current.seen >= ENOUGH_VIEWS) {
+		const bars = responseBars(popup, rows, days);
+		const word = isForm(popup) ? "Sign-ups" : "Button clicks";
+		blocks.push({
+			type: "chart",
+			config: {
+				chart_type: "timeseries",
+				style: "bar",
+				height: 180,
+				series: [{ name: `${word} per ${bars.weekly ? "week" : "day"}`, data: bars.data }],
+			},
+		});
+	}
+	blocks.push(...downloadLink(source, query, "Download this popup's numbers (CSV)"));
+	return blocks;
+}
+
+/** Results tab: every popup side by side for one period, sortable by Seen and Rate. */
+async function compareResults(
+	period: Period,
+	sort: Sort | null,
+	source: ResultsSource,
+): Promise<Block[]> {
+	const today = zoneDay(source.now, source.zone);
+	const days = periodDays(period, source.now, source.zone);
+	const [rows, query] = await Promise.all([
+		source.rows({ from: days.from, to: days.to }),
+		source.sign({ from: days.from, to: days.to }),
+	]);
+	const { rows: table, total } = compare(source.store.popups, rows, days, sort);
+	const n = (x: number) => x.toLocaleString("en");
+	return [
+		{ type: "header", text: "How your popups compare" },
+		{
+			type: "actions",
+			block_id: `period:r:${period}`,
+			elements: [periodPicker("r", period, false)],
+		},
+		{ type: "context", text: `${daysText(days, today)}.` },
+		statsRow([
+			{ label: "Seen", value: n(total.seen) },
+			{ label: "Sign-ups", value: n(total.sent) },
+		]),
+		statsRow([
+			{ label: "Button clicks", value: n(total.clicked) },
+			{ label: "Closed", value: n(total.closed) },
+		]),
+		{
+			type: "table",
+			// The period in the id: sorting then knows the period, and a new period starts unsorted.
+			block_id: `results:${period}`,
+			page_action_id: "numbers_page",
+			empty_text: "No popups yet.",
+			columns: [
+				{ key: "name", label: "Popup" },
+				{ key: "seen", label: "Seen", sortable: true },
+				{ key: "responses", label: "Sign-ups or clicks" },
+				{ key: "rate", label: "Rate", sortable: true },
+				{ key: "closed", label: "Closed" },
+				{ key: "phones", label: "Seen on phones" },
+			],
+			rows: table as unknown as Array<Record<string, unknown>>,
+		},
+		...downloadLink(source, query, "Download as a spreadsheet (CSV)"),
+		{
+			type: "context",
+			text: "Forms counts every sign-up to a form, wherever it sits; here you see only those that came through a popup. Ad blockers hide some visits.",
+		},
+		{
+			type: "context",
+			text: `Rate is sign-ups or clicks out of views, in whole percent, shown from 100 views: smaller numbers swing too much to mean anything. Days follow your site's time zone (${source.zone}). Counts are daily totals, kept for 400 days, with nothing about any single visitor.`,
+		},
+		{
+			type: "context",
+			text: 'Button links to other websites carry campaign tags (utm_source=popups), so Google Analytics shows those visits as coming from the popup. To see in Forms which popup a sign-up came from, add a hidden field named "utm_campaign" to the form.',
 		},
 	];
 }
@@ -359,21 +550,17 @@ function listBlocks(state: PageState): Block[] {
 			{ key: "edit", label: "", format: "element" },
 			{ key: "preview", label: "", format: "element" },
 			{ key: "where", label: "Shows on" },
-			{ key: "seen", label: "Seen" },
-			{ key: "responses", label: "Responses" },
 		],
 		rows: store.popups.map((popup) => ({
 			name: `${popup.name} (${kindLine(popup)}) · ${statusOf(popup, state)}`,
 			...rowActions(popup),
 			where: showsOnText(popup, state),
-			seen: num(state.totals.get(popup.id)?.seen),
-			responses: responsesText(popup, state.totals.get(popup.id)),
 		})),
 	} as Block);
 	blocks.push(
 		{
 			type: "context",
-			text: `"Seen" counts since each popup started: at least half of it was on screen for a second. Counts are approximate: some browsers block them, and your own visits while signed in are not counted.`,
+			text: "Each popup's results are on its own page (Edit); the Results tab compares them. A popup counts as seen when at least half of it was on screen for a second; your own visits while signed in are not counted.",
 		},
 		{
 			type: "context",
@@ -387,142 +574,6 @@ function listBlocks(state: PageState): Block[] {
 		});
 	}
 	return blocks;
-}
-
-// ── Numbers ─────────────────────────────────────────────────
-
-/** Noon of a UTC day, for the chart. */
-const noon = (day: string) => Date.parse(`${day}T12:00:00Z`);
-
-function numbersBlocks(state: PageState): Block[] {
-	const { from, to } = state.range;
-	const chosen = from || to;
-	const rows = state.rows;
-	// The same sums as the totals each popup's own page shows.
-	const byPopup = sumRows(rows);
-	const all = [...byPopup.values()].reduce(
-		(a, t) => ({
-			seen: a.seen + t.seen,
-			sent: a.sent + t.sent,
-			clicked: a.clicked + t.clicked,
-			closed: a.closed + t.closed,
-		}),
-		{ seen: 0, sent: 0, clicked: 0, closed: 0 },
-	);
-	const blocks: Block[] = [
-		...errorBlocks(state),
-		{
-			type: "header",
-			text: chosen
-				? `${from ? shortDay(from) : "Start"} to ${to ? shortDay(to) : "today"}`
-				: "Since each popup started",
-		},
-		{
-			type: "form",
-			block_id: `range:${from}:${to}`,
-			fields: [
-				{
-					type: "date_input",
-					action_id: "from",
-					label: "From (leave empty for since each popup started)",
-					initial_value: from || undefined,
-				},
-				{
-					type: "date_input",
-					action_id: "to",
-					label: "To (leave empty for today)",
-					initial_value: to || undefined,
-				},
-			],
-			submit: { label: "Show these dates", action_id: "range" },
-		},
-	];
-	if (state.origin && state.exportQuery) {
-		blocks.push({
-			type: "actions",
-			elements: [
-				{
-					type: "link",
-					label: "Download as a spreadsheet (CSV)",
-					target: {
-						kind: "external",
-						url: `${state.origin}/_emdash/api/plugins/${state.pluginId}/export?${state.exportQuery}`,
-					},
-					appearance: "secondary",
-				},
-			],
-		});
-	}
-	blocks.push({
-		type: "stats",
-		items: [
-			{ label: "Seen", value: all.seen.toLocaleString("en") },
-			{ label: "Sign-ups", value: all.sent.toLocaleString("en") },
-			{ label: "Button clicks", value: all.clicked.toLocaleString("en") },
-			{ label: "Closed", value: all.closed.toLocaleString("en") },
-		],
-	});
-	if (all.seen >= 100) {
-		const days = new Map<string, { seen: number; resp: number }>();
-		for (const row of rows) {
-			const d = days.get(row.day) ?? { seen: 0, resp: 0 };
-			d.seen += row.seen;
-			d.resp += row.sent + row.clicked;
-			days.set(row.day, d);
-		}
-		// A fresh copy is sorted; nothing shared changes.
-		// oxlint-disable-next-line unicorn/no-array-sort
-		const sorted = [...days.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
-		blocks.push({
-			type: "chart",
-			config: {
-				chart_type: "timeseries",
-				style: "line",
-				height: 220,
-				series: [
-					{ name: "Seen per day", data: sorted.map(([day, v]) => [noon(day), v.seen]) },
-					{
-						name: "Sign-ups and clicks per day",
-						data: sorted.map(([day, v]) => [noon(day), v.resp]),
-					},
-				],
-			},
-		});
-	}
-	blocks.push({
-		type: "table",
-		block_id: "numbers",
-		page_action_id: "numbers_page",
-		empty_text: "Nothing counted for these dates yet.",
-		columns: [
-			{ key: "name", label: "Popup" },
-			{ key: "seen", label: "Seen" },
-			{ key: "responses", label: "Responses" },
-			{ key: "closed", label: "Closed" },
-			{ key: "phones", label: "On phones" },
-			{ key: "since", label: "Counted since" },
-		],
-		rows: state.store.popups
-			.filter((popup) => byPopup.has(popup.id))
-			.map((popup) => ({ name: popup.name, ...numberCells(popup, byPopup.get(popup.id)) })),
-	});
-	blocks.push(
-		{
-			type: "context",
-			text: "Whole percentages only, and only after 100 views: smaller numbers swing too much to mean anything. Approximate: ad blockers hide some visits. Nothing about any single visitor is kept; these are daily totals. The spreadsheet has one row per popup per day for the dates shown.",
-		},
-		{
-			type: "context",
-			text: "Button links to other websites carry campaign tags (utm_source=popups), so Google Analytics shows those visits as coming from the popup.",
-		},
-	);
-	return blocks;
-}
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function shortDay(day: string): string {
-	const [y, m, d] = day.split("-").map(Number);
-	return `${d} ${MONTHS[(m ?? 1) - 1]}${y === new Date().getUTCFullYear() ? "" : ` ${y}`}`;
 }
 
 // ── Settings ────────────────────────────────────────────────
@@ -739,8 +790,10 @@ function formField(state: PageState, popup: Popup): Record<string, unknown> {
 export function mayShowStep2(input: Interaction | undefined): boolean {
 	const action = typeof input?.action_id === "string" ? input.action_id : "";
 	const value = typeof input?.value === "string" ? input.value : "";
-	if (input?.type === "form_submit") return /^save_(s[1-4]|all)$/.test(action);
+	if (input?.type === "form_submit") return /^save_(s[1-4]|all)(:[a-z0-9-]+)?$/.test(action);
 	if (input?.type !== "block_action") return false;
+	// A finished popup's page, drawn again for another period.
+	if (action === "period") return value.startsWith("p:");
 	if (ROW_ACTIONS.includes(action))
 		return value.startsWith("change:") || value.startsWith("toggle:");
 	return action === "nav" && value.startsWith("back:");
@@ -1156,7 +1209,13 @@ function editForm(state: PageState, popup: Popup): Block {
 			...(editsPlaces(state, popup) ? step3Fields(state, popup) : []),
 			...step4Fields(state, popup, false),
 		] as never,
-		submit: { label: "Save changes", action_id: "save_all" },
+		// The period on screen rides along, so the results keep it after the save. Not in the
+		// form's id: a new id would draw the form afresh and drop what was typed.
+		submit: {
+			label: "Save changes",
+			action_id:
+				state.period && state.period !== POPUP_PERIOD ? `save_all:${state.period}` : "save_all",
+		},
 	};
 }
 
@@ -1185,7 +1244,7 @@ function kindPage(state: PageState, popup: Popup): BlockResponse {
 function finishedBlocks(state: PageState, popup: Popup): Block[] {
 	const blocks: Block[] = [
 		{ type: "context", text: `${kindLine(popup)} · ${statusOf(popup, state)}` },
-		...ownNumbers(popup, state),
+		resultsSlot({ popup: popup.id, period: state.period ?? POPUP_PERIOD, sort: null }),
 	];
 	const own = pageActions(popup, state.admin);
 	if (own) blocks.push(own);
@@ -1284,7 +1343,7 @@ export function renderPage(state: PageState, tab: number = TAB.popups): BlockRes
 	const blocks: Block[] = [{ type: "header", text: "Popups" }];
 	const panels = [
 		{ label: "Popups", blocks: listBlocks(tab === TAB.popups ? state : clean(state)) },
-		{ label: "Numbers", blocks: numbersBlocks(tab === TAB.numbers ? state : clean(state)) },
+		{ label: "Results", blocks: resultsTab(tab === TAB.numbers ? state : clean(state)) },
 	];
 	if (state.admin)
 		panels.push({
@@ -1293,6 +1352,14 @@ export function renderPage(state: PageState, tab: number = TAB.popups): BlockRes
 		});
 	blocks.push({ type: "tab", default_tab: tab, panels });
 	return { blocks, ...(state.toast ? { toast: state.toast } : {}) };
+}
+
+/** The Results tab: its blocks come in through `fillResults`, for the period picked. */
+function resultsTab(state: PageState): Block[] {
+	return [
+		...errorBlocks(state),
+		resultsSlot({ popup: "", period: state.period ?? COMPARE_PERIOD, sort: state.sort ?? null }),
+	];
 }
 
 function clean(state: PageState): PageState {
@@ -1356,7 +1423,13 @@ export async function handleInteraction(
 	helpers: Helpers,
 ): Promise<Outcome> {
 	const type = input?.type;
-	const action = typeof input?.action_id === "string" ? input.action_id : "";
+	let action = typeof input?.action_id === "string" ? input.action_id : "";
+	// Save changes on a popup's page carries the period on screen: "save_all:this-month".
+	if (type === "form_submit" && action.startsWith("save_all:")) {
+		const picked = action.slice("save_all:".length);
+		if (isPeriod(picked)) state = { ...state, period: picked };
+		action = "save_all";
+	}
 	const values =
 		typeof input?.values === "object" && input.values !== null
 			? (input.values as Record<string, unknown>)
@@ -1373,6 +1446,34 @@ export async function handleInteraction(
 
 	if (type !== "block_action" && type !== "form_submit") return { response: renderPage(state) };
 
+	// ── Results: another period, or a sort ──
+	if (type === "block_action" && action === "period") {
+		// "r:<period>" on the Results tab, "p:<popup>:<period>" on a popup's page.
+		const [scope, id, picked] = value.split(":");
+		if (scope === "r" && isPeriod(id))
+			return { response: renderPage({ ...state, period: id }, TAB.numbers) };
+		const popup = find(id);
+		if (scope === "p" && popup && popup.step >= 4 && isPeriod(picked))
+			return { response: popupPage({ ...state, period: picked }, popup, 4) };
+		return { response: renderPage(state) };
+	}
+	if (type === "block_action" && action === "numbers_page") {
+		// The table's id holds its period ("results:this-month"); the value holds the sort.
+		const period = typeof input?.block_id === "string" ? input.block_id.split(":")[1] : "";
+		return {
+			response: renderPage(
+				{
+					...state,
+					...(isPeriod(period) ? { period } : {}),
+					sort: parseSort(input?.value),
+				},
+				TAB.numbers,
+			),
+		};
+	}
+	// The list never pages or sorts; a table must name an action all the same.
+	if (type === "block_action" && action === "list_page") return { response: renderPage(state) };
+
 	// ── Moving around ──
 	if (type === "block_action" && action === "nav") {
 		if (value.startsWith("back:")) {
@@ -1385,7 +1486,12 @@ export async function handleInteraction(
 			const popup = find(value.slice(5));
 			if (popup) return { response: kindPage(state, popup) };
 		}
-		if (value === "numbers") return { response: renderPage(state, TAB.numbers) };
+		if (value === "numbers" || value.startsWith("numbers:")) {
+			const picked = value.slice("numbers:".length);
+			return {
+				response: renderPage(isPeriod(picked) ? { ...state, period: picked } : state, TAB.numbers),
+			};
+		}
 		return { response: renderPage(state) };
 	}
 	if (type === "block_action" && action === "new") {
@@ -1473,21 +1579,7 @@ export async function handleInteraction(
 
 	if (type !== "form_submit") return { response: renderPage(state) };
 
-	// ── Numbers and Settings ──
-	if (action === "range") {
-		const from = typeof values.from === "string" ? values.from.slice(0, 10) : "";
-		const to = typeof values.to === "string" ? values.to.slice(0, 10) : "";
-		if (from && to && from > to) {
-			return {
-				response: renderPage(
-					{ ...state, errors: ["The From day must be before the To day."], toast: REFUSED },
-					TAB.numbers,
-				),
-			};
-		}
-		// The route reads the rows for the new dates and renders again.
-		return { response: renderPage({ ...state, range: { from, to } }, TAB.numbers) };
-	}
+	// ── Settings ──
 	if (action === HIDE_ACTION) {
 		if (!state.admin) return only("Only an administrator can change the settings.");
 		const hidden = hiddenFrom(values, store.settings.hideHelpLine);

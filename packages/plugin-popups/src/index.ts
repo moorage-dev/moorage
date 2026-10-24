@@ -12,6 +12,7 @@ import type { PluginContext, PluginDescriptor, RouteContext } from "emdash";
 import pkg from "../package.json" with { type: "json" };
 import {
 	ADMIN_ROLE,
+	fillResults,
 	handleInteraction,
 	mayShowStep2,
 	type Interaction,
@@ -43,12 +44,12 @@ import {
 	parseCount,
 	PRUNE_TASK,
 	pruneCounts,
+	KEEP_DAYS,
 	readRows,
 	STORAGE,
 	toCsv,
-	totals,
 } from "./stats.js";
-import { describeMoment, utcDay, validZone } from "./time.js";
+import { addDays, describeMoment, utcDay, validZone, zoneDay } from "./time.js";
 
 export type { Popup, Store } from "./config.js";
 
@@ -98,6 +99,14 @@ async function siteZone(): Promise<string> {
 	}
 }
 
+/**
+ * The site's time zone for the public count route, kept like the settings: a
+ * count arrives with every popup a visitor sees, and the zone rarely changes.
+ */
+function countZone(ctx: PluginContext): Promise<string> {
+	return memoSettings({ plugin: { id: `${PLUGIN_ID}:zone` }, site: ctx.site }, siteZone);
+}
+
 async function listMedia(ctx: PluginContext): Promise<MediaOption[]> {
 	if (!ctx.media) return [];
 	try {
@@ -132,8 +141,6 @@ function originOf(ctx: RouteContext): string | undefined {
 		return undefined;
 	}
 }
-
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * The public address of a picture. A plugin's media list only gives a signed-in
@@ -300,13 +307,12 @@ export function createPlugin() {
 					const now = Date.now();
 					const input = ctx.input as Interaction | undefined;
 					const origin = originOf(ctx);
-					const [store, stored, zone, media, collections, all, forms] = await Promise.all([
+					const [store, stored, zone, media, collections, forms] = await Promise.all([
 						readStore(ctx),
 						readProblems(ctx),
 						siteZone(),
 						listMedia(ctx),
 						listCollections(ctx),
-						readRows(ctx, null, null).catch(() => []),
 						// Only an Admin picks the form, and only step 2 shows it: no extra request otherwise.
 						admin && mayShowStep2(input)
 							? listForms(origin, ctx.request?.headers.get("cookie") ?? "")
@@ -314,34 +320,13 @@ export function createPlugin() {
 					]);
 					// Only when the page opens: a fixed form clears its red warning.
 					const problems = input?.type === "page_load" ? await recheck(ctx, store, stored) : stored;
-					const values = (input?.values ?? {}) as Record<string, unknown>;
-					const range =
-						input?.type === "form_submit" && input.action_id === "range"
-							? {
-									from:
-										typeof values.from === "string" && DAY.test(values.from.slice(0, 10))
-											? values.from.slice(0, 10)
-											: "",
-									to:
-										typeof values.to === "string" && DAY.test(values.to.slice(0, 10))
-											? values.to.slice(0, 10)
-											: "",
-								}
-							: { from: "", to: "" };
 					const state: PageState = {
 						store,
 						admin,
 						zone,
 						now,
 						origin,
-						// A plain link cannot send EmDash's request header, so the download is signed.
-						exportQuery: origin ? await signExport(ctx.kv, range, now) : undefined,
 						pluginId: PLUGIN_ID,
-						totals: totals(all),
-						rows: all.filter(
-							(row) => (!range.from || row.day >= range.from) && (!range.to || row.day <= range.to),
-						),
-						range,
 						problems,
 						media,
 						forms,
@@ -358,9 +343,20 @@ export function createPlugin() {
 						forgetSettings(PLUGIN_ID);
 					}
 					if (outcome.problems) await ctx.kv.set(PROBLEMS_KEY, outcome.problems);
+					// Results last: the rows for the one screen drawn, read once, after any save.
+					const saved = outcome.save ?? store;
+					const response = await fillResults(outcome.response, {
+						store: saved,
+						zone,
+						now,
+						origin,
+						pluginId: PLUGIN_ID,
+						rows: (query) => readRows(ctx, query).catch(() => []),
+						// A plain link cannot send EmDash's request header, so the download is signed.
+						sign: (range) => (origin ? signExport(ctx.kv, range, now) : Promise.resolve(undefined)),
+					});
 					// At the foot of every screen of the page (list, popup, preview), for admins only.
-					const settings = (outcome.save ?? store).settings;
-					return withHelpLine(outcome.response, admin && !settings.hideHelpLine);
+					return withHelpLine(response, admin && !saved.settings.hideHelpLine);
 				},
 			},
 			// Public write: one count for one popup. See `stats.ts` for the limits.
@@ -371,8 +367,9 @@ export function createPlugin() {
 				handler: async (ctx) => {
 					const input = parseCount(ctx.input);
 					if (!input) throw PluginRouteError.badRequest("Not a count");
-					const store = await readStore(ctx);
-					return { counted: (await addCount(ctx, store.popups, input, Date.now())) === "counted" };
+					const [store, zone] = await Promise.all([readStore(ctx), countZone(ctx)]);
+					const outcome = await addCount(ctx, store.popups, input, Date.now(), zone);
+					return { counted: outcome === "counted" };
 				},
 			},
 			// Public write: a visitor's browser could not open a popup because of its form.
@@ -469,19 +466,28 @@ export function createPlugin() {
 							body: {
 								kind: "text",
 								value:
-									"This download link has expired (it works for ten minutes) or is not valid. Open Marketing > Popups again and download from the Numbers tab.",
+									"This download link has expired (it works for ten minutes) or is not valid. Open Marketing > Popups again and download it from the Results tab or the popup's own page.",
 							},
 						});
-					const from = range.from || null;
-					const to = range.to || null;
 					const store = await readStore(ctx);
-					const rows = await readRows(ctx, from, to);
+					// Links signed before 0.2.0 could leave the dates open: every kept day.
+					const to = range.to || zoneDay(Date.now(), await siteZone());
+					const from = range.from || addDays(to, -(KEEP_DAYS - 1));
+					const rows = await readRows(ctx, {
+						from,
+						to,
+						...(range.popup ? { popup: range.popup } : {}),
+					});
 					const names = new Map(store.popups.map((p) => [p.id, p.name]));
+					const one = range.popup ? store.popups.find((p) => p.id === range.popup) : undefined;
+					const file = range.popup
+						? `popup-${one?.handle ?? "deleted"}-${from}-to-${to}.csv`
+						: `popups-${from}-to-${to}.csv`;
 					return pluginResponse({
 						status: 200,
 						headers: {
 							"content-type": "text/csv; charset=utf-8",
-							"content-disposition": `attachment; filename="popups-${from ?? "start"}-to-${to ?? utcDay(Date.now())}.csv"`,
+							"content-disposition": `attachment; filename="${file}"`,
 							"cache-control": "no-store",
 						},
 						body: { kind: "text", value: toCsv(rows, names) },
@@ -520,6 +526,7 @@ export function createPlugin() {
 					return {
 						box: {
 							id: popup.id,
+							handle: popup.handle,
 							heading: popup.heading,
 							text: popup.text,
 							picture: popup.picture
