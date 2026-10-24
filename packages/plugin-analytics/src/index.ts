@@ -4,7 +4,7 @@ import { definePlugin, getRequestContext, pluginResponse, PluginRouteError } fro
 import type { PluginContext, PluginDescriptor, RouteContext } from "emdash";
 
 import pkg from "../package.json" with { type: "json" };
-import { ADMIN_ROLE, handleInteraction, type Interaction } from "./admin.js";
+import { ADMIN_ROLE, CHECK_ACTION, handleInteraction, type Interaction } from "./admin.js";
 import {
 	bannerVersion,
 	CONFIG_KEY,
@@ -27,6 +27,7 @@ import {
 	STORAGE,
 } from "./record.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
+import { checkSite, readSiteCheck, SITE_CHECK_KEY, type SiteCheck } from "./site-check.js";
 
 export type { AnalyticsConfig } from "./config.js";
 
@@ -77,6 +78,37 @@ export function countryOf(ctx: Pick<RouteContext, "request" | "requestMeta">): s
 	return /^[A-Z]{2}$/.test(code) && code !== "XX" ? code : null;
 }
 
+/**
+ * The address to check: the site's own, as set in EmDash, or else the one the
+ * admin is using. Only ever this site.
+ */
+export function siteOrigin(siteUrl: string | undefined, requestOrigin: string | undefined) {
+	try {
+		const url = new URL(siteUrl ?? "");
+		if (url.protocol === "https:" || url.protocol === "http:") return url.origin;
+	} catch {
+		// Not set or not an address: use the request's.
+	}
+	return requestOrigin;
+}
+
+async function readStoredCheck(ctx: PluginContext): Promise<SiteCheck | null> {
+	return readSiteCheck(await ctx.kv.get(SITE_CHECK_KEY).catch(() => null));
+}
+
+/** Run "Check what loads" and keep the result, kept apart from the settings. */
+async function runSiteCheck(
+	ctx: PluginContext,
+	config: AnalyticsConfig,
+	requestOrigin: string | undefined,
+): Promise<SiteCheck | null> {
+	const origin = siteOrigin(ctx.site?.url, requestOrigin);
+	if (!origin) return null;
+	const result = await checkSite(origin, config, PLUGIN_ID).catch(() => null);
+	if (result) await ctx.kv.set(SITE_CHECK_KEY, result);
+	return result;
+}
+
 export function createPlugin() {
 	return definePlugin({
 		id: PLUGIN_ID,
@@ -121,13 +153,17 @@ export function createPlugin() {
 					if (admin) await ensurePruneScheduled(ctx).catch(() => {});
 					const now = Date.now();
 					const origin = ctx.request ? new URL(ctx.request.url).origin : undefined;
-					const [answers, exportQuery] = await Promise.all([
+					const input = ctx.input as Interaction | undefined;
+					const checking =
+						admin && input?.type === "block_action" && input.action_id === CHECK_ACTION;
+					const [answers, exportQuery, siteCheck] = await Promise.all([
 						consentSummary(ctx, new Date(now)).catch(() => null),
 						// A plain link cannot send EmDash's request header, so the download is signed.
 						// Only for an Admin: the first one stores the signing secret.
 						admin && origin ? signExport(ctx.kv, now).catch(() => undefined) : undefined,
+						checking ? runSiteCheck(ctx, config, origin) : readStoredCheck(ctx),
 					]);
-					const outcome = handleInteraction(ctx.input as Interaction | undefined, {
+					const outcome = handleInteraction(input, {
 						config,
 						admin,
 						answers,
@@ -136,6 +172,7 @@ export function createPlugin() {
 						exportUrl: exportQuery
 							? `${origin}/_emdash/api/plugins/${PLUGIN_ID}/export?${exportQuery}`
 							: undefined,
+						siteCheck,
 					});
 					if (outcome.save) {
 						await ctx.kv.set(CONFIG_KEY, outcome.save);

@@ -24,6 +24,7 @@ import { clientConfig } from "./fragment.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import { checkId, TOOL_EXAMPLES, TOOL_NAMES, type ToolId } from "./ids.js";
 import type { ConsentSummary } from "./record.js";
+import type { SiteCheck } from "./site-check.js";
 
 /**
  * The one admin page, as Block Kit: Status, Tracking tools, Cookie banner,
@@ -65,6 +66,8 @@ export interface PageState {
 	origin?: string;
 	/** The signed address of the consent log download. Admins only. */
 	exportUrl?: string;
+	/** The last "Check what loads", if it ever ran. */
+	siteCheck?: SiteCheck | null;
 	/** What was typed, kept on screen when a save was refused. */
 	draft?: Record<string, unknown>;
 	errors?: string[];
@@ -376,8 +379,85 @@ function consentBlocks(state: PageState): Block[] {
 	return blocks;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const two = (n: number) => String(n).padStart(2, "0");
+
+/** "24 Oct 2026, 10:12 UTC". */
+function utcTime(iso: string): string {
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return iso;
+	return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${two(d.getUTCHours())}:${two(d.getUTCMinutes())} UTC`;
+}
+
+export const CHECK_ACTION = "check_site";
+
+function siteCheckBlocks(state: PageState): Block[] {
+	const check = state.siteCheck;
+	const blocks: Block[] = [
+		{ type: "header", text: "What loads on your site" },
+		{
+			type: "context",
+			text: "Looks at your home page and up to four more, as a visitor gets them, for tracking code pasted in outside this plugin and for videos, maps, booking boxes and social posts that set cookies before a visitor answers. It knows the common ones, not every tool there is, and cannot see what loads later or only for some visitors.",
+		},
+	];
+	if (!check) {
+		blocks.push({
+			type: "section",
+			text: state.admin
+				? "Not checked yet."
+				: "Not checked yet. An administrator can check what loads on your site here.",
+		});
+	} else if (check.problem) {
+		blocks.push({
+			type: "banner",
+			variant: "alert",
+			title: "The check could not run",
+			description: check.problem,
+		});
+	} else {
+		const paths = check.pages.map((page) => page.path).join(", ");
+		blocks.push({
+			type: "context",
+			text: `Checked ${check.pages.length} ${check.pages.length === 1 ? "page" : "pages"} ${ago(check.at, state.now ?? Date.now())} (${utcTime(check.at)}): ${paths}. A page changed in the last few minutes may still show its older, cached version.`,
+		});
+		if (check.findings.length === 0) {
+			blocks.push({
+				type: "section",
+				text: "✓ Nothing from the list loads outside this plugin on these pages.",
+			});
+		}
+		for (const finding of check.findings) {
+			blocks.push({
+				type: "banner",
+				variant: finding.kind === "missing" ? "default" : "alert",
+				title: finding.title,
+				description: `${finding.advice} Found on: ${finding.pages.join(", ")}.`,
+			});
+		}
+	}
+	if (state.admin) {
+		blocks.push({
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: CHECK_ACTION,
+					label: check ? "Check again" : "Check what loads",
+					style: "secondary",
+				},
+			],
+		});
+	}
+	return blocks;
+}
+
 function statusBlocks(state: PageState): Block[] {
-	const blocks: Block[] = [...trackingBlocks(state), ...consentBlocks(state)];
+	const blocks: Block[] = [
+		...trackingBlocks(state),
+		...consentBlocks(state),
+		...siteCheckBlocks(state),
+	];
 
 	blocks.push({
 		type: "context",
@@ -786,6 +866,7 @@ function clean(state: PageState): PageState {
 		now: state.now,
 		origin: state.origin,
 		exportUrl: state.exportUrl,
+		siteCheck: state.siteCheck,
 	};
 }
 
@@ -867,6 +948,30 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 	const flag = (key: string, saved: boolean) =>
 		typeof values[key] === "boolean" ? (values[key] as boolean) : saved;
 
+	// The check itself ran in the route (it fetches pages); this only says how it went.
+	if (input?.type === "block_action" && action === CHECK_ACTION) {
+		const check = state.siteCheck;
+		const found = check?.findings.length ?? 0;
+		return {
+			response: renderPage(
+				{
+					...state,
+					toast: !check
+						? { type: "error", message: "The check could not run. Please try again." }
+						: check.problem
+							? { type: "error", message: "The check could not run. See Status." }
+							: {
+									type: "success",
+									message:
+										found === 0
+											? `Checked ${check.pages.length} pages. Nothing found.`
+											: `Checked ${check.pages.length} pages. ${found} ${found === 1 ? "thing" : "things"} to look at.`,
+								},
+				},
+				TAB.status,
+			),
+		};
+	}
 	if (input?.type === "block_action" && action === "reset_text") {
 		return done(
 			{ ...config, banner: { ...config.banner, title: DEFAULT_TITLE, message: DEFAULT_MESSAGE } },

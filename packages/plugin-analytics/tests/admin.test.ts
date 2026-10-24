@@ -3,7 +3,7 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import { validateBlockResponse } from "@emdash-cms/blocks/server";
 import type { RouteContext } from "emdash";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { toolStatus, warnings } from "../src/admin.js";
 import { CONFIG_KEY, DEFAULT_MESSAGE, DEFAULT_TITLE, normalizeConfig } from "../src/config.js";
@@ -720,6 +720,76 @@ describe("the Status tab", () => {
 		expect(
 			(await download("https://acme.test/_emdash/api/plugins/analytics-consent/export")).status,
 		).toBe(403);
+	});
+});
+
+describe("check what loads", () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const configured = { [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } };
+
+	it("runs for an admin from the Status tab, keeps the result apart from the settings, and shows it", async () => {
+		const asked: string[] = [];
+		vi.stubGlobal("fetch", async (input: string) => {
+			asked.push(input);
+			const path = new URL(input).pathname;
+			if (path === "/")
+				return new Response(
+					`<html><head></head><body><a href="/visit">Visit</a><iframe src="https://www.youtube.com/embed/x"></iframe></body></html>`,
+					{ headers: { "content-type": "text/html" } },
+				);
+			if (path === "/visit")
+				return new Response(
+					`<script src="https://www.googletagmanager.com/gtag/js?id=G-AB12CD34EF"></script>`,
+					{
+						headers: { "content-type": "text/html" },
+					},
+				);
+			return new Response("", { status: 404 });
+		});
+		const fake = fakeContext(configured);
+		const before = JSON.stringify(fake.kv.get(CONFIG_KEY));
+		const first = await load(fake);
+		expect(JSON.stringify(first)).toContain("Not checked yet.");
+		expect(JSON.stringify(first)).toContain('"action_id":"check_site"');
+		expect(asked).toEqual([]);
+
+		const response = await call(fake, { type: "block_action", action_id: "check_site" });
+		expectValid(response);
+		expect(asked.every((url) => url.startsWith("https://acme.test/"))).toBe(true);
+		expect(response.toast).toEqual({
+			type: "success",
+			message: "Checked 2 pages. 3 things to look at.",
+		});
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		expect(tabs?.type === "tab" && tabs.default_tab).toBe(0);
+		const text = JSON.stringify(response);
+		expect(text).toContain("Google Analytics is added twice");
+		expect(text).toContain("A YouTube video sets cookies before visitors answer");
+		expect(text).toContain("Found on: /.");
+		expect(text).toContain("Check again");
+		expect(fake.kv.get("site-check")).toMatchObject({ origin: "https://acme.test" });
+		expect(JSON.stringify(fake.kv.get(CONFIG_KEY))).toBe(before);
+
+		// An editor sees the result, read-only, and cannot run it.
+		const editor = JSON.stringify(await load(fake, EDITOR));
+		expect(editor).toContain("A YouTube video sets cookies before visitors answer");
+		expect(editor).not.toContain("check_site");
+		asked.length = 0;
+		const refused = await call(fake, { type: "block_action", action_id: "check_site" }, EDITOR);
+		expect(refused.toast?.type).toBe("error");
+		expect(asked).toEqual([]);
+	});
+
+	it("says plainly when the site cannot call its own address", async () => {
+		vi.stubGlobal("fetch", async () => {
+			throw new TypeError("fetch failed");
+		});
+		const fake = fakeContext(configured);
+		const response = await call(fake, { type: "block_action", action_id: "check_site" });
+		expect(response.toast?.type).toBe("error");
+		expect(JSON.stringify(response)).toContain(
+			"could not open its own address (https://acme.test)",
+		);
 	});
 });
 
