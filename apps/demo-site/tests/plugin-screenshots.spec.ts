@@ -31,7 +31,7 @@ import { helpLinks } from "./help-line.js";
 // Checklist are replaced with what a public bakery site would get; the rest of the page is its own.
 
 const SHOTS = process.env.PLUGIN_SCREENSHOTS === "1";
-const VERSION = { seo: "0-1-11", siteHealth: "0-1-5", popups: "0-1-8" };
+const VERSION = { seo: "0-1-11", siteHealth: "0-1-5", popups: "0-1-9" };
 const API = "/_emdash/api";
 const H = { "X-EmDash-Request": "1" };
 const PACKAGES = resolve(import.meta.dirname, "../../../packages");
@@ -580,8 +580,9 @@ test("Popups", async ({ browser }) => {
 				...popup.s3,
 			});
 		await step("save_s4", { on: true, ...popup.s4 });
+		return id;
 	}
-	await make({
+	const letter = await make({
 		name: "Monthly letter",
 		kind: "modal",
 		s2: {
@@ -615,7 +616,7 @@ test("Popups", async ({ browser }) => {
 		await page.waitForTimeout(1000);
 		await context.close();
 	}
-	await make({
+	const cakes = await make({
 		name: "Christmas cakes",
 		kind: "slide",
 		s2: {
@@ -653,6 +654,30 @@ test("Popups", async ({ browser }) => {
 		},
 	});
 
+	// Six weeks of results, as daily rows the count route would have written (the demo site's
+	// time zone is UTC): about 2.5% of views sign up to the letter, 6% click the cakes.
+	const today = new Date();
+	for (let back = 1; back <= 42; back++) {
+		const day = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - back))
+			.toISOString()
+			.slice(0, 10);
+		const wave = 1 + 0.35 * Math.sin(back / 3);
+		const rows = [
+			{ popup: letter, seen: Math.round(80 * wave), sent: Math.round(2 * wave + (back % 3)), clicked: 0 },
+			{ popup: cakes, seen: Math.round(55 * wave), sent: 0, clicked: Math.round(3 * wave + (back % 2)) },
+		];
+		for (const r of rows) {
+			const data = JSON.stringify({
+				...r,
+				day,
+				closed: Math.round(r.seen * 0.3),
+				phone: Math.round(r.seen * 0.55),
+			});
+			sql(
+				`insert or replace into _plugin_storage (plugin_id, collection, id, data) values ('popups', 'counts', '${r.popup}:${day}', '${data}')`,
+			);
+		}
+	}
 	const out = `${PACKAGES}/plugin-popups/images`;
 	const LIST = "/_emdash/admin/plugins/popups/";
 	// The README's pictures: the whole window, at its own size, light and dark.
@@ -671,6 +696,24 @@ test("Popups", async ({ browser }) => {
 			await expect(helpLinks(page)).toHaveCount(3);
 			await page.waitForTimeout(800);
 			await shot(page, `${out}/admin-new-popup-${VERSION.popups}-${device}-${scheme}.png`);
+			// A finished popup's own page: its results for this month.
+			await page.goto(LIST);
+			await page
+				.locator("tbody tr")
+				.filter({ hasText: "Monthly letter" })
+				.getByRole("button", { name: "Edit", exact: true })
+				.click();
+			await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 60_000 });
+			await page.getByRole("combobox", { name: "Period" }).click();
+			await page.getByRole("option", { name: "Last 30 days" }).click();
+			await expect(page.getByText(/compared with/)).toBeVisible();
+			await page.waitForTimeout(1200);
+			await shot(page, `${out}/admin-popup-results-${VERSION.popups}-${device}-${scheme}.png`);
+			// How your popups compare, on the same period.
+			await page.getByRole("button", { name: "Compare with other popups" }).click();
+			await expect(page.getByRole("heading", { name: "How your popups compare" })).toBeVisible();
+			await page.waitForTimeout(800);
+			await shot(page, `${out}/admin-results-${VERSION.popups}-${device}-${scheme}.png`);
 			await context.close();
 		}
 	// The website's crop of the list: twice the size, as tall as its content.
