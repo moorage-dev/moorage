@@ -1,8 +1,11 @@
 # @moorage/plugin-analytics
 
-## 0.2.8
+## 0.3.0
 
-### Patch Changes
+### Minor Changes
+
+- fc971ef: The page is now headed Analytics & Cookies, and its Status tab is two checklists. Tracking ticks each tool and says what it waits for, with a link to each tool's own numbers (Clarity straight to your project) and, for Google's tools, a link to Tag Assistant with a tip to check Realtime. Cookie consent says who is asked, links your privacy policy, says when the last answer came in, shows the last 30 days as a chart, and lets an admin download the consent log as a spreadsheet (CSV): one line per answer from the last 12 months, with exactly what is stored. New: Check what loads, which looks at your home page and up to four more for tracking code pasted in outside the plugin (such as a second Google tag) and for videos, maps, booking boxes and social posts that set cookies before visitors answer, with a plain fix for each. On the Cookie banner tab the colours now fold away under Colours, with their own Save.
+
 
 - 233c00d: Any link to #cookie-settings, such as a menu item, now opens the cookie choices; no code needed. In a menu, use `/#cookie-settings` (EmDash's menu editor does not accept a link that starts with `#`). The floating "Cookies" button steps aside while such a link is on screen, and the admin now says this in plain words instead of asking for an HTML attribute. `data-cookie-settings` keeps working.
 

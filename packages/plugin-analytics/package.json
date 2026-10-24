@@ -1,6 +1,6 @@
 {
 	"name": "@moorage/plugin-analytics",
-	"version": "0.2.8",
+	"version": "0.3.0",
 	"description": "Google Analytics, Google Tag Manager, Meta Pixel and Clarity for EmDash, with a cookie consent banner that holds them back until the visitor agrees.",
 	"keywords": [
 		"emdash",
