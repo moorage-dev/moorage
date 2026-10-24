@@ -3,12 +3,18 @@
 import type { PluginContext, PluginStorageConfig, StorageCollection } from "emdash";
 
 import { isLive, type Popup } from "./config.js";
-import { utcDay } from "./time.js";
+import { utcDay, zoneDay } from "./time.js";
 
 /**
- * Results: one row per popup per day (UTC), holding daily totals and nothing
- * about any visitor. The route that adds to them is public, so it is bounded:
- * a fixed shape, only popups that are live, and a daily ceiling per popup.
+ * Results: one row per popup per day, holding daily totals and nothing about
+ * any visitor. The route that adds to them is public, so it is bounded: a
+ * fixed shape, only popups that are live, and a daily ceiling per popup.
+ *
+ * The day is the site's time zone day (Settings > General in EmDash), so "this
+ * month" and the daily chart match the owner's calendar. Before 0.2.0 rows were
+ * kept by the UTC day; those stay as they are. Only counts within a few hours
+ * of midnight sit on the neighbouring day, and on the day of the update the
+ * two kinds of row share one id and simply add up.
  */
 
 export const COUNTS = "counts";
@@ -64,6 +70,7 @@ export async function addCount(
 	popups: Popup[],
 	input: CountInput,
 	now: number,
+	zone = "UTC",
 ): Promise<CountOutcome> {
 	const rows = table(ctx);
 	if (!rows) return "unavailable";
@@ -71,7 +78,7 @@ export async function addCount(
 	if (!popup || !isLive(popup, now) || (popup.start !== null && now < popup.start - 60_000)) {
 		return "not-live";
 	}
-	const day = utcDay(now);
+	const day = zoneDay(now, zone);
 	const id = `${popup.id}:${day}`;
 	const delta: Partial<Record<keyof CountRow, { inc: number }>> = { [input.event]: { inc: 1 } };
 	if (input.event === "seen" && input.phone) delta.phone = { inc: 1 };
@@ -113,18 +120,23 @@ export interface Totals {
 
 const empty = (): Totals => ({ seen: 0, sent: 0, clicked: 0, closed: 0, phone: 0, since: null });
 
-/** Every row in a range of days (inclusive; null for no limit), oldest first. */
-export async function readRows(
-	ctx: PluginContext,
-	from: string | null,
-	to: string | null,
-): Promise<CountRow[]> {
+export interface RowQuery {
+	/** First and last day, both included: always a bounded range. */
+	from: string;
+	to: string;
+	/** One popup's rows only (the popup-and-day index), or every popup's. */
+	popup?: string;
+}
+
+/**
+ * The rows for some days, oldest first. At most 20 popups times 400 kept days
+ * exist, so the 100 pages of 100 rows are never the limit.
+ */
+export async function readRows(ctx: PluginContext, query: RowQuery): Promise<CountRow[]> {
 	const rows = table(ctx);
 	if (!rows) return [];
-	const range: Record<string, string> = {};
-	if (from) range.gte = from;
-	if (to) range.lte = to;
-	const where = from || to ? { day: range } : undefined;
+	const day = { gte: query.from, lte: query.to };
+	const where: Record<string, string | typeof day> = query.popup ? { popup: query.popup, day } : { day };
 	const out: CountRow[] = [];
 	let cursor: string | undefined;
 	for (let page = 0; page < 100; page++) {
@@ -166,7 +178,7 @@ function cell(value: string | number): string {
 /** One row per popup per day, for a spreadsheet. */
 export function toCsv(rows: CountRow[], names: Map<string, string>): string {
 	const lines = [
-		["Day", "Popup", "Seen", "Signed up", "Clicked", "Closed", "Seen on phones"].join(","),
+		["Day", "Popup", "Seen", "Sign-ups", "Button clicks", "Closed", "Seen on phones"].join(","),
 	];
 	for (const row of rows) {
 		lines.push(

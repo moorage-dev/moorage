@@ -15,6 +15,8 @@ export interface FakeContext {
 	rows: Map<string, Record<string, unknown>>;
 	sent: Array<Record<string, unknown>>;
 	reads: () => number;
+	/** Every query of the count rows, by its where clause: one entry per page of 100. */
+	queries: Array<Record<string, unknown> | undefined>;
 }
 
 function matches(row: Record<string, unknown>, where: Record<string, unknown> = {}): boolean {
@@ -40,6 +42,7 @@ export function fakeContext(
 	const rows = new Map<string, Record<string, unknown>>();
 	const sent: Array<Record<string, unknown>> = [];
 	let reads = 0;
+	const queries: Array<Record<string, unknown> | undefined> = [];
 	const collection = {
 		async get(id: string) {
 			return rows.get(id) ?? null;
@@ -63,10 +66,24 @@ export function fakeContext(
 			}
 			return { applied: true, data: row };
 		},
-		async query(options: { where?: Record<string, unknown>; limit?: number } = {}) {
+		// Like EmDash's: at most 100 a page, ordered by day when asked, a cursor for the next page.
+		async query(
+			options: {
+				where?: Record<string, unknown>;
+				limit?: number;
+				cursor?: string;
+				orderBy?: Record<string, "asc" | "desc">;
+			} = {},
+		) {
+			queries.push(options.where);
 			const found = [...rows.entries()].filter(([, row]) => matches(row, options.where));
-			const items = found.slice(0, options.limit ?? 50).map(([id, data]) => ({ id, data }));
-			return { items, hasMore: found.length > items.length };
+			if (options.orderBy?.day)
+				found.sort(([, a], [, b]) => String(a.day).localeCompare(String(b.day)));
+			const start = Number(options.cursor ?? 0);
+			const limit = Math.min(options.limit ?? 50, 100);
+			const items = found.slice(start, start + limit).map(([id, data]) => ({ id, data }));
+			const hasMore = found.length > start + items.length;
+			return { items, hasMore, ...(hasMore ? { cursor: String(start + items.length) } : {}) };
 		},
 		async deleteMany(ids: string[]) {
 			return ids.filter((id) => rows.delete(id)).length;
@@ -150,7 +167,7 @@ export function fakeContext(
 		log: { info() {}, warn() {}, error() {}, debug() {} },
 	} as unknown as PluginContext;
 
-	return { ctx, kv, rows, sent, reads: () => reads };
+	return { ctx, kv, rows, sent, reads: () => reads, queries };
 }
 
 /** A finished popup with sensible content; override what a test cares about. */

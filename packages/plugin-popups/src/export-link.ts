@@ -1,7 +1,8 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 /**
- * A signed download link for the Numbers spreadsheet.
+ * A signed download link for a results spreadsheet: all popups (the Results
+ * tab) or one popup (its own page), for the days on screen.
  *
  * EmDash refuses a signed-in plugin route unless the request carries the
  * `X-EmDash-Request: 1` header, and a plain link in the admin cannot send one.
@@ -21,6 +22,7 @@ const SECRET_KEY = "export-secret";
 /** How long a download link works. */
 export const EXPORT_LINK_MS = 10 * 60 * 1000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const POPUP = /^[a-z0-9]{4,40}$/;
 const DIGITS = /^\d{1,13}$/;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 const encoder = new TextEncoder();
@@ -28,10 +30,12 @@ const encoder = new TextEncoder();
 type Kv = Pick<PluginContext["kv"], "getVersioned" | "compareAndSet">;
 
 export interface ExportRange {
-	/** YYYY-MM-DD or "" for since the start. */
+	/** YYYY-MM-DD; "" only in links signed before 0.2.0 (since the start). */
 	from: string;
-	/** YYYY-MM-DD or "" for today. */
+	/** YYYY-MM-DD; "" only in links signed before 0.2.0 (today). */
 	to: string;
+	/** One popup's id, or "" for every popup. */
+	popup?: string;
 }
 
 function toB64url(bytes: Uint8Array): string {
@@ -54,7 +58,7 @@ function fromB64url(text: string): Uint8Array<ArrayBuffer> | null {
 
 /** What is signed. Minting and checking both build it here, so they never disagree. */
 function signedText(range: ExportRange, expires: number): Uint8Array<ArrayBuffer> {
-	return encoder.encode(`popups-export:v1|${range.from}|${range.to}|${expires}`);
+	return encoder.encode(`popups-export:v2|${range.from}|${range.to}|${range.popup ?? ""}|${expires}`);
 }
 
 function secretBytes(value: unknown): Uint8Array<ArrayBuffer> | null {
@@ -89,6 +93,7 @@ export async function signExport(kv: Kv, range: ExportRange, now: number): Promi
 	const clean = {
 		from: DAY.test(range.from) ? range.from : "",
 		to: DAY.test(range.to) ? range.to : "",
+		popup: POPUP.test(range.popup ?? "") ? range.popup : "",
 	};
 	const expires = now + EXPORT_LINK_MS;
 	const secret = await key(kv, true);
@@ -99,6 +104,7 @@ export async function signExport(kv: Kv, range: ExportRange, now: number): Promi
 	const query = new URLSearchParams();
 	if (clean.from) query.set("from", clean.from);
 	if (clean.to) query.set("to", clean.to);
+	if (clean.popup) query.set("popup", clean.popup);
 	query.set("expires", String(expires));
 	query.set("sig", toB64url(signature));
 	return query.toString();
@@ -114,8 +120,13 @@ export async function checkExport(
 	params: URLSearchParams,
 	now: number,
 ): Promise<ExportRange | null> {
-	const range = { from: params.get("from") ?? "", to: params.get("to") ?? "" };
+	const range = {
+		from: params.get("from") ?? "",
+		to: params.get("to") ?? "",
+		popup: params.get("popup") ?? "",
+	};
 	if ((range.from && !DAY.test(range.from)) || (range.to && !DAY.test(range.to))) return null;
+	if (range.popup && !POPUP.test(range.popup)) return null;
 	const expiresText = params.get("expires") ?? "";
 	if (!DIGITS.test(expiresText)) return null;
 	const expires = Number(expiresText);
