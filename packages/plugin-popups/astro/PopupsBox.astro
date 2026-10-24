@@ -11,6 +11,8 @@ import { pluginBlockComponents } from "virtual:emdash/block-components";
 
 interface Box {
 	id: string;
+	/** For the form's hidden utm_campaign field (older servers leave it out). */
+	handle?: string;
 	heading: string;
 	text: string;
 	picture: { url: string; alt: string; width: number | null; height: number | null } | null;
@@ -79,6 +81,7 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 		<section
 			class="popups-box"
 			data-popups-box={box.id}
+			data-popups-handle={box.handle}
 			data-scheme={box.scheme}
 			role="region"
 			aria-labelledby={headingId}
@@ -137,6 +140,21 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 		if (box.dataset.popupsWired) continue;
 		box.dataset.popupsWired = "1";
 		const id = box.dataset.popupsBox!;
+		// The form's own hidden campaign fields, if it has them and they are empty: Forms then
+		// shows which box a sign-up came from. Filled again just before it sends (capture runs
+		// before the forms plugin's own handler), in case its script restored a saved page.
+		const tags: Record<string, string> = {
+			utm_source: "popups",
+			utm_medium: "popup",
+			utm_campaign: box.dataset.popupsHandle ?? "",
+			page_url: location.origin + location.pathname,
+		};
+		const tag = () => {
+			for (const input of box.querySelectorAll<HTMLInputElement>("form input[type=hidden][name]"))
+				if (tags[input.name] && !input.value) input.value = tags[input.name]!;
+		};
+		tag();
+		box.addEventListener("submit", tag, true);
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const watch = new IntersectionObserver(
 			(entries) => {

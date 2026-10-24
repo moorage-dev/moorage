@@ -176,7 +176,7 @@ describe("the list", () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		const page = await load(fake, EDITOR);
 		const tab = page.blocks.find((b) => b.type === "tab") as Extract<Block, { type: "tab" }>;
-		expect(tab.panels.map((p) => p.label)).toEqual(["Popups", "Numbers"]);
+		expect(tab.panels.map((p) => p.label)).toEqual(["Popups", "Results"]);
 		expect(words(page)).not.toContain("delete:");
 		expect(words(await press(fake, "row", "delete:abcd1234", EDITOR))).toContain(
 			"Only an administrator",
@@ -556,54 +556,7 @@ describe("the help line", () => {
 	});
 });
 
-describe("Numbers and Settings", () => {
-	it("shows results since each popup started, a date range and a download", async () => {
-		const fake = fakeContext({ popups: { popups: [popup()] } });
-		fake.rows.set("a", {
-			popup: "abcd1234",
-			day: "2026-10-03",
-			seen: 150,
-			sent: 0,
-			clicked: 9,
-			closed: 40,
-			phone: 75,
-		});
-		fake.rows.set("b", {
-			popup: "abcd1234",
-			day: "2026-10-05",
-			seen: 50,
-			sent: 0,
-			clicked: 1,
-			closed: 10,
-			phone: 25,
-		});
-		const page = await load(fake);
-		const table = all(page).find((b) => b.type === "table" && b.block_id === "numbers") as Extract<
-			Block,
-			{ type: "table" }
-		>;
-		expect(table.columns.slice(0, 3).map((c) => c.label)).toEqual(["Popup", "Seen", "Responses"]);
-		expect(table.rows[0]).toMatchObject({
-			seen: "200",
-			responses: "10 clicks (5%)",
-			phones: "50%",
-			since: "3 Oct",
-		});
-		expect(words(page)).toMatch(
-			/https:\/\/hartleys\.test\/_emdash\/api\/plugins\/popups\/export\?expires=\d+&sig=[\w-]{43}/,
-		);
-		expect(all(page).some((b) => b.type === "chart")).toBe(true);
-		const ranged = await submit(fake, "range", "range::", { from: "2026-10-05", to: "" });
-		const rows = (
-			all(ranged).find((b) => b.type === "table" && b.block_id === "numbers") as Extract<
-				Block,
-				{ type: "table" }
-			>
-		).rows;
-		expect(rows[0]).toMatchObject({ seen: "50" });
-		expect(words(ranged)).toMatch(/export\?from=2026-10-05&expires=\d+&sig=/);
-	});
-
+describe("Settings", () => {
 	it("refuses unreadable colours and wrong email addresses, and saves good ones", async () => {
 		const fake = fakeContext();
 		expect(
@@ -839,83 +792,6 @@ describe("a finished popup's page: one Save", () => {
 		expect(words(await press(fake, "nav", "kind:abcd1234", EDITOR))).toContain(
 			"Only an administrator",
 		);
-	});
-});
-
-describe("a finished popup's own numbers", () => {
-	const statsOf = (response: BlockResponse) =>
-		(
-			all(response).filter((b) => b.type === "stats") as Array<Extract<Block, { type: "stats" }>>
-		).flatMap((b) => b.items);
-	const numbersRow = (response: BlockResponse, name: string) =>
-		(
-			all(response).find((b) => b.type === "table" && b.block_id === "numbers") as Extract<
-				Block,
-				{ type: "table" }
-			>
-		).rows.find((row) => row.name === name);
-	const row = (popupId: string, day: string, seen: number, clicked: number, sent = 0) => ({
-		popup: popupId,
-		day,
-		seen,
-		sent,
-		clicked,
-		closed: Math.floor(seen / 5),
-		phone: Math.floor(seen / 2),
-	});
-
-	it("shows the same numbers as the Numbers tab, with a way to see them all", async () => {
-		const fake = fakeContext({
-			popups: {
-				popups: [
-					popup(),
-					popup({ id: "form0001", name: "Letter", contains: "form", form: "newsletter" }),
-					popup({ id: "inline01", name: "Box", kind: "inline" }),
-					popup({ id: "none0001", name: "Quiet" }),
-				],
-			},
-		});
-		fake.rows.set("a", row("abcd1234", "2026-10-03", 150, 9));
-		fake.rows.set("b", row("abcd1234", "2026-10-05", 50, 1));
-		fake.rows.set("c", row("form0001", "2026-10-05", 40, 0, 3));
-		fake.rows.set("d", row("inline01", "2026-10-05", 120, 6));
-		const list = await load(fake);
-		for (const [id, name] of [
-			["abcd1234", "Monthly letter"],
-			["form0001", "Letter"],
-			["inline01", "Box"],
-		] as const) {
-			const own = await press(fake, "row", `change:${id}`);
-			const shown = numbersRow(list, name)!;
-			expect(statsOf(own)).toEqual([
-				{ label: "Seen", value: shown.seen },
-				{ label: "Responses", value: shown.responses },
-				{ label: "Closed", value: shown.closed },
-				{ label: "On phones", value: shown.phones },
-			]);
-		}
-		const own = await press(fake, "row", "change:abcd1234");
-		expect(statsOf(own).map((s) => s.value)).toEqual(["200", "10 clicks (5%)", "40", "50%"]);
-		// Under 100 views: no percentage, and the same words as the Numbers tab.
-		expect(statsOf(await press(fake, "row", "change:form0001"))[1]!.value).toBe(
-			"3 sign-ups (not enough visitors yet)",
-		);
-		// Nothing counted: a dash everywhere, as the Numbers tab would show.
-		expect(statsOf(await press(fake, "row", "change:none0001")).map((s) => s.value)).toEqual([
-			"–",
-			"–",
-			"–",
-			"–",
-		]);
-		// Under the status line, with a button to the Numbers tab.
-		const blocks = all(own);
-		const status = blocks.findIndex((b) => b.type === "context" && /· On/.test(b.text));
-		expect(status).toBeGreaterThan(-1);
-		expect(blocks[status + 1]?.type).toBe("stats");
-		expect(words(own)).toContain('"label":"See all numbers"');
-		const numbers = await press(fake, "nav", "numbers");
-		const tab = numbers.blocks.find((b) => b.type === "tab") as Extract<Block, { type: "tab" }>;
-		expect(tab.default_tab).toBe(1);
 	});
 });
 

@@ -607,8 +607,12 @@ describe("routes", () => {
 		expect(await call(fake, "boxes", {})).toEqual({
 			items: [{ id: "inl00001", name: "Letter box" }],
 		});
-		const answer = (await call(fake, "box", { id: "inl00001" })) as { box: { form: string } };
+		const answer = (await call(fake, "box", { id: "inl00001" })) as {
+			box: { form: string; handle: string };
+		};
 		expect(answer.box.form).toBe("newsletter");
+		// For the form's hidden utm_campaign field, as in a popup.
+		expect(answer.box.handle).toBe("monthly-letter");
 		expect(await call(fake, "box", { id: "abcd1234" })).toEqual({ box: null });
 	});
 

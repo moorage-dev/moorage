@@ -319,6 +319,60 @@ describe("forms", () => {
 		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).f.newsletter).toBe(1);
 	});
 
+	it("fills the form's hidden campaign fields with the popup, so Forms shows where a sign-up came from", async () => {
+		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
+		const hidden = (name: string, defaultValue = "") => ({
+			id: name,
+			type: "hidden",
+			label: name,
+			name,
+			required: false,
+			width: "full",
+			defaultValue,
+		});
+		const tagged = {
+			...definition,
+			pages: [
+				{
+					fields: [
+						definition.pages[0]!.fields[0]!,
+						hidden("utm_source"),
+						hidden("utm_medium"),
+						hidden("utm_campaign"),
+						hidden("page_url"),
+						// The owner's own value stays; other hidden fields are left alone.
+						hidden("utm_content", "spring-menu"),
+						hidden("ref"),
+					],
+				},
+			],
+		};
+		const calls = stubForms({
+			definition: () => new Response(JSON.stringify({ success: true, data: tagged })),
+			submit: () =>
+				new Response(JSON.stringify({ success: true, data: { success: true, message: "Ok" } })),
+		});
+		boot(config({ contains: "form", form: "newsletter", kind: "slide" }));
+		await readOn();
+		await ready();
+		const form = shadow().querySelector("form")!;
+		form.querySelector<HTMLInputElement>("[name=email]")!.value = "jo@example.com";
+		form.dispatchEvent(new Event("submit", { cancelable: true }));
+		await ready();
+		await ready();
+		const sent = calls.find((c) => c.url.endsWith("submit"))!;
+		expect((sent.body as { data: Record<string, unknown> }).data).toEqual({
+			email: "jo@example.com",
+			utm_source: "popups",
+			utm_medium: "slide-in",
+			utm_campaign: "p0",
+			page_url: `${location.origin}${location.pathname}`,
+			utm_content: "spring-menu",
+			ref: "",
+			_hp: "",
+		});
+	});
+
 	it("stays closed and tells the owner when the form is missing or cannot work in a popup", async () => {
 		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
 		const calls = stubForms({

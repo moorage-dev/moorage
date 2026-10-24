@@ -315,7 +315,8 @@ export function compare(popups: Popup[], rows: CountRow[], days: Days, sort: Sor
 				phones: phones === null ? "–" : `${phones}%`,
 			},
 			seen: t.seen,
-			rate: r,
+			// Sorted by the exact share, so 4.6% and 5.4% (both "5%") still come out in order.
+			rate: r === null ? null : got / t.seen,
 			order,
 			deleted: !popup,
 		};

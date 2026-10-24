@@ -523,6 +523,7 @@ export function createPlugin() {
 					return {
 						box: {
 							id: popup.id,
+							handle: popup.handle,
 							heading: popup.heading,
 							text: popup.text,
 							picture: popup.picture
