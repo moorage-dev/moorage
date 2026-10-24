@@ -1137,6 +1137,13 @@ test.describe("the Status tab", () => {
 
 	test("the banner colours fold away under Colours, and save from there", async () => {
 		await configure({ ga4: IDS.ga4 });
+		// Start from the standard colours, whatever an earlier test left.
+		await save("save_colours", {
+			color_background: "",
+			color_text: "",
+			color_accent: "",
+			dark_colors: false,
+		});
 		const page = await openAdmin();
 		await page.getByRole("tab", { name: "Cookie banner" }).click();
 		const background = page.getByRole("textbox", { name: /Banner background colour/ });
