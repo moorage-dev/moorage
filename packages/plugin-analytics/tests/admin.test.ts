@@ -567,6 +567,162 @@ describe("who is asked", () => {
 	});
 });
 
+describe("the Status tab", () => {
+	function status(response: BlockResponse): Block[] {
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		return tabs?.type === "tab" ? tabs.panels[0]!.blocks : response.blocks;
+	}
+	const headers = (blocks: Block[]) =>
+		blocks.flatMap((block) => (block.type === "header" ? [block.text] : []));
+	const between = (blocks: Block[], from: string, to?: string) => {
+		const start = blocks.findIndex((b) => b.type === "header" && b.text === from);
+		const end = to ? blocks.findIndex((b) => b.type === "header" && b.text === to) : blocks.length;
+		return blocks.slice(start + 1, end);
+	};
+	const busy = {
+		[CONFIG_KEY]: {
+			tools: { ga4: "G-AB12CD34EF", clarity: "ab12cd34ef", hubspot: "12345678" },
+			hubspotEu: true,
+			banner: { audience: "everyone" },
+		},
+	};
+
+	it("is two headed checklists, Tracking then Cookie consent, each with its own warnings first", async () => {
+		const blocks = status(await load(fakeContext(busy)));
+		expect(headers(blocks).slice(0, 2)).toEqual(["Tracking", "Cookie consent"]);
+		const tracking = between(blocks, "Tracking", "Cookie consent");
+		const consent = between(blocks, "Cookie consent");
+		expect(consent[0]).toMatchObject({
+			type: "banner",
+			variant: "alert",
+			title: "The banner has no link to your privacy policy",
+		});
+		expect(tracking.some((b) => b.type === "banner")).toBe(false);
+		const doubled = status(
+			await load(
+				fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF", gtm: "GTM-AB12CD3" } } }),
+			),
+		);
+		expect(between(doubled, "Tracking", "Cookie consent")[0]).toMatchObject({
+			type: "banner",
+			title: "Google Analytics may be counting twice",
+		});
+	});
+
+	it("ticks each tool, says what it waits for, and links to its own numbers", async () => {
+		const tracking = between(status(await load(fakeContext(busy))), "Tracking", "Cookie consent");
+		const lines = tracking.filter((b) => b.type === "section");
+		expect(lines.map((b) => b.type === "section" && b.text)).toEqual([
+			"✓ Google Analytics: on. Waits for every visitor to accept Analytics cookies.",
+			"✓ Microsoft Clarity: on. Waits for every visitor to accept Analytics cookies.",
+			"✓ HubSpot: on. Waits for every visitor to accept Marketing cookies.",
+			"✓ Enquiries: counted. Clicks on phone and email links, and forms that were sent.",
+		]);
+		const links = lines.map((b) =>
+			b.type === "section" && b.accessory?.type === "link" && b.accessory.target.kind === "external"
+				? b.accessory.target.url
+				: null,
+		);
+		expect(links).toEqual([
+			"https://analytics.google.com/",
+			"https://clarity.microsoft.com/projects/view/ab12cd34ef/dashboard",
+			"https://app-eu1.hubspot.com/",
+			null,
+		]);
+		// Google's tools get the way to check they receive visits.
+		const text = JSON.stringify(tracking);
+		expect(text).toContain("https://tagassistant.google.com/");
+		expect(text).toContain("Realtime");
+		const clarityOnly = JSON.stringify(
+			status(await load(fakeContext({ [CONFIG_KEY]: { tools: { clarity: "ab12cd34ef" } } }))),
+		);
+		expect(clarityOnly).not.toContain("tagassistant");
+	});
+
+	it("says who is asked, links the privacy policy, and when the last answer came", async () => {
+		const fake = fakeContext({
+			[CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" }, banner: { policyUrl: "/privacy" } },
+		});
+		const now = Date.now();
+		fake.rows.set("a1", { at: new Date(now - 12 * 60_000).toISOString(), choice: "all" });
+		fake.rows.set("a2", { at: new Date(now - 3 * 86_400_000).toISOString(), choice: "none" });
+		const consent = between(status(await load(fake)), "Cookie consent");
+		const text = JSON.stringify(consent);
+		expect(text).toContain("✓ Asks visitors in Europe and the UK first.");
+		expect(text).toContain("✓ Links to your privacy policy: /privacy");
+		expect(text).toContain("https://acme.test/privacy");
+		expect(text).toContain("Last answer received 12 minutes ago.");
+		const chart = consent.find((b) => b.type === "chart");
+		expect(chart?.type === "chart" && chart.config.chart_type).toBe("timeseries");
+		const series =
+			chart?.type === "chart" && chart.config.chart_type === "timeseries"
+				? chart.config.series
+				: [];
+		expect(
+			series.map((s) => [s.name, s.data.length, s.data.reduce((n, [, v]) => n + v, 0)]),
+		).toEqual([
+			["Accepted all", 30, 1],
+			["Rejected all", 30, 1],
+		]);
+	});
+
+	it("waits for the first answer before drawing a chart", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const consent = between(status(await load(fake)), "Cookie consent");
+		expect(JSON.stringify(consent)).toContain("No answers received yet.");
+		expect(consent.some((b) => b.type === "chart")).toBe(false);
+	});
+
+	it("gives an admin a signed download of the consent log, and an editor none", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		fake.rows.set("ref00001", {
+			at: "2026-10-20T08:09:10.000Z",
+			choice: "some",
+			analytics: true,
+			marketing: false,
+			version: "v1",
+			country: "FR",
+		});
+		const editor = JSON.stringify(await load(fake, EDITOR));
+		expect(editor).not.toContain("/export?");
+		expect(fake.kv.has("export-secret")).toBe(false);
+
+		const page = JSON.stringify(await load(fake));
+		const url = page.match(
+			/https:\/\/acme\.test\/_emdash\/api\/plugins\/analytics-consent\/export\?[^"]+/,
+		)?.[0];
+		expect(url).toBeDefined();
+		const handler = createPlugin().routes.export!.handler;
+		interface Raw {
+			status: number;
+			headers: Array<[string, string]>;
+			body: { kind: string; value: string };
+		}
+		const download = async (address: string) =>
+			(await handler({
+				...fake.ctx,
+				request: new Request(address),
+				input: undefined,
+			} as unknown as RouteContext)) as Raw;
+		const good = await download(url!);
+		const header = (name: string) => good.headers.find(([key]) => key === name)?.[1];
+		expect(good.status).toBe(200);
+		expect(header("content-type")).toBe("text/csv; charset=utf-8");
+		expect(header("cache-control")).toBe("no-store");
+		expect(header("content-disposition")).toMatch(
+			/^attachment; filename="consent-log-\d{4}-\d{2}-\d{2}\.csv"$/,
+		);
+		expect(good.body.value).toBe(
+			"Date and time (UTC),Country,Answer,Analytics,Marketing,Banner version,Reference\r\n2026-10-20 08:09:10,FR,Chose some,yes,no,v1,ref00001\r\n",
+		);
+		const changed = url!.replace(/expires=(\d+)/, (_, n: string) => `expires=${Number(n) - 1}`);
+		expect((await download(changed)).status).toBe(403);
+		expect(
+			(await download("https://acme.test/_emdash/api/plugins/analytics-consent/export")).status,
+		).toBe(403);
+	});
+});
+
 describe("the page's layout", () => {
 	function panel(response: BlockResponse, label: string): Block[] {
 		const tabs = response.blocks.find((block) => block.type === "tab");

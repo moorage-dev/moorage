@@ -23,7 +23,7 @@ import {
 import { clientConfig } from "./fragment.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import { checkId, TOOL_EXAMPLES, TOOL_NAMES, type ToolId } from "./ids.js";
-import type { ConsentCounts } from "./record.js";
+import type { ConsentSummary } from "./record.js";
 
 /**
  * The one admin page, as Block Kit: Status, Tracking tools, Cookie banner,
@@ -57,9 +57,14 @@ const TOOL_LABEL: Record<ToolId, string> = {
 export interface PageState {
 	config: AnalyticsConfig;
 	admin: boolean;
-	counts: ConsentCounts | null;
+	/** The last 30 days of answers to the banner; null when they cannot be read. */
+	answers: ConsentSummary | null;
+	/** The time the page was made, for "N minutes ago". */
+	now?: number;
 	/** The site's own address (https://example.com), for the preview links. */
 	origin?: string;
+	/** The signed address of the consent log download. Admins only. */
+	exportUrl?: string;
 	/** What was typed, kept on screen when a save was refused. */
 	draft?: Record<string, unknown>;
 	errors?: string[];
@@ -104,9 +109,19 @@ function toolDoes(tool: "clarity" | "meta" | "ads"): string {
 	return tool === "clarity" ? "records visits" : "is used for advertising";
 }
 
+interface Warning {
+	title: string;
+	description: string;
+}
+
 /** Things the owner should fix or know, most important first. */
-export function warnings(config: AnalyticsConfig): Array<{ title: string; description: string }> {
-	const list: Array<{ title: string; description: string }> = [];
+export function warnings(config: AnalyticsConfig): Warning[] {
+	return allWarnings(config).map(({ title, description }) => ({ title, description }));
+}
+
+/** The same, each filed under the Status checklist it belongs to. */
+function allWarnings(config: AnalyticsConfig): Array<Warning & { area: "tracking" | "consent" }> {
+	const list: Array<Warning & { area?: "tracking" }> = [];
 	const { tools, banner } = config;
 	const asks = needsConsent(config);
 	if (asks && banner.audience === "none") {
@@ -139,6 +154,7 @@ export function warnings(config: AnalyticsConfig): Array<{ title: string; descri
 	}
 	if (tools.gtm && config.gtmLoading === "immediate" && banner.audience !== "none") {
 		list.push({
+			area: "tracking",
 			title: "Google Tag Manager loads before visitors answer",
 			description:
 				"Every tag inside your container must wait for consent by itself. If you are not sure, set Tag Manager to load after the visitor has chosen, under Advanced.",
@@ -146,23 +162,86 @@ export function warnings(config: AnalyticsConfig): Array<{ title: string; descri
 	}
 	if (tools.ga4 && tools.gtm) {
 		list.push({
+			area: "tracking",
 			title: "Google Analytics may be counting twice",
 			description:
 				"Google Analytics and Google Tag Manager are both on. If your Tag Manager container also contains Google Analytics, every visit is counted twice. Keep one of the two.",
 		});
 	}
-	return list;
+	return list.map((warning) => ({ ...warning, area: warning.area ?? "consent" }));
 }
 
-function statusBlocks(state: PageState): Block[] {
-	const { config, counts } = state;
-	const on = enabledTools(config);
-	const blocks: Block[] = [];
-
-	for (const warning of warnings(config)) {
-		blocks.push({ type: "banner", variant: "alert", ...warning });
+/**
+ * Where each tool shows its numbers. Only Clarity's address is built from the
+ * ID; the others open the tool's own home, which asks which account to show.
+ */
+export function toolLink(config: AnalyticsConfig, tool: ToolId): string {
+	switch (tool) {
+		case "ga4":
+			return "https://analytics.google.com/";
+		case "gtm":
+			return "https://tagmanager.google.com/";
+		case "ads":
+			return "https://ads.google.com/";
+		case "meta":
+			return "https://business.facebook.com/events_manager2/";
+		case "clarity":
+			return `https://clarity.microsoft.com/projects/view/${encodeURIComponent(config.tools.clarity)}/dashboard`;
+		case "hubspot":
+			return config.hubspotEu ? "https://app-eu1.hubspot.com/" : "https://app.hubspot.com/";
+		case "cloudflare":
+			return "https://dash.cloudflare.com/";
 	}
+}
 
+const TOOL_SHORT: Record<ToolId, string> = {
+	ga4: "Open Google Analytics",
+	gtm: "Open Tag Manager",
+	ads: "Open Google Ads",
+	meta: "Open Events Manager",
+	clarity: "Open Clarity",
+	hubspot: "Open HubSpot",
+	cloudflare: "Open Cloudflare",
+};
+
+const external = (label: string, url: string) => ({
+	type: "link" as const,
+	label,
+	target: { kind: "external" as const, url },
+	appearance: "secondary" as const,
+});
+
+/** "just now", "12 minutes ago", "3 hours ago", "2 days ago". */
+export function ago(iso: string, now: number): string {
+	const minutes = Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000));
+	if (Number.isNaN(minutes)) return "some time ago";
+	if (minutes < 1) return "just now";
+	if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+	const days = Math.floor(hours / 24);
+	return `${days} ${days === 1 ? "day" : "days"} ago`;
+}
+
+/** Noon UTC on a day, as the chart's time: the bar sits in the middle of its day. */
+function noon(day: string): number {
+	return Date.parse(`${day}T12:00:00.000Z`);
+}
+
+function trackingBlocks(state: PageState): Block[] {
+	const { config } = state;
+	const on = enabledTools(config);
+	const blocks: Block[] = [{ type: "header", text: "Tracking" }];
+	for (const warning of allWarnings(config)) {
+		if (warning.area === "tracking") {
+			blocks.push({
+				type: "banner",
+				variant: "alert",
+				title: warning.title,
+				description: warning.description,
+			});
+		}
+	}
 	if (on.length === 0) {
 		blocks.push({
 			type: "banner",
@@ -171,36 +250,134 @@ function statusBlocks(state: PageState): Block[] {
 				? "Open Tracking tools and paste the ID of each tool you use."
 				: "An administrator has not added any tracking tools.",
 		});
-	} else {
-		// One short paragraph each. A label-and-value grid would cut these sentences off.
-		for (const tool of on) blocks.push({ type: "section", text: toolStatus(config, tool) });
-		const asks = needsConsent(config);
-		blocks.push({ type: "divider" });
+		return blocks;
+	}
+	// One short line each, with the way to the tool's own numbers beside it.
+	for (const tool of on) {
 		blocks.push({
 			type: "section",
-			text: !asks
-				? "Cookie banner: not needed. Nothing you use sets cookies."
-				: config.banner.audience === "none"
-					? "Cookie banner: off. Another consent tool is in charge."
-					: `Cookie banner: shown to ${whoWaits(config.banner.audience)}. They are asked again after ${config.banner.months} months, or when you add or remove a tool.`,
+			text: `✓ ${toolStatus(config, tool)}`,
+			accessory: external(TOOL_SHORT[tool], toolLink(config, tool)),
 		});
-		blocks.push({
-			type: "section",
-			text: config.enquiries
-				? "Enquiries: counted. Clicks on phone and email links, and forms that were sent."
-				: "Enquiries: not counted.",
-		});
-		if (asks && config.banner.audience !== "none" && counts) {
+	}
+	blocks.push({
+		type: "section",
+		text: config.enquiries
+			? "✓ Enquiries: counted. Clicks on phone and email links, and forms that were sent."
+			: "– Enquiries: not counted.",
+	});
+	if (on.some((tool) => tool === "ga4" || tool === "gtm" || tool === "ads")) {
+		blocks.push(
+			{
+				type: "context",
+				text: "To check that Google receives your visits: open Tag Assistant, type your site's address and accept the cookies there. Then look at Reports, Realtime in Google Analytics: your visit shows within a minute.",
+			},
+			{
+				type: "actions",
+				elements: [external("Open Tag Assistant", "https://tagassistant.google.com/")],
+			},
+		);
+	}
+	return blocks;
+}
+
+function consentBlocks(state: PageState): Block[] {
+	const { config, answers } = state;
+	const { banner } = config;
+	const blocks: Block[] = [{ type: "header", text: "Cookie consent" }];
+	for (const warning of allWarnings(config)) {
+		if (warning.area === "consent") {
 			blocks.push({
-				type: "stats",
-				items: [
-					{ label: "Accepted all", value: counts.all, description: "Last 30 days" },
-					{ label: "Rejected all", value: counts.none, description: "Last 30 days" },
-					{ label: "Chose some", value: counts.some, description: "Last 30 days" },
-				],
+				type: "banner",
+				variant: "alert",
+				title: warning.title,
+				description: warning.description,
 			});
 		}
 	}
+	const asks = needsConsent(config);
+	if (!asks) {
+		blocks.push({
+			type: "section",
+			text:
+				enabledTools(config).length === 0
+					? "– No banner yet: it appears once you add a tool that sets cookies."
+					: "✓ No banner needed: nothing you use sets cookies.",
+		});
+		return blocks;
+	}
+	if (banner.audience === "none") {
+		blocks.push({ type: "section", text: "– Banner off: another consent tool asks instead." });
+		return blocks;
+	}
+	blocks.push({
+		type: "section",
+		text: `✓ Asks ${whoWaits(banner.audience)} first. They are asked again after ${banner.months} months, or when you add or remove a tool.`,
+	});
+	if (banner.policyUrl) {
+		const url = banner.policyUrl.startsWith("/")
+			? state.origin
+				? `${state.origin}${banner.policyUrl}`
+				: undefined
+			: banner.policyUrl;
+		blocks.push({
+			type: "section",
+			text: `✓ Links to your privacy policy: ${banner.policyUrl}`,
+			...(url ? { accessory: external("Open it", url) } : {}),
+		});
+	}
+	if (banner.settingsButton) {
+		blocks.push({
+			type: "section",
+			text: '✓ Visitors can change their answer at any time with the small "Cookies" button.',
+		});
+	}
+	if (!answers) return blocks;
+	blocks.push({
+		type: "section",
+		text: answers.lastAt
+			? `Last answer received ${ago(answers.lastAt, state.now ?? Date.now())}.`
+			: "No answers received yet. They show here a minute or so after visitors answer the banner.",
+	});
+	blocks.push({
+		type: "stats",
+		items: [
+			{ label: "Accepted all", value: answers.all, description: "Last 30 days" },
+			{ label: "Rejected all", value: answers.none, description: "Last 30 days" },
+			{ label: "Chose some", value: answers.some, description: "Last 30 days" },
+		],
+	});
+	if (answers.all + answers.none + answers.some > 0) {
+		blocks.push({
+			type: "chart",
+			config: {
+				chart_type: "timeseries",
+				style: "bar",
+				height: 200,
+				series: [
+					{ name: "Accepted all", data: answers.days.map((d) => [noon(d.day), d.all]) },
+					{ name: "Rejected all", data: answers.days.map((d) => [noon(d.day), d.none]) },
+				],
+			},
+		});
+	}
+	if (state.admin && state.exportUrl) {
+		blocks.push(
+			{
+				type: "actions",
+				elements: [external("Download the consent log (CSV)", state.exportUrl)],
+			},
+			{
+				type: "context",
+				text: "Your proof that visitors were asked: one line per answer from the last 12 months, with the time, country, answer and the random reference the visitor's browser keeps. No addresses or names. The link works for ten minutes.",
+			},
+		);
+	}
+	return blocks;
+}
+
+function statusBlocks(state: PageState): Block[] {
+	const blocks: Block[] = [...trackingBlocks(state), ...consentBlocks(state)];
 
 	blocks.push({
 		type: "context",
@@ -602,7 +779,14 @@ export function renderPage(state: PageState, tab: number = TAB.status): BlockRes
 
 /** The state without a refused save's leftovers, for the tabs it did not happen on. */
 function clean(state: PageState): PageState {
-	return { config: state.config, admin: state.admin, counts: state.counts, origin: state.origin };
+	return {
+		config: state.config,
+		admin: state.admin,
+		answers: state.answers,
+		now: state.now,
+		origin: state.origin,
+		exportUrl: state.exportUrl,
+	};
 }
 
 // ── Saving ──────────────────────────────────────────────────

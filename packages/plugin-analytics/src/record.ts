@@ -131,6 +131,131 @@ export async function countConsents(
 	return { all: all ?? 0, none: none ?? 0, some: some ?? 0 };
 }
 
+export interface ConsentDay {
+	/** YYYY-MM-DD, UTC. */
+	day: string;
+	all: number;
+	none: number;
+}
+
+export interface ConsentSummary extends ConsentCounts {
+	/** One entry per day, oldest first, today last. */
+	days: ConsentDay[];
+	/** When the newest answer arrived, ISO 8601, or null before the first. */
+	lastAt: string | null;
+}
+
+/**
+ * The Status tab's numbers: answers per day for the last `days` days (UTC,
+ * today included), their totals, and when the last one came in. Counts only,
+ * served by the (choice, at) index: two per day, one for "some", one read for
+ * the newest row, all at once.
+ */
+export async function consentSummary(
+	ctx: PluginContext,
+	now: Date,
+	days = 30,
+): Promise<ConsentSummary | null> {
+	const table = rows(ctx);
+	if (!table) return null;
+	const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+	const starts = Array.from({ length: days + 1 }, (_, index) =>
+		new Date(today - (days - 1 - index) * DAY_MS).toISOString(),
+	);
+	const count = async (choice: ChoiceKind, gte: string, lt?: string) =>
+		(await table.count({ choice, at: lt ? { gte, lt } : { gte } })) ?? 0;
+	const [perDay, some, newest] = await Promise.all([
+		Promise.all(
+			starts.slice(0, days).map(async (start, index) => {
+				const end = starts[index + 1]!;
+				const [all, none] = await Promise.all([
+					count("all", start, end),
+					count("none", start, end),
+				]);
+				return { day: start.slice(0, 10), all, none };
+			}),
+		),
+		count("some", starts[0]!),
+		table.query({ orderBy: { at: "desc" }, limit: 1 }),
+	]);
+	return {
+		all: perDay.reduce((sum, day) => sum + day.all, 0),
+		none: perDay.reduce((sum, day) => sum + day.none, 0),
+		some,
+		days: perDay,
+		lastAt: newest.items[0]?.data.at ?? null,
+	};
+}
+
+/** How many answers one spreadsheet download holds at most: 100 reads of 100 rows. */
+export const EXPORT_MAX_ROWS = 10_000;
+
+/** The newest answers kept, up to `max`, and whether there are more. */
+export async function readConsentLog(
+	ctx: PluginContext,
+	max = EXPORT_MAX_ROWS,
+): Promise<{ rows: Array<{ id: string; data: ConsentRow }>; more: boolean }> {
+	const table = rows(ctx);
+	if (!table) return { rows: [], more: false };
+	const out: Array<{ id: string; data: ConsentRow }> = [];
+	let cursor: string | undefined;
+	let more = false;
+	while (out.length < max) {
+		const page = await table.query({
+			orderBy: { at: "desc" },
+			limit: Math.min(100, max - out.length),
+			...(cursor ? { cursor } : {}),
+		});
+		out.push(...page.items);
+		more = page.hasMore;
+		if (!page.hasMore || !page.cursor) break;
+		cursor = page.cursor;
+	}
+	return { rows: out, more };
+}
+
+const ANSWER: Record<ChoiceKind, string> = {
+	all: "Accepted all",
+	none: "Rejected all",
+	some: "Chose some",
+};
+
+function cell(value: string): string {
+	// A spreadsheet treats a leading = + - @ as a formula.
+	const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
+	return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/**
+ * The consent log for a spreadsheet: one line per answer, with exactly what is
+ * stored. The reference is the random one the visitor's own browser keeps in
+ * its cookie, so one answer can be matched to one visitor who asks.
+ */
+export function consentCsv(list: Array<{ id: string; data: ConsentRow }>, more = false): string {
+	const lines = ["Date and time (UTC),Country,Answer,Analytics,Marketing,Banner version,Reference"];
+	for (const { id, data } of list) {
+		lines.push(
+			[
+				String(data.at).slice(0, 19).replace("T", " "),
+				data.country ?? "",
+				ANSWER[data.choice] ?? "",
+				data.analytics ? "yes" : "no",
+				data.marketing ? "yes" : "no",
+				String(data.version ?? ""),
+				id,
+			]
+				.map(cell)
+				.join(","),
+		);
+	}
+	if (more) {
+		lines.push(
+			`Only the newest ${list.length.toLocaleString("en")} answers are in this file. Older ones are still kept on the site.`,
+		);
+	}
+	return `${lines.join("\r\n")}\r\n`;
+}
+
 /** Delete rows older than a year, a batch at a time. Returns how many went. */
 export async function pruneConsents(ctx: PluginContext, now: Date): Promise<number> {
 	const table = rows(ctx);
