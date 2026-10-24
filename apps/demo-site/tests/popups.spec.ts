@@ -193,11 +193,11 @@ test.afterAll(async () => {
 	await adminContext.close();
 });
 
-async function inbox(): Promise<Array<{ data: Record<string, unknown> }>> {
+async function inbox(slug = "newsletter"): Promise<Array<{ data: Record<string, unknown> }>> {
 	const forms = (await (
 		await admin.post(`${FORMS}/forms/list`, { headers: H, data: {} })
 	).json()) as { data: { items: Array<{ id: string; slug: string }> } };
-	const formId = forms.data.items.find((f) => f.slug === "newsletter")!.id;
+	const formId = forms.data.items.find((f) => f.slug === slug)!.id;
 	const list = (await (
 		await admin.post(`${FORMS}/submissions/list`, { headers: H, data: { formId } })
 	).json()) as { data: { items: Array<{ data: Record<string, unknown> }> } };
@@ -406,10 +406,12 @@ test.describe("admin", () => {
 		const row = page.locator("tbody tr").filter({ hasText: "Opening hours" });
 		await row.getByRole("button", { name: "Edit", exact: true }).click();
 		await expect(page.getByRole("heading", { name: "Opening hours" })).toBeVisible();
-		// Its own numbers, as on the Numbers tab: one view, too few for a percentage.
+		// Its own results: one view, too few for a rate or a chart.
+		await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
 		await expect(page.getByText("Seen", { exact: true })).toBeVisible();
-		await expect(page.getByText("0 clicks (not enough visitors yet)")).toBeVisible();
-		await expect(page.getByRole("button", { name: "See all numbers" })).toBeVisible();
+		await expect(page.getByText("(needs 100 views)")).toBeVisible();
+		await expect(page.locator("canvas")).toHaveCount(0);
+		await expect(page.getByRole("button", { name: "Compare with other popups" })).toBeVisible();
 		// One Save for everything: no Save per section.
 		const save = page.getByRole("button", { name: "Save changes" });
 		await expect(save).toHaveCount(1);
@@ -435,12 +437,93 @@ test.describe("admin", () => {
 			).json(),
 		);
 		expect(list).toContain("Every page, except /contact");
-		await page.getByRole("button", { name: "See all numbers" }).click();
-		await expect(page.getByRole("tab", { name: "Numbers", selected: true })).toBeVisible();
+		await page.getByRole("button", { name: "Compare with other popups" }).click();
+		await expect(page.getByRole("tab", { name: "Results", selected: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "How your popups compare" })).toBeVisible();
 		await page.close();
 	});
 
-	test("the Numbers tab downloads a spreadsheet", async () => {
+	test("results: This month on a popup's page, the same period on Results, sorted by Rate, its own CSV", async () => {
+		test.setTimeout(240_000);
+		const button = (name: string, label: string) => ({
+			name,
+			kind: "slide" as const,
+			s2: {
+				heading: name,
+				text: "Ten till two.",
+				contains: "button",
+				button_label: label,
+				button_url: "/hours",
+				decline: "no-thanks",
+			},
+		});
+		const low = await make(button("Opening hours", "See the hours"));
+		const high = await make(button("Cake of the month", "Order"));
+		// Counted the way a visitor's browser does: 120 views and 6 clicks, 100 views and 10 clicks.
+		const count = async (p: string, e: string, n: number) => {
+			for (let i = 0; i < n; i++) {
+				const r = await admin.post(`${API}/count`, { data: { p, e, m: false } });
+				expect(r.status()).toBe(200);
+			}
+		};
+		await count(low, "seen", 120);
+		await count(low, "clicked", 6);
+		await count(high, "seen", 100);
+		await count(high, "clicked", 10);
+		const page = await adminContext.newPage();
+		await page.setViewportSize({ width: 1280, height: 1400 });
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await page.locator("text=New popup").first().waitFor({ timeout: 150_000 });
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		if (await welcome.isVisible().catch(() => false))
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		await page
+			.locator("tbody tr")
+			.filter({ hasText: "Opening hours" })
+			.getByRole("button", { name: "Edit", exact: true })
+			.click();
+		await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
+		// Pick This month: applied at once, no Show button.
+		await page.getByRole("combobox", { name: "Period" }).click();
+		await page.getByRole("option", { name: "This month" }).click();
+		await expect(page.getByRole("combobox", { name: "Period" })).toHaveText(/This month/);
+		await expect(page.getByText("120", { exact: true })).toBeVisible();
+		await expect(page.getByText("5%", { exact: true })).toBeVisible();
+		await expect(page.getByText("Button clicks", { exact: true })).toBeVisible();
+		// The daily bars.
+		await expect(page.locator("canvas").first()).toBeVisible();
+		// Its own download: only this popup's rows.
+		const own = await page
+			.getByRole("link", { name: "Download this popup's numbers (CSV)" })
+			.getAttribute("href");
+		const file = await page.request.get(own!);
+		expect(file.status()).toBe(200);
+		expect(file.headers()["content-disposition"]).toMatch(
+			/^attachment; filename="popup-opening-hours-\d{4}-\d{2}-01-to-\d{4}-\d{2}-\d{2}\.csv"$/,
+		);
+		const csv = await file.text();
+		expect(csv.split("\r\n")[0]).toBe("Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones");
+		expect(csv).toContain(",Opening hours,120,0,6,0,0");
+		expect(csv).not.toContain("Cake of the month");
+		// Compare: the Results tab on the same period.
+		await page.getByRole("button", { name: "Compare with other popups" }).click();
+		await expect(page.getByRole("tab", { name: "Results", selected: true })).toBeVisible();
+		await expect(page.getByRole("combobox", { name: "Period" })).toHaveText(/This month/);
+		const names = () =>
+			page
+				.locator("tbody tr td:first-child")
+				.filter({ hasText: /Opening hours|Cake of the month/ })
+				.allTextContents();
+		await page.getByRole("columnheader", { name: "Rate" }).click();
+		await expect.poll(names).toEqual(["Opening hours", "Cake of the month"]);
+		await page.getByRole("columnheader", { name: "Rate" }).click();
+		await expect.poll(names).toEqual(["Cake of the month", "Opening hours"]);
+		// Still This month after sorting.
+		await expect(page.getByRole("combobox", { name: "Period" })).toHaveText(/This month/);
+		await page.close();
+	});
+
+	test("the Results tab downloads a spreadsheet", async () => {
 		test.setTimeout(240_000);
 		const page = await adminContext.newPage();
 		await page.goto("/_emdash/admin/plugins/popups/");
@@ -448,7 +531,7 @@ test.describe("admin", () => {
 		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
 		if (await welcome.isVisible().catch(() => false))
 			await welcome.getByRole("button", { name: "Get Started" }).click();
-		await page.getByRole("tab", { name: "Numbers" }).click();
+		await page.getByRole("tab", { name: "Results" }).click();
 		// The link opens in a new tab, which receives the file.
 		const download = new Promise<Download>((resolve) => {
 			adminContext.on("page", (opened) => opened.once("download", resolve));
@@ -463,10 +546,10 @@ test.describe("admin", () => {
 				.map((p) => p.textContent("body").catch(() => "")),
 		);
 		expect(file, `no download arrived; the new tab says: ${shown.join(" | ")}`).not.toBeNull();
-		expect(file!.suggestedFilename()).toMatch(/^popups-start-to-\d{4}-\d{2}-\d{2}\.csv$/);
+		expect(file!.suggestedFilename()).toMatch(/^popups-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/);
 		const path = await file!.path();
 		const text = await readFile(path, "utf8");
-		expect(text.split("\r\n")[0]).toBe("Day,Popup,Seen,Signed up,Clicked,Closed,Seen on phones");
+		expect(text.split("\r\n")[0]).toBe("Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones");
 		for (const opened of adminContext.pages()) await opened.close();
 	});
 
@@ -731,6 +814,65 @@ test.describe("box in a page", () => {
 		await region.getByRole("button", { name: "Join the list" }).click();
 		await expect(region.locator(".ec-form-status--success")).toBeVisible();
 		expect((await inbox()).length).toBe(before + 1);
+		await page.context().close();
+	});
+});
+
+test.describe("which popup a sign-up came from", () => {
+	test("fills a form's hidden campaign fields from a slide-in and from a box in a page", async ({
+		browser,
+	}) => {
+		const hidden = (name: string) => ({ id: name, type: "hidden", label: name, name, required: false });
+		const created = await admin.post(`${FORMS}/forms/create`, {
+			headers: H,
+			data: {
+				name: "Tagged",
+				slug: "tagged",
+				pages: [
+					{
+						fields: [
+							{ id: "email", type: "email", label: "Email address", name: "email", required: true },
+							hidden("utm_source"),
+							hidden("utm_medium"),
+							hidden("utm_campaign"),
+							hidden("page_url"),
+						],
+					},
+				],
+				settings: { spamProtection: "honeypot", submitLabel: "Join the list" },
+			},
+		});
+		expect([200, 409]).toContain(created.status());
+		const words = { picture: "none", contains: "form", form: "tagged", thanks: "Thanks" };
+		await make({ name: "Spring offer", kind: "slide", s2: { heading: "Spring offer", text: "", ...words } });
+		const box = await make({ name: "Letter box", kind: "inline", s2: { heading: "Letter box", text: "", ...words } });
+		const before = (await inbox("tagged")).length;
+		const page = await visitor(browser);
+		await page.goto("/popups-test");
+		await read(page);
+		const slide = page.getByRole("region", { name: "Spring offer" });
+		await expect(slide).toBeVisible();
+		await slide.getByLabel(/Email address/).fill("slide@example.com");
+		await slide.getByRole("button", { name: "Join the list" }).click();
+		await expect(page.locator("[data-form-status].ec-form-status--success")).toHaveCount(1);
+		await page.goto(`/popups-test?box=${box}`);
+		const region = page.getByRole("region", { name: "Letter box" });
+		await region.getByLabel(/Email address/).fill("box@example.com");
+		await region.getByRole("button", { name: "Join the list" }).click();
+		await expect(region.locator(".ec-form-status--success")).toBeVisible();
+		const items = (await inbox("tagged")).slice(0, (await inbox("tagged")).length - before);
+		const by = (email: string) => items.find((i) => i.data.email === email)!.data;
+		expect(by("slide@example.com")).toMatchObject({
+			utm_source: "popups",
+			utm_medium: "slide-in",
+			utm_campaign: "spring-offer",
+		});
+		expect(String(by("slide@example.com").page_url)).toMatch(/\/popups-test$/);
+		expect(by("box@example.com")).toMatchObject({
+			utm_source: "popups",
+			utm_medium: "popup",
+			utm_campaign: "letter-box",
+		});
 		await page.context().close();
 	});
 });
