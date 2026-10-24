@@ -142,7 +142,6 @@ function originOf(ctx: RouteContext): string | undefined {
 	}
 }
 
-
 /**
  * The public address of a picture. A plugin's media list only gives a signed-in
  * address (`/_emdash/api/media/asset/...`), which visitors cannot load, so the
@@ -474,7 +473,11 @@ export function createPlugin() {
 					// Links signed before 0.2.0 could leave the dates open: every kept day.
 					const to = range.to || zoneDay(Date.now(), await siteZone());
 					const from = range.from || addDays(to, -(KEEP_DAYS - 1));
-					const rows = await readRows(ctx, { from, to, ...(range.popup ? { popup: range.popup } : {}) });
+					const rows = await readRows(ctx, {
+						from,
+						to,
+						...(range.popup ? { popup: range.popup } : {}),
+					});
 					const names = new Map(store.popups.map((p) => [p.id, p.name]));
 					const one = range.popup ? store.popups.find((p) => p.id === range.popup) : undefined;
 					const file = range.popup

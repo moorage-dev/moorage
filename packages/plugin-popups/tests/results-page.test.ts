@@ -51,7 +51,8 @@ function flatten(blocks: Block[]): Block[] {
 }
 const all = (r: BlockResponse) => flatten(r.blocks);
 const words = (r: BlockResponse) => JSON.stringify(r.blocks);
-const tab = (r: BlockResponse) => r.blocks.find((b) => b.type === "tab") as Extract<Block, { type: "tab" }>;
+const tab = (r: BlockResponse) =>
+	r.blocks.find((b) => b.type === "tab") as Extract<Block, { type: "tab" }>;
 const resultsPanel = (r: BlockResponse) => tab(r).panels.find((p) => p.label === "Results")!.blocks;
 const tableOf = (blocks: Block[]) =>
 	blocks.find((b) => b.type === "table" && b.block_id?.startsWith("results:")) as Extract<
@@ -109,7 +110,9 @@ describe("the Results tab: how your popups compare", () => {
 	it("opens on the last 30 days, and its totals are the rows of its table, deleted popups included", async () => {
 		const fake = site1();
 		const panel = resultsPanel(await call(fake, { type: "page_load", page: "/" }));
-		expect(panel.find((b) => b.type === "header")).toMatchObject({ text: "How your popups compare" });
+		expect(panel.find((b) => b.type === "header")).toMatchObject({
+			text: "How your popups compare",
+		});
 		expect(picker(panel)).toMatchObject({ label: "Period", initial_value: "r:30-days" });
 		expect(picker(panel)!.options.map((o) => o.label)).toEqual([
 			"Since they started",
@@ -176,7 +179,12 @@ describe("the Results tab: how your popups compare", () => {
 		]);
 		const up = tableOf(
 			resultsPanel(
-				await press(fake, "numbers_page", { sort: { key: "seen", dir: "asc" } }, "results:this-month"),
+				await press(
+					fake,
+					"numbers_page",
+					{ sort: { key: "seen", dir: "asc" } },
+					"results:this-month",
+				),
 			),
 		).rows;
 		expect(up.map((r) => r.name)).toEqual(["Monthly letter", "Letter", "Deleted popups"]);
@@ -196,7 +204,10 @@ describe("a finished popup's own page: Results", () => {
 		const at = page.findIndex((b) => b.type === "header" && b.text === "Results");
 		expect(at).toBeGreaterThan(0);
 		expect(picker(page)).toMatchObject({ initial_value: "p:abcd1234:start" });
-		expect(picker(page)!.options[0]).toEqual({ label: "Since it started", value: "p:abcd1234:start" });
+		expect(picker(page)!.options[0]).toEqual({
+			label: "Since it started",
+			value: "p:abcd1234:start",
+		});
 		expect(words({ blocks: page })).toContain("1 Aug to 16 Oct.");
 		expect(tiles(page)).toEqual([
 			{ label: "Seen", value: "400" },
@@ -264,7 +275,11 @@ describe("a finished popup's own page: Results", () => {
 		few.rows.set("x", count("abcd1234", "2026-10-03", 40, { clicked: 2 }));
 		const quiet = all(await press(few, "row", "change:abcd1234"));
 		expect(quiet.some((b) => b.type === "chart")).toBe(false);
-		expect(tiles(quiet)[2]).toEqual({ label: "Rate", value: "–", description: "(needs 100 views)" });
+		expect(tiles(quiet)[2]).toEqual({
+			label: "Rate",
+			value: "–",
+			description: "(needs 100 views)",
+		});
 	});
 
 	it("says when counts older than 400 days are gone, instead of 'since it started'", async () => {
@@ -272,7 +287,9 @@ describe("a finished popup's own page: Results", () => {
 			popups: { popups: [popup({ createdAt: "2024-03-01T00:00:00.000Z" })] },
 		});
 		const page = all(await press(fake, "row", "change:abcd1234"));
-		expect(words({ blocks: page })).toContain("12 Sep 2025 to 16 Oct (counts are kept for 400 days).");
+		expect(words({ blocks: page })).toContain(
+			"12 Sep 2025 to 16 Oct (counts are kept for 400 days).",
+		);
 	});
 });
 
@@ -303,7 +320,10 @@ describe("days in the site's time zone", () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		const count = createPlugin().routes.count!.handler;
 		// Noon UTC on the 16th is 1 am on the 17th in Auckland.
-		await count({ ...fake.ctx, input: { p: "abcd1234", e: "seen", m: false } } as unknown as RouteContext);
+		await count({
+			...fake.ctx,
+			input: { p: "abcd1234", e: "seen", m: false },
+		} as unknown as RouteContext);
 		expect([...fake.rows.keys()]).toEqual(["abcd1234:2026-10-17"]);
 		const panel = resultsPanel(await call(fake, { type: "page_load", page: "/" }));
 		expect(words({ blocks: panel })).toContain("18 Sep to 17 Oct.");

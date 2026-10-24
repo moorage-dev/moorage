@@ -58,7 +58,9 @@ function fromB64url(text: string): Uint8Array<ArrayBuffer> | null {
 
 /** What is signed. Minting and checking both build it here, so they never disagree. */
 function signedText(range: ExportRange, expires: number): Uint8Array<ArrayBuffer> {
-	return encoder.encode(`popups-export:v2|${range.from}|${range.to}|${range.popup ?? ""}|${expires}`);
+	return encoder.encode(
+		`popups-export:v2|${range.from}|${range.to}|${range.popup ?? ""}|${expires}`,
+	);
 }
 
 function secretBytes(value: unknown): Uint8Array<ArrayBuffer> | null {

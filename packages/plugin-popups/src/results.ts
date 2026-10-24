@@ -61,7 +61,12 @@ export interface PeriodDays extends Days {
  * - Last 30 days: today and the 29 days before; before it, the 30 days before those.
  * - Since it started: the day the popup was made (or, comparing, the oldest kept day) to today.
  */
-export function periodDays(period: Period, now: number, zone: string, started?: string): PeriodDays {
+export function periodDays(
+	period: Period,
+	now: number,
+	zone: string,
+	started?: string,
+): PeriodDays {
 	const today = zoneDay(now, zone);
 	const oldest = addDays(today, -(KEEP_DAYS - 1));
 	const firstOf = (day: string) => `${day.slice(0, 8)}01`;
@@ -278,7 +283,12 @@ function plural(n: number, one: string, many: string): string {
  * Seen or Rate when asked; a row without a rate (under 100 views) goes last
  * either way, and deleted popups always last of all.
  */
-export function compare(popups: Popup[], rows: CountRow[], days: Days, sort: Sort | null): Compared {
+export function compare(
+	popups: Popup[],
+	rows: CountRow[],
+	days: Days,
+	sort: Sort | null,
+): Compared {
 	const inPeriod = rows.filter((row) => row.day >= days.from && row.day <= days.to);
 	const sums = totals(inPeriod);
 	const known = new Set(popups.map((p) => p.id));
@@ -289,12 +299,7 @@ export function compare(popups: Popup[], rows: CountRow[], days: Days, sort: Sor
 		total.clicked += t.clicked;
 		total.closed += t.closed;
 	}
-	const line = (
-		name: string,
-		t: Totals,
-		popup: Popup | null,
-		order: number,
-	): Line => {
+	const line = (name: string, t: Totals, popup: Popup | null, order: number): Line => {
 		const got = popup ? responses(popup, t) : t.sent + t.clicked;
 		const r = rate(got, t.seen);
 		const phones = phoneShare(t);
@@ -302,7 +307,10 @@ export function compare(popups: Popup[], rows: CountRow[], days: Days, sort: Sor
 			? isForm(popup)
 				? plural(got, "sign-up", "sign-ups")
 				: plural(got, "button click", "button clicks")
-			: [t.sent ? plural(t.sent, "sign-up", "sign-ups") : "", t.clicked ? plural(t.clicked, "button click", "button clicks") : ""]
+			: [
+					t.sent ? plural(t.sent, "sign-up", "sign-ups") : "",
+					t.clicked ? plural(t.clicked, "button click", "button clicks") : "",
+				]
 					.filter(Boolean)
 					.join(", ") || "0";
 		return {

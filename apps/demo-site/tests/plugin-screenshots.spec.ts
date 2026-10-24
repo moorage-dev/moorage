@@ -658,13 +658,25 @@ test("Popups", async ({ browser }) => {
 	// time zone is UTC): about 2.5% of views sign up to the letter, 6% click the cakes.
 	const today = new Date();
 	for (let back = 1; back <= 42; back++) {
-		const day = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - back))
+		const day = new Date(
+			Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - back),
+		)
 			.toISOString()
 			.slice(0, 10);
 		const wave = 1 + 0.35 * Math.sin(back / 3);
 		const rows = [
-			{ popup: letter, seen: Math.round(80 * wave), sent: Math.round(2 * wave + (back % 3)), clicked: 0 },
-			{ popup: cakes, seen: Math.round(55 * wave), sent: 0, clicked: Math.round(3 * wave + (back % 2)) },
+			{
+				popup: letter,
+				seen: Math.round(80 * wave),
+				sent: Math.round(2 * wave + (back % 3)),
+				clicked: 0,
+			},
+			{
+				popup: cakes,
+				seen: Math.round(55 * wave),
+				sent: 0,
+				clicked: Math.round(3 * wave + (back % 2)),
+			},
 		];
 		for (const r of rows) {
 			const data = JSON.stringify({

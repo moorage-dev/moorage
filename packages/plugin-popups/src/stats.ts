@@ -136,7 +136,9 @@ export async function readRows(ctx: PluginContext, query: RowQuery): Promise<Cou
 	const rows = table(ctx);
 	if (!rows) return [];
 	const day = { gte: query.from, lte: query.to };
-	const where: Record<string, string | typeof day> = query.popup ? { popup: query.popup, day } : { day };
+	const where: Record<string, string | typeof day> = query.popup
+		? { popup: query.popup, day }
+		: { day };
 	const out: CountRow[] = [];
 	let cursor: string | undefined;
 	for (let page = 0; page < 100; page++) {

@@ -441,11 +441,23 @@ describe("results", () => {
 	it("keeps each count on the site's own day, not the UTC day", async () => {
 		const fake = fakeContext();
 		// Noon UTC on 16 October is 1 am on the 17th in Auckland and 5 am on the 16th in Los Angeles.
-		await addCount(fake.ctx, [popup()], { popup: "abcd1234", event: "seen", phone: false }, NOW, "Pacific/Auckland");
+		await addCount(
+			fake.ctx,
+			[popup()],
+			{ popup: "abcd1234", event: "seen", phone: false },
+			NOW,
+			"Pacific/Auckland",
+		);
 		expect(fake.rows.get("abcd1234:2026-10-17")).toMatchObject({ day: "2026-10-17", seen: 1 });
 		// 11 pm UTC on the 16th is still the 16th in Los Angeles but already the 17th in UTC.
 		const late = Date.UTC(2026, 9, 16, 23);
-		await addCount(fake.ctx, [popup()], { popup: "abcd1234", event: "seen", phone: false }, late, "America/Los_Angeles");
+		await addCount(
+			fake.ctx,
+			[popup()],
+			{ popup: "abcd1234", event: "seen", phone: false },
+			late,
+			"America/Los_Angeles",
+		);
 		expect(fake.rows.get("abcd1234:2026-10-16")).toMatchObject({ day: "2026-10-16", seen: 1 });
 	});
 
@@ -453,9 +465,21 @@ describe("results", () => {
 		const fake = fakeContext();
 		for (let d = 0; d < 250; d++) {
 			const day = new Date(Date.UTC(2026, 0, 1 + d)).toISOString().slice(0, 10);
-			fake.rows.set(`r${d}`, { popup: "abcd1234", day, seen: 1, sent: 0, clicked: 0, closed: 0, phone: 0 });
+			fake.rows.set(`r${d}`, {
+				popup: "abcd1234",
+				day,
+				seen: 1,
+				sent: 0,
+				clicked: 0,
+				closed: 0,
+				phone: 0,
+			});
 		}
-		const rows = await readRows(fake.ctx, { from: "2026-01-01", to: "2026-12-31", popup: "abcd1234" });
+		const rows = await readRows(fake.ctx, {
+			from: "2026-01-01",
+			to: "2026-12-31",
+			popup: "abcd1234",
+		});
 		expect(rows).toHaveLength(250);
 		expect(rows[0]!.day).toBe("2026-01-01");
 		expect(fake.queries).toHaveLength(3);
@@ -490,7 +514,11 @@ describe("results", () => {
 			closed: 0,
 			phone: 0,
 		});
-		const rows = await readRows(fake.ctx, { from: "2026-10-01", to: "2026-10-31", popup: "abcd1234" });
+		const rows = await readRows(fake.ctx, {
+			from: "2026-10-01",
+			to: "2026-10-31",
+			popup: "abcd1234",
+		});
 		expect(totals(rows).get("abcd1234")).toEqual({
 			seen: 110,
 			sent: 5,
@@ -500,7 +528,9 @@ describe("results", () => {
 			since: "2026-10-03",
 		});
 		expect(await readRows(fake.ctx, { from: "2026-10-04", to: "2026-10-31" })).toHaveLength(2);
-		expect(await readRows(fake.ctx, { from: "2026-10-04", to: "2026-10-31", popup: "abcd1234" })).toHaveLength(1);
+		expect(
+			await readRows(fake.ctx, { from: "2026-10-04", to: "2026-10-31", popup: "abcd1234" }),
+		).toHaveLength(1);
 		// Only that popup and those days were asked for.
 		expect(fake.queries.at(-1)).toEqual({
 			popup: "abcd1234",
@@ -509,7 +539,9 @@ describe("results", () => {
 		expect(rate(5, 99)).toBeNull();
 		expect(rate(5, 110)).toBe(5);
 		const csv = toCsv(rows, new Map([["abcd1234", '=HYPERLINK("x"), "a"']]));
-		expect(csv.split("\r\n")[0]).toBe("Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones");
+		expect(csv.split("\r\n")[0]).toBe(
+			"Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones",
+		);
 		expect(csv).toContain(`2026-10-03,"'=HYPERLINK(""x""), ""a""",90,3,0,10,40`);
 	});
 });
@@ -633,7 +665,11 @@ describe("routes", () => {
 		});
 		fake.rows.set("b", { ...fake.rows.get("a")!, popup: "efgh5678", seen: 4 });
 		const shown = JSON.stringify(
-			await call(fake, "admin", { type: "block_action", action_id: "period", value: "r:this-month" }),
+			await call(fake, "admin", {
+				type: "block_action",
+				action_id: "period",
+				value: "r:this-month",
+			}),
 		);
 		const link = /"url":"([^"]+\/export\?[^"]+)"/.exec(shown)![1]!;
 		expect(link).toMatch(
@@ -652,7 +688,11 @@ describe("routes", () => {
 		expect(out.body.value).toContain("2026-10-03,Spring,4");
 		// A popup's own page: its own link, its own rows only.
 		const own = JSON.stringify(
-			await call(fake, "admin", { type: "block_action", action_id: "row", value: "change:abcd1234" }),
+			await call(fake, "admin", {
+				type: "block_action",
+				action_id: "row",
+				value: "change:abcd1234",
+			}),
 		);
 		const ownLink = /"url":"([^"]+\/export\?[^"]+)"/.exec(own)![1]!;
 		expect(ownLink).toContain("popup=abcd1234");

@@ -74,7 +74,9 @@ describe("signed download link", () => {
 			expect(await checkExport(kv, copy, NOW), copy.toString()).toBeNull();
 		}
 		// And a link for every popup cannot be narrowed to one.
-		const every = new URLSearchParams(await signExport(kv, { from: "2026-10-01", to: "2026-10-07" }, NOW));
+		const every = new URLSearchParams(
+			await signExport(kv, { from: "2026-10-01", to: "2026-10-07" }, NOW),
+		);
 		every.set("popup", "abcd1234");
 		expect(await checkExport(kv, every, NOW)).toBeNull();
 	});

@@ -502,7 +502,9 @@ test.describe("admin", () => {
 			/^attachment; filename="popup-opening-hours-\d{4}-\d{2}-01-to-\d{4}-\d{2}-\d{2}\.csv"$/,
 		);
 		const csv = await file.text();
-		expect(csv.split("\r\n")[0]).toBe("Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones");
+		expect(csv.split("\r\n")[0]).toBe(
+			"Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones",
+		);
 		expect(csv).toContain(",Opening hours,120,0,6,0,0");
 		expect(csv).not.toContain("Cake of the month");
 		// Compare: the Results tab on the same period.
@@ -546,10 +548,14 @@ test.describe("admin", () => {
 				.map((p) => p.textContent("body").catch(() => "")),
 		);
 		expect(file, `no download arrived; the new tab says: ${shown.join(" | ")}`).not.toBeNull();
-		expect(file!.suggestedFilename()).toMatch(/^popups-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/);
+		expect(file!.suggestedFilename()).toMatch(
+			/^popups-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/,
+		);
 		const path = await file!.path();
 		const text = await readFile(path, "utf8");
-		expect(text.split("\r\n")[0]).toBe("Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones");
+		expect(text.split("\r\n")[0]).toBe(
+			"Day,Popup,Seen,Sign-ups,Button clicks,Closed,Seen on phones",
+		);
 		for (const opened of adminContext.pages()) await opened.close();
 	});
 
@@ -822,7 +828,13 @@ test.describe("which popup a sign-up came from", () => {
 	test("fills a form's hidden campaign fields from a slide-in and from a box in a page", async ({
 		browser,
 	}) => {
-		const hidden = (name: string) => ({ id: name, type: "hidden", label: name, name, required: false });
+		const hidden = (name: string) => ({
+			id: name,
+			type: "hidden",
+			label: name,
+			name,
+			required: false,
+		});
 		const created = await admin.post(`${FORMS}/forms/create`, {
 			headers: H,
 			data: {
@@ -844,8 +856,16 @@ test.describe("which popup a sign-up came from", () => {
 		});
 		expect([200, 409]).toContain(created.status());
 		const words = { picture: "none", contains: "form", form: "tagged", thanks: "Thanks" };
-		await make({ name: "Spring offer", kind: "slide", s2: { heading: "Spring offer", text: "", ...words } });
-		const box = await make({ name: "Letter box", kind: "inline", s2: { heading: "Letter box", text: "", ...words } });
+		await make({
+			name: "Spring offer",
+			kind: "slide",
+			s2: { heading: "Spring offer", text: "", ...words },
+		});
+		const box = await make({
+			name: "Letter box",
+			kind: "inline",
+			s2: { heading: "Letter box", text: "", ...words },
+		});
 		const before = (await inbox("tagged")).length;
 		const page = await visitor(browser);
 		await page.goto("/popups-test");

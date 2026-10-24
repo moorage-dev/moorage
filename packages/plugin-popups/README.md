@@ -28,8 +28,8 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 - **Preview:** "Preview on your site" (light or dark) shows the popup at once, for you only, exactly where a visitor sees it: a top bar at the top, a slide-in in its corner, a popup centred (a sheet on phones). A box in a page shows at the top of the page's content, lined up with the page's text as visitors see it in a post, since its place is where an editor puts the block. It says whether a real visitor would see it now and, if not, why ("this browser closed it 3 days ago; it shows again after a month"). Nothing is counted and the form does not send.
 - **Checks:** the form's short name is checked when you save. Colours that are hard to read are refused, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
 
-| A popup's results                                         | Results: how your popups compare                      |
-| ---------------------------------------------------------- | ----------------------------------------------------- |
+| A popup's results                                       | Results: how your popups compare                  |
+| ------------------------------------------------------- | ------------------------------------------------- |
 | ![](images/admin-popup-results-0-1-9-desktop-light.png) | ![](images/admin-results-0-1-9-desktop-light.png) |
 
 | Popup, computer                            | Popup, phone                            | Slide-in                                     | Box in a page                                    |

@@ -23,9 +23,9 @@ import {
 	type Popup,
 	type Store,
 } from "./config.js";
+import type { ExportRange } from "./export-link.js";
 import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
 import { hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
-import type { ExportRange } from "./export-link.js";
 import {
 	compare,
 	COMPARE_PERIOD,
@@ -401,7 +401,6 @@ async function compareResults(
 		},
 	];
 }
-
 
 /** A form's id changes with the saved data, so the admin shows saved values after a save. */
 function formId(name: string, popup: Popup | undefined, extra = ""): string {
@@ -1214,7 +1213,8 @@ function editForm(state: PageState, popup: Popup): Block {
 		// form's id: a new id would draw the form afresh and drop what was typed.
 		submit: {
 			label: "Save changes",
-			action_id: state.period && state.period !== POPUP_PERIOD ? `save_all:${state.period}` : "save_all",
+			action_id:
+				state.period && state.period !== POPUP_PERIOD ? `save_all:${state.period}` : "save_all",
 		},
 	};
 }
