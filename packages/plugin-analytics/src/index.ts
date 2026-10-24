@@ -1,10 +1,10 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import { definePlugin, getRequestContext, PluginRouteError } from "emdash";
+import { definePlugin, getRequestContext, pluginResponse, PluginRouteError } from "emdash";
 import type { PluginContext, PluginDescriptor, RouteContext } from "emdash";
 
 import pkg from "../package.json" with { type: "json" };
-import { ADMIN_ROLE, handleInteraction, type Interaction } from "./admin.js";
+import { ADMIN_ROLE, CHECK_ACTION, handleInteraction, type Interaction } from "./admin.js";
 import {
 	bannerVersion,
 	CONFIG_KEY,
@@ -12,10 +12,13 @@ import {
 	normalizeConfig,
 	type AnalyticsConfig,
 } from "./config.js";
+import { checkExport, signExport } from "./export-link.js";
 import { pageFragments } from "./fragment.js";
 import {
-	countConsents,
+	consentCsv,
+	consentSummary,
 	DESCRIPTOR_STORAGE,
+	readConsentLog,
 	ensurePruneScheduled,
 	parseConsent,
 	PRUNE_TASK,
@@ -24,6 +27,7 @@ import {
 	STORAGE,
 } from "./record.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
+import { checkSite, readSiteCheck, SITE_CHECK_KEY, type SiteCheck } from "./site-check.js";
 
 export type { AnalyticsConfig } from "./config.js";
 
@@ -74,6 +78,37 @@ export function countryOf(ctx: Pick<RouteContext, "request" | "requestMeta">): s
 	return /^[A-Z]{2}$/.test(code) && code !== "XX" ? code : null;
 }
 
+/**
+ * The address to check: the site's own, as set in EmDash, or else the one the
+ * admin is using. Only ever this site.
+ */
+export function siteOrigin(siteUrl: string | undefined, requestOrigin: string | undefined) {
+	try {
+		const url = new URL(siteUrl ?? "");
+		if (url.protocol === "https:" || url.protocol === "http:") return url.origin;
+	} catch {
+		// Not set or not an address: use the request's.
+	}
+	return requestOrigin;
+}
+
+async function readStoredCheck(ctx: PluginContext): Promise<SiteCheck | null> {
+	return readSiteCheck(await ctx.kv.get(SITE_CHECK_KEY).catch(() => null));
+}
+
+/** Run "Check what loads" and keep the result, kept apart from the settings. */
+async function runSiteCheck(
+	ctx: PluginContext,
+	config: AnalyticsConfig,
+	requestOrigin: string | undefined,
+): Promise<SiteCheck | null> {
+	const origin = siteOrigin(ctx.site?.url, requestOrigin);
+	if (!origin) return null;
+	const result = await checkSite(origin, config, PLUGIN_ID).catch(() => null);
+	if (result) await ctx.kv.set(SITE_CHECK_KEY, result);
+	return result;
+}
+
 export function createPlugin() {
 	return definePlugin({
 		id: PLUGIN_ID,
@@ -116,12 +151,28 @@ export function createPlugin() {
 					const admin = (ctx.user?.role ?? 0) >= ADMIN_ROLE;
 					// Sites that had the plugin before this task existed never ran the activate hook for it.
 					if (admin) await ensurePruneScheduled(ctx).catch(() => {});
-					const counts = await countConsents(ctx, new Date()).catch(() => null);
-					const outcome = handleInteraction(ctx.input as Interaction | undefined, {
+					const now = Date.now();
+					const origin = ctx.request ? new URL(ctx.request.url).origin : undefined;
+					const input = ctx.input as Interaction | undefined;
+					const checking =
+						admin && input?.type === "block_action" && input.action_id === CHECK_ACTION;
+					const [answers, exportQuery, siteCheck] = await Promise.all([
+						consentSummary(ctx, new Date(now)).catch(() => null),
+						// A plain link cannot send EmDash's request header, so the download is signed.
+						// Only for an Admin: the first one stores the signing secret.
+						admin && origin ? signExport(ctx.kv, now).catch(() => undefined) : undefined,
+						checking ? runSiteCheck(ctx, config, origin) : readStoredCheck(ctx),
+					]);
+					const outcome = handleInteraction(input, {
 						config,
 						admin,
-						counts,
-						origin: ctx.request ? new URL(ctx.request.url).origin : undefined,
+						answers,
+						now,
+						origin,
+						exportUrl: exportQuery
+							? `${origin}/_emdash/api/plugins/${PLUGIN_ID}/export?${exportQuery}`
+							: undefined,
+						siteCheck,
 					});
 					if (outcome.save) {
 						await ctx.kv.set(CONFIG_KEY, outcome.save);
@@ -129,6 +180,42 @@ export function createPlugin() {
 						forgetSettings(PLUGIN_ID);
 					}
 					return outcome.response;
+				},
+			},
+			// The consent log as a spreadsheet. A plain link in the admin cannot send EmDash's
+			// request header, so this route is public and serves only a link the admin page
+			// signed for an Admin in the last ten minutes (see export-link.ts).
+			export: {
+				public: true,
+				methods: ["GET"],
+				response: "raw",
+				handler: async (ctx) => {
+					const params = ctx.request
+						? new URL(ctx.request.url).searchParams
+						: new URLSearchParams();
+					const now = Date.now();
+					if (!(await checkExport(ctx.kv, params, now))) {
+						// A sentence, not an error object: this opens in a browser tab.
+						return pluginResponse({
+							status: 403,
+							headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+							body: {
+								kind: "text",
+								value:
+									"This download link has expired (it works for ten minutes) or is not valid. Open Analytics in the admin again and download from the Status tab.",
+							},
+						});
+					}
+					const { rows, more } = await readConsentLog(ctx);
+					return pluginResponse({
+						status: 200,
+						headers: {
+							"content-type": "text/csv; charset=utf-8",
+							"content-disposition": `attachment; filename="consent-log-${new Date(now).toISOString().slice(0, 10)}.csv"`,
+							"cache-control": "no-store",
+						},
+						body: { kind: "text", value: consentCsv(rows, more) },
+					});
 				},
 			},
 			// Public, never cached: tells the browser which country the visitor is in.

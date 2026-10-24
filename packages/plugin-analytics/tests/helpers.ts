@@ -15,6 +15,8 @@ export interface FakeContext {
 	rows: Map<string, Record<string, unknown>>;
 	scheduled: Array<{ name: string; schedule: string }>;
 	reads: () => number;
+	/** How many storage queries ran (counts not included). */
+	queries: () => number;
 }
 
 function matches(row: Record<string, unknown>, where: Record<string, unknown> = {}): boolean {
@@ -35,6 +37,7 @@ export function fakeContext(stored: Record<string, unknown> = {}): FakeContext {
 	const rows = new Map<string, Record<string, unknown>>();
 	const scheduled: Array<{ name: string; schedule: string }> = [];
 	let reads = 0;
+	let queries = 0;
 
 	const collection = {
 		async put(id: string, data: Record<string, unknown>) {
@@ -43,10 +46,29 @@ export function fakeContext(stored: Record<string, unknown> = {}): FakeContext {
 		async count(where?: Record<string, unknown>) {
 			return [...rows.values()].filter((row) => matches(row, where)).length;
 		},
-		async query(options: { where?: Record<string, unknown>; limit?: number } = {}) {
+		async query(
+			options: {
+				where?: Record<string, unknown>;
+				limit?: number;
+				orderBy?: Record<string, "asc" | "desc">;
+				cursor?: string;
+			} = {},
+		) {
+			queries++;
 			const found = [...rows.entries()].filter(([, row]) => matches(row, options.where));
-			const items = found.slice(0, options.limit ?? 50).map(([id, data]) => ({ id, data }));
-			return { items, hasMore: found.length > items.length };
+			const [field, direction] = Object.entries(options.orderBy ?? {})[0] ?? [];
+			if (field) {
+				found.sort(([, a], [, b]) => {
+					const order = String(a[field]) < String(b[field]) ? -1 : 1;
+					return direction === "desc" ? -order : order;
+				});
+			}
+			// Like EmDash: at most 100 rows a page.
+			const limit = Math.min(options.limit ?? 50, 100);
+			const start = options.cursor ? Number(options.cursor) : 0;
+			const items = found.slice(start, start + limit).map(([id, data]) => ({ id, data }));
+			const hasMore = found.length > start + items.length;
+			return { items, hasMore, ...(hasMore ? { cursor: String(start + items.length) } : {}) };
 		},
 		async deleteMany(ids: string[]) {
 			return ids.filter((id) => rows.delete(id)).length;
@@ -63,6 +85,15 @@ export function fakeContext(stored: Record<string, unknown> = {}): FakeContext {
 			async set(key: string, value: unknown) {
 				kv.set(key, value);
 			},
+			async getVersioned(key: string) {
+				return kv.has(key) ? { value: kv.get(key), revision: JSON.stringify(kv.get(key)) } : null;
+			},
+			async compareAndSet(key: string, expected: string | null, value: unknown) {
+				const current = kv.has(key) ? JSON.stringify(kv.get(key)) : null;
+				if (current !== expected) return { applied: false };
+				kv.set(key, value);
+				return { applied: true, revision: JSON.stringify(value) };
+			},
 		},
 		storage: { consents: collection },
 		cron: {
@@ -77,5 +108,5 @@ export function fakeContext(stored: Record<string, unknown> = {}): FakeContext {
 		log: { info() {}, warn() {}, error() {}, debug() {} },
 	} as unknown as PluginContext;
 
-	return { ctx, kv, rows, scheduled, reads: () => reads };
+	return { ctx, kv, rows, scheduled, reads: () => reads, queries: () => queries };
 }

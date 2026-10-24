@@ -16,9 +16,9 @@ Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analy
 
 - It is **not a Google-certified consent platform and has no IAB TCF support.** That only matters if you _show_ Google ads on your own pages (AdSense, Ad Manager); those sites need a certified tool. Measuring your own Google Ads campaigns works.
 - It does not make a site "GDPR compliant" by being installed. The banner is built to the EDPB cookie banner taskforce report and the UK ICO's guidance; what your tools do with the data is still yours to describe in your privacy policy.
-- No dashboards or reports: read your numbers in each tool.
-- No cookie scanner, no cookie wall, no consent by scrolling.
-- Not yet: custom code snippets, banner text per language, a self-test of your site, an export of the consent record.
+- No dashboards or reports: read your numbers in each tool (the Status tab links to each one).
+- No cookie scanner that claims to find everything, no cookie wall, no consent by scrolling. "Check what loads" looks for the common problems only (see below).
+- Not yet: custom code snippets, banner text per language.
 
 ## Install
 
@@ -92,14 +92,17 @@ EmDash does not add a nonce or hash to scripts that plugins put on the page. If 
 
 ## The Analytics page
 
-One page, **Analytics**, under Marketing in the admin sidebar, with four tabs.
+One page, **Analytics & Cookies** (labelled Analytics under Marketing in the admin sidebar), with four tabs.
 
-- **Status**: one line per tool saying what it does right now ("Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies."), warnings first (no privacy policy link, Google Analytics and Tag Manager both on, Tag Manager loading before the answer), and how visitors answered in the last 30 days.
+- **Status**: three short sections, each with its warnings first.
+  - **Tracking**: a tick and one line per tool saying what it waits for ("Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies."), with a link to each tool's own numbers (Microsoft Clarity straight to your project; the others to their home page). With a Google tool, a link to Google's Tag Assistant and a tip to check Realtime in Google Analytics.
+  - **Cookie consent**: who is asked, your privacy policy link, when the last answer came in ("Last answer received 12 minutes ago"), the last 30 days' answers as numbers and a chart, and **Download the consent log (CSV)**: one line per answer from the last 12 months (time in UTC, country, answer, Analytics and Marketing yes or no, banner version, and the random reference the visitor's browser keeps in its cookie), newest first, up to 10,000 lines. The link is signed for the admin who opened the page and works for ten minutes.
+  - **What loads on your site**: **Check what loads** fetches your home page and up to four more (from its links, then the sitemap), as a visitor gets them, and lists what it finds with a plain fix for each: tracking code pasted in outside this plugin (the same tool twice, which counts every visit twice, or another tool such as Hotjar, or Google AdSense), and embeds that set cookies before the visitor answers (YouTube: use youtube-nocookie.com; Vimeo without `dnt=1`; Google Maps; Calendly; Facebook, Instagram, TikTok and X posts; Typeform; Spotify; SoundCloud; Disqus; common chat boxes). It checks against that short list, never runs the pages' scripts, and only fetches your own address; pages may be cached for a few minutes. If the site cannot call its own address from the server, it says so. The result and the time it ran stay on the Status tab.
 - **Tracking tools**: the seven ID boxes, "My HubSpot account is in the EU data centre", "Cloudflare Web Analytics: wait for consent anyway", and "Track enquiries automatically".
-- **Cookie banner**: who sees it, your privacy policy page, the heading and text (leave the text empty for the standard wording, which names what your tools are used for), where it appears, light or dark, the "Cookies" button and its corner, three colours (background, text, buttons; a combination that is hard to read is refused, and button text is chosen for you), with a switch that opens three more for dark mode, and whether to ask again after 6 or 12 months. Two buttons, **Preview the banner** and **Preview in dark mode**, open your home page with the banner shown as saved: to you, wherever you are, with nothing saved and no tool loaded.
+- **Cookie banner**: who sees it, your privacy policy page, the heading and text (leave the text empty for the standard wording, which names what your tools are used for), where it appears, light or dark, the "Cookies" button and its corner, and whether to ask again after 6 or 12 months, saved with **Save banner**. Under **Colours**, folded away with its own **Save colours**: three colours (background, text, buttons; a combination that is hard to read is refused, and button text is chosen for you), with a switch that opens three more for dark mode. Two buttons, **Preview the banner** and **Preview in dark mode**, open your home page with the banner shown as saved: to you, wherever you are, with nothing saved and no tool loaded.
 - **Advanced**: pages not to track (one address per line; everything under it is covered), and when Google Tag Manager loads.
 
-Admins can change settings. Editors see the Status tab, read-only.
+Admins can change settings. Editors see the Status tab, read-only: no download link and no Check what loads button, but the last check's result.
 
 **Changes can take a few minutes to reach visitors.** The script is part of the page, and pages are cached. A new setting shows when the cached copy of a page expires or the page is published again. There is no way for a plugin to clear the cache.
 
@@ -129,7 +132,7 @@ In the visitor's browser:
 - a cookie `cookie_consent` with the answer (which categories, the day, a random reference, and a code for the tool list), kept 6 or 12 months;
 - `cookie_consent_geo` in local storage: the two-letter country and the day it was learned, kept 30 days.
 
-On your site, one row per answer: the random reference, the time, the answer, the code for the tool list, and the country. **No IP address, no browser details, nothing that identifies a person.** Rows are deleted after 12 months by a daily job. The route that writes them is public, so it accepts only that exact shape, only for the banner that is live, and at most 2,000 rows a day.
+On your site, one row per answer: the random reference, the time, the answer, the code for the tool list, and the country. **No IP address, no browser details, nothing that identifies a person.** Rows are deleted after 12 months by a daily job. The route that writes them is public, so it accepts only that exact shape, only for the banner that is live, and at most 2,000 rows a day. The consent log download holds exactly these rows, nothing more. The last "Check what loads" result is kept too: the pages checked, what was found, and when.
 
 ## FAQ
 

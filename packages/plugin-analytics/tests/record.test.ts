@@ -3,6 +3,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	consentCsv,
+	consentSummary,
+	readConsentLog,
 	countConsents,
 	ensurePruneScheduled,
 	KEEP_DAYS,
@@ -143,5 +146,113 @@ describe("keeping consent records", () => {
 		await ensurePruneScheduled(fake.ctx);
 		await ensurePruneScheduled(fake.ctx);
 		expect(fake.scheduled).toEqual([{ name: PRUNE_TASK, schedule: "@daily" }]);
+	});
+});
+
+describe("the 30-day summary", () => {
+	const add = async (
+		fake: ReturnType<typeof fakeContext>,
+		id: string,
+		a: boolean,
+		m: boolean,
+		at: Date,
+	) => saveConsent(fake.ctx, { id, analytics: a, marketing: m, version: "v", country: null }, at);
+
+	it("counts each of the last 30 days, today included, and the time of the last answer", async () => {
+		const fake = fakeContext();
+		await add(fake, "aaaaaaaa1", true, true, new Date("2026-10-13T08:00:00.000Z"));
+		await add(fake, "aaaaaaaa2", false, false, new Date("2026-10-13T09:30:00.000Z"));
+		await add(fake, "aaaaaaaa3", true, true, new Date("2026-10-12T23:59:00.000Z"));
+		await add(fake, "aaaaaaaa4", true, false, new Date("2026-10-12T10:00:00.000Z"));
+		// The first of the 30 days, and the day before it.
+		await add(fake, "aaaaaaaa5", false, false, new Date("2026-09-14T00:00:00.000Z"));
+		await add(fake, "aaaaaaaa6", false, false, new Date("2026-09-13T23:59:00.000Z"));
+		const summary = await consentSummary(fake.ctx, NOW);
+		expect(summary).not.toBeNull();
+		expect(summary!.days).toHaveLength(30);
+		expect(summary!.days[0]).toEqual({ day: "2026-09-14", all: 0, none: 1 });
+		expect(summary!.days.at(-2)).toEqual({ day: "2026-10-12", all: 1, none: 0 });
+		expect(summary!.days.at(-1)).toEqual({ day: "2026-10-13", all: 1, none: 1 });
+		expect(summary).toMatchObject({
+			all: 2,
+			none: 2,
+			some: 1,
+			lastAt: "2026-10-13T09:30:00.000Z",
+		});
+	});
+
+	it("says there is no answer yet on a new site", async () => {
+		expect(await consentSummary(fakeContext().ctx, NOW)).toMatchObject({
+			all: 0,
+			none: 0,
+			some: 0,
+			lastAt: null,
+		});
+	});
+});
+
+describe("the consent log as a spreadsheet", () => {
+	it("lists every answer kept, newest first, with what is stored and nothing more", async () => {
+		const fake = fakeContext();
+		await saveConsent(
+			fake.ctx,
+			{ id: "older0001", analytics: false, marketing: false, version: "v1", country: null },
+			new Date("2026-10-01T10:00:00.000Z"),
+		);
+		await saveConsent(
+			fake.ctx,
+			{ id: "newer0001", analytics: true, marketing: false, version: "v2", country: "DE" },
+			new Date("2026-10-13T11:22:33.000Z"),
+		);
+		const { rows, more } = await readConsentLog(fake.ctx);
+		expect(more).toBe(false);
+		expect(consentCsv(rows)).toBe(
+			[
+				"Date and time (UTC),Country,Answer,Analytics,Marketing,Banner version,Reference",
+				"2026-10-13 11:22:33,DE,Chose some,yes,no,v2,newer0001",
+				"2026-10-01 10:00:00,,Rejected all,no,no,v1,older0001",
+				"",
+			].join("\r\n"),
+		);
+	});
+
+	it("stops at the limit and says so at the end of the file", async () => {
+		const fake = fakeContext();
+		for (let index = 0; index < 250; index++) {
+			fake.rows.set(`r${String(index).padStart(8, "0")}`, {
+				at: new Date(NOW.getTime() - index * 60_000).toISOString(),
+				choice: "all",
+				analytics: true,
+				marketing: true,
+				version: "v",
+				country: null,
+			});
+		}
+		const { rows, more } = await readConsentLog(fake.ctx, 120);
+		expect(rows).toHaveLength(120);
+		expect(more).toBe(true);
+		// Pages of at most 100.
+		expect(fake.queries()).toBe(2);
+		const csv = consentCsv(rows, more);
+		expect(csv.trim().split("\r\n").at(-1)).toBe(
+			"Only the newest 120 answers are in this file. Older ones are still kept on the site.",
+		);
+	});
+
+	it("never lets a cell start a spreadsheet formula", () => {
+		const csv = consentCsv([
+			{
+				id: "x",
+				data: {
+					at: "2026-10-13T00:00:00.000Z",
+					choice: "all",
+					analytics: true,
+					marketing: true,
+					version: "=cmd",
+					country: null,
+				},
+			},
+		]);
+		expect(csv).toContain(",'=cmd,");
 	});
 });

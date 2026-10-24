@@ -3,7 +3,7 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import { validateBlockResponse } from "@emdash-cms/blocks/server";
 import type { RouteContext } from "emdash";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { toolStatus, warnings } from "../src/admin.js";
 import { CONFIG_KEY, DEFAULT_MESSAGE, DEFAULT_TITLE, normalizeConfig } from "../src/config.js";
@@ -564,5 +564,325 @@ describe("who is asked", () => {
 		const text = JSON.stringify(await load(fakeContext()));
 		expect(text).toContain("recommended if you use Clarity, Meta Pixel or Google Ads");
 		expect(text).toContain("for example in the US");
+	});
+});
+
+describe("the Status tab", () => {
+	function status(response: BlockResponse): Block[] {
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		return tabs?.type === "tab" ? tabs.panels[0]!.blocks : response.blocks;
+	}
+	const headers = (blocks: Block[]) =>
+		blocks.flatMap((block) => (block.type === "header" ? [block.text] : []));
+	const between = (blocks: Block[], from: string, to?: string) => {
+		const start = blocks.findIndex((b) => b.type === "header" && b.text === from);
+		const end = to ? blocks.findIndex((b) => b.type === "header" && b.text === to) : blocks.length;
+		return blocks.slice(start + 1, end);
+	};
+	const busy = {
+		[CONFIG_KEY]: {
+			tools: { ga4: "G-AB12CD34EF", clarity: "ab12cd34ef", hubspot: "12345678" },
+			hubspotEu: true,
+			banner: { audience: "everyone" },
+		},
+	};
+
+	it("is two headed checklists, Tracking then Cookie consent, each with its own warnings first", async () => {
+		const blocks = status(await load(fakeContext(busy)));
+		expect(headers(blocks).slice(0, 2)).toEqual(["Tracking", "Cookie consent"]);
+		const tracking = between(blocks, "Tracking", "Cookie consent");
+		const consent = between(blocks, "Cookie consent");
+		expect(consent[0]).toMatchObject({
+			type: "banner",
+			variant: "alert",
+			title: "The banner has no link to your privacy policy",
+		});
+		expect(tracking.some((b) => b.type === "banner")).toBe(false);
+		const doubled = status(
+			await load(
+				fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF", gtm: "GTM-AB12CD3" } } }),
+			),
+		);
+		expect(between(doubled, "Tracking", "Cookie consent")[0]).toMatchObject({
+			type: "banner",
+			title: "Google Analytics may be counting twice",
+		});
+	});
+
+	it("ticks each tool, says what it waits for, and links to its own numbers", async () => {
+		const tracking = between(status(await load(fakeContext(busy))), "Tracking", "Cookie consent");
+		const lines = tracking.filter((b) => b.type === "section");
+		expect(lines.map((b) => b.type === "section" && b.text)).toEqual([
+			"✓ Google Analytics: on. Waits for every visitor to accept Analytics cookies.",
+			"✓ Microsoft Clarity: on. Waits for every visitor to accept Analytics cookies.",
+			"✓ HubSpot: on. Waits for every visitor to accept Marketing cookies.",
+			"✓ Enquiries: counted. Clicks on phone and email links, and forms that were sent.",
+		]);
+		const row = tracking.find((b) => b.type === "actions");
+		const links =
+			row?.type === "actions"
+				? row.elements.map((e) =>
+						e.type === "link" && e.target.kind === "external" ? [e.label, e.target.url] : null,
+					)
+				: [];
+		expect(links).toEqual([
+			["Open Google Analytics", "https://analytics.google.com/"],
+			["Open Clarity", "https://clarity.microsoft.com/projects/view/ab12cd34ef/dashboard"],
+			["Open HubSpot", "https://app-eu1.hubspot.com/"],
+		]);
+		// Google's tools get the way to check they receive visits.
+		const text = JSON.stringify(tracking);
+		expect(text).toContain("https://tagassistant.google.com/");
+		expect(text).toContain("Realtime");
+		const clarityOnly = JSON.stringify(
+			status(await load(fakeContext({ [CONFIG_KEY]: { tools: { clarity: "ab12cd34ef" } } }))),
+		);
+		expect(clarityOnly).not.toContain("tagassistant");
+	});
+
+	it("says who is asked, links the privacy policy, and when the last answer came", async () => {
+		const fake = fakeContext({
+			[CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" }, banner: { policyUrl: "/privacy" } },
+		});
+		const now = Date.now();
+		fake.rows.set("a1", { at: new Date(now - 12 * 60_000).toISOString(), choice: "all" });
+		fake.rows.set("a2", { at: new Date(now - 3 * 86_400_000).toISOString(), choice: "none" });
+		const consent = between(status(await load(fake)), "Cookie consent");
+		const text = JSON.stringify(consent);
+		expect(text).toContain("✓ Asks visitors in Europe and the UK first.");
+		expect(text).toContain("✓ Links to your privacy policy: /privacy");
+		expect(text).toContain("https://acme.test/privacy");
+		expect(text).toContain("Last answer received 12 minutes ago.");
+		const chart = consent.find((b) => b.type === "chart");
+		expect(chart?.type === "chart" && chart.config.chart_type).toBe("timeseries");
+		const series =
+			chart?.type === "chart" && chart.config.chart_type === "timeseries"
+				? chart.config.series
+				: [];
+		expect(
+			series.map((s) => [s.name, s.data.length, s.data.reduce((n, [, v]) => n + v, 0)]),
+		).toEqual([
+			["Accepted all", 30, 1],
+			["Rejected all", 30, 1],
+		]);
+	});
+
+	it("waits for the first answer before drawing a chart", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const consent = between(status(await load(fake)), "Cookie consent");
+		expect(JSON.stringify(consent)).toContain("No answers received yet.");
+		expect(consent.some((b) => b.type === "chart")).toBe(false);
+	});
+
+	it("gives an admin a signed download of the consent log, and an editor none", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		fake.rows.set("ref00001", {
+			at: "2026-10-20T08:09:10.000Z",
+			choice: "some",
+			analytics: true,
+			marketing: false,
+			version: "v1",
+			country: "FR",
+		});
+		const editor = JSON.stringify(await load(fake, EDITOR));
+		expect(editor).not.toContain("/export?");
+		expect(fake.kv.has("export-secret")).toBe(false);
+
+		const page = JSON.stringify(await load(fake));
+		const url = page.match(
+			/https:\/\/acme\.test\/_emdash\/api\/plugins\/analytics-consent\/export\?[^"]+/,
+		)?.[0];
+		expect(url).toBeDefined();
+		const handler = createPlugin().routes.export!.handler;
+		interface Raw {
+			status: number;
+			headers: Array<[string, string]>;
+			body: { kind: string; value: string };
+		}
+		const download = async (address: string) =>
+			(await handler({
+				...fake.ctx,
+				request: new Request(address),
+				input: undefined,
+			} as unknown as RouteContext)) as Raw;
+		const good = await download(url!);
+		const header = (name: string) => good.headers.find(([key]) => key === name)?.[1];
+		expect(good.status).toBe(200);
+		expect(header("content-type")).toBe("text/csv; charset=utf-8");
+		expect(header("cache-control")).toBe("no-store");
+		expect(header("content-disposition")).toMatch(
+			/^attachment; filename="consent-log-\d{4}-\d{2}-\d{2}\.csv"$/,
+		);
+		expect(good.body.value).toBe(
+			"Date and time (UTC),Country,Answer,Analytics,Marketing,Banner version,Reference\r\n2026-10-20 08:09:10,FR,Chose some,yes,no,v1,ref00001\r\n",
+		);
+		const changed = url!.replace(/expires=(\d+)/, (_, n: string) => `expires=${Number(n) - 1}`);
+		expect((await download(changed)).status).toBe(403);
+		expect(
+			(await download("https://acme.test/_emdash/api/plugins/analytics-consent/export")).status,
+		).toBe(403);
+	});
+});
+
+describe("check what loads", () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const configured = { [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } };
+
+	it("runs for an admin from the Status tab, keeps the result apart from the settings, and shows it", async () => {
+		const asked: string[] = [];
+		vi.stubGlobal("fetch", async (input: string) => {
+			asked.push(input);
+			const path = new URL(input).pathname;
+			if (path === "/")
+				return new Response(
+					`<html><head></head><body><a href="/visit">Visit</a><iframe src="https://www.youtube.com/embed/x"></iframe></body></html>`,
+					{ headers: { "content-type": "text/html" } },
+				);
+			if (path === "/visit")
+				return new Response(
+					`<script src="https://www.googletagmanager.com/gtag/js?id=G-AB12CD34EF"></script>`,
+					{
+						headers: { "content-type": "text/html" },
+					},
+				);
+			return new Response("", { status: 404 });
+		});
+		const fake = fakeContext(configured);
+		const before = JSON.stringify(fake.kv.get(CONFIG_KEY));
+		const first = await load(fake);
+		expect(JSON.stringify(first)).toContain("Not checked yet.");
+		expect(JSON.stringify(first)).toContain('"action_id":"check_site"');
+		expect(asked).toEqual([]);
+
+		const response = await call(fake, { type: "block_action", action_id: "check_site" });
+		expectValid(response);
+		expect(asked.every((url) => url.startsWith("https://acme.test/"))).toBe(true);
+		expect(response.toast).toEqual({
+			type: "success",
+			message: "Checked 2 pages. 3 things to look at.",
+		});
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		expect(tabs?.type === "tab" && tabs.default_tab).toBe(0);
+		const text = JSON.stringify(response);
+		expect(text).toContain("Google Analytics is added twice");
+		expect(text).toContain("A YouTube video sets cookies before visitors answer");
+		expect(text).toContain("Found on: /.");
+		expect(text).toContain("Check again");
+		expect(fake.kv.get("site-check")).toMatchObject({ origin: "https://acme.test" });
+		expect(JSON.stringify(fake.kv.get(CONFIG_KEY))).toBe(before);
+
+		// An editor sees the result, read-only, and cannot run it.
+		const editor = JSON.stringify(await load(fake, EDITOR));
+		expect(editor).toContain("A YouTube video sets cookies before visitors answer");
+		expect(editor).not.toContain("check_site");
+		asked.length = 0;
+		const refused = await call(fake, { type: "block_action", action_id: "check_site" }, EDITOR);
+		expect(refused.toast?.type).toBe("error");
+		expect(asked).toEqual([]);
+	});
+
+	it("says plainly when the site cannot call its own address", async () => {
+		vi.stubGlobal("fetch", async () => {
+			throw new TypeError("fetch failed");
+		});
+		const fake = fakeContext(configured);
+		const response = await call(fake, { type: "block_action", action_id: "check_site" });
+		expect(response.toast?.type).toBe("error");
+		expect(JSON.stringify(response)).toContain(
+			"could not open its own address (https://acme.test)",
+		);
+	});
+});
+
+describe("the page's layout", () => {
+	function panel(response: BlockResponse, label: string): Block[] {
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		return tabs?.type === "tab" ? (tabs.panels.find((p) => p.label === label)?.blocks ?? []) : [];
+	}
+	const formIds = (response: BlockResponse) =>
+		flatten(response.blocks)
+			.flatMap((block) => (block.type === "accordion" ? [block, ...block.blocks] : [block]))
+			.filter((block) => block.type === "form")
+			.map((block) => block.block_id ?? "");
+
+	it("is headed Analytics & Cookies, for admins and editors", async () => {
+		const fake = fakeContext();
+		for (const response of [await load(fake), await load(fake, EDITOR)]) {
+			expect(response.blocks[0]).toEqual({ type: "header", text: "Analytics & Cookies" });
+		}
+	});
+
+	it("folds the colours on the Cookie banner tab into their own Colours section", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		const blocks = panel(response, "Cookie banner");
+		const accordion = blocks.find((block) => block.type === "accordion");
+		expect(accordion?.type === "accordion" && accordion.label).toBe("Colours");
+		expect(accordion?.type === "accordion" && accordion.default_open).toBeFalsy();
+		const colours = accordion?.type === "accordion" ? accordion.blocks : [];
+		const coloursForm = colours.find((block) => block.type === "form");
+		const fields = coloursForm?.type === "form" ? coloursForm.fields.map((f) => f.action_id) : [];
+		expect(fields).toEqual([
+			"color_background",
+			"color_text",
+			"color_accent",
+			"dark_colors",
+			"dark_background",
+			"dark_text",
+			"dark_accent",
+		]);
+		expect(coloursForm?.type === "form" && coloursForm.submit.action_id).toBe("save_colours");
+		// The main form no longer holds any colour.
+		const main = blocks.find((block) => block.type === "form");
+		const mainFields = main?.type === "form" ? main.fields.map((f) => f.action_id) : [];
+		expect(mainFields.some((id) => /color|dark/.test(id))).toBe(false);
+		expect(mainFields).toContain("audience");
+		// Plain headings between the parts.
+		expect(blocks.flatMap((block) => (block.type === "header" ? [block.text] : []))).toEqual([
+			"Who is asked and what they read",
+			"Preview",
+		]);
+	});
+
+	it("saves the colours from their own form and keeps the section open after", async () => {
+		const fake = fakeContext();
+		const response = await submit(fake, "save_colours", {
+			color_background: "#FBF7F0",
+			color_text: "#3b2a1a",
+			color_accent: "#1f6f43",
+		});
+		expect(response.toast?.type).toBe("success");
+		expect(saved(fake).banner.colors).toEqual({
+			background: "#fbf7f0",
+			text: "#3b2a1a",
+			accent: "#1f6f43",
+		});
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		expect(tabs?.type === "tab" && tabs.default_tab).toBe(2);
+		const accordion = panel(response, "Cookie banner").find((block) => block.type === "accordion");
+		expect(accordion?.type === "accordion" && accordion.default_open).toBe(true);
+
+		const refused = await submit(fakeContext(), "save_colours", { color_accent: "green" });
+		expect(refused.toast?.type).toBe("error");
+		const open = panel(refused, "Cookie banner").find((block) => block.type === "accordion");
+		expect(open?.type === "accordion" && open.default_open).toBe(true);
+	});
+
+	it("gives each form an identity of its own, so saving one never clears what is typed in another", async () => {
+		const fake = fakeContext();
+		const [tools, banner, colours, advanced] = formIds(await load(fake)).filter((id) =>
+			/^(tools|banner|colours|advanced)-/.test(id),
+		);
+		const afterColours = formIds(await submit(fake, "save_colours", { color_accent: "#1f6f43" }));
+		expect(afterColours).toContain(tools);
+		expect(afterColours).toContain(banner);
+		expect(afterColours).toContain(advanced);
+		expect(afterColours).not.toContain(colours);
+		const afterBanner = formIds(await submit(fake, "save_banner", { title: "Cookies?" }));
+		expect(afterBanner).not.toContain(banner);
+		expect(afterBanner).toContain(tools);
+		const afterTools = formIds(await submit(fake, "save_tools", { ga4: "G-AB12CD34EF" }));
+		expect(afterTools).not.toContain(tools);
+		expect(afterTools).toContain(advanced);
 	});
 });
