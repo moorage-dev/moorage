@@ -1,5 +1,12 @@
 # @moorage/plugin-popups
 
+## 0.1.9
+
+### Patch Changes
+
+- 12b45a9: Editing a finished popup now has one Save for everything, so nothing typed is lost; each popup's page shows its own numbers.
+- 27f7b3e: On a phone, "When it opens" no longer runs off the edge of the screen: its three choices are now listed on the page to pick from, and their words wrap. The Turn off and More buttons on a popup's page no longer cause a warning in the browser console.
+
 ## 0.1.8
 
 ### Patch Changes
