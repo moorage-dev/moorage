@@ -566,3 +566,96 @@ describe("who is asked", () => {
 		expect(text).toContain("for example in the US");
 	});
 });
+
+describe("the page's layout", () => {
+	function panel(response: BlockResponse, label: string): Block[] {
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		return tabs?.type === "tab" ? (tabs.panels.find((p) => p.label === label)?.blocks ?? []) : [];
+	}
+	const formIds = (response: BlockResponse) =>
+		flatten(response.blocks)
+			.flatMap((block) => (block.type === "accordion" ? [block, ...block.blocks] : [block]))
+			.filter((block) => block.type === "form")
+			.map((block) => block.block_id ?? "");
+
+	it("is headed Analytics & Cookies, for admins and editors", async () => {
+		const fake = fakeContext();
+		for (const response of [await load(fake), await load(fake, EDITOR)]) {
+			expect(response.blocks[0]).toEqual({ type: "header", text: "Analytics & Cookies" });
+		}
+	});
+
+	it("folds the colours on the Cookie banner tab into their own Colours section", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		const blocks = panel(response, "Cookie banner");
+		const accordion = blocks.find((block) => block.type === "accordion");
+		expect(accordion?.type === "accordion" && accordion.label).toBe("Colours");
+		expect(accordion?.type === "accordion" && accordion.default_open).toBeFalsy();
+		const colours = accordion?.type === "accordion" ? accordion.blocks : [];
+		const coloursForm = colours.find((block) => block.type === "form");
+		const fields = coloursForm?.type === "form" ? coloursForm.fields.map((f) => f.action_id) : [];
+		expect(fields).toEqual([
+			"color_background",
+			"color_text",
+			"color_accent",
+			"dark_colors",
+			"dark_background",
+			"dark_text",
+			"dark_accent",
+		]);
+		expect(coloursForm?.type === "form" && coloursForm.submit.action_id).toBe("save_colours");
+		// The main form no longer holds any colour.
+		const main = blocks.find((block) => block.type === "form");
+		const mainFields = main?.type === "form" ? main.fields.map((f) => f.action_id) : [];
+		expect(mainFields.some((id) => /color|dark/.test(id))).toBe(false);
+		expect(mainFields).toContain("audience");
+		// Plain headings between the parts.
+		expect(blocks.flatMap((block) => (block.type === "header" ? [block.text] : []))).toEqual([
+			"Who is asked and what they read",
+			"Preview",
+		]);
+	});
+
+	it("saves the colours from their own form and keeps the section open after", async () => {
+		const fake = fakeContext();
+		const response = await submit(fake, "save_colours", {
+			color_background: "#FBF7F0",
+			color_text: "#3b2a1a",
+			color_accent: "#1f6f43",
+		});
+		expect(response.toast?.type).toBe("success");
+		expect(saved(fake).banner.colors).toEqual({
+			background: "#fbf7f0",
+			text: "#3b2a1a",
+			accent: "#1f6f43",
+		});
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		expect(tabs?.type === "tab" && tabs.default_tab).toBe(2);
+		const accordion = panel(response, "Cookie banner").find((block) => block.type === "accordion");
+		expect(accordion?.type === "accordion" && accordion.default_open).toBe(true);
+
+		const refused = await submit(fakeContext(), "save_colours", { color_accent: "green" });
+		expect(refused.toast?.type).toBe("error");
+		const open = panel(refused, "Cookie banner").find((block) => block.type === "accordion");
+		expect(open?.type === "accordion" && open.default_open).toBe(true);
+	});
+
+	it("gives each form an identity of its own, so saving one never clears what is typed in another", async () => {
+		const fake = fakeContext();
+		const [tools, banner, colours, advanced] = formIds(await load(fake)).filter((id) =>
+			/^(tools|banner|colours|advanced)-/.test(id),
+		);
+		const afterColours = formIds(await submit(fake, "save_colours", { color_accent: "#1f6f43" }));
+		expect(afterColours).toContain(tools);
+		expect(afterColours).toContain(banner);
+		expect(afterColours).toContain(advanced);
+		expect(afterColours).not.toContain(colours);
+		const afterBanner = formIds(await submit(fake, "save_banner", { title: "Cookies?" }));
+		expect(afterBanner).not.toContain(banner);
+		expect(afterBanner).toContain(tools);
+		const afterTools = formIds(await submit(fake, "save_tools", { ga4: "G-AB12CD34EF" }));
+		expect(afterTools).not.toContain(tools);
+		expect(afterTools).toContain(advanced);
+	});
+});

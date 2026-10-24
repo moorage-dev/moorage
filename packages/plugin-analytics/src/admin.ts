@@ -64,6 +64,8 @@ export interface PageState {
 	draft?: Record<string, unknown>;
 	errors?: string[];
 	toast?: BlockResponse["toast"];
+	/** Show the Colours section open: after its own save, or a refused one. */
+	openColours?: boolean;
 }
 
 // ── Status ──────────────────────────────────────────────────
@@ -225,8 +227,28 @@ function text(draft: Record<string, unknown> | undefined, key: string, saved: st
  * pasted snippet, the original text after a reset) and keep the typed ones
  * after a refused save.
  */
-function formId(name: string, config: AnalyticsConfig): string {
-	return `${name}-${shortHash(JSON.stringify(config))}`;
+function formId(name: FormName, config: AnalyticsConfig): string {
+	return `${name}-${shortHash(JSON.stringify(formPart(name, config)))}`;
+}
+
+type FormName = "tools" | "banner" | "colours" | "advanced";
+
+/**
+ * The part of the settings each form shows. A form's id follows only its own
+ * part, so saving one form never clears what is typed, and not yet saved, in another.
+ */
+function formPart(name: FormName, config: AnalyticsConfig): unknown {
+	const { colors, darkColors, darkOn, ...banner } = config.banner;
+	switch (name) {
+		case "tools":
+			return [config.tools, config.hubspotEu, config.cloudflareWait, config.enquiries];
+		case "banner":
+			return banner;
+		case "colours":
+			return [colors, darkColors, darkOn];
+		case "advanced":
+			return [config.exclude, config.gtmLoading];
+	}
 }
 
 function errorBlocks(state: PageState): Block[] {
@@ -293,6 +315,7 @@ function bannerBlocks(state: PageState): Block[] {
 	const { banner } = config;
 	return [
 		...errorBlocks(state),
+		{ type: "header", text: "Who is asked and what they read" },
 		{
 			type: "context",
 			text: "Visitors who are not asked, for example in the US, can always turn the tools off with Cookie settings, as US state laws such as California's require, and Global Privacy Control is always respected. Tools that record visits or advertise are safer behind a banner for everyone.",
@@ -376,57 +399,6 @@ function bannerBlocks(state: PageState): Block[] {
 					initial_value: banner.settingsSide,
 				},
 				{
-					type: "text_input",
-					action_id: "color_background",
-					label: "Banner background colour, for example #fbf7f0 (empty: the standard colours)",
-					placeholder: "#ffffff",
-					initial_value: text(draft, "color_background", banner.colors.background),
-				},
-				{
-					type: "text_input",
-					action_id: "color_text",
-					label: "Banner text colour, set together with the background",
-					placeholder: "#141414",
-					initial_value: text(draft, "color_text", banner.colors.text),
-				},
-				{
-					type: "text_input",
-					action_id: "color_accent",
-					label: "Button colour, used for both Accept all and Reject all",
-					placeholder: "#141414",
-					initial_value: text(draft, "color_accent", banner.colors.accent),
-				},
-				{
-					type: "toggle",
-					action_id: "dark_colors",
-					label: "Different colours when the visitor's device is in dark mode",
-					initial_value: banner.darkOn,
-				},
-				{
-					type: "text_input",
-					action_id: "dark_background",
-					label: "Dark mode: banner background colour, for example #1c1c1c",
-					placeholder: "#1c1c1c",
-					initial_value: text(draft, "dark_background", banner.darkColors.background),
-					condition: { field: "dark_colors", eq: true },
-				},
-				{
-					type: "text_input",
-					action_id: "dark_text",
-					label: "Dark mode: banner text colour, set together with the background",
-					placeholder: "#f2f2f2",
-					initial_value: text(draft, "dark_text", banner.darkColors.text),
-					condition: { field: "dark_colors", eq: true },
-				},
-				{
-					type: "text_input",
-					action_id: "dark_accent",
-					label: "Dark mode: button colour",
-					placeholder: "#f2f2f2",
-					initial_value: text(draft, "dark_accent", banner.darkColors.accent),
-					condition: { field: "dark_colors", eq: true },
-				},
-				{
 					type: "select",
 					action_id: "months",
 					label: "Ask again after",
@@ -450,8 +422,84 @@ function bannerBlocks(state: PageState): Block[] {
 				},
 			],
 		},
+		coloursBlock(state),
 		...previewBlocks(state),
 	];
+}
+
+/** The colours, folded away: most sites keep the standard ones. A form of their own, inside the fold. */
+function coloursBlock(state: PageState): Block {
+	const { config, draft } = state;
+	const { banner } = config;
+	return {
+		type: "accordion",
+		label: "Colours",
+		...(state.openColours ? { default_open: true } : {}),
+		blocks: [
+			{
+				type: "context",
+				text: "Leave these empty for the standard light and dark colours. Accept all and Reject all always share one colour, so neither is pushed.",
+			},
+			{
+				type: "form",
+				block_id: formId("colours", config),
+				fields: [
+					{
+						type: "text_input",
+						action_id: "color_background",
+						label: "Banner background colour, for example #fbf7f0 (empty: the standard colours)",
+						placeholder: "#ffffff",
+						initial_value: text(draft, "color_background", banner.colors.background),
+					},
+					{
+						type: "text_input",
+						action_id: "color_text",
+						label: "Banner text colour, set together with the background",
+						placeholder: "#141414",
+						initial_value: text(draft, "color_text", banner.colors.text),
+					},
+					{
+						type: "text_input",
+						action_id: "color_accent",
+						label: "Button colour, used for both Accept all and Reject all",
+						placeholder: "#141414",
+						initial_value: text(draft, "color_accent", banner.colors.accent),
+					},
+					{
+						type: "toggle",
+						action_id: "dark_colors",
+						label: "Different colours when the visitor's device is in dark mode",
+						initial_value: banner.darkOn,
+					},
+					{
+						type: "text_input",
+						action_id: "dark_background",
+						label: "Dark mode: banner background colour, for example #1c1c1c",
+						placeholder: "#1c1c1c",
+						initial_value: text(draft, "dark_background", banner.darkColors.background),
+						condition: { field: "dark_colors", eq: true },
+					},
+					{
+						type: "text_input",
+						action_id: "dark_text",
+						label: "Dark mode: banner text colour, set together with the background",
+						placeholder: "#f2f2f2",
+						initial_value: text(draft, "dark_text", banner.darkColors.text),
+						condition: { field: "dark_colors", eq: true },
+					},
+					{
+						type: "text_input",
+						action_id: "dark_accent",
+						label: "Dark mode: button colour",
+						placeholder: "#f2f2f2",
+						initial_value: text(draft, "dark_accent", banner.darkColors.accent),
+						condition: { field: "dark_colors", eq: true },
+					},
+				],
+				submit: { label: "Save colours", action_id: "save_colours" },
+			},
+		],
+	};
 }
 
 /** Two links that open the site's home page with the banner shown as saved, in light and in dark. */
@@ -459,6 +507,7 @@ function previewBlocks(state: PageState): Block[] {
 	if (!state.origin) return [];
 	if (enabledTools(state.config).length === 0) {
 		return [
+			{ type: "header", text: "Preview" },
 			{
 				type: "context",
 				text: "Add a tool on the Tracking tools tab to preview the banner on your site.",
@@ -528,7 +577,7 @@ function advancedBlocks(state: PageState): Block[] {
 }
 
 export function renderPage(state: PageState, tab: number = TAB.status): BlockResponse {
-	const blocks: Block[] = [{ type: "header", text: "Analytics" }];
+	const blocks: Block[] = [{ type: "header", text: "Analytics & Cookies" }];
 	if (state.admin) {
 		blocks.push({
 			type: "tab",
@@ -622,14 +671,15 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		return {
 			save,
 			response: renderPage(
-				{ ...state, config: save, toast: { type: "success", message: said } },
+				{ ...state, config: save, openColours, toast: { type: "success", message: said } },
 				tab,
 			),
 		};
 	};
 	const refuse = (errors: string[], tab: number): Outcome => ({
-		response: renderPage({ ...state, draft: values, errors, toast: REFUSED }, tab),
+		response: renderPage({ ...state, draft: values, errors, openColours, toast: REFUSED }, tab),
 	});
+	const openColours = action === "save_colours";
 	const flag = (key: string, saved: boolean) =>
 		typeof values[key] === "boolean" ? (values[key] as boolean) : saved;
 
@@ -664,7 +714,7 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		);
 	}
 
-	if (action === "save_banner") {
+	if (action === "save_banner" || action === "save_colours") {
 		const banner = { ...config.banner };
 		if (has(values, "policy_url")) {
 			const typed = typeof values.policy_url === "string" ? values.policy_url.trim() : "";
