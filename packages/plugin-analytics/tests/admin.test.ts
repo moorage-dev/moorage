@@ -618,16 +618,17 @@ describe("the Status tab", () => {
 			"✓ HubSpot: on. Waits for every visitor to accept Marketing cookies.",
 			"✓ Enquiries: counted. Clicks on phone and email links, and forms that were sent.",
 		]);
-		const links = lines.map((b) =>
-			b.type === "section" && b.accessory?.type === "link" && b.accessory.target.kind === "external"
-				? b.accessory.target.url
-				: null,
-		);
+		const row = tracking.find((b) => b.type === "actions");
+		const links =
+			row?.type === "actions"
+				? row.elements.map((e) =>
+						e.type === "link" && e.target.kind === "external" ? [e.label, e.target.url] : null,
+					)
+				: [];
 		expect(links).toEqual([
-			"https://analytics.google.com/",
-			"https://clarity.microsoft.com/projects/view/ab12cd34ef/dashboard",
-			"https://app-eu1.hubspot.com/",
-			null,
+			["Open Google Analytics", "https://analytics.google.com/"],
+			["Open Clarity", "https://clarity.microsoft.com/projects/view/ab12cd34ef/dashboard"],
+			["Open HubSpot", "https://app-eu1.hubspot.com/"],
 		]);
 		// Google's tools get the way to check they receive visits.
 		const text = JSON.stringify(tracking);

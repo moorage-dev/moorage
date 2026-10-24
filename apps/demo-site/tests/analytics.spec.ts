@@ -1041,6 +1041,120 @@ test.describe("the consent record and the admin page", () => {
 	});
 });
 
+test.describe("the Status tab", () => {
+	/** A signed-in admin page on the plugin, past EmDash's first-visit welcome. */
+	async function openAdmin(viewport?: { width: number; height: number }): Promise<Page> {
+		const page = await adminContext.newPage();
+		if (viewport) await page.setViewportSize(viewport);
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		await page.addLocatorHandler(welcome, async () => {
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		});
+		await page.goto(ADMIN_PAGE);
+		await expect(page.getByRole("tab", { name: "Status" })).toBeVisible({ timeout: 60_000 });
+		return page;
+	}
+
+	test("is two checklists with links out, the answers chart and a consent log download", async ({
+		page,
+		context,
+	}) => {
+		await configure({ ga4: IDS.ga4, clarity: IDS.clarity });
+		await stubVendors(context);
+		await inCountry(page, "DE");
+		await page.goto("/");
+		await banner(page).getByRole("button", { name: "Reject all" }).click();
+		await expect
+			.poll(async () => {
+				const status = await admin.post(`${API}/admin`, {
+					headers: { "X-EmDash-Request": "1" },
+					data: { type: "page_load", page: "/settings" },
+				});
+				return JSON.stringify(await status.json());
+			})
+			.toMatch(/Last answer received (just now|\d+ minutes? ago)/);
+
+		const status = await openAdmin();
+		await expect(status.getByRole("heading", { name: "Analytics & Cookies" })).toBeVisible();
+		for (const name of ["Tracking", "Cookie consent", "What loads on your site"]) {
+			await expect(status.getByRole("heading", { name, exact: true })).toBeVisible();
+		}
+		await expect(status.getByText("✓ Microsoft Clarity: on.")).toBeVisible();
+		await expect(status.getByRole("link", { name: "Open Clarity" })).toHaveAttribute(
+			"href",
+			`https://clarity.microsoft.com/projects/view/${IDS.clarity}/dashboard`,
+		);
+		await expect(status.getByRole("link", { name: "Open Tag Assistant" })).toHaveAttribute(
+			"href",
+			"https://tagassistant.google.com/",
+		);
+		await expect(status.getByText("✓ Links to your privacy policy: /privacy")).toBeVisible();
+		await expect(status.getByText(/Last answer received/)).toBeVisible();
+		await expect(status.locator("canvas").first()).toBeVisible();
+
+		// The download is a plain link the admin signed; it works without EmDash's header.
+		const href = await status
+			.getByRole("link", { name: "Download the consent log (CSV)" })
+			.getAttribute("href");
+		expect(href).toMatch(/\/_emdash\/api\/plugins\/analytics-consent\/export\?expires=\d+&sig=/);
+		const download = await page.request.get(href!);
+		expect(download.status()).toBe(200);
+		expect(download.headers()["content-type"]).toBe("text/csv; charset=utf-8");
+		const csv = await download.text();
+		expect(csv.split("\r\n")[0]).toBe(
+			"Date and time (UTC),Country,Answer,Analytics,Marketing,Banner version,Reference",
+		);
+		expect(csv).toMatch(
+			/\r\n\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},DE,Rejected all,no,no,[a-z0-9]+,[a-z0-9]+\r\n/,
+		);
+		// Changed by one character, it is refused.
+		const tampered = await page.request.get(href!.replace(/sig=./, "sig=A"));
+		expect(tampered.status()).toBe(403);
+		await status.close();
+	});
+
+	test("Check what loads fetches the site's own pages and reports on Status", async () => {
+		await configure({ ga4: IDS.ga4 });
+		const status = await openAdmin();
+		await expect(status.getByText("Not checked yet.")).toBeVisible();
+		await status.getByRole("button", { name: "Check what loads" }).click();
+		await expect(status.getByText(/^Checked \d pages? (just now|1 minute ago) \(/)).toBeVisible({
+			timeout: 60_000,
+		});
+		await expect(status.getByText("The check could not run")).toBeHidden();
+		await expect(status.getByRole("button", { name: "Check again" })).toBeVisible();
+
+		const shots = process.env.DEMO_SITE_SHOTS_DIR;
+		if (shots) {
+			const { growToContent } = await import("./full-shot.js");
+			await growToContent(status, 1280, 900);
+			await status.screenshot({ path: `${shots}/status-desktop.png`, fullPage: true });
+			await growToContent(status, 390, 844);
+			await status.screenshot({ path: `${shots}/status-phone.png`, fullPage: true });
+		}
+		await status.close();
+	});
+
+	test("the banner colours fold away under Colours, and save from there", async () => {
+		await configure({ ga4: IDS.ga4 });
+		const page = await openAdmin();
+		await page.getByRole("tab", { name: "Cookie banner" }).click();
+		const background = page.getByRole("textbox", { name: /Banner background colour/ });
+		await expect(background).toBeHidden();
+		await page.getByRole("button", { name: "Colours" }).click();
+		await background.fill("#fbf7f0");
+		await page.getByRole("textbox", { name: /Banner text colour/ }).fill("#3b2a1a");
+		await page.getByRole("button", { name: "Save colours" }).click();
+		await expect(
+			page.getByText("Saved. It can take a few minutes to reach visitors."),
+		).toBeVisible();
+		// Still open after the save, showing what was saved.
+		await expect(background).toHaveValue("#fbf7f0");
+		await page.close();
+		await save("save_colours", { color_background: "", color_text: "", color_accent: "" });
+	});
+});
+
 test("an admin sees the help line under every tab, and the switch under Advanced hides it", async ({
 	page,
 }) => {

@@ -255,19 +255,18 @@ function trackingBlocks(state: PageState): Block[] {
 		});
 		return blocks;
 	}
-	// One short line each, with the way to the tool's own numbers beside it.
-	for (const tool of on) {
-		blocks.push({
-			type: "section",
-			text: `✓ ${toolStatus(config, tool)}`,
-			accessory: external(TOOL_SHORT[tool], toolLink(config, tool)),
-		});
-	}
+	// One short line each. The ways to each tool's own numbers follow in one row, which
+	// wraps on a phone instead of squeezing the lines.
+	for (const tool of on) blocks.push({ type: "section", text: `✓ ${toolStatus(config, tool)}` });
 	blocks.push({
 		type: "section",
 		text: config.enquiries
 			? "✓ Enquiries: counted. Clicks on phone and email links, and forms that were sent."
 			: "– Enquiries: not counted.",
+	});
+	blocks.push({
+		type: "actions",
+		elements: on.map((tool) => external(TOOL_SHORT[tool], toolLink(config, tool))),
 	});
 	if (on.some((tool) => tool === "ga4" || tool === "gtm" || tool === "ads")) {
 		blocks.push(
@@ -351,6 +350,7 @@ function consentBlocks(state: PageState): Block[] {
 		],
 	});
 	if (answers.all + answers.none + answers.some > 0) {
+		blocks.push({ type: "context", text: "Accepted all and Rejected all, per day:" });
 		blocks.push({
 			type: "chart",
 			config: {
