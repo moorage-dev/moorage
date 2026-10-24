@@ -38,7 +38,7 @@ export interface AnalyticsConfig {
 		message: string;
 		position: Position;
 		scheme: Scheme;
-		/** Show the small "Cookies" button after a choice was made (hidden on pages with a data-cookie-settings link). */
+		/** Show the small "Cookies" button after a choice was made (it steps aside while a link to #cookie-settings is on screen). */
 		settingsButton: boolean;
 		/** Which bottom corner that button sits in. */
 		settingsSide: Side;

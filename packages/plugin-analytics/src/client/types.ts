@@ -32,7 +32,7 @@ export interface ClientConfig {
 	rec?: 1;
 	pos: "bar" | "left" | "right";
 	scheme: "auto" | "light" | "dark";
-	/** Show the small "Cookies" button (unless the page has a data-cookie-settings link). */
+	/** Show the small "Cookies" button (it steps aside while a link to #cookie-settings is on screen). */
 	btn?: 1;
 	/** That button in the bottom right corner instead of the left. */
 	btnRight?: 1;
