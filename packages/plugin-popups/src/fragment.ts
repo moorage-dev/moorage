@@ -6,12 +6,14 @@ import clientCode from "virtual:client-script";
 import { barInner } from "./client/bar.js";
 import { styles } from "./client/css.js";
 import type { ClientConfig, ClientItem } from "./client/types.js";
+import { colourSet, OWN_COLOURS } from "./colour-sets.js";
 import {
 	AGAIN_DAYS,
 	buttonText,
 	DECLINE_LABEL,
 	isLive,
 	showsOn,
+	type Colors,
 	type Popup,
 	type Settings,
 	type Store,
@@ -117,17 +119,51 @@ export function clientConfig(
 		items,
 		t: TEXT,
 	};
-	if (
-		settings.custom &&
-		settings.colors.background &&
-		settings.colors.text &&
-		settings.colors.accent
-	) {
-		const { background: g, text: f, accent: x } = settings.colors;
-		out.col = { g, f, x, y: buttonText(x) };
-	}
+	const { light, dark } = lookColours(settings);
+	if (light) out.col = forBrowser(light);
+	if (dark) out.colDark = forBrowser(dark);
 	if (settings.corner === "left") out.left = 1;
 	return out;
+}
+
+/** Colours in the browser's short form, with the button's words chosen. */
+const forBrowser = ({ background: g, text: f, accent: x }: Colors) => ({
+	g,
+	f,
+	x,
+	y: buttonText(x),
+});
+
+/** Colours with the button's words chosen, for a box in a page. */
+const ready = (c: Colors | undefined) => (c ? { ...c, accentText: buttonText(c.accent) } : null);
+
+/**
+ * The colours the settings choose, as plain colours: a set's light and dark versions, the
+ * owner's own (one version for every device), or none for the theme's colours.
+ */
+export function lookColours(settings: Settings): { light?: Colors; dark?: Colors } {
+	const set = colourSet(settings.colourSet);
+	if (set) return { light: set.light, dark: set.dark };
+	const { background, text, accent } = settings.colors;
+	if (settings.colourSet === OWN_COLOURS && background && text && accent)
+		return { light: settings.colors };
+	return {};
+}
+
+/**
+ * A box in a page's colours, for the server's HTML: the one version the look picks, or a
+ * light one and a dark one to swap in on a dark device. The button's words are chosen here.
+ */
+export function boxColours(settings: Settings): {
+	colors: (Colors & { accentText: string }) | null;
+	darkColors: (Colors & { accentText: string }) | null;
+} {
+	const { light, dark } = lookColours(settings);
+	if (!light) return { colors: null, darkColors: null };
+	if (!dark) return { colors: ready(light), darkColors: null };
+	if (settings.scheme === "dark") return { colors: ready(dark), darkColors: null };
+	if (settings.scheme === "light") return { colors: ready(light), darkColors: null };
+	return { colors: ready(light), darkColors: ready(dark) };
 }
 
 /** JSON that is safe inside a `<script>`. */
@@ -150,7 +186,7 @@ export function clientScriptFor(config: ClientConfig): string {
 export function barHtml(item: ClientItem, config: ClientConfig): string {
 	return (
 		`<div id="popups-bar-${item.i}" data-popups-bar="${item.i}" style="display:block">` +
-		`<template shadowrootmode="open"><style>${styles(config.sc, config.col)}</style>` +
+		`<template shadowrootmode="open"><style>${styles(config.sc, config.col, config.colDark)}</style>` +
 		barInner(item, config.t.close) +
 		`</template></div>`
 	);

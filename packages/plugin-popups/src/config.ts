@@ -5,6 +5,8 @@
  * the page hook reads once. Everything here is pure and tested on its own.
  */
 
+import { cleanColourChoice, OWN_COLOURS, THEME_COLOURS } from "./colour-sets.js";
+
 export const STORE_KEY = "popups";
 export const PROBLEMS_KEY = "problems";
 export const MAX_POPUPS = 20;
@@ -73,6 +75,12 @@ export interface Colors {
 
 export interface Settings {
 	scheme: "auto" | "light" | "dark";
+	/**
+	 * "theme" (the theme's CSS variables, else neutral colours), one of the shared sets in
+	 * colour-sets.ts, or "own" for `colors`. Versions before 0.2.1 do not know it and read
+	 * `custom` instead, which a save keeps in step (on only under "own").
+	 */
+	colourSet: string;
 	custom: boolean;
 	colors: Colors;
 	corner: "right" | "left";
@@ -88,6 +96,7 @@ export interface Store {
 
 export const DEFAULT_SETTINGS: Settings = {
 	scheme: "auto",
+	colourSet: THEME_COLOURS,
 	custom: false,
 	colors: { background: "", text: "", accent: "" },
 	corner: "right",
@@ -208,6 +217,8 @@ export function normalizeSettings(raw: unknown): Settings {
 	>;
 	return {
 		scheme: pick(s.scheme, ["auto", "light", "dark"] as const, "auto"),
+		// Saved before there was a choice: the "Choose my own colours" switch decides.
+		colourSet: cleanColourChoice(s.colourSet, s.custom === true ? OWN_COLOURS : THEME_COLOURS),
 		custom: s.custom === true,
 		colors: {
 			background: cleanColor(colors.background),

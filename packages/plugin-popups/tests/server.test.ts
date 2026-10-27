@@ -634,6 +634,7 @@ describe("routes", () => {
 					}),
 					popup(),
 				],
+				settings: { colourSet: "white-blue" },
 			},
 		});
 		expect(await call(fake, "boxes", {})).toEqual({
@@ -645,6 +646,11 @@ describe("routes", () => {
 		expect(answer.box.form).toBe("newsletter");
 		// For the form's hidden utm_campaign field, as in a popup.
 		expect(answer.box.handle).toBe("monthly-letter");
+		// The chosen colour set, ready for the server's HTML.
+		expect(answer.box).toMatchObject({
+			colors: { background: "#ffffff", accent: "#1d4ed8", accentText: "#ffffff" },
+			darkColors: { background: "#111827", accent: "#93c5fd", accentText: "#141414" },
+		});
 		expect(await call(fake, "box", { id: "abcd1234" })).toEqual({ box: null });
 	});
 

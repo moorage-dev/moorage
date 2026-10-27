@@ -46,6 +46,8 @@ export interface ClientConfig {
 	/** Light, dark or follow the device; the owner's colours when chosen. */
 	sc: "auto" | "light" | "dark";
 	col?: { g: string; f: string; x: string; y: string };
+	/** A colour set's dark version; without it `col` is used on every device. */
+	colDark?: { g: string; f: string; x: string; y: string };
 	/** Slide-ins in the bottom left corner. */
 	left?: 1;
 	/** On a preview link: the previewed popup is set to show on this page. */

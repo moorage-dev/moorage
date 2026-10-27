@@ -480,7 +480,7 @@ export function boot(c: ClientConfig): void {
 			"</h2>" +
 			(content.x ? "<p>" + esc(content.x) + "</p>" : "") +
 			action;
-		const theme = "<style>" + styles(look, c.col) + "</style>";
+		const theme = "<style>" + styles(look, c.col, c.colDark) + "</style>";
 		if (modal) {
 			root.innerHTML =
 				theme +
@@ -875,7 +875,7 @@ export function boot(c: ClientConfig): void {
 						const root = bar.attachShadow({ mode: "open" });
 						root.innerHTML =
 							"<style>" +
-							styles(previewScheme || c.sc, c.col) +
+							styles(previewScheme || c.sc, c.col, c.colDark) +
 							"</style>" +
 							barInner(item, c.t.close, tag());
 						root.addEventListener("click", (event) => {
