@@ -1,5 +1,23 @@
 # @moorage/plugin-popups
 
+## 0.2.1
+
+### Patch Changes
+
+- e6af924: Colours for popups are now a choice, not hex codes. In Settings, pick your theme's colours (recommended, as before), one of five ready-made sets (Warm cream with brown buttons, Clean white with blue buttons, Soft grey with green buttons, Pale pink with plum buttons, Dark with gold buttons), or My own colours, which shows the colour boxes as before. Each set has a matching dark version and follows "Light or dark", every one is easy to read, and the cookie banner in Analytics & Cookies offers the same sets, so the two can match.
+  
+  Nothing to do on your side: if "Choose my own colours" was on, it now shows as My own colours and looks exactly the same. Choosing a set keeps the colours you typed, so going back to My own colours shows them again; an earlier version shows your theme's colours instead of a set.
+  
+  A correction to 0.2.0: a popup's hidden campaign fields (`utm_campaign` and the others) show when you open a sign-up under Forms and in what Lead Delivery passes on. Forms leaves hidden fields out of its emails, daily digest and CSV download, so they do not show there; the README now says so.
+- 6857c03: Clearer kinds, and a helpful "Popups box" list in the editor. Only "Box in a page" is called a box now: a popup "opens by itself over the page, in the middle of the screen", a slide-in "slides in at a bottom corner", and a box in a page "sits inside a page or post, where you place it while editing". When there is no box yet, the editor's "Which box" list says how to make one, and names a popup or slide-in you made instead, since those open by themselves and are not placed in a post. A box that is turned off still shows, marked "(off)".
+- 7431138: A finished popup's page is shorter and easier to follow. From the top: "← All popups", the name, one line that says how it is doing ("On · Popup with a form · every page, after they have read a while") with Turn on or off beside it, then "Preview on your site" and More (Change name or kind, Duplicate). A popup that cannot open shows the same warning here as on the list.
+  
+  Results open on the last 30 days, here and on the Results tab, and show two numbers: Sign-ups (or Button clicks) and Rate. How often it was seen and closed is one line under the chart, and the chart's dates no longer run into each other on a phone. "Compare popups" and "Download CSV" sit together under it.
+  
+  Edit is one form in the order what it says, when and where, dates, with shorter labels; the times name your site's time zone. The "Turn it on" switch is gone from this form: Turn on or off is beside the name, and pressing it keeps anything you typed but have not saved. Turn on or off, Duplicate and Change name or kind now bring you back to the popup's page instead of the list. "Delete popup" is at the very foot, for administrators, and asks first. The summary that repeated the form is gone.
+  
+  Editors see Turn on or off and Preview, and one line saying where and when the popup shows. Nothing stored changes.
+
 ## 0.2.0
 
 ### Minor Changes
