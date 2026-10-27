@@ -161,7 +161,7 @@ interface OtherRule {
 }
 
 const LATER =
-	"It loads before anyone is asked, and this plugin cannot hold it back. Remove it, or use one of the tools on the Tracking tools tab instead.";
+	"It loads before anyone is asked, and this plugin cannot hold it back. Remove it, or use one of the tools on the Tools tab instead.";
 
 /** Tracking tools this plugin does not add. Kept short: the ones small sites paste most. */
 const OTHER_TRACKERS: OtherRule[] = [
@@ -315,7 +315,7 @@ export function scanPage(html: string, config: AnalyticsConfig, pluginId: string
 			twice.push({
 				kind: "twice",
 				title: `${name} is added twice`,
-				advice: `Your pages also have ${name} code pasted into them (in an HTML block or the theme) with the same ID as on the Tracking tools tab. Remove the pasted code: Analytics adds it for you, and only after a visitor agrees. Until then every visit is counted twice, and the pasted code loads before anyone is asked.`,
+				advice: `Your pages also have ${name} code pasted into them (in an HTML block or the theme) with the same ID as on the Tools tab. Remove the pasted code: Analytics adds it for you, and only after a visitor agrees. Until then every visit is counted twice, and the pasted code loads before anyone is asked.`,
 			});
 		}
 		const others = ids.filter((id) => id !== mine);
@@ -329,8 +329,8 @@ export function scanPage(html: string, config: AnalyticsConfig, pluginId: string
 				title: `${name}${others.length ? ` (${others.join(", ")})` : ""} is pasted into your pages`,
 				advice:
 					rule.tool === "cloudflare"
-						? "Cloudflare Web Analytics is also added outside this plugin, perhaps by Cloudflare itself (its automatic setup). It sets no cookies, but visits may be counted twice. Keep one: turn off the automatic setup in Cloudflare, or empty the box on the Tracking tools tab."
-						: `It loads without waiting for the cookie banner. Remove the pasted code${mine ? "" : `, and if you still need ${name}, paste its ID on the Tracking tools tab instead`}.`,
+						? "Cloudflare Web Analytics is also added outside this plugin, perhaps by Cloudflare itself (its automatic setup). It sets no cookies, but visits may be counted twice. Keep one: turn off the automatic setup in Cloudflare, or empty the box on the Tools tab."
+						: `It loads without waiting for the cookie banner. Remove the pasted code${mine ? "" : `, and if you still need ${name}, paste its ID on the Tools tab instead`}.`,
 			});
 		}
 	}

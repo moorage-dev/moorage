@@ -983,7 +983,7 @@ test.describe("the consent record and the admin page", () => {
 		// The sidebar files the page under Marketing, by its plain name.
 		await expect(page.getByRole("link", { name: "Analytics", exact: true })).toBeVisible();
 
-		await page.getByRole("tab", { name: "Tracking tools" }).click();
+		await page.getByRole("tab", { name: "Tools" }).click();
 		const ga = page.getByRole("textbox", { name: /Google Analytics: Measurement ID/ });
 		await ga.fill("UA-12345678-1");
 		await page.getByRole("button", { name: "Save tools" }).click();
@@ -1149,7 +1149,7 @@ test.describe("the Status tab", () => {
 		});
 		await save("save_colours", { colour_set: "theme" });
 		const page = await openAdmin();
-		await page.getByRole("tab", { name: "Cookie banner" }).click();
+		await page.getByRole("tab", { name: "Banner" }).click();
 		const background = page.getByRole("textbox", { name: /Banner background colour/ });
 		await expect(background).toBeHidden();
 		await page.getByRole("button", { name: "Colours" }).click();
@@ -1183,7 +1183,7 @@ test.describe("the Status tab", () => {
 		await configure({ ga4: IDS.ga4 });
 		await save("save_colours", { colour_set: "theme" });
 		const page = await openAdmin();
-		await page.getByRole("tab", { name: "Cookie banner" }).click();
+		await page.getByRole("tab", { name: "Banner" }).click();
 		await page.getByRole("button", { name: "Colours" }).click();
 		await page.getByRole("radio", { name: "Warm cream with brown buttons" }).check();
 		// A set needs no colour boxes: it has its own dark version.
@@ -1244,6 +1244,136 @@ test.describe("the Status tab", () => {
 		}
 		await save("save_colours", { colour_set: "theme" });
 	});
+
+	test("every tab fits a 390 px phone: tabs, fields, dropdowns and their choices", async ({
+		browser,
+	}) => {
+		test.setTimeout(240_000);
+		// The longest page there is: four tools, Tag Manager loading at once, every warning.
+		await configure(
+			{ ga4: IDS.ga4, gtm: "GTM-TEST123", clarity: IDS.clarity, meta: IDS.meta },
+			{ policy_url: "", settings_button: false },
+			{ gtm_loading: "immediate" },
+		);
+		await save("save_colours", { colour_set: "own" });
+		const width = 390;
+		const phone = await browser.newContext({
+			storageState: await adminContext.storageState(),
+			viewport: { width, height: 844 },
+			isMobile: true,
+			hasTouch: true,
+		});
+		const page = await phone.newPage();
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		await page.addLocatorHandler(welcome, async () => {
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		});
+		await page.goto(ADMIN_PAGE);
+		const tabs = page.getByRole("tab");
+		await expect(tabs.first()).toBeVisible({ timeout: 60_000 });
+		// Order and meaning stay: Status, then the tools, the banner, and Advanced.
+		expect(await tabs.allTextContents()).toEqual(["Status", "Tools", "Banner", "Advanced"]);
+
+		/**
+		 * Everything on the plugin's page that reaches past its column (the page's own margin on
+		 * the left, as measured on Status, mirrored on the right), whether or not a scrolling box
+		 * hides it, and any box in the page that scrolls sideways. EmDash's closed side menu (off
+		 * screen to the left) and the hidden inputs behind radios and switches are not counted.
+		 * Linux fonts (CI) are wider than macOS ones, so tabs and dropdowns, which never wrap,
+		 * must leave 16 px to spare.
+		 */
+		const outside = (margin?: number) =>
+			page.evaluate((baseline) => {
+				const title = [...document.querySelectorAll("h1, h2")].find(
+					(h) => h.textContent?.trim() === "Analytics & Cookies",
+				)!;
+				const left = title.getBoundingClientRect().left;
+				const edge = window.innerWidth - (baseline ?? left);
+				const main = title.closest("main") ?? document.body;
+				const sticks = (el: Element) => {
+					const r = el.getBoundingClientRect();
+					if (r.width <= 1 || r.height <= 1 || r.right <= 0) return false;
+					const style = getComputedStyle(el);
+					if (style.visibility === "hidden" || style.display === "none") return false;
+					const role = el.getAttribute("role");
+					const spare = role === "tab" || role === "combobox" ? 16 : 0;
+					return r.right > edge - spare + 0.5;
+				};
+				const name = (el: Element) =>
+					`<${el.tagName.toLowerCase()}> "${(el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 60)}"`;
+				const found: string[] = [];
+				if (baseline !== undefined && Math.abs(left - baseline) > 0.5) {
+					found.push(`the page moved sideways: its title starts at ${Math.round(left)}`);
+				}
+				for (const el of main.querySelectorAll("*")) {
+					const { overflowX } = getComputedStyle(el);
+					if (
+						(overflowX === "auto" || overflowX === "scroll") &&
+						el.scrollWidth > el.clientWidth + 1
+					) {
+						found.push(`${name(el)} scrolls sideways (${el.scrollWidth} > ${el.clientWidth})`);
+					}
+					if (!sticks(el) || (el.parentElement && sticks(el.parentElement))) continue;
+					const r = el.getBoundingClientRect();
+					found.push(
+						`${name(el)} (${Math.round(r.left)}..${Math.round(r.right)} > ${Math.round(edge)})`,
+					);
+				}
+				if (document.documentElement.scrollWidth > window.innerWidth) {
+					found.push(`page scrolls sideways: ${document.documentElement.scrollWidth}`);
+				}
+				return found;
+			}, margin);
+		/** Every dropdown on the tab, closed and with its choices open. */
+		const dropdowns = async () => {
+			const found: string[] = [];
+			for (const box of await page.getByRole("combobox").all()) {
+				if (!(await box.isVisible())) continue;
+				await box.scrollIntoViewIfNeeded();
+				await box.click();
+				const options = page.getByRole("option");
+				await expect(options.first()).toBeVisible();
+				for (const option of await options.all()) {
+					const r = (await option.boundingBox())!;
+					if (r.x < 0 || r.x + r.width > width) {
+						found.push(`choice "${await option.textContent()}" (${Math.round(r.x + r.width)})`);
+					}
+				}
+				await page.keyboard.press("Escape");
+				await expect(options).toHaveCount(0);
+			}
+			return found;
+		};
+
+		await expect(page.getByRole("heading", { name: "What loads on your site" })).toBeVisible();
+		expect(await outside(), "Status").toEqual([]);
+		const margin = await page
+			.getByRole("heading", { name: "Analytics & Cookies" })
+			.evaluate((h) => h.getBoundingClientRect().left);
+		await page.getByRole("tab", { name: "Tools" }).click();
+		await expect(page.getByRole("button", { name: "Save tools" })).toBeVisible();
+		expect(await outside(margin), "Tools").toEqual([]);
+		await page.getByRole("tab", { name: "Banner" }).click();
+		await expect(page.getByRole("button", { name: "Save banner" })).toBeVisible();
+		await page.getByRole("button", { name: "Colours" }).first().click();
+		await expect(page.getByRole("textbox", { name: /Dark mode: button colour/ })).toBeVisible();
+		expect(await outside(margin), "Banner").toEqual([]);
+		expect(await dropdowns(), "Banner dropdowns").toEqual([]);
+		await page.getByRole("tab", { name: "Advanced" }).click();
+		await expect(page.getByRole("button", { name: "Save", exact: true }).first()).toBeVisible();
+		expect(await outside(margin), "Advanced").toEqual([]);
+		expect(await dropdowns(), "Advanced dropdowns").toEqual([]);
+		await phone.close();
+
+		await save("save_colours", {
+			colour_set: "own",
+			color_background: "",
+			color_text: "",
+			color_accent: "",
+		});
+		await save("save_colours", { colour_set: "theme" });
+		await configure({});
+	});
 });
 
 test("an admin sees the help line under every tab, and the switch under Advanced hides it", async ({
@@ -1260,7 +1390,7 @@ test("an admin sees the help line under every tab, and the switch under Advanced
 	});
 	await open();
 	await expectHelpLine(page, guide);
-	await page.getByRole("tab", { name: "Cookie banner" }).click();
+	await page.getByRole("tab", { name: "Banner" }).click();
 	await expectHelpLine(page, guide);
 	await page.getByRole("tab", { name: "Advanced" }).click();
 	await expectHelpLine(page, guide);
