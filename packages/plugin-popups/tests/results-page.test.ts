@@ -198,9 +198,9 @@ describe("the Results tab: how your popups compare", () => {
 });
 
 describe("a finished popup's own page: Results", () => {
-	it("shows its period, four tiles, a bar a day, a way to compare and its own download", async () => {
+	it("shows its period, two tiles, a bar a week since it started, a way to compare and its own download", async () => {
 		const fake = site1();
-		const page = all(await press(fake, "row", "change:abcd1234"));
+		const page = all(await press(fake, "period", "p:abcd1234:start"));
 		const at = page.findIndex((b) => b.type === "header" && b.text === "Results");
 		expect(at).toBeGreaterThan(0);
 		expect(picker(page)).toMatchObject({ initial_value: "p:abcd1234:start" });
@@ -210,19 +210,20 @@ describe("a finished popup's own page: Results", () => {
 		});
 		expect(words({ blocks: page })).toContain("1 Aug to 16 Oct.");
 		expect(tiles(page)).toEqual([
-			{ label: "Seen", value: "400" },
 			{ label: "Button clicks", value: "13" },
 			{ label: "Rate", value: "3%" },
-			{ label: "Closed", value: "55" },
 		]);
+		expect(words({ blocks: page })).toContain(
+			"Seen 400 times; closed 55 times without clicking. Rate shows from 100 views.",
+		);
 		const chart = page.find((b) => b.type === "chart") as Extract<Block, { type: "chart" }>;
-		expect(chart.config).toMatchObject({ chart_type: "timeseries", style: "bar" });
-		const series = (chart.config as { series: Array<{ name: string; data: [number, number][] }> })
-			.series;
+		expect(chart.config).toMatchObject({ chart_type: "custom", height: 140 });
+		const series = (chart.config as unknown as { options: { series: Array<{ name: string }> } })
+			.options.series;
 		expect(series).toHaveLength(1);
 		expect(series[0]!.name).toBe("Button clicks per week");
-		expect(words({ blocks: page })).toContain('"label":"Compare with other popups"');
-		expect(words({ blocks: page })).toContain('"label":"Download this popup\'s numbers (CSV)"');
+		expect(words({ blocks: page })).toContain('"label":"Compare popups"');
+		expect(words({ blocks: page })).toContain('"label":"Download CSV"');
 		expect(words({ blocks: page })).toMatch(/export\?from=2026-08-01&to=2026-10-16&popup=abcd1234/);
 		expect(words({ blocks: page })).not.toContain("See all numbers");
 	});
@@ -233,19 +234,27 @@ describe("a finished popup's own page: Results", () => {
 		const formId = page.find((b) => b.type === "form")!.block_id;
 		const month = all(await press(fake, "period", "p:abcd1234:this-month"));
 		expect(picker(month)).toMatchObject({ initial_value: "p:abcd1234:this-month" });
-		expect(words({ blocks: month })).toContain("1 Oct to 16 Oct, compared with 1 Sep to 16 Sep.");
+		expect(words({ blocks: month })).toContain(
+			"1 Oct to 16 Oct, compared with the same days last month.",
+		);
 		expect(tiles(month)).toEqual([
-			{ label: "Seen", value: "200", description: "no change from 200", trend: "neutral" },
 			{ label: "Button clicks", value: "9", description: "up from 4", trend: "up" },
 			{ label: "Rate", value: "5%", description: "up from 2%", trend: "up" },
-			{ label: "Closed", value: "25", description: "down from 30" },
 		]);
+		expect(words({ blocks: month })).toContain(
+			"Seen 200 times (no change from 200); closed 25 times without clicking.",
+		);
 		const chart = month.find((b) => b.type === "chart") as Extract<Block, { type: "chart" }>;
-		const data = (chart.config as { series: Array<{ data: [number, number][] }> }).series[0]!.data;
+		const options = (
+			chart.config as unknown as {
+				options: { xAxis: { data: string[] }; series: Array<{ data: number[] }> };
+			}
+		).options;
 		// Every day of the month so far, empty days as 0.
-		expect(data).toHaveLength(16);
-		expect(data[2]).toEqual([Date.UTC(2026, 9, 3, 12), 6]);
-		expect(data[3]).toEqual([Date.UTC(2026, 9, 4, 12), 0]);
+		expect(options.xAxis.data).toHaveLength(16);
+		expect(options.xAxis.data[2]).toBe("3 Oct");
+		expect(options.series[0]!.data[2]).toBe(6);
+		expect(options.series[0]!.data[3]).toBe(0);
 		// The form keeps its id, so what was typed stays; Save carries the period.
 		const form = month.find((b) => b.type === "form") as Extract<Block, { type: "form" }>;
 		expect(form.block_id).toBe(formId);
@@ -275,7 +284,7 @@ describe("a finished popup's own page: Results", () => {
 		few.rows.set("x", count("abcd1234", "2026-10-03", 40, { clicked: 2 }));
 		const quiet = all(await press(few, "row", "change:abcd1234"));
 		expect(quiet.some((b) => b.type === "chart")).toBe(false);
-		expect(tiles(quiet)[2]).toEqual({
+		expect(tiles(quiet)[1]).toEqual({
 			label: "Rate",
 			value: "–",
 			description: "(needs 100 views)",
@@ -286,7 +295,7 @@ describe("a finished popup's own page: Results", () => {
 		const fake = fakeContext({
 			popups: { popups: [popup({ createdAt: "2024-03-01T00:00:00.000Z" })] },
 		});
-		const page = all(await press(fake, "row", "change:abcd1234"));
+		const page = all(await press(fake, "period", "p:abcd1234:start"));
 		expect(words({ blocks: page })).toContain(
 			"12 Sep 2025 to 16 Oct (counts are kept for 400 days).",
 		);
@@ -299,8 +308,9 @@ describe("reads only what the screen shows", () => {
 		await press(fake, "new");
 		expect(fake.queries).toEqual([]);
 		await press(fake, "row", "change:abcd1234");
+		// The last 30 days and the 30 before them, in one read.
 		expect(fake.queries).toEqual([
-			{ popup: "abcd1234", day: { gte: "2026-08-01", lte: "2026-10-16" } },
+			{ popup: "abcd1234", day: { gte: "2026-08-18", lte: "2026-10-16" } },
 		]);
 		fake.queries.length = 0;
 		await press(fake, "period", "p:abcd1234:this-month");

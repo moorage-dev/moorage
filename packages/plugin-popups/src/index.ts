@@ -204,7 +204,7 @@ export function alertEmail(
 ): { subject: string; text: string } {
 	const fix =
 		kind === "missing"
-			? `Its form "${popup.form}" no longer exists under Forms. Open Forms, copy the short name of the form you want, and paste it in this popup under Popups > Edit > What it says.`
+			? `Its form "${popup.form}" no longer exists under Forms. Open Forms, copy the short name of the form you want, and paste it in this popup under Popups > Edit > Form.`
 			: kind === "paused"
 				? `Its form "${popup.form}" is paused under Forms. The popup opens again by itself once the form is turned back on.`
 				: `Its form "${popup.form}" uses Cloudflare Turnstile or a file upload, which only work in a box in a page for now. Choose another form for this popup, or put this form in a box in a page.`;

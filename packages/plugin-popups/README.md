@@ -4,7 +4,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 
 **A developer installs it once.** It is a native plugin: someone adds one line to the site's `astro.config.mjs` (below). After that, everything is done on the admin page under Marketing > Popups. It cannot be installed from the plugin registry.
 
-![The Popups list](images/admin-list-0-1-9-desktop-light.png)
+![The Popups list](images/admin-list-0-2-1-desktop-light.png)
 
 ## What it does
 
@@ -23,15 +23,15 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
   - Never while someone is typing.
   - Never again for someone who signed up or clicked. After a close it shows again after a week, after a month, or never.
   - Always a 44 px close button, and Esc closes it. Nothing closes by itself, and the "No thanks" words come from a fixed list.
-- **Results:** each popup's own page shows how it is doing, for a period you pick: since it started, this month, last month or the last 30 days. Four numbers: Seen (at least half of it on screen for a second), Sign-ups (or Button clicks for a popup with a button), Rate and Closed, each with the change from the period before (this month against the same days of last month, last month against the month before, the last 30 days against the 30 before). Under them, a small chart of sign-ups or clicks a day (a week, for long periods). The Results tab puts every popup side by side for the same period, sortable by Seen or Rate. Rates, the share seen on phones and the changes appear from 100 views. Both have a spreadsheet download (daily counts; the link works for ten minutes, so open the page again for a fresh one). Days follow your site's time zone. It stores no cookies and nothing about any visitor; counts are kept for 400 days.
+- **Results:** each popup's own page shows how it is doing, for a period you pick: the last 30 days (where it opens), this month, last month or since it started. Two numbers: Sign-ups (or Button clicks for a popup with a button) and Rate, each with the change from the period before (the last 30 days against the 30 before, this month against the same days of last month, last month against the month before). Under them, a small chart of sign-ups or clicks a day (a week, for long periods), and one line with how often it was seen (at least half of it on screen for a second) and closed. The Results tab puts every popup side by side for the same period, sortable by Seen or Rate. Rates, the share seen on phones and the changes appear from 100 views. Both have a spreadsheet download (daily counts; the link works for ten minutes, so open the page again for a fresh one). Days follow your site's time zone. It stores no cookies and nothing about any visitor; counts are kept for 400 days.
 - **Which popup a sign-up came from:** button links to other websites get campaign tags (`utm_source=popups`, `utm_medium`, `utm_campaign=<popup>`), so Google Analytics shows those visits as coming from the popup. A form does the same when it has hidden fields with those names (see below), so the sign-up's details under Forms, Lead Delivery and your CRM show the popup.
 - **Preview:** "Preview on your site" (light or dark) shows the popup at once, for you only, exactly where a visitor sees it: a top bar at the top, a slide-in in its corner, a popup centred (a sheet on phones). A box in a page shows at the top of the page's content, lined up with the page's text as visitors see it in a post, since its place is where an editor puts the block. It says whether a real visitor would see it now and, if not, why ("this browser closed it 3 days ago; it shows again after a month"). Nothing is counted and the form does not send.
 - **Colours:** your theme's colours (the default), one of five ready-made sets, or your own. Each set has a matching dark version for visitors whose device is in dark mode, and the cookie banner in Analytics & Cookies offers the same sets, so the two match.
 - **Checks:** the form's short name is checked when you save. Your own colours are refused when they are hard to read, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
 
-| A popup's results                                       | Results: how your popups compare                  |
-| ------------------------------------------------------- | ------------------------------------------------- |
-| ![](images/admin-popup-results-0-1-9-desktop-light.png) | ![](images/admin-results-0-1-9-desktop-light.png) |
+| A popup's results                                       | A popup's results, on a phone                        |
+| ------------------------------------------------------- | ---------------------------------------------------- |
+| ![](images/admin-popup-results-0-2-1-desktop-light.png) | ![](images/admin-popup-results-0-2-1-phone-dark.png) |
 
 | Popup, computer                            | Popup, phone                            | Slide-in                                     | Box in a page                                    |
 | ------------------------------------------ | --------------------------------------- | -------------------------------------------- | ------------------------------------------------ |
@@ -107,25 +107,40 @@ Popups take your theme's colours from these CSS variables. All of them are optio
 
 ## Settings
 
-| Where        | Setting                                                            | Default                                          |
-| ------------ | ------------------------------------------------------------------ | ------------------------------------------------ |
-| Each popup   | Kind                                                               | chosen when made                                 |
-|              | Heading, text, picture, button or form, "No thanks" words          | No thanks                                        |
-|              | When it opens                                                      | After they have read a while (top bars: at once) |
-|              | Show on the first page they visit (popups, computers only)         | Off                                              |
-|              | Where, never on these pages, phones or computers                   | Every page; phones and computers                 |
-|              | Show again after a close                                           | After a month                                    |
-|              | Starts, ends (date and time, site's time zone), on or off          | No dates; on ("Save and finish" starts it)       |
-| Settings tab | Light or dark                                                      | Follow the visitor's device                      |
-|              | Colours: theme, a ready-made set, or my own (checked for contrast) | Your theme's colours                             |
-|              | Slide-in corner                                                    | Bottom right                                     |
-|              | Emails when a popup cannot open                                    | None                                             |
+| Where        | Setting                                                                     | Default                                          |
+| ------------ | --------------------------------------------------------------------------- | ------------------------------------------------ |
+| Each popup   | Kind                                                                        | chosen when made                                 |
+|              | Heading, text, picture, button or form, "No thanks" words                   | No thanks                                        |
+|              | When it opens                                                               | After they have read a while (top bars: at once) |
+|              | Show on the first page they visit (popups, computers only)                  | Off                                              |
+|              | Where, never on these pages, phones or computers                            | Every page; phones and computers                 |
+|              | Show again after a close                                                    | After a month                                    |
+|              | Starts, ends (date and time, site's time zone), on or off (beside the name) | No dates; on ("Save and finish" starts it)       |
+| Settings tab | Light or dark                                                               | Follow the visitor's device                      |
+|              | Colours: theme, a ready-made set, or my own (checked for contrast)          | Your theme's colours                             |
+|              | Slide-in corner                                                             | Bottom right                                     |
+|              | Emails when a popup cannot open                                             | None                                             |
 
 A new popup is off while you make it. Its last step has "Turn it on" already switched on, so "Save and finish" starts it at its start time; switch it off first to keep it off.
 
-Each row of the list shows the popup's name and status, with Edit and Preview. Turn on or off, Duplicate and Delete are at the top of a popup's own page (open it with Edit).
+Each row of the list shows the popup's name and status, with Edit and Preview. Open a popup with Edit to turn it on or off, duplicate it or delete it.
 
-A new popup is made one step at a time. Once it is finished, its own page shows its Results (the period, four numbers, the chart, "Compare with other popups" to open the Results tab on the same period, and a download of its own numbers) and one form for what it says, when and where, and its dates, with one "Save changes" at the end. If something cannot be saved, every problem is listed together and everything you typed stays in place. The name and kind are changed with "Change name or kind", on a screen of their own, because the kind decides which settings the popup has.
+A new popup is made one step at a time. Once it is finished, its own page has, from the top:
+
+- "← All popups", the name, and one line saying how it is doing ("On · Popup with a form · every page, after they have read a while") with Turn on or off beside it. Turning it on or off keeps anything you typed below and not saved yet.
+- "Preview on your site", and More with "Change name or kind" and "Duplicate". The name and kind are changed on a screen of their own, because the kind decides which settings the popup has; both it and Duplicate bring you back to the popup's page.
+- The same warning as the list, if the popup cannot open or its form is paused.
+- Results: the period, Sign-ups (or Button clicks) and Rate, the chart, a line with how often it was seen and closed, then "Compare popups" (the Results tab on the same period) and "Download CSV" (its own numbers).
+- Edit: one form for what it says, when and where, and its dates, with one "Save changes" at the end. If something cannot be saved, every problem is listed together and everything you typed stays in place. "Preview in dark mode" is under it, and for a popup that opens with a click, the instructions for your web person.
+- "Delete popup" at the very foot. It asks first.
+
+| A popup's page                                       | Results: how your popups compare                  |
+| ---------------------------------------------------- | ------------------------------------------------- |
+| ![](images/admin-popup-page-0-2-1-desktop-light.png) | ![](images/admin-results-0-2-1-desktop-light.png) |
+
+| New popup: the kind                                 | Settings: colours                                 | The "Popups box" block in a post                     |
+| --------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
+| ![](images/admin-new-popup-0-2-1-desktop-light.png) | ![](images/admin-colours-0-2-1-desktop-light.png) | ![](images/editor-which-box-0-2-1-desktop-light.png) |
 
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
 

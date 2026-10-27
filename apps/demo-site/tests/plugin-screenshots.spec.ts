@@ -1,7 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
@@ -31,7 +31,7 @@ import { helpLinks } from "./help-line.js";
 // Checklist are replaced with what a public bakery site would get; the rest of the page is its own.
 
 const SHOTS = process.env.PLUGIN_SCREENSHOTS === "1";
-const VERSION = { seo: "0-1-11", siteHealth: "0-1-5", popups: "0-1-9", analytics: "0-3-1" };
+const VERSION = { seo: "0-1-11", siteHealth: "0-1-5", popups: "0-2-1", analytics: "0-3-1" };
 const API = "/_emdash/api";
 const H = { "X-EmDash-Request": "1" };
 const PACKAGES = resolve(import.meta.dirname, "../../../packages");
@@ -509,7 +509,7 @@ test("Site Health", async ({ browser }) => {
 	}
 });
 
-// ---------- Popups: the list with four popups, one with sign-ups, and a new popup ----------
+// ---------- Popups: the list, the kind, a popup's page, Results, colours and the editor's box picker ----------
 
 const FORMS = `${API}/plugins/emdash-forms`;
 const POPUPS = `${API}/plugins/popups/admin`;
@@ -692,42 +692,148 @@ test("Popups", async ({ browser }) => {
 	}
 	const out = `${PACKAGES}/plugin-popups/images`;
 	const LIST = "/_emdash/admin/plugins/popups/";
+	const V = VERSION.popups;
+	// Where the website's crop of a popup's page stops: under Compare popups and Download CSV,
+	// in CSS px below the top bar.
+	const stops: Record<string, number> = {};
+	const openLetter = async (page: Page) => {
+		await page.goto(LIST);
+		await page
+			.locator("tbody tr")
+			.filter({ hasText: "Monthly letter" })
+			.getByRole("button", { name: "Edit", exact: true })
+			.click({ timeout: 120_000 });
+		await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByText(/compared with the 30 days before/)).toBeVisible();
+		await expect(page.locator("canvas").first()).toBeVisible();
+	};
 	// The README's pictures: the whole window, at its own size, light and dark.
 	for (const [device, viewport] of [
 		["desktop", { width: 1280, height: 1100 }],
 		["phone", { width: 390, height: 1600 }],
 	] as const)
 		for (const scheme of ["light", "dark"] as const) {
+			const name = (what: string) => `${out}/admin-${what}-${V}-${device}-${scheme}.png`;
 			const { context, page } = await open(browser, LIST, viewport, 1, scheme);
 			await expect(page.getByText("Letter box").first()).toBeVisible({ timeout: 120_000 });
 			await expect(helpLinks(page)).toHaveCount(3);
 			await page.waitForTimeout(800);
-			await shot(page, `${out}/admin-list-${VERSION.popups}-${device}-${scheme}.png`);
+			await shot(page, name("list"));
+			// New popup's first step: the choice of kind.
 			await page.getByRole("button", { name: "New popup" }).first().click();
 			await expect(page.getByRole("heading", { name: "New popup" })).toBeVisible();
 			await expect(helpLinks(page)).toHaveCount(3);
 			await page.waitForTimeout(800);
-			await shot(page, `${out}/admin-new-popup-${VERSION.popups}-${device}-${scheme}.png`);
-			// A finished popup's own page: its results for this month.
-			await page.goto(LIST);
-			await page
-				.locator("tbody tr")
-				.filter({ hasText: "Monthly letter" })
-				.getByRole("button", { name: "Edit", exact: true })
-				.click();
-			await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 60_000 });
-			await page.getByRole("combobox", { name: "Period" }).click();
-			await page.getByRole("option", { name: "Last 30 days" }).click();
-			await expect(page.getByText(/compared with/)).toBeVisible();
+			await shot(page, name("new-popup"));
+			// A finished popup's own page: the top with its Results, in the window...
+			await openLetter(page);
 			await page.waitForTimeout(1200);
-			await shot(page, `${out}/admin-popup-results-${VERSION.popups}-${device}-${scheme}.png`);
+			await shot(page, name("popup-results"));
+			const row = await page.getByRole("button", { name: "Compare popups" }).boundingBox();
+			if (scheme === "light")
+				stops[`admin-popup-results-${V}-${device}-light.png`] = Math.round(
+					(row?.y ?? 0) + (row?.height ?? 0) - 58 + 24,
+				);
+			// ...and the whole page, down to Edit, Delete and the help line.
+			await fullShot(page, name("popup-page"), viewport.width, viewport.height);
+			await page.setViewportSize(viewport);
 			// How your popups compare, on the same period.
-			await page.getByRole("button", { name: "Compare with other popups" }).click();
+			await page.getByRole("button", { name: "Compare popups" }).click();
 			await expect(page.getByRole("heading", { name: "How your popups compare" })).toBeVisible();
 			await page.waitForTimeout(800);
-			await shot(page, `${out}/admin-results-${VERSION.popups}-${device}-${scheme}.png`);
+			await shot(page, name("results"));
+			// Settings: the choice of colours.
+			await page.getByRole("tab", { name: "Settings" }).click();
+			const colours = page.getByText("Colours", { exact: true }).first();
+			await expect(colours).toBeVisible();
+			await colours.evaluate((el) => el.scrollIntoView({ block: "start" }));
+			await page.waitForTimeout(600);
+			await shot(page, name("colours"));
 			await context.close();
 		}
+	mkdirSync(RETAKES, { recursive: true });
+	writeFileSync(`${RETAKES}/popups-stops.json`, `${JSON.stringify(stops, null, "\t")}\n`);
+
+	// An editor placing a box in a post: the "Popups box" block lists the boxes to choose from.
+	const schema = `${API}/schema/collections`;
+	const typesFile = resolve(import.meta.dirname, "../emdash-env.d.ts");
+	const typesBefore = readFileSync(typesFile, "utf8");
+	await ok(
+		admin.post(schema, {
+			headers: H,
+			data: { slug: "journal", label: "Journal", labelSingular: "Journal post" },
+		}),
+	);
+	try {
+		await ok(
+			admin.post(`${schema}/journal/fields`, {
+				headers: H,
+				data: { slug: "body", label: "Body", type: "portableText" },
+			}),
+		);
+		const post = await ok(
+			admin.post(`${API}/content/journal`, {
+				headers: H,
+				data: {
+					data: {
+						body: [
+							{
+								_type: "block",
+								_key: "p1",
+								style: "normal",
+								children: [
+									{
+										_type: "span",
+										_key: "s1",
+										text: "Our sourdough starter is twelve years old this spring.",
+									},
+								],
+							},
+						],
+					},
+				},
+			}),
+		);
+		const postId = post.data.item.id as string;
+		for (const [device, viewport] of [
+			["desktop", { width: 1280, height: 1100 }],
+			["phone", { width: 390, height: 1600 }],
+		] as const)
+			for (const scheme of ["light", "dark"] as const) {
+				const { context, page } = await open(
+					browser,
+					`/_emdash/admin/content/journal/${postId}`,
+					viewport,
+					1,
+					scheme,
+				);
+				const editor = page.locator(".ProseMirror").last();
+				await editor.waitFor({ timeout: 150_000 });
+				await editor.click();
+				await page.keyboard.press("End");
+				await page.keyboard.press("Enter");
+				await page.keyboard.type("/Popups box");
+				await page.getByText("Popups box", { exact: true }).last().click();
+				const dialog = page.getByRole("dialog", { name: "Insert Popups box" });
+				await expect(dialog.getByText("Loading...")).toHaveCount(0);
+				await dialog.getByRole("combobox").click();
+				await expect(page.getByRole("option", { name: "Letter box" })).toBeVisible();
+				await page.waitForTimeout(600);
+				await shot(page, `${out}/editor-which-box-${V}-${device}-${scheme}.png`);
+				await context.close();
+			}
+	} finally {
+		await ok(admin.delete(`${schema}/journal?force=true`, { headers: H }));
+		// The dev server rewrites the site's types when a collection comes and goes: put them back.
+		await new Promise((done) => setTimeout(done, 1500));
+		await expect
+			.poll(() => {
+				if (readFileSync(typesFile, "utf8") !== typesBefore) writeFileSync(typesFile, typesBefore);
+				return readFileSync(typesFile, "utf8");
+			})
+			.toBe(typesBefore);
+	}
+
 	// The website's crop of the list: twice the size, as tall as its content.
 	for (const [width, suffix, min] of [
 		[1280, "", 900],
