@@ -347,7 +347,39 @@ test.describe("admin", () => {
 		await row.getByRole("button", { name: "Edit", exact: true }).click();
 		await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "More" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "← All popups" })).toBeVisible();
 		const width = 390;
+		// Compare popups and Download CSV share one line, inside the screen.
+		const compare = page.getByRole("button", { name: "Compare popups" });
+		const csv = page.getByRole("link", { name: "Download CSV" });
+		await compare.scrollIntoViewIfNeeded();
+		const [a, b] = [(await compare.boundingBox())!, (await csv.boundingBox())!];
+		expect(Math.abs(a.y - b.y)).toBeLessThan(2);
+		expect(b.x + b.width).toBeLessThanOrEqual(width);
+		// The Period select has its row to itself.
+		const period = page.getByRole("combobox", { name: "Period" });
+		const periodRow = (await period.boundingBox())!;
+		for (const other of [compare, page.getByRole("button", { name: "Turn off" })]) {
+			const box = (await other.boundingBox())!;
+			expect(box.y + box.height <= periodRow.y || box.y >= periodRow.y + periodRow.height).toBe(
+				true,
+			);
+		}
+		// Nothing on the page's main column runs out of the screen: every block, button and label.
+		const out = await page.evaluate((w) => {
+			const main = document.querySelector("main") ?? document.body;
+			return [
+				...main.querySelectorAll(
+					"button, a, label, h1, h2, h3, p, textarea, [role=combobox], input:not([type=radio]):not([type=checkbox]):not([type=hidden])",
+				),
+			]
+				.filter((el) => {
+					const r = el.getBoundingClientRect();
+					return r.width > 1 && (r.right > w + 0.5 || r.left < -0.5);
+				})
+				.map((el) => `${el.tagName} ${(el.textContent ?? "").slice(0, 40)}`);
+		}, width);
+		expect(out).toEqual([]);
 		const inside = async (locator: ReturnType<Page["locator"]>) => {
 			await locator.scrollIntoViewIfNeeded();
 			const r = (await locator.boundingBox())!;
@@ -368,7 +400,7 @@ test.describe("admin", () => {
 		const boxes = await page.getByRole("combobox").all();
 		expect(boxes.length).toBeGreaterThan(0);
 		for (const box of boxes) await inside(box);
-		await page.getByRole("combobox", { name: /show it to them again/ }).click();
+		await page.getByRole("combobox", { name: /Show it again/ }).click();
 		const options = page.getByRole("option");
 		await expect(options.first()).toBeVisible();
 		for (const option of await options.all()) await inside(option);
@@ -410,14 +442,31 @@ test.describe("admin", () => {
 		await expect(page.getByRole("heading", { name: "Opening hours" })).toBeVisible();
 		// Its own results: one view, too few for a rate or a chart.
 		await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
-		await expect(page.getByText("Seen", { exact: true })).toBeVisible();
+		await expect(
+			page.getByText(
+				/^Seen 1 time; closed 0 times without clicking\. Rate shows from 100 views\.$/,
+			),
+		).toBeVisible();
 		await expect(page.getByText("(needs 100 views)")).toBeVisible();
 		await expect(page.locator("canvas")).toHaveCount(0);
-		await expect(page.getByRole("button", { name: "Compare with other popups" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Compare popups" })).toBeVisible();
+		await expect(page.getByRole("combobox", { name: "Period" })).toHaveText(/Last 30 days/);
+		// No summary of the form above it, and no switch in it: Turn off is beside the name.
+		await expect(page.getByText("Again after closing")).toHaveCount(0);
+		await expect(page.getByText("Turn it on")).toHaveCount(0);
 		// One Save for everything: no Save per section.
 		const save = page.getByRole("button", { name: "Save changes" });
 		await expect(save).toHaveCount(1);
 		await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
+		// Turn off keeps the page and what was typed but not saved.
+		await page.getByLabel(/^Text/).fill("Typed, then turned off");
+		await page.getByRole("button", { name: "Turn off" }).click();
+		await expect(page.getByRole("button", { name: "Turn on" })).toBeVisible();
+		await expect(page.getByText(/^Off · Slide-in/)).toBeVisible();
+		await expect(page.getByLabel(/^Text/)).toHaveValue("Typed, then turned off");
+		await page.getByLabel(/^Text/).fill("Ten till two.");
+		await page.getByRole("button", { name: "Turn on" }).click();
+		await expect(page.getByRole("button", { name: "Turn off" })).toBeVisible();
 		// Words and where, then a refused save: everything typed stays.
 		const heading = page.getByLabel(/^Heading/);
 		const never = page.getByLabel(/^Never on these pages/);
@@ -439,9 +488,73 @@ test.describe("admin", () => {
 			).json(),
 		);
 		expect(list).toContain("Every page, except /contact");
-		await page.getByRole("button", { name: "Compare with other popups" }).click();
+		await page.getByRole("button", { name: "Compare popups" }).click();
 		await expect(page.getByRole("tab", { name: "Results", selected: true })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "How your popups compare" })).toBeVisible();
+		await page.close();
+	});
+
+	test("a popup's page: back to the list, Duplicate stays, Delete asks first and returns to the list", async () => {
+		test.setTimeout(240_000);
+		const id = await make({
+			name: "Cake of the week",
+			kind: "slide",
+			s2: {
+				heading: "Lemon drizzle this week",
+				text: "While it lasts.",
+				contains: "button",
+				button_label: "Order",
+				button_url: "/cakes",
+				decline: "no-thanks",
+			},
+		});
+		const page = await adminContext.newPage();
+		await page.setViewportSize({ width: 1280, height: 1400 });
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await page.locator("text=New popup").first().waitFor({ timeout: 150_000 });
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		if (await welcome.isVisible().catch(() => false))
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		const edit = () =>
+			page
+				.locator("tbody tr")
+				.filter({ hasText: /^Cake of the week \(/ })
+				.getByRole("button", { name: "Edit", exact: true })
+				.click();
+		await edit();
+		await expect(page.getByRole("heading", { name: "Cake of the week" })).toBeVisible();
+		await page.getByRole("button", { name: "← All popups" }).click();
+		await expect(page.getByRole("button", { name: "New popup" })).toBeVisible();
+		await edit();
+		// Duplicate stays on this popup's page.
+		await page.getByRole("button", { name: "More" }).click();
+		await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+		await page.getByRole("menuitem", { name: "Duplicate" }).click();
+		await expect(page.getByText('Made "Cake of the week (copy)", turned off.')).toBeVisible();
+		await expect(
+			page.getByRole("heading", { name: "Cake of the week", exact: true }),
+		).toBeVisible();
+		// The copy is deleted after the test with the rest.
+		const listed = JSON.stringify(
+			await (
+				await admin.post(`${API}/admin`, { headers: H, data: { type: "page_load", page: "/" } })
+			).json(),
+		);
+		for (const m of listed.matchAll(/change:([a-z0-9]+)/g))
+			if (!made.includes(m[1]!)) made.push(m[1]!);
+		// Delete asks first; "Keep it" keeps it.
+		await page.getByRole("button", { name: "Delete popup" }).click();
+		const dialog = page.getByRole("dialog");
+		await expect(dialog.getByText('Delete "Cake of the week"?')).toBeVisible();
+		await dialog.getByRole("button", { name: "Keep it" }).click();
+		await expect(
+			page.getByRole("heading", { name: "Cake of the week", exact: true }),
+		).toBeVisible();
+		await page.getByRole("button", { name: "Delete popup" }).click();
+		await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+		await expect(page.getByText('Deleted "Cake of the week".', { exact: false })).toBeVisible();
+		await expect(page.getByRole("button", { name: "New popup" })).toBeVisible();
+		made.splice(made.indexOf(id), 1);
 		await page.close();
 	});
 
@@ -494,16 +607,16 @@ test.describe("admin", () => {
 		await page.getByRole("combobox", { name: "Period" }).click();
 		await page.getByRole("option", { name: "This month" }).click();
 		await expect(page.getByRole("combobox", { name: "Period" })).toHaveText(/This month/);
-		await expect(page.getByText("120", { exact: true })).toBeVisible();
+		await expect(
+			page.getByText(/^Seen 120 times; closed 0 times without clicking\./),
+		).toBeVisible();
 		await expect(heading).toHaveValue("Typed, not saved yet");
 		await expect(page.getByText("5%", { exact: true })).toBeVisible();
 		await expect(page.getByText("Button clicks", { exact: true })).toBeVisible();
 		// The daily bars.
 		await expect(page.locator("canvas").first()).toBeVisible();
 		// Its own download: only this popup's rows.
-		const own = await page
-			.getByRole("link", { name: "Download this popup's numbers (CSV)" })
-			.getAttribute("href");
+		const own = await page.getByRole("link", { name: "Download CSV" }).getAttribute("href");
 		const file = await page.request.get(own!);
 		expect(file.status()).toBe(200);
 		expect(file.headers()["content-disposition"]).toMatch(
@@ -516,7 +629,7 @@ test.describe("admin", () => {
 		expect(csv).toContain(",Opening hours,120,0,6,0,0");
 		expect(csv).not.toContain("Cake of the month");
 		// Compare: the Results tab on the same period.
-		await page.getByRole("button", { name: "Compare with other popups" }).click();
+		await page.getByRole("button", { name: "Compare popups" }).click();
 		await expect(page.getByRole("tab", { name: "Results", selected: true })).toBeVisible();
 		await expect(page.getByRole("combobox", { name: "Period" })).toHaveText(/This month/);
 		const names = () =>
