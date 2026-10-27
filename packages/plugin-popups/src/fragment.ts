@@ -119,22 +119,51 @@ export function clientConfig(
 		items,
 		t: TEXT,
 	};
-	// A set becomes plain colours here: a light and a dark version.
-	const set = colourSet(settings.colourSet);
-	const ready = ({ background: g, text: f, accent: x }: Colors) => ({ g, f, x, y: buttonText(x) });
-	if (set) {
-		out.col = ready(set.light);
-		out.colDark = ready(set.dark);
-	} else if (
-		settings.colourSet === OWN_COLOURS &&
-		settings.colors.background &&
-		settings.colors.text &&
-		settings.colors.accent
-	) {
-		out.col = ready(settings.colors);
-	}
+	const { light, dark } = lookColours(settings);
+	if (light) out.col = forBrowser(light);
+	if (dark) out.colDark = forBrowser(dark);
 	if (settings.corner === "left") out.left = 1;
 	return out;
+}
+
+/** Colours in the browser's short form, with the button's words chosen. */
+const forBrowser = ({ background: g, text: f, accent: x }: Colors) => ({
+	g,
+	f,
+	x,
+	y: buttonText(x),
+});
+
+/** Colours with the button's words chosen, for a box in a page. */
+const ready = (c: Colors | undefined) => (c ? { ...c, accentText: buttonText(c.accent) } : null);
+
+/**
+ * The colours the settings choose, as plain colours: a set's light and dark versions, the
+ * owner's own (one version for every device), or none for the theme's colours.
+ */
+export function lookColours(settings: Settings): { light?: Colors; dark?: Colors } {
+	const set = colourSet(settings.colourSet);
+	if (set) return { light: set.light, dark: set.dark };
+	const { background, text, accent } = settings.colors;
+	if (settings.colourSet === OWN_COLOURS && background && text && accent)
+		return { light: settings.colors };
+	return {};
+}
+
+/**
+ * A box in a page's colours, for the server's HTML: the one version the look picks, or a
+ * light one and a dark one to swap in on a dark device. The button's words are chosen here.
+ */
+export function boxColours(settings: Settings): {
+	colors: (Colors & { accentText: string }) | null;
+	darkColors: (Colors & { accentText: string }) | null;
+} {
+	const { light, dark } = lookColours(settings);
+	if (!light) return { colors: null, darkColors: null };
+	if (!dark) return { colors: ready(light), darkColors: null };
+	if (settings.scheme === "dark") return { colors: ready(dark), darkColors: null };
+	if (settings.scheme === "light") return { colors: ready(light), darkColors: null };
+	return { colors: ready(light), darkColors: ready(dark) };
 }
 
 /** JSON that is safe inside a `<script>`. */

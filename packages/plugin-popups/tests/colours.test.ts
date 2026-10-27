@@ -18,7 +18,7 @@ import {
 	normalizeStore,
 	type Store,
 } from "../src/config.js";
-import { clientConfig, pageFragments } from "../src/fragment.js";
+import { boxColours, clientConfig, pageFragments } from "../src/fragment.js";
 import { createPlugin } from "../src/index.js";
 import { fakeContext, popup, type FakeContext } from "./helpers.js";
 
@@ -158,6 +158,45 @@ describe("the stylesheet", () => {
 		const code = (out[0] as { code: string }).code;
 		expect(code).toContain('"colDark":{"g":"#1c211e"');
 		expect(gzipSync(code).length).toBeLessThan(9 * 1024);
+	});
+});
+
+describe("a box in a page", () => {
+	it("gets a set's light version with a dark one for dark devices, or the one the look picks", () => {
+		const cream = {
+			background: "#fbf7f0",
+			text: "#2b2420",
+			accent: "#8a3b12",
+			accentText: "#ffffff",
+		};
+		const night = {
+			background: "#2a2420",
+			text: "#f5ede3",
+			accent: "#e0a872",
+			accentText: "#141414",
+		};
+		expect(boxColours(normalizeSettings({ colourSet: "cream-brown" }))).toEqual({
+			colors: cream,
+			darkColors: night,
+		});
+		expect(boxColours(normalizeSettings({ colourSet: "cream-brown", scheme: "light" }))).toEqual({
+			colors: cream,
+			darkColors: null,
+		});
+		expect(boxColours(normalizeSettings({ colourSet: "cream-brown", scheme: "dark" }))).toEqual({
+			colors: night,
+			darkColors: null,
+		});
+	});
+
+	it("gets the owner's own colours as before, and nothing for the theme's", () => {
+		expect(boxColours(normalizeSettings({ custom: true, colors: OWN }))).toEqual({
+			colors: { ...OWN, accentText: "#ffffff" },
+			darkColors: null,
+		});
+		expect(
+			boxColours(normalizeSettings({ colourSet: "theme", custom: true, colors: OWN })),
+		).toEqual({ colors: null, darkColors: null });
 	});
 });
 

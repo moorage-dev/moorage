@@ -33,7 +33,7 @@ import {
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, listForms, type FormCheck } from "./forms.js";
-import { isPopupPreview, pageFragments, previewItem } from "./fragment.js";
+import { boxColours, isPopupPreview, pageFragments, previewItem } from "./fragment.js";
 import { withHelpLine } from "./help-line.js";
 import { fetchOwnSite } from "./self-fetch.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
@@ -543,7 +543,7 @@ export function createPlugin() {
 									? { label: popup.buttonLabel, url: popup.buttonUrl }
 									: null,
 							scheme: store.settings.scheme,
-							colors: store.settings.custom ? store.settings.colors : null,
+							...boxColours(store.settings),
 						},
 					};
 				},

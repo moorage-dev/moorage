@@ -1540,6 +1540,41 @@ test.describe("colours", () => {
 		}
 	});
 
+	test("a box in a page takes the set too, its dark version on a dark device", async ({
+		browser,
+	}) => {
+		const id = await make({
+			name: "Cake box",
+			kind: "inline",
+			s2: {
+				heading: "Christmas cakes",
+				text: "Order by 1 December.",
+				picture: "none",
+				contains: "button",
+				button_label: "Order a cake",
+				button_url: "/pricing",
+			},
+		});
+		await look({ colour_set: "cream-brown" });
+		for (const [dark, expected] of [
+			[false, ["rgb(251, 247, 240)", "rgb(43, 36, 32)", "rgb(138, 59, 18)", "rgb(255, 255, 255)"]],
+			[true, ["rgb(42, 36, 32)", "rgb(245, 237, 227)", "rgb(224, 168, 114)", "rgb(20, 20, 20)"]],
+		] as const) {
+			const page = await visitor(browser, { dark });
+			await page.goto(`/popups-test?box=${id}`);
+			const region = page.getByRole("region", { name: "Christmas cakes" });
+			await expect(region).toBeVisible();
+			expect(
+				await region.evaluate((box) => {
+					const own = getComputedStyle(box);
+					const button = getComputedStyle(box.querySelector(".popups-box-button")!);
+					return [own.backgroundColor, own.color, button.backgroundColor, button.color];
+				}),
+			).toEqual(expected);
+			await page.context().close();
+		}
+	});
+
 	test("every set on a popup's preview, light and dark, for the founder", async () => {
 		const shots = process.env.DEMO_SITE_SHOTS_DIR;
 		test.skip(!shots, "screenshots only");

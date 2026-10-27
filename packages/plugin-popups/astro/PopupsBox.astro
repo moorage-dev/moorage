@@ -19,7 +19,10 @@ interface Box {
 	form: string;
 	button: { label: string; url: string } | null;
 	scheme: "auto" | "light" | "dark";
-	colors: { background: string; text: string; accent: string } | null;
+	/** The look's colours, and the button's words on them (older servers leave those out). */
+	colors: { background: string; text: string; accent: string; accentText?: string } | null;
+	/** A colour set's dark version, for a dark device (older servers leave it out). */
+	darkColors?: { background: string; text: string; accent: string; accentText?: string } | null;
 }
 
 const { node } = Astro.props as { node?: { popup?: string } };
@@ -47,8 +50,13 @@ const FormEmbed = box?.form
 			| ((props: { node: { formId: string } }) => unknown)
 			| undefined)
 	: undefined;
-const own = box?.colors
-	? `--popups-background:${box.colors.background};--popups-surface:${box.colors.background};--popups-text:${box.colors.text};--popups-accent:${box.colors.accent};`
+const vars = (c: NonNullable<Box["colors"]>, important = "") =>
+	`--popups-background:${c.background}${important};--popups-surface:${c.background}${important};--popups-text:${c.text}${important};--popups-accent:${c.accent}${important};` +
+	(c.accentText ? `--popups-accent-text:${c.accentText}${important};` : "");
+const own = box?.colors ? vars(box.colors) : "";
+// A colour set's dark version wins over the light one on a dark device. The id is letters and digits.
+const ownDark = box?.darkColors
+	? `@media (prefers-color-scheme:dark){[data-popups-box="${box.id}"]{${vars(box.darkColors, " !important")}}}`
 	: "";
 // Inline, once per box: a block loaded through EmDash's plugin components is not part of the
 // page's own style graph, so a component stylesheet would not always reach the page.
@@ -87,7 +95,7 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 			aria-labelledby={headingId}
 			style={own || undefined}
 		>
-			<style is:inline set:html={css} />
+			<style is:inline set:html={css + ownDark} />
 			{box.picture && (
 				<img
 					class="popups-box-pic"

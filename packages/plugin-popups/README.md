@@ -97,7 +97,7 @@ Forms keeps only the fields a form has. To see which popup a sign-up came from, 
 
 Popups fills each one that is empty when a visitor sends the form, in a popup, a slide-in or a box in a page. A value you set yourself on the field is kept. The same form used elsewhere on the site, outside a popup, leaves them empty.
 
-Where they show: open a sign-up under Forms to see them with its other answers, and Lead Delivery passes them on to your CRM, Slack or sheet with the rest. Forms leaves hidden fields out of its own emails, its daily digest and its CSV download, so they do not show there.
+Where they show: open a sign-up under Forms to see them, and Lead Delivery passes them on with the other answers. Forms leaves hidden fields out of its own emails, its daily digest and its CSV download, so they do not show there.
 
 ### Theme colours
 
