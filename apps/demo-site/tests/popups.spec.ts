@@ -1447,33 +1447,35 @@ test("an admin sees the help line on the list and on a new popup, and the switch
 	await page.close();
 });
 
+/** The box's background and text, and the button's colour and words. */
+const colours = (page: Page) =>
+	page.evaluate(() => {
+		const root = document.querySelector("#popups")!.shadowRoot!;
+		const box = getComputedStyle(root.querySelector(".pp")!);
+		const button = getComputedStyle(root.querySelector(".p")!);
+		return [box.backgroundColor, box.color, button.backgroundColor, button.color];
+	});
+const seen = async (page: Page) => {
+	await page.goto("/popups-test");
+	await read(page);
+	await expect(host(page)).toBeAttached();
+	await page.waitForTimeout(400);
+	return colours(page);
+};
+
+/** Settings ▸ the look, saved as the admin does. */
+const look = (values: Record<string, unknown>) =>
+	adminPost(`${API}/admin`, {
+		type: "form_submit",
+		action_id: "save_look",
+		block_id: "look:new:x",
+		values: { scheme: "auto", corner: "right", ...values },
+	});
+
 test.describe("colours", () => {
-	const look = (values: Record<string, unknown>) =>
-		adminPost(`${API}/admin`, {
-			type: "form_submit",
-			action_id: "save_look",
-			block_id: "look:new:x",
-			values: { scheme: "auto", corner: "right", ...values },
-		});
 	test.afterEach(async () => {
 		await look({ colour_set: "theme" });
 	});
-
-	/** The box's background and text, and the button's colour and words. */
-	const colours = (page: Page) =>
-		page.evaluate(() => {
-			const root = document.querySelector("#popups")!.shadowRoot!;
-			const box = getComputedStyle(root.querySelector(".pp")!);
-			const button = getComputedStyle(root.querySelector(".p")!);
-			return [box.backgroundColor, box.color, button.backgroundColor, button.color];
-		});
-	const seen = async (page: Page) => {
-		await page.goto("/popups-test");
-		await read(page);
-		await expect(host(page)).toBeAttached();
-		await page.waitForTimeout(400);
-		return colours(page);
-	};
 
 	test("a set chosen in Settings dresses a visitor's slide-in, in light and dark", async ({
 		browser,
