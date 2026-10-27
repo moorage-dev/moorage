@@ -1,6 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 
 import {
 	expect,
@@ -220,7 +220,9 @@ test.describe("admin", () => {
 		await expect(page.getByText("Marketing", { exact: true })).toBeVisible();
 		await page.getByRole("button", { name: "New popup" }).click();
 		await page.getByLabel("Name (only you see it)").fill("Test letter");
-		await page.getByText(/^Popup: a box in the middle/).click();
+		await page
+			.getByText(/^Popup: opens by itself over the page, in the middle of the screen/)
+			.click();
 		await page.getByRole("button", { name: "Next: what it says" }).click();
 		await page.getByLabel(/^Heading/).fill("Hello");
 		await page.getByText("A form from Forms (made once there; sign-ups land in its inbox)").click();
@@ -827,6 +829,94 @@ test.describe("box in a page", () => {
 		await expect(region.locator(".ec-form-status--success")).toBeVisible();
 		expect((await inbox()).length).toBe(before + 1);
 		await page.context().close();
+	});
+
+	test("a post's Popups box block lists only boxes, and says how to make one", async () => {
+		test.setTimeout(240_000);
+		// The seed has no Portable Text field (pages use blocks): a posts collection for this test.
+		const schema = "/_emdash/api/schema/collections";
+		// The dev server rewrites the site's generated types when a collection is made, and not
+		// always back when it is deleted: they are put back so a test run changes no file.
+		const types = new URL("../emdash-env.d.ts", import.meta.url);
+		const typesBefore = await readFile(types, "utf8");
+		const created = await admin.post(schema, {
+			headers: H,
+			data: { slug: "box_posts", label: "Box posts", labelSingular: "Box post" },
+		});
+		expect(created.status(), await created.text()).toBe(201);
+		try {
+			const field = await admin.post(`${schema}/box_posts/fields`, {
+				headers: H,
+				data: { slug: "body", label: "Body", type: "portableText" },
+			});
+			expect(field.status(), await field.text()).toBe(201);
+			const post = await admin.post("/_emdash/api/content/box_posts", {
+				headers: H,
+				data: { data: { body: [] } },
+			});
+			expect(post.status(), await post.text()).toBe(201);
+			const postId = ((await post.json()) as { data: { item: { id: string } } }).data.item.id;
+			// The founder's mix-up: a popup, not a box in a page.
+			await make({ ...FORM_POPUP, name: "Spring offer" });
+
+			const page = await adminContext.newPage();
+			const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+			await page.addLocatorHandler(welcome, async () => {
+				await welcome.getByRole("button", { name: "Get Started" }).click();
+			});
+			const insert = async () => {
+				await page.goto(`/_emdash/admin/content/box_posts/${postId}`);
+				const editor = page.locator(".ProseMirror").last();
+				await editor.waitFor({ timeout: 150_000 });
+				await editor.click();
+				await page.keyboard.type("/Popups box");
+				await page.getByText("Popups box", { exact: true }).last().click();
+				const dialog = page.getByRole("dialog", { name: "Insert Popups box" });
+				await expect(
+					dialog.getByText('Which box (made under Popups as "Box in a page")'),
+				).toBeVisible();
+				await expect(dialog.getByText("Loading...")).toHaveCount(0);
+				return dialog;
+			};
+			let dialog = await insert();
+			// The words stand where "Select..." would, and nothing can be inserted.
+			await expect(dialog.getByRole("combobox")).toContainText(
+				'No boxes yet. "Spring offer" is a popup: it opens by itself and is not placed here.',
+			);
+			await expect(dialog.getByRole("button", { name: "Insert" })).toBeDisabled();
+
+			// A box turned off: listed, marked "(off)"; the popup is not.
+			await make({
+				name: "Letter box",
+				kind: "inline",
+				s2: {
+					heading: "Letter box",
+					text: "",
+					picture: "none",
+					contains: "form",
+					form: "newsletter",
+					thanks: "Thanks",
+				},
+				s4: { on: false },
+			});
+			dialog = await insert();
+			await dialog.getByRole("combobox").click();
+			await expect(page.getByRole("option")).toHaveText(["Select...", "Letter box (off)"]);
+			await page.getByRole("option", { name: "Letter box (off)" }).click();
+			await expect(dialog.getByRole("button", { name: "Insert" })).toBeEnabled();
+			await page.close();
+		} finally {
+			const removed = await admin.delete(`${schema}/box_posts?force=true`, { headers: H });
+			expect(removed.ok(), await removed.text()).toBe(true);
+			// Give the rewrite that follows the delete time to land before putting the file back.
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+			await expect
+				.poll(async () => {
+					if ((await readFile(types, "utf8")) !== typesBefore) await writeFile(types, typesBefore);
+					return readFile(types, "utf8");
+				})
+				.toBe(typesBefore);
+		}
 	});
 });
 

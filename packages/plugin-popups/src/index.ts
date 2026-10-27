@@ -28,6 +28,7 @@ import {
 	normalizeStore,
 	PROBLEMS_KEY,
 	STORE_KEY,
+	type Kind,
 	type Popup,
 	type Store,
 } from "./config.js";
@@ -240,6 +241,40 @@ async function recheck(ctx: RouteContext, store: Store, problems: Problems): Pro
 	return next;
 }
 
+type Placed = Exclude<Kind, "inline">;
+const KIND_ONE: Record<Placed, string> = {
+	modal: "a popup",
+	slide: "a slide-in",
+	bar: "a top bar",
+};
+const KIND_MANY: Record<Placed, string> = { modal: "popups", slide: "slide-ins", bar: "top bars" };
+const MAKE_A_BOX = 'In Popups, make one and choose "Box in a page".';
+
+/**
+ * The editor's "Which box" list. With no box, one item with an empty id says how to make
+ * one: EmDash shows it in place of "Select..." and keeps Insert off, so nothing empty is
+ * placed. Popups of other kinds are named, since picking one of those is the usual mix-up.
+ */
+export function boxOptions(popups: Popup[]): Array<{ id: string; name: string }> {
+	const boxes = popups.filter((p) => p.kind === "inline");
+	if (boxes.length > 0)
+		return boxes.map((p) => ({ id: p.id, name: p.on ? p.name : `${p.name} (off)` }));
+	const others = popups.filter((p): p is Popup & { kind: Placed } => p.kind !== "inline");
+	const [first] = others;
+	let name = `No boxes yet. ${MAKE_A_BOX} Popups and slide-ins open by themselves and are not placed here.`;
+	if (others.length === 1 && first) {
+		name = `No boxes yet. "${first.name}" is ${KIND_ONE[first.kind]}: it opens by itself and is not placed here. ${MAKE_A_BOX}`;
+	} else if (others.length > 1) {
+		const kinds = (["modal", "slide", "bar"] as const)
+			.filter((k) => others.some((p) => p.kind === k))
+			.map((k) => KIND_MANY[k]);
+		const list =
+			kinds.length > 1 ? `${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}` : kinds[0];
+		name = `No boxes yet. Your ${others.length} ${list} open by themselves and are not placed here. ${MAKE_A_BOX}`;
+	}
+	return [{ id: "", name }];
+}
+
 export function createPlugin() {
 	return definePlugin({
 		id: PLUGIN_ID,
@@ -254,12 +289,12 @@ export function createPlugin() {
 					label: "Popups box",
 					icon: "megaphone",
 					category: "Marketing",
-					description: "A box made under Popups: a sign-up form or a button",
+					description: 'A box made under Popups as "Box in a page": a sign-up form or a button',
 					fields: [
 						{
 							type: "select",
 							action_id: "popup",
-							label: "Which box (made under Marketing > Popups, kind: Box in a page)",
+							label: 'Which box (made under Popups as "Box in a page")',
 							options: [],
 							optionsRoute: "boxes",
 						},
@@ -497,14 +532,7 @@ export function createPlugin() {
 			// The list for the "Popups box" block in the editor.
 			boxes: {
 				permission: "plugins:read",
-				handler: async (ctx) => {
-					const store = await readStore(ctx);
-					return {
-						items: store.popups
-							.filter((p) => p.kind === "inline")
-							.map((p) => ({ id: p.id, name: p.on ? p.name : `${p.name} (off)` })),
-					};
-				},
+				handler: async (ctx) => ({ items: boxOptions((await readStore(ctx)).popups) }),
 			},
 			// Public read for the box's own component: what one live box says.
 			box: {
