@@ -2,6 +2,8 @@
 
 Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analytics, Google Tag Manager, Google Ads, Meta Pixel, Microsoft Clarity, HubSpot and Cloudflare Web Analytics by pasting one ID each, with a cookie banner that holds every one of them back until the visitor agrees. Tools and banner live in one plugin, so "nothing loads before consent" is true by construction, and there is no theme file to edit. Runs on any EmDash site, self-hosted or on Cloudflare, with no account and no key.
 
+![The Status tab: what is on, the cookie banner checklist and how visitors answered](images/status-0-3-1-desktop-light.png)
+
 ## What it does
 
 - **Tracking tools.** One box per tool. Paste the ID, or the whole code the tool gave you; the ID is picked out of it. A wrong ID is explained ("That is a Google Tag Manager ID (GTM-). Put it in the Google Tag Manager box instead."). An empty box means off.
@@ -11,6 +13,10 @@ Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analy
 - **Who is asked.** Where the law says ask first, the EU, EEA, UK and Switzerland (the default, right for sites that only count visits); those places plus India (its consent rules apply from about May 2027); everyone, everywhere (recommended with Clarity, Meta Pixel or Google Ads, which record visits or advertise); or no one, when another consent tool asks instead. Visitors who are not asked, for example in the US, can always turn the tools off with Cookie settings, as US state laws such as California's require, and Global Privacy Control is always respected. The admin says this beside each choice, and the Status tab suggests asking everyone when you use those tools.
 - **Enquiries.** Clicks on phone and email links, and forms sent through the official forms plugin, are counted as a lead (`generate_lead` in Google Analytics, `Lead` or `Contact` in Meta, an `enquiry` event in the data layer). Only the kind of enquiry is sent, never a number, an address or anything typed into a form.
 - **Never tracked.** The admin, preview links, the visual editor, a browser that has signed in to the admin, and any pages you list.
+
+| Tracking tools                                     | Cookie banner, with its colour sets               | Status, dark mode                         | Status, phone                            |
+| -------------------------------------------------- | ------------------------------------------------- | ----------------------------------------- | ---------------------------------------- |
+| ![](images/tracking-tools-0-3-1-desktop-light.png) | ![](images/cookie-banner-0-3-1-desktop-light.png) | ![](images/status-0-3-1-desktop-dark.png) | ![](images/status-0-3-1-phone-light.png) |
 
 ## What it does not do
 

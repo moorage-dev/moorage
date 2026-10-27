@@ -16,7 +16,7 @@ import {
 import { growToContent } from "./full-shot.js";
 import { helpLinks } from "./help-line.js";
 
-// README and registry pictures of SEO, Site Health and Popups, and the full-size captures the
+// README and registry pictures of SEO, Site Health, Popups and Analytics & Cookie Consent, and the full-size captures the
 // website crops from Popups' list and Content Approval's Settings, on a site set up as a bakery's:
 //   DEMO_SITE_PORT=4501 DEMO_SITE_PUBLIC_URL=https://www.harbourstreetbakery.example \
 //     PLUGIN_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/plugin-screenshots.spec.ts
@@ -31,7 +31,7 @@ import { helpLinks } from "./help-line.js";
 // Checklist are replaced with what a public bakery site would get; the rest of the page is its own.
 
 const SHOTS = process.env.PLUGIN_SCREENSHOTS === "1";
-const VERSION = { seo: "0-1-11", siteHealth: "0-1-5", popups: "0-1-9" };
+const VERSION = { seo: "0-1-11", siteHealth: "0-1-5", popups: "0-1-9", analytics: "0-3-1" };
 const API = "/_emdash/api";
 const H = { "X-EmDash-Request": "1" };
 const PACKAGES = resolve(import.meta.dirname, "../../../packages");
@@ -738,6 +738,115 @@ test("Popups", async ({ browser }) => {
 		await fullShot(page, `${RETAKES}/popups-list${suffix}.png`, width, min);
 		await context.close();
 	}
+});
+
+// ---------- Analytics & Cookie Consent: Status, Tracking tools and Cookie banner ----------
+
+const ANALYTICS = `${API}/plugins/analytics-consent/admin`;
+
+test("Analytics & Cookie Consent", async ({ browser }) => {
+	test.setTimeout(400_000);
+	const save = async (action: string, values: Record<string, unknown>) => {
+		const res = await ok(
+			admin.post(ANALYTICS, {
+				headers: H,
+				data: { type: "form_submit", action_id: action, values },
+			}),
+		);
+		expect(res.data.toast?.type, `${action}: ${res.data.toast?.message}`).toBe("success");
+	};
+	// Google Analytics and Clarity, a banner for Europe in the bakery's cream and brown.
+	await save("save_tools", {
+		ga4: "G-7Q2HX4LMRB",
+		gtm: "",
+		ads: "",
+		meta: "",
+		clarity: "k3m8p2x9wq",
+		hubspot: "",
+		cloudflare: "",
+		hubspot_eu: false,
+		cloudflare_wait: false,
+		enquiries: true,
+	});
+	await save("save_banner", {
+		audience: "europe",
+		policy_url: "/privacy",
+		position: "bar",
+		scheme: "auto",
+		settings_button: true,
+		months: "6",
+	});
+	await save("save_colours", { colour_set: "cream-brown" });
+	await save("save_advanced", { exclude: "", gtm_loading: "choice" });
+
+	// Thirty days of answers, as the banner's route would have stored them (no address, no browser).
+	const now = Date.now();
+	const countries = ["GB", "GB", "GB", "DE", "FR", "NL", "IE", "ES"];
+	const values: string[] = [];
+	for (let back = 0; back < 30; back++) {
+		const wave = 1 + 0.4 * Math.sin(back / 2.5);
+		const answers = [
+			...Array<string>(Math.round(9 * wave + (back % 3))).fill("all"),
+			...Array<string>(Math.round(4 * wave + (back % 2))).fill("none"),
+			...Array<string>(back % 4 === 0 ? 1 : 0).fill("some"),
+		];
+		answers.forEach((choice, i) => {
+			const at = new Date(now - back * 86_400_000 - (i * 37 + 11) * 60_000).toISOString();
+			const row = {
+				at,
+				choice,
+				analytics: choice !== "none",
+				marketing: choice === "all",
+				version: "shots1",
+				country: countries[(back + i) % countries.length],
+			};
+			values.push(
+				`('analytics-consent', 'consents', 'shot${back}x${i}', '${JSON.stringify(row)}')`,
+			);
+		});
+	}
+	sql(
+		`insert or replace into _plugin_storage (plugin_id, collection, id, data) values ${values.join(",")}`,
+	);
+
+	const out = `${PACKAGES}/plugin-analytics/images`;
+	const PAGE = "/_emdash/admin/plugins/analytics-consent/settings";
+	const stops: Record<string, number> = {};
+	for (const [device, width, min, schemes] of [
+		["desktop", 1280, 900, ["light", "dark"]],
+		["phone", 390, 844, ["light"]],
+	] as const)
+		for (const scheme of schemes) {
+			const name = (tab: string) => `${out}/${tab}-${VERSION.analytics}-${device}-${scheme}.png`;
+			const { context, page } = await open(browser, PAGE, { width, height: min }, 1, scheme);
+			await expect(page.getByRole("tab", { name: "Status" })).toBeVisible({ timeout: 120_000 });
+			await expect(page.getByText(/Last answer received/)).toBeVisible();
+			await expect(page.locator("canvas").first()).toBeVisible();
+			await page.waitForTimeout(1200);
+			await fullShot(page, name("status"), width, min);
+
+			await page.setViewportSize({ width, height: min });
+			await page.getByRole("tab", { name: "Tracking tools" }).click();
+			await expect(page.getByRole("button", { name: "Save tools" })).toBeVisible();
+			await fullShot(page, name("tracking-tools"), width, min);
+
+			await page.setViewportSize({ width, height: min });
+			await page.getByRole("tab", { name: "Cookie banner" }).click();
+			await page.getByRole("button", { name: "Colours" }).first().click();
+			await expect(
+				page.getByRole("radio", { name: "Warm cream with brown buttons" }),
+			).toBeChecked();
+			await page.mouse.move(0, 0);
+			await fullShot(page, name("cookie-banner"), width, min);
+			// The website's crop stops under the Colours section, in CSS px below the top bar.
+			if (scheme === "light") {
+				const box = await page.getByRole("button", { name: "Save colours" }).boundingBox();
+				stops[`cookie-banner-${device}`] = Math.round((box?.y ?? 0) + (box?.height ?? 0) - 58 + 24);
+			}
+			await context.close();
+		}
+	mkdirSync(RETAKES, { recursive: true });
+	writeFileSync(`${RETAKES}/analytics-stops.json`, `${JSON.stringify(stops, null, "\t")}\n`);
 });
 
 // ---------- Content Approval: Settings before the first save, for the website's crop ----------
