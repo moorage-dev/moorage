@@ -24,9 +24,10 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
   - Never again for someone who signed up or clicked. After a close it shows again after a week, after a month, or never.
   - Always a 44 px close button, and Esc closes it. Nothing closes by itself, and the "No thanks" words come from a fixed list.
 - **Results:** each popup's own page shows how it is doing, for a period you pick: since it started, this month, last month or the last 30 days. Four numbers: Seen (at least half of it on screen for a second), Sign-ups (or Button clicks for a popup with a button), Rate and Closed, each with the change from the period before (this month against the same days of last month, last month against the month before, the last 30 days against the 30 before). Under them, a small chart of sign-ups or clicks a day (a week, for long periods). The Results tab puts every popup side by side for the same period, sortable by Seen or Rate. Rates, the share seen on phones and the changes appear from 100 views. Both have a spreadsheet download (daily counts; the link works for ten minutes, so open the page again for a fresh one). Days follow your site's time zone. It stores no cookies and nothing about any visitor; counts are kept for 400 days.
-- **Which popup a sign-up came from:** button links to other websites get campaign tags (`utm_source=popups`, `utm_medium`, `utm_campaign=<popup>`), so Google Analytics shows those visits as coming from the popup. A form does the same when it has hidden fields with those names (see below), so Forms, its emails, Lead Delivery and your CRM show the popup.
+- **Which popup a sign-up came from:** button links to other websites get campaign tags (`utm_source=popups`, `utm_medium`, `utm_campaign=<popup>`), so Google Analytics shows those visits as coming from the popup. A form does the same when it has hidden fields with those names (see below), so the sign-up's details under Forms, Lead Delivery and your CRM show the popup.
 - **Preview:** "Preview on your site" (light or dark) shows the popup at once, for you only, exactly where a visitor sees it: a top bar at the top, a slide-in in its corner, a popup centred (a sheet on phones). A box in a page shows at the top of the page's content, lined up with the page's text as visitors see it in a post, since its place is where an editor puts the block. It says whether a real visitor would see it now and, if not, why ("this browser closed it 3 days ago; it shows again after a month"). Nothing is counted and the form does not send.
-- **Checks:** the form's short name is checked when you save. Colours that are hard to read are refused, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
+- **Colours:** your theme's colours (the default), one of five ready-made sets, or your own. Each set has a matching dark version for visitors whose device is in dark mode, and the cookie banner in Analytics & Cookies offers the same sets, so the two match.
+- **Checks:** the form's short name is checked when you save. Your own colours are refused when they are hard to read, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
 
 | A popup's results                                       | Results: how your popups compare                  |
 | ------------------------------------------------------- | ------------------------------------------------- |
@@ -94,7 +95,9 @@ Forms keeps only the fields a form has. To see which popup a sign-up came from, 
 - `utm_medium`: `popup`, `slide-in` or `top-bar` (a box in a page says `popup`)
 - `page_url`: the page it was sent from, without anything after a `?`
 
-Popups fills each one that is empty when a visitor sends the form, in a popup, a slide-in or a box in a page. A value you set yourself on the field is kept. The same form used elsewhere on the site, outside a popup, leaves them empty. Lead Delivery passes these fields on with the other answers.
+Popups fills each one that is empty when a visitor sends the form, in a popup, a slide-in or a box in a page. A value you set yourself on the field is kept. The same form used elsewhere on the site, outside a popup, leaves them empty.
+
+Where they show: open a sign-up under Forms to see them with its other answers, and Lead Delivery passes them on to your CRM, Slack or sheet with the rest. Forms leaves hidden fields out of its own emails, its daily digest and its CSV download, so they do not show there.
 
 ### Theme colours
 
@@ -104,19 +107,19 @@ Popups take your theme's colours from these CSS variables. All of them are optio
 
 ## Settings
 
-| Where        | Setting                                                    | Default                                          |
-| ------------ | ---------------------------------------------------------- | ------------------------------------------------ |
-| Each popup   | Kind                                                       | chosen when made                                 |
-|              | Heading, text, picture, button or form, "No thanks" words  | No thanks                                        |
-|              | When it opens                                              | After they have read a while (top bars: at once) |
-|              | Show on the first page they visit (popups, computers only) | Off                                              |
-|              | Where, never on these pages, phones or computers           | Every page; phones and computers                 |
-|              | Show again after a close                                   | After a month                                    |
-|              | Starts, ends (date and time, site's time zone), on or off  | No dates; on ("Save and finish" starts it)       |
-| Settings tab | Light or dark                                              | Follow the visitor's device                      |
-|              | Own colours (checked for contrast)                         | Off: theme colours                               |
-|              | Slide-in corner                                            | Bottom right                                     |
-|              | Emails when a popup cannot open                            | None                                             |
+| Where        | Setting                                                            | Default                                          |
+| ------------ | ------------------------------------------------------------------ | ------------------------------------------------ |
+| Each popup   | Kind                                                               | chosen when made                                 |
+|              | Heading, text, picture, button or form, "No thanks" words          | No thanks                                        |
+|              | When it opens                                                      | After they have read a while (top bars: at once) |
+|              | Show on the first page they visit (popups, computers only)         | Off                                              |
+|              | Where, never on these pages, phones or computers                   | Every page; phones and computers                 |
+|              | Show again after a close                                           | After a month                                    |
+|              | Starts, ends (date and time, site's time zone), on or off          | No dates; on ("Save and finish" starts it)       |
+| Settings tab | Light or dark                                                      | Follow the visitor's device                      |
+|              | Colours: theme, a ready-made set, or my own (checked for contrast) | Your theme's colours                             |
+|              | Slide-in corner                                                    | Bottom right                                     |
+|              | Emails when a popup cannot open                                    | None                                             |
 
 A new popup is off while you make it. Its last step has "Turn it on" already switched on, so "Save and finish" starts it at its start time; switch it off first to keep it off.
 
