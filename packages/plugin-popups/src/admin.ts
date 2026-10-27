@@ -43,12 +43,13 @@ import {
 	responseBars,
 	startedOn,
 	sum,
+	type Days,
 	type Period,
 	type Sort,
 	type Tile,
 } from "./results.js";
 import type { CountRow, RowQuery } from "./stats.js";
-import { describeMoment, fromMoment, HALF_HOURS, toMoment, zoneDay } from "./time.js";
+import { describeMoment, fromMoment, HALF_HOURS, shortDay, toMoment, zoneDay } from "./time.js";
 
 /**
  * The one admin page, as Block Kit: Popups, Results, Settings, and the four
@@ -125,6 +126,13 @@ const TRIGGER_CHOICE = {
 	click: "When they click a button or link on the page",
 	exit: "When they are about to leave (computers only; phones never see it)",
 } as const;
+
+/** The same choices on a finished popup's page, where they were explained once already. */
+const TRIGGER_SHORT: Record<keyof typeof TRIGGER_CHOICE, string> = {
+	read: "After they have read a while (recommended)",
+	click: "When they click a button or link",
+	exit: "When they are about to leave (computers only)",
+};
 
 function kindLine(popup: Popup): string {
 	if (popup.contains === "form" && popup.form && popup.kind !== "bar") {
@@ -283,7 +291,72 @@ function downloadLink(source: ResultsSource, query: string | undefined, label: s
 	];
 }
 
-/** A finished popup's results: the period, four tiles, a bar a day, and its own download. */
+/** "…, compared with the 30 days before": the period before in words, not a second set of dates. */
+const BEFORE_WORDS: Record<Period, string> = {
+	"30-days": "the 30 days before",
+	"this-month": "the same days last month",
+	"last-month": "the month before",
+	start: "",
+};
+
+const timesText = (n: number) => `${n.toLocaleString("en")} ${n === 1 ? "time" : "times"}`;
+
+/** At most this many day labels under the chart: more run into each other on a 390 px phone. */
+const MAX_LABELS = 5;
+
+/**
+ * The bars as a plain ECharts bar chart. Block Kit's timeseries chart adds its
+ * own month labels between the days ("29 Oct 3 5") and has no setting for how
+ * many; a category axis with ready-made short labels and a fixed interval does.
+ * Plain strings only: the admin strips formatter functions.
+ */
+function barChart(
+	popup: Popup,
+	bars: { weekly: boolean; data: [number, number][] },
+	days: Days,
+): { name: string; chart: Block } {
+	const name = `${isForm(popup) ? "Sign-ups" : "Button clicks"} per ${bars.weekly ? "week" : "day"}`;
+	const labels = bars.data.map(([t]) => shortDay(new Date(t).toISOString().slice(0, 10), days.to));
+	// A label with a year is half as wide again: fewer of them.
+	const most = labels.some((l) => / \d{4}$/.test(l)) ? 3 : MAX_LABELS;
+	return {
+		name,
+		chart: {
+			type: "chart",
+			config: {
+				chart_type: "custom",
+				height: 140,
+				options: {
+					aria: { enabled: true },
+					grid: { left: 4, right: 8, top: 12, bottom: 4, containLabel: true },
+					tooltip: { trigger: "axis" },
+					xAxis: {
+						type: "category",
+						data: labels,
+						axisTick: { show: false },
+						axisLabel: {
+							interval: Math.max(0, Math.ceil(labels.length / most) - 1),
+							hideOverlap: true,
+						},
+					},
+					yAxis: {
+						type: "value",
+						minInterval: 1,
+						splitNumber: 2,
+						splitLine: { lineStyle: { type: "dashed" } },
+					},
+					series: [{ type: "bar", name, data: bars.data.map(([, n]) => n), barMaxWidth: 24 }],
+				},
+			},
+		},
+	};
+}
+
+/**
+ * A finished popup's results: the period on its own, two tiles (what it got and
+ * its rate), a bar a day, one line for how often it was seen and closed, then
+ * Compare popups and its own download.
+ */
 async function popupResults(popup: Popup, period: Period, source: ResultsSource): Promise<Block[]> {
 	const today = zoneDay(source.now, source.zone);
 	const days = periodDays(period, source.now, source.zone, startedOn(popup, source.zone));
@@ -294,50 +367,58 @@ async function popupResults(popup: Popup, period: Period, source: ResultsSource)
 	]);
 	const current = sum(rows, days);
 	const before = days.before ? sum(rows, days.before) : null;
-	const tiles = popupTiles(popup, current, before);
-	const compared = tiles.some((t) => t.description?.includes(" from "));
+	const [seen, got, rated] = popupTiles(popup, current, before) as [Tile, Tile, Tile, Tile];
+	const compared = [seen, got, rated].some((t) => t.description?.includes(" from "));
 	const when = [
 		daysText(days, today),
 		days.cut ? " (counts are kept for 400 days)" : "",
-		compared && days.before ? `, compared with ${daysText(days.before, today)}` : "",
+		compared && BEFORE_WORDS[period] ? `, compared with ${BEFORE_WORDS[period]}` : "",
 	].join("");
 	const blocks: Block[] = [
+		{ type: "divider" },
 		{ type: "header", text: "Results" },
 		{
 			type: "actions",
 			// The period in the id: arriving from another screen draws the picker afresh, showing it.
+			// Alone in its row: a button beside it would line up with its label, not its box.
 			block_id: `period:p:${popup.id}:${period}`,
-			elements: [
-				periodPicker(`p:${popup.id}`, period, true),
-				{
-					type: "button",
-					action_id: "nav",
-					label: "Compare with other popups",
-					value: `numbers:${period}`,
-					style: "secondary",
-				},
-			],
+			elements: [periodPicker(`p:${popup.id}`, period, true)],
 		},
 		{ type: "context", text: `${when}.` },
-		// Two by two: EmDash lays a stats block out in one line that never wraps, and four boxes
-		// run off a 390 px phone.
-		statsRow(tiles.slice(0, 2)),
-		statsRow(tiles.slice(2)),
+		// Two tiles: EmDash lays a stats block out in one line that never wraps.
+		statsRow([got, rated]),
 	];
 	if (current.seen >= ENOUGH_VIEWS) {
-		const bars = responseBars(popup, rows, days);
-		const word = isForm(popup) ? "Sign-ups" : "Button clicks";
-		blocks.push({
-			type: "chart",
-			config: {
-				chart_type: "timeseries",
-				style: "bar",
-				height: 180,
-				series: [{ name: `${word} per ${bars.weekly ? "week" : "day"}`, data: bars.data }],
-			},
-		});
+		const { name, chart } = barChart(popup, responseBars(popup, rows, days), days);
+		blocks.push({ type: "context", text: name }, chart);
 	}
-	blocks.push(...downloadLink(source, query, "Download this popup's numbers (CSV)"));
+	// A top bar and a box in a page have no close worth counting.
+	const closes = popup.kind !== "bar" && popup.kind !== "inline";
+	const seenText = `Seen ${timesText(current.seen)}${seen.description ? ` (${seen.description})` : ""}`;
+	const closedText = closes
+		? `; closed ${timesText(current.closed)} without ${isForm(popup) ? "signing up" : "clicking"}`
+		: "";
+	blocks.push({ type: "context", text: `${seenText}${closedText}. Rate shows from 100 views.` });
+	const row: unknown[] = [
+		{
+			type: "button",
+			action_id: "nav",
+			label: "Compare popups",
+			value: `numbers:${period}`,
+			style: "secondary",
+		},
+	];
+	if (source.origin && query)
+		row.push({
+			type: "link",
+			label: "Download CSV",
+			target: {
+				kind: "external",
+				url: `${source.origin}/_emdash/api/plugins/${source.pluginId}/export?${query}`,
+			},
+			appearance: "secondary",
+		});
+	blocks.push({ type: "actions", elements: row } as Block);
 	return blocks;
 }
 
@@ -403,9 +484,14 @@ async function compareResults(
 	];
 }
 
-/** A form's id changes with the saved data, so the admin shows saved values after a save. */
+/**
+ * A form's id changes with the saved data, so the admin shows saved values after a save.
+ * On or off is left out: no form on a finished popup's page holds it, and Turn on or off
+ * beside the name must not draw the form afresh and drop what was typed.
+ */
 function formId(name: string, popup: Popup | undefined, extra = ""): string {
-	return `${name}:${popup?.id ?? "new"}:${shortHash(JSON.stringify(popup ?? {}) + extra)}`;
+	const { on: _on, ...saved } = popup ?? ({} as Partial<Popup>);
+	return `${name}:${popup?.id ?? "new"}:${shortHash(JSON.stringify(saved) + extra)}`;
 }
 
 function typed(state: PageState, key: string, saved: string): string {
@@ -440,18 +526,31 @@ const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; descr
 		missing: (p) => ({
 			title: `"${p.name}" cannot open: there is no form called "${p.form}" any more`,
 			description:
-				"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit ▸ What it says. Visitors see nothing broken in the meantime; the popup simply stays closed.",
+				"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit (Form). Visitors see nothing broken in the meantime; the popup simply stays closed.",
 		}),
 		unsupported: (p) => ({
 			title: `"${p.name}" cannot open: its form uses Turnstile or a file upload`,
 			description:
-				"Those only work in a box in a page for now. Choose another form under Edit ▸ What it says, or make a box in a page with this form.",
+				"Those only work in a box in a page for now. Choose another form under Edit (Form), or make a box in a page with this form.",
 		}),
 		paused: (p) => ({
 			title: `"${p.name}" is waiting: its form "${p.form}" is paused under Forms`,
 			description: "It opens again by itself once the form is turned back on under Forms.",
 		}),
 	};
+
+/** Why a live popup with a form cannot open or is waiting, and the fix; the list and its page alike. */
+function problemBanner(state: PageState, popup: Popup): Block[] {
+	const problem = state.problems[popup.id];
+	if (!problem || !isLive(popup, state.now) || popup.contains !== "form") return [];
+	return [
+		{
+			type: "banner",
+			variant: problem.k === "paused" ? "alert" : "error",
+			...PROBLEM_TEXT[problem.k](popup),
+		},
+	];
+}
 
 /**
  * A popup's own actions (change, preview, toggle, duplicate, delete) all send
@@ -482,9 +581,8 @@ function rowActions(popup: Popup): Record<string, unknown> {
 }
 
 /**
- * On a popup's own page: Turn on or off (a finished popup; anyone who can edit
- * it) and, for an Admin, Duplicate and Delete in a menu. Same actions as the
- * list's rows had, so each lands back on the list with its message.
+ * Under a half-made popup's step, for an Admin: Duplicate and Delete in a menu.
+ * A finished popup's page has its own (see headBlocks and deleteBlocks).
  */
 function pageActions(popup: Popup, admin: boolean): Block | null {
 	const elements: unknown[] = [];
@@ -506,15 +604,7 @@ function pageActions(popup: Popup, admin: boolean): Block | null {
 function listBlocks(state: PageState): Block[] {
 	const { store } = state;
 	const blocks: Block[] = [...errorBlocks(state)];
-	for (const popup of store.popups) {
-		const problem = state.problems[popup.id];
-		if (!problem || !isLive(popup, state.now) || popup.contains !== "form") continue;
-		blocks.push({
-			type: "banner",
-			variant: problem.k === "paused" ? "alert" : "error",
-			...PROBLEM_TEXT[problem.k](popup),
-		});
-	}
+	for (const popup of store.popups) blocks.push(...problemBanner(state, popup));
 	if (store.popups.length === 0) {
 		blocks.push({
 			type: "empty",
@@ -794,14 +884,20 @@ export function mayShowStep2(input: Interaction | undefined): boolean {
 	if (input?.type !== "block_action") return false;
 	// A finished popup's page, drawn again for another period.
 	if (action === "period") return value.startsWith("p:");
+	// Turn on or off and Duplicate draw the popup's page again.
 	if (ROW_ACTIONS.includes(action))
-		return value.startsWith("change:") || value.startsWith("toggle:");
+		return ["change:", "toggle:", "duplicate:"].some((verb) => value.startsWith(verb));
 	return action === "nav" && value.startsWith("back:");
 }
 
 type Field = Record<string, unknown>;
 
-function step2Fields(state: PageState, popup: Popup): Field[] {
+/**
+ * `short`: a finished popup's page, where the boxes are already filled in and
+ * the labels only need to say which is which. "New popup" keeps the longer
+ * labels that explain each choice the first time.
+ */
+function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 	const bar = popup.kind === "bar";
 	const inline = popup.kind === "inline";
 	const fields: Field[] = [
@@ -828,7 +924,7 @@ function step2Fields(state: PageState, popup: Popup): Field[] {
 		fields.push({
 			type: "combobox",
 			action_id: "picture",
-			label: "Picture (optional), from your media library",
+			label: short ? "Picture (optional)" : "Picture (optional), from your media library",
 			placeholder: "Type to search your pictures",
 			options: pictureOptions(state, popup),
 			initial_value: typed(state, "picture", popup.picture?.id ?? "none"),
@@ -841,14 +937,19 @@ function step2Fields(state: PageState, popup: Popup): Field[] {
 			label: "It contains",
 			options: [
 				{ value: "button", label: "A button that opens a page" },
-				{ value: "form", label: "A form from Forms (made once there; sign-ups land in its inbox)" },
+				{
+					value: "form",
+					label: short
+						? "A form from Forms"
+						: "A form from Forms (made once there; sign-ups land in its inbox)",
+				},
 			],
 			initial_value: typed(state, "contains", popup.contains),
 		});
 		fields.push(formField(state, popup), {
 			type: "text_input",
 			action_id: "thanks",
-			label: "Thank-you heading, shown after the form is sent",
+			label: short ? "Thank-you heading" : "Thank-you heading, shown after the form is sent",
 			placeholder: "Thanks, you're on the list",
 			initial_value: typed(state, "thanks", popup.thanks),
 			condition: { field: "contains", eq: "form" },
@@ -868,9 +969,13 @@ function step2Fields(state: PageState, popup: Popup): Field[] {
 			{
 				type: "text_input",
 				action_id: "button_url",
-				label: bar
-					? "Link: a page on this site such as /hours, or a full address"
-					: "Where the button goes: a page on this site such as /cakes, or a full address",
+				label: short
+					? bar
+						? "Link: a page such as /hours, or a full address"
+						: "Button link: a page such as /cakes, or a full address"
+					: bar
+						? "Link: a page on this site such as /hours, or a full address"
+						: "Where the button goes: a page on this site such as /cakes, or a full address",
 				placeholder: "/cakes",
 				initial_value: typed(state, "button_url", popup.buttonUrl),
 				...(buttonCondition ? { condition: buttonCondition } : {}),
@@ -881,8 +986,9 @@ function step2Fields(state: PageState, popup: Popup): Field[] {
 		fields.push({
 			type: "select",
 			action_id: "decline",
-			label:
-				"The quiet way out, beside the button (fixed words, so nobody is shamed for saying no)",
+			label: short
+				? "Words to say no"
+				: "The quiet way out, beside the button (fixed words, so nobody is shamed for saying no)",
 			options: (Object.keys(DECLINE_LABEL) as Array<keyof typeof DECLINE_LABEL>).map((value) => ({
 				value,
 				label: DECLINE_LABEL[value],
@@ -932,18 +1038,19 @@ function step3Form(state: PageState, popup: Popup): Block {
 	};
 }
 
-function step3Fields(state: PageState, popup: Popup): Field[] {
+function step3Fields(state: PageState, popup: Popup, short = false): Field[] {
 	const fields: Field[] = [];
 	if (popup.kind !== "bar") {
+		const choices = short ? TRIGGER_SHORT : TRIGGER_CHOICE;
 		// Radio, not a dropdown: a dropdown is as wide as its chosen words and these
 		// run past a phone's screen; radio labels wrap.
 		fields.push({
 			type: "radio",
 			action_id: "trigger",
 			label: "When it opens",
-			options: (Object.keys(TRIGGER_CHOICE) as Array<keyof typeof TRIGGER_CHOICE>).map((value) => ({
+			options: (Object.keys(choices) as Array<keyof typeof choices>).map((value) => ({
 				value,
-				label: TRIGGER_CHOICE[value],
+				label: choices[value],
 			})),
 			initial_value: typed(state, "trigger", popup.trigger === "load" ? "read" : popup.trigger),
 		});
@@ -952,9 +1059,12 @@ function step3Fields(state: PageState, popup: Popup): Field[] {
 		fields.push({
 			type: "toggle",
 			action_id: "first_page",
-			label: "Show on the first page they visit (computers only)",
-			description:
-				"Off by default: a popup over the first page someone sees makes many people leave, and Google ranks pages lower on phones when it happens there. Phones always wait for the second page.",
+			label: short
+				? "Also on the first page they visit (computers only)"
+				: "Show on the first page they visit (computers only)",
+			description: short
+				? "Off by default: a popup over the first page makes many people leave. Phones always wait for the second page."
+				: "Off by default: a popup over the first page someone sees makes many people leave, and Google ranks pages lower on phones when it happens there. Phones always wait for the second page.",
 			initial_value: popup.firstPage,
 		});
 	}
@@ -973,7 +1083,9 @@ function step3Fields(state: PageState, popup: Popup): Field[] {
 		{
 			type: "text_input",
 			action_id: "prefixes",
-			label: "Addresses (one per line; /cakes/ covers every page under it)",
+			label: short
+				? "Addresses (one per line)"
+				: "Addresses (one per line; /cakes/ covers every page under it)",
 			multiline: true,
 			placeholder: "/cakes/",
 			initial_value: typed(state, "prefixes", popup.prefixes.join("\n")),
@@ -994,7 +1106,9 @@ function step3Fields(state: PageState, popup: Popup): Field[] {
 		{
 			type: "text_input",
 			action_id: "exclude",
-			label: "Never on these pages (one address per line; /cakes/ also covers every page under it)",
+			label: short
+				? "Never on these pages (one per line)"
+				: "Never on these pages (one address per line; /cakes/ also covers every page under it)",
 			multiline: true,
 			placeholder: "/contact",
 			initial_value: typed(state, "exclude", popup.exclude.join("\n")),
@@ -1013,7 +1127,9 @@ function step3Fields(state: PageState, popup: Popup): Field[] {
 		{
 			type: "select",
 			action_id: "again",
-			label: "After someone closes it, show it to them again",
+			label: short
+				? "Show it again after someone closes it"
+				: "After someone closes it, show it to them again",
 			options: [
 				{ value: "week", label: "After a week" },
 				{ value: "month", label: "After a month (recommended)" },
@@ -1151,45 +1267,53 @@ function step4Blocks(state: PageState, popup: Popup): Block[] {
 	];
 }
 
+/**
+ * The dates, and in "New popup" the switch that turns it on. A finished popup's
+ * page has Turn on or off beside its name instead, so its form has no switch
+ * (saving without it keeps on or off as it is), and names the time zone in the
+ * time labels.
+ */
 function step4Fields(state: PageState, popup: Popup, wizard: boolean): Field[] {
 	const start = popup.start ? fromMoment(popup.start, state.zone) : null;
 	const end = popup.end ? fromMoment(popup.end, state.zone) : null;
 	const times = HALF_HOURS.map((t) => ({ value: t, label: t }));
-	return [
+	const fields: Field[] = [
 		{
 			type: "date_input",
 			action_id: "start_date",
-			label: "Starts on (leave empty to start now)",
+			label: wizard ? "Starts on (leave empty to start now)" : "Starts on (empty: now)",
 			initial_value: typed(state, "start_date", start?.date ?? "") || undefined,
 		},
 		{
 			type: "select",
 			action_id: "start_time",
-			label: "Start time",
+			label: wizard ? "Start time" : `Start time (${state.zone})`,
 			options: times,
 			initial_value: typed(state, "start_time", start?.clock ?? "00:00"),
 		},
 		{
 			type: "date_input",
 			action_id: "end_date",
-			label: "Ends on (leave empty to keep it on)",
+			label: wizard ? "Ends on (leave empty to keep it on)" : "Ends on (empty: keeps going)",
 			initial_value: typed(state, "end_date", end?.date ?? "") || undefined,
 		},
 		{
 			type: "select",
 			action_id: "end_time",
-			label: "End time",
+			label: wizard ? "End time" : `End time (${state.zone})`,
 			options: times,
 			initial_value: typed(state, "end_time", end?.clock ?? "00:00"),
 		},
-		{
+	];
+	if (wizard)
+		fields.push({
 			type: "toggle",
 			action_id: "on",
 			label: "Turn it on",
 			description: "It starts at its start time by itself and stops at its end.",
-			initial_value: wizard ? true : popup.on,
-		},
-	];
+			initial_value: true,
+		});
+	return fields;
 }
 
 /** Whether a finished popup's page has "When and where": an Admin's, and not for a box in a page. */
@@ -1205,8 +1329,8 @@ function editForm(state: PageState, popup: Popup): Block {
 		type: "form",
 		block_id: formId("edit", popup),
 		fields: [
-			...step2Fields(state, popup),
-			...(editsPlaces(state, popup) ? step3Fields(state, popup) : []),
+			...step2Fields(state, popup, true),
+			...(editsPlaces(state, popup) ? step3Fields(state, popup, true) : []),
 			...step4Fields(state, popup, false),
 		] as never,
 		// The period on screen rides along, so the results keep it after the save. Not in the
@@ -1241,80 +1365,237 @@ function kindPage(state: PageState, popup: Popup): BlockResponse {
 	};
 }
 
-function finishedBlocks(state: PageState, popup: Popup): Block[] {
+/** Where and when it opens, short, for the status line: "every page, after they have read a while". */
+function placeText(popup: Popup, state: PageState): string {
+	if (popup.kind === "inline") return "where it is placed";
+	let where = "every page";
+	if (popup.where === "prefix")
+		where = `pages under ${popup.prefixes.join(", ") || "(none chosen)"}`;
+	if (popup.where === "collections")
+		where = `everything in ${
+			popup.collections
+				.map((slug) => state.collections.find((c) => c.slug === slug)?.label ?? slug)
+				.join(", ") || "(no collection chosen)"
+		}`;
+	if (popup.kind === "bar") return where;
+	const when =
+		popup.trigger === "click"
+			? "when they click a button or link"
+			: popup.trigger === "exit"
+				? "when they are about to leave"
+				: "after they have read a while";
+	return `${where}, ${when}`;
+}
+
+/** For an Editor, who has no "When and where" boxes: where and when it shows, in one line. */
+function editorPlaceLine(popup: Popup, state: PageState): Block {
+	if (popup.kind === "inline")
+		return {
+			type: "context",
+			text: 'It shows where an editor adds the "Popups box" block to a page or post and chooses it.',
+		};
+	const devices =
+		popup.devices === "all"
+			? "phones and computers"
+			: popup.devices === "desktop"
+				? "computers only"
+				: "phones only";
+	const opens =
+		popup.kind === "bar"
+			? "as soon as the page opens"
+			: popup.trigger === "click"
+				? "when they click a button or link that your web person sets up"
+				: popup.trigger === "exit"
+					? "when they are about to leave (computers only)"
+					: popup.kind === "modal" && !popup.firstPage
+						? "after they have read a while, from their second page"
+						: "after they have read a while";
+	return {
+		type: "context",
+		text: `It shows on ${showsOnText(popup, state)}; on ${devices}; ${opens}. Only an administrator can change where and when.`,
+	};
+}
+
+/** The preview's address on the site: its first page under an address, or the home page. */
+function previewUrl(popup: Popup, state: PageState, scheme: "light" | "dark"): string {
+	const page =
+		popup.kind !== "inline" && popup.where === "prefix" && popup.prefixes[0]
+			? popup.prefixes[0]
+			: "/";
+	return `${state.origin}${page}?popups_preview=${popup.id}&scheme=${scheme}`;
+}
+
+/**
+ * The top of a finished popup's page: the status in words with Turn on or off
+ * beside it, then Preview (the page's one primary action) and, for an Admin,
+ * More. Without the site's address (never on a real site) Preview is a button
+ * to the preview screen.
+ */
+function headBlocks(state: PageState, popup: Popup): Block[] {
 	const blocks: Block[] = [
-		{ type: "context", text: `${kindLine(popup)} · ${statusOf(popup, state)}` },
-		resultsSlot({ popup: popup.id, period: state.period ?? POPUP_PERIOD, sort: null }),
+		{
+			type: "section",
+			text: `${statusOf(popup, state)} · ${kindLine(popup)} · ${placeText(popup, state)}`,
+			accessory: rowButton(popup, popup.on ? "Turn off" : "Turn on", "toggle"),
+		} as Block,
 	];
-	const own = pageActions(popup, state.admin);
-	if (own) blocks.push(own);
-	blocks.push(summary(popup, state));
+	if (!state.admin) blocks.push(editorPlaceLine(popup, state));
+	const elements: unknown[] = [
+		state.origin
+			? {
+					type: "link",
+					label: "Preview on your site",
+					target: { kind: "external", url: previewUrl(popup, state, "light") },
+					appearance: "primary",
+				}
+			: { ...rowButton(popup, "Preview on your site", "preview"), style: "primary" },
+	];
 	if (state.admin)
+		elements.push({
+			type: "menu",
+			action_id: "row_more",
+			label: "More",
+			items: [
+				{ label: "Change name or kind", value: `kind:${popup.id}` },
+				{ label: "Duplicate", value: `duplicate:${popup.id}` },
+			],
+			style: "secondary",
+		});
+	blocks.push({ type: "actions", elements } as Block);
+	return blocks;
+}
+
+/** Below the one Save: when changes show, the dark preview, and what the preview cannot know. */
+function afterForm(state: PageState, popup: Popup): Block[] {
+	const blocks: Block[] = [
+		{
+			type: "context",
+			text: "Changes reach visitors within a few minutes. Preview shows what was last saved.",
+		},
+	];
+	// An Editor cannot change the form, so says which it is; an Admin sees it in the form.
+	if (!state.admin) blocks.push(...step2Note(state, popup));
+	if (state.origin)
 		blocks.push({
+			type: "actions",
+			elements: [
+				{
+					type: "link",
+					label: "Preview in dark mode",
+					target: { kind: "external", url: previewUrl(popup, state, "dark") },
+					appearance: "inline",
+				},
+			],
+		});
+	if (popup.kind === "inline")
+		blocks.push({
+			type: "context",
+			text: "The preview cannot know where the box is placed, so it puts it at the top of your home page's content.",
+		});
+	else if (popup.where === "collections")
+		blocks.push({
+			type: "context",
+			text: `It is set for a collection, so the preview opens your home page, where it may say it does not show. To see it where visitors do, open a page of that collection and add ?popups_preview=${popup.id} to its address.`,
+		});
+	return blocks;
+}
+
+/** At the very foot, for an Admin: a red button that asks first (a menu item cannot ask). */
+function deleteBlocks(state: PageState, popup: Popup): Block[] {
+	if (!state.admin) return [];
+	return [
+		{ type: "divider" },
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: "row",
+					label: "Delete popup",
+					value: `delete:${popup.id}`,
+					style: "danger",
+					confirm: {
+						title: `Delete "${popup.name}"?`,
+						text: "Its results stay under Results, as Deleted popups. This cannot be undone.",
+						confirm: "Delete",
+						deny: "Keep it",
+						style: "danger",
+					},
+				},
+			],
+		},
+	];
+}
+
+/**
+ * A finished popup's page, top to bottom: back to the list, its name, the
+ * status with Turn on or off, Preview and More, any problem, Results, then
+ * Edit with the one form, and Delete at the foot. "← All popups" is a button:
+ * a link to the plugin's page goes to the address already open, and the admin
+ * then draws nothing new.
+ */
+function finishedBlocks(state: PageState, popup: Popup): Block[] {
+	return [
+		{
 			type: "actions",
 			elements: [
 				{
 					type: "button",
 					action_id: "nav",
-					label: "Change name or kind",
-					value: `kind:${popup.id}`,
+					label: "← All popups",
+					value: "list",
 					style: "secondary",
 				},
 			],
-		});
-	blocks.push(
-		{
-			type: "header",
-			text: editsPlaces(state, popup)
-				? "What it says, when and where, and dates"
-				: "What it says, and dates",
 		},
+		{ type: "header", text: popup.name },
+		...errorBlocks(state),
+		...headBlocks(state, popup),
+		...problemBanner(state, popup),
+		resultsSlot({ popup: popup.id, period: state.period ?? POPUP_PERIOD, sort: null }),
+		{ type: "divider" },
+		{ type: "header", text: "Edit" },
 		{
 			type: "context",
-			text: `Change anything below, then press Save changes once at the end. Times are ${state.zone} time, your site's time zone.`,
+			text: "Change what you need, then press Save changes at the bottom.",
 		},
 		editForm(state, popup),
-		...step2Note(state, popup),
+		...afterForm(state, popup),
 		...clickInstructions(popup),
-		...previewLinks(popup, state, "It shows what was last saved."),
-		backTo("Back to the list", "list"),
-	);
-	return blocks;
+		...deleteBlocks(state, popup),
+	];
 }
 
 /** "New popup", one step at a time, or a finished popup with one form for everything. */
 function popupPage(state: PageState, popup: Popup | undefined, step: number): BlockResponse {
+	if (popup && popup.step >= 4)
+		return { blocks: finishedBlocks(state, popup), ...(state.toast ? { toast: state.toast } : {}) };
 	const blocks: Block[] = [{ type: "header", text: popup ? popup.name : "New popup" }];
-	const wizard = !popup || popup.step < 4;
 	blocks.push(...errorBlocks(state));
-	if (wizard) {
-		blocks.push(stepsLine(popup, step));
-		if (step === 1) blocks.push(step1Form(state, popup, true));
-		if (step === 2 && popup) blocks.push(...step2Blocks(state, popup));
-		if (step === 3 && popup) blocks.push(step3Form(state, popup));
-		if (step === 4 && popup) blocks.push(...step4Blocks(state, popup));
-		const back =
-			step > 1 && popup
-				? `back:${popup.id}:${popup.kind === "inline" && step === 4 ? 2 : step - 1}`
-				: "list";
-		blocks.push({
-			type: "actions",
-			elements: [
-				{
-					type: "button",
-					action_id: "nav",
-					label: step > 1 ? "Back" : "Cancel",
-					value: back,
-					style: "secondary",
-				},
-			],
-		});
-		// A half-made popup can still be duplicated or deleted (Admin).
-		const own = popup ? pageActions(popup, state.admin) : null;
-		if (own) blocks.push(own);
-	} else if (popup) {
-		blocks.push(...finishedBlocks(state, popup));
-	}
+	blocks.push(stepsLine(popup, step));
+	if (step === 1) blocks.push(step1Form(state, popup, true));
+	if (step === 2 && popup) blocks.push(...step2Blocks(state, popup));
+	if (step === 3 && popup) blocks.push(step3Form(state, popup));
+	if (step === 4 && popup) blocks.push(...step4Blocks(state, popup));
+	const back =
+		step > 1 && popup
+			? `back:${popup.id}:${popup.kind === "inline" && step === 4 ? 2 : step - 1}`
+			: "list";
+	blocks.push({
+		type: "actions",
+		elements: [
+			{
+				type: "button",
+				action_id: "nav",
+				label: step > 1 ? "Back" : "Cancel",
+				value: back,
+				style: "secondary",
+			},
+		],
+	});
+	// A half-made popup can still be duplicated or deleted (Admin).
+	const own = popup ? pageActions(popup, state.admin) : null;
+	if (own) blocks.push(own);
 	return { blocks, ...(state.toast ? { toast: state.toast } : {}) };
 }
 
@@ -1417,6 +1698,10 @@ function pictureFrom(state: PageState, value: unknown, saved: Picture | null): P
 		: saved;
 }
 
+/** The screen a popup opens on: the next step of a half-made one, or a finished one's page. */
+const resumeStep = (popup: Popup) =>
+	popup.step < 4 ? popup.step + (popup.kind === "inline" && popup.step === 2 ? 2 : 1) : 4;
+
 export async function handleInteraction(
 	input: Interaction | undefined,
 	state: PageState,
@@ -1504,31 +1789,34 @@ export async function handleInteraction(
 		const [verb, id] = value.split(":");
 		const popup = find(id);
 		if (!popup) return { response: renderPage(state) };
-		if (verb === "change")
-			return {
-				response: popupPage(
-					state,
-					popup,
-					popup.step < 4 ? popup.step + (popup.kind === "inline" && popup.step === 2 ? 2 : 1) : 4,
-				),
-			};
+		if (verb === "change") return { response: popupPage(state, popup, resumeStep(popup)) };
 		if (verb === "preview") return { response: previewPage(state, popup) };
 		if (verb === "toggle") {
 			if (popup.step < 4) return { response: popupPage(state, popup, Math.min(4, popup.step + 1)) };
 			const save = next(store.popups.map((p) => (p.id === popup.id ? { ...p, on: !p.on } : p)));
+			// Back on the popup's own page, where the switch is: its form keeps its id, so
+			// anything typed and not saved yet stays.
 			return {
 				save,
-				response: renderPage({
-					...state,
-					store: save,
-					toast: {
-						type: "success",
-						message: popup.on
-							? `"${popup.name}" is off.${isLive(popup, state.now) ? ` ${LATER}` : ""}`
-							: `"${popup.name}" is on. ${SAVED}`,
+				response: popupPage(
+					{
+						...state,
+						store: save,
+						toast: {
+							type: "success",
+							message: popup.on
+								? `"${popup.name}" is off.${isLive(popup, state.now) ? ` ${LATER}` : ""}`
+								: `"${popup.name}" is on. ${SAVED}`,
+						},
 					},
-				}),
+					save.popups.find((p) => p.id === popup.id)!,
+					4,
+				),
 			};
+		}
+		if (verb === "kind") {
+			if (!state.admin) return only("Only an administrator can change the kind.");
+			return { response: kindPage(state, popup) };
 		}
 		if (!state.admin) return only("Only an administrator can duplicate or delete popups.");
 		if (verb === "duplicate") {
@@ -1547,13 +1835,18 @@ export async function handleInteraction(
 				createdAt: new Date(state.now).toISOString(),
 			};
 			const save = next([...store.popups, copy]);
+			// Stays where it was asked for: the original's page, or its step of "New popup".
 			return {
 				save,
-				response: renderPage({
-					...state,
-					store: save,
-					toast: { type: "success", message: `Made "${name}", turned off.` },
-				}),
+				response: popupPage(
+					{
+						...state,
+						store: save,
+						toast: { type: "success", message: `Made "${name}", turned off.` },
+					},
+					popup,
+					resumeStep(popup),
+				),
 			};
 		}
 		if (verb === "delete") {

@@ -14,8 +14,8 @@ import { addDays, daysFrom, monthEnd, shortDay, zoneDay } from "./time.js";
 export const PERIODS = ["start", "this-month", "last-month", "30-days"] as const;
 export type Period = (typeof PERIODS)[number];
 
-/** One popup's page opens on its whole life; comparing opens on the same 30 days for all. */
-export const POPUP_PERIOD: Period = "start";
+/** A popup's page and comparing both open on the last 30 days, so the two tell the same story. */
+export const POPUP_PERIOD: Period = "30-days";
 export const COMPARE_PERIOD: Period = "30-days";
 
 /** From this many views a rate means something; under it, it swings too much. */

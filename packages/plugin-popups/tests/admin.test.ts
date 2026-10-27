@@ -121,26 +121,28 @@ describe("the list", () => {
 	it("puts Turn off, Duplicate and Delete on the popup's own page, Duplicate and Delete for an Admin only", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		const own = all(await press(fake, "row", "change:abcd1234"));
-		const actions = own.find(
-			(b) => b.type === "actions" && JSON.stringify(b).includes("toggle:abcd1234"),
+		const status = own.find((b) => b.type === "section") as Extract<Block, { type: "section" }>;
+		expect(status.accessory).toMatchObject({
+			type: "button",
+			action_id: "row",
+			label: "Turn off",
+			value: "toggle:abcd1234",
+		});
+		const more = own.find(
+			(b) => b.type === "actions" && JSON.stringify(b).includes("row_more"),
 		) as Extract<Block, { type: "actions" }>;
-		expect(actions.elements).toMatchObject([
-			{ type: "button", action_id: "row", label: "Turn off", value: "toggle:abcd1234" },
-			{
-				type: "menu",
-				action_id: "row_more",
-				label: "More",
-				items: [
-					{ label: "Duplicate", value: "duplicate:abcd1234" },
-					{ label: "Delete", value: "delete:abcd1234" },
-				],
-			},
-		]);
-		// Near the top: before the first section.
-		expect(own.indexOf(actions)).toBeLessThan(
-			own.findIndex(
-				(b) => b.type === "header" && b.text === "What it says, when and where, and dates",
-			),
+		expect(more.elements.at(-1)).toMatchObject({
+			type: "menu",
+			label: "More",
+			items: [
+				{ label: "Change name or kind", value: "kind:abcd1234" },
+				{ label: "Duplicate", value: "duplicate:abcd1234" },
+			],
+		});
+		expect(JSON.stringify(own)).toContain('"value":"delete:abcd1234"');
+		// Near the top: before Results and Edit.
+		expect(own.indexOf(more)).toBeLessThan(
+			own.findIndex((b) => b.type === "header" && b.text === "Edit"),
 		);
 		const editor = words(await press(fake, "row", "change:abcd1234", EDITOR));
 		expect(editor).toContain("toggle:abcd1234");
@@ -629,8 +631,10 @@ describe("a finished popup's page: one Save", () => {
 		>;
 		expect(shown.map((f) => f.submit)).toEqual([{ label: "Save changes", action_id: "save_all" }]);
 		const ids = shown[0]!.fields.map((f) => f.action_id);
-		for (const id of ["heading", "button_url", "trigger", "where", "devices", "start_date", "on"])
+		for (const id of ["heading", "button_url", "trigger", "where", "devices", "start_date"])
 			expect(ids).toContain(id);
+		// Turn on or off sits beside the name, not in the form.
+		expect(ids).not.toContain("on");
 		// The kind decides which boxes there are, so it is changed on a screen of its own.
 		const kind = await press(fake, "nav", "kind:abcd1234");
 		expect(
@@ -649,12 +653,9 @@ describe("a finished popup's page: one Save", () => {
 		const noName = await submit(fake, "save_s1", formOf(kind, "save_s1").block_id!, { name: "" });
 		expect(words(noName)).toContain("Give it a name");
 		expect(formOf(noName, "save_all")).toBeUndefined();
-		// Nothing about saving first beside Preview: Preview sits after the one Save.
+		// Nothing about saving first beside Preview: the line under the one Save says it.
 		expect(words(page)).not.toContain("Save your changes first");
-		const blocks = all(page);
-		expect(
-			blocks.findIndex((b) => b.type === "actions" && JSON.stringify(b).includes("popups_preview")),
-		).toBeGreaterThan(blocks.indexOf(shown[0]!));
+		expect(words(page)).toContain("Preview shows what was last saved.");
 	});
 
 	it("keeps what was typed when a save is refused, and shows every problem at once", async () => {
@@ -849,21 +850,22 @@ describe("fits a phone, and React can tell every control apart", () => {
 				if (!elements) continue;
 				const own = ids(elements);
 				expect(new Set(own).size, JSON.stringify(own)).toBe(own.length);
-				if (block.type === "actions" && own.length > 1) checked++;
+				if (block.type === "actions" && elements.length > 1) checked++;
 			}
 		}
-		// The popup pages' Turn off beside More, at least.
+		// The popup pages' Preview beside More, at least.
 		expect(checked).toBeGreaterThan(0);
 	});
 
 	it("keeps the popup page's Turn off and More apart, both going to the same place", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		const own = all(await press(fake, "row", "change:abcd1234"));
+		const status = own.find((b) => b.type === "section") as Extract<Block, { type: "section" }>;
+		expect((status.accessory as { action_id?: string }).action_id).toBe("row");
 		const actions = own.find(
-			(b) => b.type === "actions" && JSON.stringify(b).includes("toggle:abcd1234"),
+			(b) => b.type === "actions" && JSON.stringify(b).includes("duplicate:abcd1234"),
 		) as Extract<Block, { type: "actions" }>;
 		expect(ids(actions.elements as unknown as Array<Record<string, unknown>>)).toEqual([
-			"row",
 			"row_more",
 		]);
 	});
