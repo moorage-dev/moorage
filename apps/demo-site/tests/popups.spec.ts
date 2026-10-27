@@ -1092,7 +1092,7 @@ test.describe("each kind where a visitor sees it", () => {
 			type: "form_submit",
 			action_id: "save_look",
 			block_id: "look:new:x",
-			values: { scheme: "auto", custom: false, corner: "right" },
+			values: { scheme: "auto", colour_set: "theme", corner: "right" },
 		});
 	});
 
@@ -1185,7 +1185,7 @@ test.describe("each kind where a visitor sees it", () => {
 			type: "form_submit",
 			action_id: "save_look",
 			block_id: "look:new:x",
-			values: { scheme: "auto", custom: false, corner: "left" },
+			values: { scheme: "auto", colour_set: "theme", corner: "left" },
 		});
 		page = await previewTab(id);
 		await corner(page, "left");
@@ -1445,4 +1445,124 @@ test("an admin sees the help line on the list and on a new popup, and the switch
 	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
 	await expectHelpLine(page, guide);
 	await page.close();
+});
+
+test.describe("colours", () => {
+	const look = (values: Record<string, unknown>) =>
+		adminPost(`${API}/admin`, {
+			type: "form_submit",
+			action_id: "save_look",
+			block_id: "look:new:x",
+			values: { scheme: "auto", corner: "right", ...values },
+		});
+	test.afterEach(async () => {
+		await look({ colour_set: "theme" });
+	});
+
+	/** The box's background and text, and the button's colour and words. */
+	const colours = (page: Page) =>
+		page.evaluate(() => {
+			const root = document.querySelector("#popups")!.shadowRoot!;
+			const box = getComputedStyle(root.querySelector(".pp")!);
+			const button = getComputedStyle(root.querySelector(".p")!);
+			return [box.backgroundColor, box.color, button.backgroundColor, button.color];
+		});
+	const seen = async (page: Page) => {
+		await page.goto("/popups-test");
+		await read(page);
+		await expect(host(page)).toBeAttached();
+		await page.waitForTimeout(400);
+		return colours(page);
+	};
+
+	test("a set chosen in Settings dresses a visitor's slide-in, in light and dark", async ({
+		browser,
+	}) => {
+		test.setTimeout(240_000);
+		await make(SLIDE);
+		const page = await adminContext.newPage();
+		await page.setViewportSize({ width: 1280, height: 1400 });
+		const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+		await page.addLocatorHandler(welcome, async () => {
+			await welcome.getByRole("button", { name: "Get Started" }).click();
+		});
+		await page.goto("/_emdash/admin/plugins/popups/");
+		await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible({ timeout: 150_000 });
+		await page.getByRole("tab", { name: "Settings" }).click();
+		await expect(
+			page.getByRole("radio", { name: "Your theme's colours (recommended)" }),
+		).toBeChecked();
+		const background = page.getByRole("textbox", { name: /^Background/ });
+		await expect(background).toBeHidden();
+		await page.getByRole("radio", { name: "My own colours" }).check();
+		await expect(background).toBeVisible();
+		await page.getByRole("radio", { name: "Soft grey with green buttons" }).check();
+		await expect(background).toBeHidden();
+		const shots = process.env.DEMO_SITE_SHOTS_DIR;
+		if (shots) {
+			const form = page
+				.getByRole("radio", { name: "My own colours" })
+				.locator("xpath=ancestor::form");
+			await form.screenshot({ path: `${shots}/colours-choice-popups.png` });
+		}
+		await page.getByRole("button", { name: "Save the look" }).click();
+		await expect(page.getByText(/^Saved/)).toBeVisible();
+		await page.close();
+
+		const light = await visitor(browser);
+		expect(await seen(light)).toEqual([
+			"rgb(242, 243, 242)",
+			"rgb(31, 42, 36)",
+			"rgb(31, 111, 67)",
+			"rgb(255, 255, 255)",
+		]);
+		await light.context().close();
+		const dark = await visitor(browser, { dark: true });
+		expect(await seen(dark)).toEqual([
+			"rgb(28, 33, 30)",
+			"rgb(238, 242, 239)",
+			"rgb(124, 196, 154)",
+			"rgb(20, 20, 20)",
+		]);
+		await dark.context().close();
+	});
+
+	test("My own colours still work, the same on a dark device", async ({ browser }) => {
+		await make(SLIDE);
+		await look({ colour_set: "own", background: "#fbf8f3", text: "#2b2420", accent: "#8a3b12" });
+		const own = ["rgb(251, 248, 243)", "rgb(43, 36, 32)", "rgb(138, 59, 18)", "rgb(255, 255, 255)"];
+		for (const dark of [false, true]) {
+			const page = await visitor(browser, { dark });
+			expect(await seen(page)).toEqual(own);
+			await page.context().close();
+		}
+	});
+
+	test("every set on a popup's preview, light and dark, for the founder", async () => {
+		const shots = process.env.DEMO_SITE_SHOTS_DIR;
+		test.skip(!shots, "screenshots only");
+		test.setTimeout(240_000);
+		const { COLOUR_SETS } = await import("../../../packages/plugin-popups/src/colour-sets.js");
+		const id = await make({ ...MODAL, s4: { on: false } });
+		for (const set of COLOUR_SETS) {
+			await look({ colour_set: set.id });
+			for (const scheme of ["light", "dark"] as const) {
+				const page = await adminContext.newPage();
+				await page.setViewportSize({ width: 1100, height: 700 });
+				await page.emulateMedia({ colorScheme: scheme });
+				await page.goto(`/popups-test?popups_preview=${id}&scheme=${scheme}`);
+				await expect(host(page)).toBeAttached();
+				await page.waitForTimeout(600);
+				expect((await colours(page))[0]).toBe(
+					`rgb(${set[scheme].background
+						.slice(1)
+						.match(/../g)!
+						.map((hex) => parseInt(hex, 16))
+						.join(", ")})`,
+				);
+				await page.screenshot({ path: `${shots}/popup-${set.id}-${scheme}.png` });
+				await page.close();
+			}
+		}
+	});
 });

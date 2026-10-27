@@ -533,10 +533,10 @@ test.describe("a visitor who is not asked", () => {
 
 	test("separate dark mode colours are used in dark mode only", async ({ page }) => {
 		await configure(IDS, {
+			colour_set: "own",
 			color_background: "#fbf7f0",
 			color_text: "#3b2a1a",
 			color_accent: "#1f6f43",
-			dark_colors: true,
 			dark_background: "#102030",
 			dark_text: "#f0f0f0",
 			dark_accent: "#f5a0c5",
@@ -554,7 +554,7 @@ test.describe("a visitor who is not asked", () => {
 		await page.goto("/?cookie_preview=dark");
 		await expect(banner(page)).toBeVisible();
 		expect(await sheet()).toEqual(["rgb(16, 32, 48)", "rgb(245, 160, 197)"]);
-		await configure(IDS);
+		await configure(IDS, { colour_set: "theme" });
 	});
 
 	test("Global Privacy Control keeps Marketing off", async ({ page, context }) => {
@@ -1137,18 +1137,28 @@ test.describe("the Status tab", () => {
 
 	test("the banner colours fold away under Colours, and save from there", async () => {
 		await configure({ ga4: IDS.ga4 });
-		// Start from the standard colours, whatever an earlier test left.
+		// Start from the theme's colours and no colours of our own, whatever an earlier test left.
 		await save("save_colours", {
+			colour_set: "own",
 			color_background: "",
 			color_text: "",
 			color_accent: "",
-			dark_colors: false,
+			dark_background: "",
+			dark_text: "",
+			dark_accent: "",
 		});
+		await save("save_colours", { colour_set: "theme" });
 		const page = await openAdmin();
 		await page.getByRole("tab", { name: "Cookie banner" }).click();
 		const background = page.getByRole("textbox", { name: /Banner background colour/ });
 		await expect(background).toBeHidden();
 		await page.getByRole("button", { name: "Colours" }).click();
+		await expect(
+			page.getByRole("radio", { name: "Your theme's colours (recommended)" }),
+		).toBeChecked();
+		// The colour boxes show only under My own colours.
+		await expect(background).toBeHidden();
+		await page.getByRole("radio", { name: "My own colours" }).check();
 		await background.fill("#fbf7f0");
 		await page.getByRole("textbox", { name: /Banner text colour/ }).fill("#3b2a1a");
 		await page.getByRole("button", { name: "Save colours" }).click();
@@ -1158,7 +1168,81 @@ test.describe("the Status tab", () => {
 		// Still open after the save, showing what was saved.
 		await expect(background).toHaveValue("#fbf7f0");
 		await page.close();
-		await save("save_colours", { color_background: "", color_text: "", color_accent: "" });
+		await save("save_colours", {
+			colour_set: "own",
+			color_background: "",
+			color_text: "",
+			color_accent: "",
+		});
+		await save("save_colours", { colour_set: "theme" });
+	});
+
+	test("a colour set chosen under Colours dresses the banner, in light and dark", async ({
+		page: visitor,
+	}) => {
+		await configure({ ga4: IDS.ga4 });
+		await save("save_colours", { colour_set: "theme" });
+		const page = await openAdmin();
+		await page.getByRole("tab", { name: "Cookie banner" }).click();
+		await page.getByRole("button", { name: "Colours" }).click();
+		await page.getByRole("radio", { name: "Warm cream with brown buttons" }).check();
+		// A set needs no colour boxes: it has its own dark version.
+		await expect(page.getByRole("textbox", { name: /Banner background colour/ })).toBeHidden();
+		await expect(page.getByRole("textbox", { name: /Dark mode/ })).toHaveCount(0);
+		const shots = process.env.DEMO_SITE_SHOTS_DIR;
+		if (shots) {
+			const form = page
+				.getByRole("radio", { name: "My own colours" })
+				.locator("xpath=ancestor::form");
+			await form.screenshot({ path: `${shots}/colours-choice-banner.png` });
+		}
+		await page.getByRole("button", { name: "Save colours" }).click();
+		await expect(
+			page.getByText("Saved. It can take a few minutes to reach visitors."),
+		).toBeVisible();
+		await expect(page.getByRole("radio", { name: "Warm cream with brown buttons" })).toBeChecked();
+		await page.close();
+
+		const look = () =>
+			visitor.evaluate(() => {
+				const root = document.getElementById("cookie-consent")!.shadowRoot!;
+				const sheet = getComputedStyle(root.querySelector(".b")!);
+				const button = getComputedStyle(root.querySelector(".p")!);
+				return [sheet.backgroundColor, sheet.color, button.backgroundColor, button.color];
+			});
+		await visitor.goto("/?cookie_preview=light");
+		await expect(banner(visitor)).toBeVisible();
+		expect(await look()).toEqual([
+			"rgb(251, 247, 240)",
+			"rgb(43, 36, 32)",
+			"rgb(138, 59, 18)",
+			"rgb(255, 255, 255)",
+		]);
+		await visitor.goto("/?cookie_preview=dark");
+		await expect(banner(visitor)).toBeVisible();
+		expect(await look()).toEqual([
+			"rgb(42, 36, 32)",
+			"rgb(245, 237, 227)",
+			"rgb(224, 168, 114)",
+			"rgb(20, 20, 20)",
+		]);
+
+		// For the founder: every set on the banner, light and dark.
+		if (shots) {
+			const { COLOUR_SETS } = await import("../../../packages/plugin-analytics/src/colour-sets.js");
+			await visitor.setViewportSize({ width: 1100, height: 520 });
+			for (const set of COLOUR_SETS) {
+				await save("save_colours", { colour_set: set.id });
+				for (const scheme of ["light", "dark"] as const) {
+					await visitor.emulateMedia({ colorScheme: scheme });
+					await visitor.goto(`/?cookie_preview=${scheme}`);
+					await expect(banner(visitor)).toBeVisible();
+					await visitor.waitForTimeout(400);
+					await visitor.screenshot({ path: `${shots}/banner-${set.id}-${scheme}.png` });
+				}
+			}
+		}
+		await save("save_colours", { colour_set: "theme" });
 	});
 });
 
