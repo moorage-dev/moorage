@@ -199,6 +199,21 @@ describe("New popup, four steps", () => {
 		});
 		const s1 = await press(fake, "new");
 		expect(words(s1)).toContain("1 What kind (now)");
+		// Only "Box in a page" is called a box, and each kind says where it appears: a popup
+		// described as "a box" was picked by someone who wanted a box in a post.
+		const kinds = formOf(s1, "save_s1").fields.find((f) => f.action_id === "kind") as unknown as {
+			options: Array<{ value: string; label: string }>;
+		};
+		const kindWords = Object.fromEntries(kinds.options.map((o) => [o.value, o.label]));
+		expect(kindWords.modal).toMatch(
+			/^Popup: opens by itself over the page, in the middle of the screen/,
+		);
+		expect(kindWords.slide).toMatch(/^Slide-in: slides in at a bottom corner/);
+		expect(kindWords.bar).toMatch(/^Top bar: a thin strip across the top of the page/);
+		expect(kindWords.inline).toMatch(
+			/^Box in a page: sits inside a page or post, where you place it while editing/,
+		);
+		for (const kind of ["modal", "slide", "bar"]) expect(kindWords[kind]).not.toMatch(/\bbox\b/i);
 		const refused = await submit(fake, "save_s1", formOf(s1, "save_s1").block_id!, { name: "" });
 		expect(words(refused)).toContain("Give it a name");
 		const s2 = await submit(fake, "save_s1", formOf(s1, "save_s1").block_id!, {

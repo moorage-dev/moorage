@@ -648,6 +648,63 @@ describe("routes", () => {
 		expect(await call(fake, "box", { id: "abcd1234" })).toEqual({ box: null });
 	});
 
+	it("says in the editor's picker how to make a box when there is none", async () => {
+		// The picker shows the item with an empty id in place of "Select...", and Insert stays
+		// off while nothing else is chosen: so the words show and no empty box can be placed.
+		const none = fakeContext({ popups: { popups: [] } });
+		expect(await call(none, "boxes", {})).toEqual({
+			items: [
+				{
+					id: "",
+					name: 'No boxes yet. In Popups, make one and choose "Box in a page". Popups and slide-ins open by themselves and are not placed here.',
+				},
+			],
+		});
+		// Only popups of other kinds: they are named, since that is the likely mix-up.
+		const one = fakeContext({ popups: { popups: [popup({ name: "Spring offer" })] } });
+		expect(await call(one, "boxes", {})).toEqual({
+			items: [
+				{
+					id: "",
+					name: 'No boxes yet. "Spring offer" is a popup: it opens by itself and is not placed here. In Popups, make one and choose "Box in a page".',
+				},
+			],
+		});
+		const two = fakeContext({
+			popups: {
+				popups: [popup(), popup({ id: "efgh5678", kind: "slide", name: "Offer", handle: "offer" })],
+			},
+		});
+		expect(await call(two, "boxes", {})).toEqual({
+			items: [
+				{
+					id: "",
+					name: 'No boxes yet. Your 2 popups and slide-ins open by themselves and are not placed here. In Popups, make one and choose "Box in a page".',
+				},
+			],
+		});
+		// An unfinished or turned-off box is still listed, marked "(off)".
+		const off = fakeContext({
+			popups: {
+				popups: [popup({ id: "inl00001", kind: "inline", name: "Letter box", on: false })],
+			},
+		});
+		expect(await call(off, "boxes", {})).toEqual({
+			items: [{ id: "inl00001", name: "Letter box (off)" }],
+		});
+	});
+
+	it("names the kind in the editor block's words", () => {
+		const block = createPlugin().admin?.portableTextBlocks?.[0];
+		expect(block?.label).toBe("Popups box");
+		expect(block?.description).toBe(
+			'A box made under Popups as "Box in a page": a sign-up form or a button',
+		);
+		expect(block?.fields?.[0]).toMatchObject({
+			label: 'Which box (made under Popups as "Box in a page")',
+		});
+	});
+
 	it("downloads results as a spreadsheet from a link the admin page signed", async () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(NOW);

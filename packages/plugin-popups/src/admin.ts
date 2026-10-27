@@ -112,11 +112,11 @@ const STEPS = ["What kind", "What it says", "When and where", "Dates and turn on
 const KIND_CHOICE: Record<Kind, string> = {
 	bar: "Top bar: a thin strip across the top of the page, for short news such as opening hours or a closure. Recommended for announcements.",
 	slide:
-		"Slide-in: a small box in the bottom corner that leaves the page usable. Recommended for offers.",
+		"Slide-in: slides in at a bottom corner and leaves the page usable. Opens by itself. Recommended for offers.",
 	modal:
-		"Popup: a box in the middle of the screen that dims the page until it is closed. It interrupts, so it waits until a visitor's second page (you can change that for computers), and on phones it opens as a sheet at the bottom.",
+		"Popup: opens by itself over the page, in the middle of the screen, and dims the page until it is closed. It interrupts, so it waits until a visitor's second page (you can change that for computers), and on phones it opens as a sheet at the bottom.",
 	inline:
-		'Box in a page: a box inside a page or post, placed by you in the editor with the "Popups box" block. Recommended for newsletter sign-ups at the end of posts.',
+		'Box in a page: sits inside a page or post, where you place it while editing (insert the "Popups box" block). Recommended for newsletter sign-ups at the end of posts.',
 };
 
 const TRIGGER_CHOICE = {
@@ -519,7 +519,7 @@ function listBlocks(state: PageState): Block[] {
 			type: "empty",
 			title: "No popups yet",
 			description:
-				"Tell visitors about opening hours, an offer or your newsletter: a bar across the top, a box in the corner, a popup, or a box inside a page.",
+				"Tell visitors about opening hours, an offer or your newsletter: a bar across the top, a slide-in at a corner, a popup over the page, or a box inside a page or post.",
 			actions: state.admin
 				? [{ type: "button", action_id: "new", label: "New popup", style: "primary" }]
 				: [],
@@ -954,7 +954,7 @@ function step3Fields(state: PageState, popup: Popup): Field[] {
 			action_id: "first_page",
 			label: "Show on the first page they visit (computers only)",
 			description:
-				"Off by default: a box over the first page someone sees makes many people leave, and Google ranks pages lower on phones when it happens there. Phones always wait for the second page.",
+				"Off by default: a popup over the first page someone sees makes many people leave, and Google ranks pages lower on phones when it happens there. Phones always wait for the second page.",
 			initial_value: popup.firstPage,
 		});
 	}

@@ -10,9 +10,9 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 
 - **Four kinds, one look.**
   - **Top bar:** a thin strip above the header, in the page itself. It is part of the page when it loads, so it never moves the page or covers a sticky header.
-  - **Slide-in:** a small box in a bottom corner that leaves the page usable. On phones it is a sheet at the bottom, at most 45% of the screen.
-  - **Popup:** a box in the middle of the screen that dims the page. On phones it opens as a sheet at the bottom, unless the visitor opened it by clicking.
-  - **Box in a page:** a box an editor places in a post or page with the "Popups box" block. If your site styles its forms (the `.ec-form` classes of the Forms plugin), a form in the box keeps that look.
+  - **Slide-in:** slides in at a bottom corner and leaves the page usable. It opens by itself. On phones it is a sheet at the bottom, at most 45% of the screen.
+  - **Popup:** opens by itself over the page, in the middle of the screen, and dims the page. On phones it opens as a sheet at the bottom, unless the visitor opened it by clicking.
+  - **Box in a page:** sits inside a page or post, where an editor places it while editing (the "Popups box" block). It is the only kind that is placed; the others open by themselves. If your site styles its forms (the `.ec-form` classes of the Forms plugin), a form in the box keeps that look.
 - **What it says:** a heading, a short text, a picture from your media library, and either one button or a form from the official Forms plugin. Sign-ups land in the Forms inbox, with all of its emails and notifications.
 - **When it opens:** "after they have read a while" (40% down the page or 30 seconds), "when they click" a link or button your web person sets up, or "when they are about to leave" (computers only). Top bars show as soon as the page opens. There are no raw seconds or percentages to set.
 - **Where and when:** every page, pages under an address, or a whole collection; "never on these pages"; phones, computers or both; a start and an end, with a date and a time in your site's time zone.
@@ -122,19 +122,21 @@ A new popup is off while you make it. Its last step has "Turn it on" already swi
 
 Each row of the list shows the popup's name and status, with Edit and Preview. Turn on or off, Duplicate and Delete are at the top of a popup's own page (open it with Edit).
 
-A new popup is made one step at a time. Once it is finished, its own page shows its Results (the period, four numbers, the chart, "Compare with other popups" to open the Results tab on the same period, and a download of its own numbers) and one form for what it says, when and where, and its dates, with one "Save changes" at the end. If something cannot be saved, every problem is listed together and everything you typed stays in place. The name and kind are changed with "Change name or kind", on a screen of their own, because the kind decides which boxes the popup has.
+A new popup is made one step at a time. Once it is finished, its own page shows its Results (the period, four numbers, the chart, "Compare with other popups" to open the Results tab on the same period, and a download of its own numbers) and one form for what it says, when and where, and its dates, with one "Save changes" at the end. If something cannot be saved, every problem is listed together and everything you typed stays in place. The name and kind are changed with "Change name or kind", on a screen of their own, because the kind decides which settings the popup has.
 
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
 
 ## FAQ
 
-**Will it hurt my Google ranking?** Popups on phones open as a sheet at the bottom, never as a box over the page on arrival, and a popup never covers the first page of a visit on phones. That follows Google's guidance on intrusive interstitials.
+**Will it hurt my Google ranking?** Popups on phones open as a sheet at the bottom, never as a popup over the page on arrival, and a popup never covers the first page of a visit on phones. That follows Google's guidance on intrusive interstitials.
 
 **Do I need a cookie banner for it?** It sets no cookies. It remembers in the visitor's own browser storage that they closed or signed up, so it does not ask again, and it never sends that anywhere.
 
 **A change I made does not show.** Cached pages refresh within a few minutes. The dates travel with the page, so a popup that has ended stops showing even on a cached page.
 
 **My popup with a form never opens.** Open the admin page: a warning names the problem. A red one means the form was deleted, or it uses Turnstile or a file upload; a yellow one means the form is paused under Forms. Use the Preview link to see why a real visitor would not see it.
+
+**My popup is not in the list when I add a "Popups box" to a post.** The list shows only popups made with the kind "Box in a page". Popups, slide-ins and top bars open by themselves and are not placed in a post. Make a new one under Popups and choose "Box in a page" (an administrator can also change a popup's kind with "Change name or kind"). A box that is not finished or is turned off shows in the list with "(off)".
 
 **What is the line at the foot of the page?** Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" at the bottom of the Settings tab and press Save.
 
