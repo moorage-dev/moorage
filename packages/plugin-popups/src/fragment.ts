@@ -6,12 +6,14 @@ import clientCode from "virtual:client-script";
 import { barInner } from "./client/bar.js";
 import { styles } from "./client/css.js";
 import type { ClientConfig, ClientItem } from "./client/types.js";
+import { colourSet, OWN_COLOURS } from "./colour-sets.js";
 import {
 	AGAIN_DAYS,
 	buttonText,
 	DECLINE_LABEL,
 	isLive,
 	showsOn,
+	type Colors,
 	type Popup,
 	type Settings,
 	type Store,
@@ -117,14 +119,19 @@ export function clientConfig(
 		items,
 		t: TEXT,
 	};
-	if (
-		settings.custom &&
+	// A set becomes plain colours here: a light and a dark version.
+	const set = colourSet(settings.colourSet);
+	const ready = ({ background: g, text: f, accent: x }: Colors) => ({ g, f, x, y: buttonText(x) });
+	if (set) {
+		out.col = ready(set.light);
+		out.colDark = ready(set.dark);
+	} else if (
+		settings.colourSet === OWN_COLOURS &&
 		settings.colors.background &&
 		settings.colors.text &&
 		settings.colors.accent
 	) {
-		const { background: g, text: f, accent: x } = settings.colors;
-		out.col = { g, f, x, y: buttonText(x) };
+		out.col = ready(settings.colors);
 	}
 	if (settings.corner === "left") out.left = 1;
 	return out;
@@ -150,7 +157,7 @@ export function clientScriptFor(config: ClientConfig): string {
 export function barHtml(item: ClientItem, config: ClientConfig): string {
 	return (
 		`<div id="popups-bar-${item.i}" data-popups-bar="${item.i}" style="display:block">` +
-		`<template shadowrootmode="open"><style>${styles(config.sc, config.col)}</style>` +
+		`<template shadowrootmode="open"><style>${styles(config.sc, config.col, config.colDark)}</style>` +
 		barInner(item, config.t.close) +
 		`</template></div>`
 	);

@@ -562,7 +562,7 @@ describe("Settings", () => {
 		expect(
 			words(
 				await submit(fake, "save_look", "look", {
-					custom: true,
+					colour_set: "own",
 					background: "#ffffff",
 					text: "#dddddd",
 					accent: "#8a3b12",
@@ -571,7 +571,7 @@ describe("Settings", () => {
 		).toContain("hard to read");
 		await submit(fake, "save_look", "look", {
 			scheme: "dark",
-			custom: true,
+			colour_set: "own",
 			background: "#fbf8f3",
 			text: "#2b2420",
 			accent: "#8a3b12",

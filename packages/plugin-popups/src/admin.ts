@@ -2,6 +2,7 @@
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 
+import { cleanColourChoice, COLOUR_OPTIONS, OWN_COLOURS } from "./colour-sets.js";
 import {
 	colorProblems,
 	cleanColor,
@@ -600,12 +601,11 @@ function settingsBlocks(state: PageState): Block[] {
 					initial_value: s.scheme,
 				},
 				{
-					type: "toggle",
-					action_id: "custom",
-					label: "Choose my own colours",
-					description:
-						"Off: your theme's colours, or calm neutral ones if it sets none (recommended).",
-					initial_value: s.custom,
+					type: "radio",
+					action_id: "colour_set",
+					label: "Colours",
+					options: [...COLOUR_OPTIONS],
+					initial_value: s.colourSet,
 				},
 				{
 					type: "text_input",
@@ -613,7 +613,7 @@ function settingsBlocks(state: PageState): Block[] {
 					label: "Background (for example #fbf8f3)",
 					placeholder: "#fbf8f3",
 					initial_value: typed(state, "background", s.colors.background),
-					condition: { field: "custom", eq: true },
+					condition: { field: "colour_set", eq: OWN_COLOURS },
 				},
 				{
 					type: "text_input",
@@ -621,7 +621,7 @@ function settingsBlocks(state: PageState): Block[] {
 					label: "Text",
 					placeholder: "#2b2420",
 					initial_value: typed(state, "text", s.colors.text),
-					condition: { field: "custom", eq: true },
+					condition: { field: "colour_set", eq: OWN_COLOURS },
 				},
 				{
 					type: "text_input",
@@ -629,7 +629,7 @@ function settingsBlocks(state: PageState): Block[] {
 					label: "Button",
 					placeholder: "#8a3b12",
 					initial_value: typed(state, "accent", s.colors.accent),
-					condition: { field: "custom", eq: true },
+					condition: { field: "colour_set", eq: OWN_COLOURS },
 				},
 				{
 					type: "radio",
@@ -646,7 +646,7 @@ function settingsBlocks(state: PageState): Block[] {
 		},
 		{
 			type: "context",
-			text: "Your own colours must be easy to read: text on the background, and the button's words on the button, need a 4.5 to 1 contrast. Colours that do not reach it are refused, with the reason.",
+			text: "Your theme's colours come from your theme, or are calm neutral ones if it sets none. Each ready-made set has a matching dark version for visitors whose device is in dark mode, and the cookie banner in Analytics & Cookies offers the same sets, so the two can match. My own colours are used in light and dark mode alike, and must be easy to read: text on the background, and the button's words on the button, need a 4.5 to 1 contrast. Colours that do not reach it are refused, with the reason.",
 		},
 		{ type: "header", text: "Emails when a popup cannot open" },
 		{
@@ -1607,7 +1607,12 @@ export async function handleInteraction(
 		if (action === "save_look") {
 			if (has(values, "scheme")) settings.scheme = values.scheme as typeof settings.scheme;
 			if (has(values, "corner")) settings.corner = values.corner as typeof settings.corner;
-			if (typeof values.custom === "boolean") settings.custom = values.custom;
+			if (has(values, "colour_set"))
+				settings.colourSet = cleanColourChoice(values.colour_set, settings.colourSet);
+			// Kept in step for older versions, which read only this switch: they show the
+			// theme's colours under a set. The colours themselves stay stored.
+			settings.custom = settings.colourSet === OWN_COLOURS;
+			// Under any other choice the colour boxes are hidden but still sent; they are not checked.
 			if (settings.custom) {
 				const colors = {
 					background: cleanColor(text(values, "background", settings.colors.background)),

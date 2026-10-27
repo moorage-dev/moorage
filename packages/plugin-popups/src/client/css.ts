@@ -73,11 +73,21 @@ export function ownColors(col?: { g: string; f: string; x: string; y: string }):
 		: "";
 }
 
-/** The whole stylesheet for a light, dark or device-following look. */
+/**
+ * The whole stylesheet for a light, dark or device-following look. A colour set has a dark
+ * version (`colDark`) and follows the look like the standard colours; the owner's own
+ * colours (`col` alone) are used on every device.
+ */
 export function styles(
 	scheme: "auto" | "light" | "dark",
 	col?: { g: string; f: string; x: string; y: string },
+	colDark?: { g: string; f: string; x: string; y: string },
 ): string {
+	if (col && colDark) {
+		if (scheme === "dark") return CSS + ownColors(colDark);
+		if (scheme === "light") return CSS + ownColors(col);
+		return `${CSS + ownColors(col)}@media(prefers-color-scheme:dark){${ownColors(colDark)}}`;
+	}
 	if (col) return CSS + ownColors(col);
 	if (scheme === "dark") return CSS + DARK;
 	if (scheme === "auto") return `${CSS}@media(prefers-color-scheme:dark){${DARK}}`;
