@@ -1410,9 +1410,13 @@ function editorPlaceLine(popup: Popup, state: PageState): Block {
 					: popup.kind === "modal" && !popup.firstPage
 						? "after they have read a while, from their second page"
 						: "after they have read a while";
+	// The list's words start with a capital ("Every page"); here they sit mid-sentence.
+	const where = showsOnText(popup, state).replace(/^(Every page|Pages under)/, (w) =>
+		w.toLowerCase(),
+	);
 	return {
 		type: "context",
-		text: `It shows on ${showsOnText(popup, state)}; on ${devices}; ${opens}. Only an administrator can change where and when.`,
+		text: `It shows on ${where}; on ${devices}; ${opens}. Only an administrator can change where and when.`,
 	};
 }
 

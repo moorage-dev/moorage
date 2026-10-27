@@ -448,7 +448,7 @@ describe("an Editor's view", () => {
 		});
 		expect(page.blocks[3]).toEqual({
 			type: "context",
-			text: "It shows on Every page, except /contact; on phones and computers; after they have read a while, from their second page. Only an administrator can change where and when.",
+			text: "It shows on every page, except /contact; on phones and computers; after they have read a while, from their second page. Only an administrator can change where and when.",
 		});
 		expect(words(page)).toContain('"label":"Preview on your site"');
 		expect(words(page)).not.toContain("row_more");
