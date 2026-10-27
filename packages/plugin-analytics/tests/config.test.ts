@@ -146,3 +146,56 @@ describe("banner text", () => {
 		});
 	});
 });
+
+describe("the colours choice", () => {
+	const own = { background: "#fbf7f0", text: "#3b2a1a", accent: "#1f6f43" };
+
+	it("is the theme's colours on a new site", () => {
+		expect(DEFAULT_CONFIG.banner.colourSet).toBe("theme");
+		expect(normalizeConfig({}).banner.colourSet).toBe("theme");
+		expect(
+			normalizeConfig({ banner: { colors: { background: "", text: "", accent: "" } } }).banner
+				.colourSet,
+		).toBe("theme");
+	});
+
+	it("is the owner's own on a site that saved colours before there was a choice, so nothing changes", () => {
+		expect(normalizeConfig({ banner: { colors: own } }).banner.colourSet).toBe("own");
+		// A button colour alone counts too.
+		expect(
+			normalizeConfig({ banner: { colors: { background: "", text: "", accent: "#1f6f43" } } })
+				.banner.colourSet,
+		).toBe("own");
+		// So do dark mode colours alone, when they were turned on.
+		expect(
+			normalizeConfig({
+				banner: {
+					darkOn: true,
+					darkColors: { background: "#1c1c1c", text: "#f2f2f2", accent: "" },
+				},
+			}).banner.colourSet,
+		).toBe("own");
+		// Dark mode colours that were turned off were never used.
+		expect(
+			normalizeConfig({
+				banner: {
+					darkOn: false,
+					darkColors: { background: "#1c1c1c", text: "#f2f2f2", accent: "" },
+				},
+			}).banner.colourSet,
+		).toBe("theme");
+	});
+
+	it("keeps a saved choice and the saved colours under it, and drops an unknown one", () => {
+		const set = normalizeConfig({ banner: { colourSet: "cream-brown", colors: own } }).banner;
+		expect(set.colourSet).toBe("cream-brown");
+		expect(set.colors).toEqual(own);
+		expect(normalizeConfig({ banner: { colourSet: "theme", colors: own } }).banner.colourSet).toBe(
+			"theme",
+		);
+		expect(normalizeConfig({ banner: { colourSet: "purple" } }).banner.colourSet).toBe("theme");
+		expect(normalizeConfig({ banner: { colourSet: "purple", colors: own } }).banner.colourSet).toBe(
+			"own",
+		);
+	});
+});

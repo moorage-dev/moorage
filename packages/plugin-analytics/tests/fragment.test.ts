@@ -225,6 +225,30 @@ describe("the browser script", () => {
 		expect(size).toBeLessThan(6400);
 	});
 
+	it("stays under the same budget with a colour set or the owner's light and dark colours", () => {
+		for (const banner of [
+			{ policyUrl: "/privacy-policy", colourSet: "cream-brown" },
+			{
+				policyUrl: "/privacy-policy",
+				colourSet: "own",
+				colors: { background: "#fbf7f0", text: "#3b2a1a", accent: "#ffe066" },
+				darkOn: true,
+				darkColors: { background: "#1c1c1c", text: "#f2f2f2", accent: "#1c1c1c" },
+			},
+		]) {
+			const code = clientScriptFor(
+				clientConfig(normalizeConfig({ tools: ALL_TOOLS, banner }), PLUGIN_ID),
+			);
+			const size = gzipSync(code, { level: 9 }).length;
+			console.log(
+				`inline script with ${banner.colourSet} colours: ${size} bytes gzipped (budget 6400)`,
+			);
+			expect(size).toBeLessThan(6400);
+		}
+		// A set is turned into colours here, on the server: the browser script itself is the same.
+		expect(clientCode).not.toContain("cream");
+	});
+
 	it("never names the company behind the plugin, and has no noscript fallback", () => {
 		expect(full).not.toMatch(/moorage/i);
 		expect(full).not.toMatch(/gosi/i);
@@ -240,6 +264,44 @@ describe("the browser script", () => {
 			"https://www.clarity.ms",
 			"https://www.googletagmanager.com",
 		]);
+	});
+});
+
+describe("the colours choice", () => {
+	const own = { background: "#fbf7f0", text: "#3b2a1a", accent: "#1f6f43" };
+	const config = (banner: Record<string, unknown>) =>
+		clientConfig(normalizeConfig({ tools: { ga4: "G-AB12CD34EF" }, banner }), PLUGIN_ID);
+
+	it("sends no colours for the theme's colours, even with older colours still stored", () => {
+		for (const banner of [{}, { colourSet: "theme", colors: own, darkOn: true, darkColors: own }]) {
+			const out = config(banner);
+			expect(out.col).toBeUndefined();
+			expect(out.colDark).toBeUndefined();
+		}
+	});
+
+	it("turns a set into its light and dark colours, ignoring older colours still stored", () => {
+		const out = config({ colourSet: "cream-brown", colors: own });
+		expect(out.col).toEqual({ g: "#fbf7f0", f: "#2b2420", x: "#8a3b12", y: "#ffffff" });
+		expect(out.colDark).toEqual({ g: "#2a2420", f: "#f5ede3", x: "#e0a872", y: "#141414" });
+		// One look whatever the device: the dark set is dark in both.
+		const dark = config({ colourSet: "dark-gold" });
+		expect(dark.col).toEqual(dark.colDark);
+	});
+
+	it("uses the owner's own colours as before", () => {
+		const out = config({ colourSet: "own", colors: own });
+		expect(out.col).toEqual({ g: "#fbf7f0", f: "#3b2a1a", x: "#1f6f43", y: "#ffffff" });
+		expect(out.colDark).toBeUndefined();
+		const both = config({
+			colourSet: "own",
+			colors: own,
+			darkOn: true,
+			darkColors: { background: "#1c1c1c", text: "#f2f2f2", accent: "" },
+		});
+		expect(both.colDark).toEqual({ g: "#1c1c1c", f: "#f2f2f2" });
+		// Saved before the choice existed: the same colours, nothing changes.
+		expect(config({ colors: own }).col).toEqual(out.col);
 	});
 });
 

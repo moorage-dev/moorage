@@ -1,5 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import { cleanColourChoice, OWN_COLOURS, THEME_COLOURS } from "./colour-sets.js";
 import { checkId, TOOL_NAMES, type ToolId } from "./ids.js";
 
 /** Everything the plugin stores about its settings lives under this one key, so a page costs one read. */
@@ -42,7 +43,13 @@ export interface AnalyticsConfig {
 		settingsButton: boolean;
 		/** Which bottom corner that button sits in. */
 		settingsSide: Side;
-		/** Banner background, text and button colour, each "#rrggbb" or "" for the default (or the theme's CSS variables). */
+		/**
+		 * "theme" (the theme's CSS variables, else neutral colours), one of the shared sets in
+		 * colour-sets.ts, or "own" for the colours below. Versions before 0.3.1 do not know it
+		 * and use the colours below when they are set; they are kept whatever is chosen here.
+		 */
+		colourSet: string;
+		/** Banner background, text and button colour, each "#rrggbb" or "" for the default (or the theme's CSS variables). Used only under "own". */
 		colors: { background: string; text: string; accent: string };
 		/** Use `darkColors` when the visitor's device is in dark mode. */
 		darkOn: boolean;
@@ -96,6 +103,7 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 		scheme: "auto",
 		settingsButton: true,
 		settingsSide: "left",
+		colourSet: THEME_COLOURS,
 		colors: { ...NO_COLORS },
 		darkOn: false,
 		darkColors: { ...NO_COLORS },
@@ -268,6 +276,15 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 	const rawBanner = isRecord(source.banner) ? source.banner : {};
 	const defaults = DEFAULT_CONFIG;
 
+	const colors = cleanColors(rawBanner.colors);
+	const darkOn = bool(rawBanner.darkOn, defaults.banner.darkOn);
+	const darkColors = cleanColors(rawBanner.darkColors);
+	// Saved before there was a choice: colours that were in use mean "own", so nothing changes.
+	const usedOwn =
+		colors.background !== "" ||
+		colors.accent !== "" ||
+		(darkOn && (darkColors.background !== "" || darkColors.accent !== ""));
+
 	const tools = { ...defaults.tools };
 	for (const tool of TOOL_IDS) {
 		const checked = checkId(tool, rawTools[tool]);
@@ -296,9 +313,10 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 			scheme: oneOf(rawBanner.scheme, ["auto", "light", "dark"], defaults.banner.scheme),
 			settingsButton: bool(rawBanner.settingsButton, defaults.banner.settingsButton),
 			settingsSide: oneOf(rawBanner.settingsSide, ["left", "right"], defaults.banner.settingsSide),
-			colors: cleanColors(rawBanner.colors),
-			darkOn: bool(rawBanner.darkOn, defaults.banner.darkOn),
-			darkColors: cleanColors(rawBanner.darkColors),
+			colourSet: cleanColourChoice(rawBanner.colourSet, usedOwn ? OWN_COLOURS : THEME_COLOURS),
+			colors,
+			darkOn,
+			darkColors,
 			months: rawBanner.months === 12 || rawBanner.months === "12" ? 12 : 6,
 		},
 		exclude: parseExcludes(source.exclude),

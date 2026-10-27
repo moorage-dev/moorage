@@ -4,6 +4,7 @@ import type { PageFragmentContribution } from "emdash";
 import clientCode from "virtual:client-script";
 
 import type { ClientConfig } from "./client/types.js";
+import { colourSet, OWN_COLOURS } from "./colour-sets.js";
 import {
 	bannerVersion,
 	enabledTools,
@@ -79,9 +80,16 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 	if (asks) out.rec = 1;
 	if (asks && banner.settingsButton) out.btn = 1;
 	if (asks && banner.settingsButton && banner.settingsSide === "right") out.btnRight = 1;
-	const col = clientColors(banner.colors);
+	// A set becomes plain colours here, so the browser script is the same for every choice.
+	const set = colourSet(banner.colourSet);
+	const own = banner.colourSet === OWN_COLOURS;
+	const col = set ? clientColors(set.light) : own ? clientColors(banner.colors) : undefined;
 	if (col) out.col = col;
-	const colDark = banner.darkOn ? clientColors(banner.darkColors, true) : undefined;
+	const colDark = set
+		? clientColors(set.dark, true)
+		: own && banner.darkOn
+			? clientColors(banner.darkColors, true)
+			: undefined;
 	if (colDark) out.colDark = colDark;
 	if (banner.policyUrl) out.policy = banner.policyUrl;
 	return out;

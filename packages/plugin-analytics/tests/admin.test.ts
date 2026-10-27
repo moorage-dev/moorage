@@ -6,6 +6,7 @@ import type { RouteContext } from "emdash";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { toolStatus, warnings } from "../src/admin.js";
+import { COLOUR_OPTIONS } from "../src/colour-sets.js";
 import { CONFIG_KEY, DEFAULT_MESSAGE, DEFAULT_TITLE, normalizeConfig } from "../src/config.js";
 import type { AnalyticsConfig } from "../src/config.js";
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
@@ -288,6 +289,7 @@ describe("saving the banner and advanced settings", () => {
 			scheme: "dark",
 			settingsButton: false,
 			settingsSide: "left",
+			colourSet: "theme",
 			colors: { background: "", text: "", accent: "" },
 			darkOn: false,
 			darkColors: { background: "", text: "", accent: "" },
@@ -299,21 +301,23 @@ describe("saving the banner and advanced settings", () => {
 		const fake = fakeContext();
 		await submit(fake, "save_banner", {
 			settings_side: "right",
+			colour_set: "own",
 			color_background: "#FBF7F0",
 			color_text: "#3b2a1a",
 			color_accent: "#1f6f43",
 		});
 		expect(saved(fake).banner).toMatchObject({
 			settingsSide: "right",
+			colourSet: "own",
 			colors: { background: "#fbf7f0", text: "#3b2a1a", accent: "#1f6f43" },
 		});
 	});
 
 	it("refuses colours that are hard to read, half set, or not colours", async () => {
 		for (const [values, words] of [
-			[{ color_background: "#ffffff", color_text: "#cccccc" }, "hard to read"],
-			[{ color_background: "#ffffff", color_text: "" }, "go together"],
-			[{ color_accent: "green" }, "six digits"],
+			[{ colour_set: "own", color_background: "#ffffff", color_text: "#cccccc" }, "hard to read"],
+			[{ colour_set: "own", color_background: "#ffffff", color_text: "" }, "go together"],
+			[{ colour_set: "own", color_accent: "green" }, "six digits"],
 		] as const) {
 			const fake = fakeContext();
 			const response = await submit(fake, "save_banner", values);
@@ -500,10 +504,10 @@ describe("status wording", () => {
 });
 
 describe("dark mode colours and the preview", () => {
-	it("saves dark mode colours only when they are turned on and readable", async () => {
+	it("saves dark mode colours under My own colours, when they are filled in and readable", async () => {
 		const fake = fakeContext();
-		await submit(fake, "save_banner", {
-			dark_colors: true,
+		await submit(fake, "save_colours", {
+			colour_set: "own",
 			dark_background: "#1c1c1c",
 			dark_text: "#f2f2f2",
 			dark_accent: "#f5a0c5",
@@ -512,13 +516,24 @@ describe("dark mode colours and the preview", () => {
 			darkOn: true,
 			darkColors: { background: "#1c1c1c", text: "#f2f2f2", accent: "#f5a0c5" },
 		});
-		const refused = await submit(fakeContext(), "save_banner", {
-			dark_colors: true,
+		const refused = await submit(fakeContext(), "save_colours", {
+			colour_set: "own",
 			dark_background: "#1c1c1c",
 			dark_text: "#333333",
 		});
 		expect(refused.toast?.type).toBe("error");
 		expect(JSON.stringify(refused)).toContain("Dark mode: The text is hard to read");
+		// Emptied: the same colours in dark mode; the old dark ones stay stored for older versions.
+		await submit(fake, "save_colours", {
+			colour_set: "own",
+			dark_background: "",
+			dark_text: "",
+			dark_accent: "",
+		});
+		expect(saved(fake).banner).toMatchObject({
+			darkOn: false,
+			darkColors: { background: "#1c1c1c", text: "#f2f2f2", accent: "#f5a0c5" },
+		});
 	});
 
 	it("links to a preview of the banner on the site's home page, in light and dark", async () => {
@@ -823,10 +838,10 @@ describe("the page's layout", () => {
 		const coloursForm = colours.find((block) => block.type === "form");
 		const fields = coloursForm?.type === "form" ? coloursForm.fields.map((f) => f.action_id) : [];
 		expect(fields).toEqual([
+			"colour_set",
 			"color_background",
 			"color_text",
 			"color_accent",
-			"dark_colors",
 			"dark_background",
 			"dark_text",
 			"dark_accent",
@@ -847,6 +862,7 @@ describe("the page's layout", () => {
 	it("saves the colours from their own form and keeps the section open after", async () => {
 		const fake = fakeContext();
 		const response = await submit(fake, "save_colours", {
+			colour_set: "own",
 			color_background: "#FBF7F0",
 			color_text: "#3b2a1a",
 			color_accent: "#1f6f43",
@@ -862,7 +878,10 @@ describe("the page's layout", () => {
 		const accordion = panel(response, "Cookie banner").find((block) => block.type === "accordion");
 		expect(accordion?.type === "accordion" && accordion.default_open).toBe(true);
 
-		const refused = await submit(fakeContext(), "save_colours", { color_accent: "green" });
+		const refused = await submit(fakeContext(), "save_colours", {
+			colour_set: "own",
+			color_accent: "green",
+		});
 		expect(refused.toast?.type).toBe("error");
 		const open = panel(refused, "Cookie banner").find((block) => block.type === "accordion");
 		expect(open?.type === "accordion" && open.default_open).toBe(true);
@@ -873,7 +892,7 @@ describe("the page's layout", () => {
 		const [tools, banner, colours, advanced] = formIds(await load(fake)).filter((id) =>
 			/^(tools|banner|colours|advanced)-/.test(id),
 		);
-		const afterColours = formIds(await submit(fake, "save_colours", { color_accent: "#1f6f43" }));
+		const afterColours = formIds(await submit(fake, "save_colours", { colour_set: "cream-brown" }));
 		expect(afterColours).toContain(tools);
 		expect(afterColours).toContain(banner);
 		expect(afterColours).toContain(advanced);
@@ -884,5 +903,86 @@ describe("the page's layout", () => {
 		const afterTools = formIds(await submit(fake, "save_tools", { ga4: "G-AB12CD34EF" }));
 		expect(afterTools).not.toContain(tools);
 		expect(afterTools).toContain(advanced);
+	});
+});
+
+describe("the colours choice", () => {
+	function coloursForm(response: BlockResponse) {
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		const blocks =
+			tabs?.type === "tab"
+				? (tabs.panels.find((p) => p.label === "Cookie banner")?.blocks ?? [])
+				: [];
+		const accordion = blocks.find((block) => block.type === "accordion");
+		const form = (accordion?.type === "accordion" ? accordion.blocks : []).find(
+			(block) => block.type === "form",
+		);
+		return form?.type === "form" ? form : undefined;
+	}
+
+	it("offers the theme's colours, the shared sets and My own colours, which alone shows the colour boxes", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		const form = coloursForm(response)!;
+		const choice = form.fields[0]!;
+		expect(choice).toMatchObject({
+			type: "radio",
+			action_id: "colour_set",
+			label: "Colours",
+			initial_value: "theme",
+		});
+		expect(choice.type === "radio" && choice.options).toEqual(COLOUR_OPTIONS);
+		for (const field of form.fields.slice(1)) {
+			expect(field.condition).toEqual({ field: "colour_set", eq: "own" });
+		}
+		// No separate dark mode switch: each set has its own dark colours.
+		expect(form.fields.some((field) => field.type === "toggle")).toBe(false);
+	});
+
+	it("shows the colours saved before the choice existed under My own colours", async () => {
+		const fake = fakeContext({
+			[CONFIG_KEY]: {
+				banner: { colors: { background: "#fbf7f0", text: "#3b2a1a", accent: "#1f6f43" } },
+			},
+		});
+		const form = coloursForm(await load(fake))!;
+		expect(form.fields[0]).toMatchObject({ initial_value: "own" });
+		expect(form.fields[1]).toMatchObject({
+			action_id: "color_background",
+			initial_value: "#fbf7f0",
+		});
+	});
+
+	it("saves a set and keeps the stored colours for going back, even when they would be refused", async () => {
+		const stored = { background: "#fbf7f0", text: "#3b2a1a", accent: "#1f6f43" };
+		const fake = fakeContext({ [CONFIG_KEY]: { banner: { colourSet: "own", colors: stored } } });
+		// The hidden boxes still send what is in them; they are not checked or saved.
+		const response = await submit(fake, "save_colours", {
+			colour_set: "grey-green",
+			color_background: "#ffffff",
+			color_text: "#eeeeee",
+			color_accent: "nope",
+		});
+		expect(response.toast?.type).toBe("success");
+		expect(saved(fake).banner).toMatchObject({ colourSet: "grey-green", colors: stored });
+		await submit(fake, "save_colours", { colour_set: "theme" });
+		expect(saved(fake).banner).toMatchObject({ colourSet: "theme", colors: stored });
+		// And back to My own colours: the same colours as before.
+		await submit(fake, "save_colours", { colour_set: "own" });
+		expect(saved(fake).banner).toMatchObject({ colourSet: "own", colors: stored });
+	});
+
+	it("ignores a choice that is not on the list", async () => {
+		const fake = fakeContext();
+		await submit(fake, "save_colours", { colour_set: "purple" });
+		expect(saved(fake).banner.colourSet).toBe("theme");
+	});
+
+	it("cannot be changed by an editor", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const response = await submit(fake, "save_colours", { colour_set: "dark-gold" }, EDITOR);
+		expect(response.toast?.type).toBe("error");
+		expect(normalizeConfig(fake.kv.get(CONFIG_KEY)).banner.colourSet).toBe("theme");
+		expect(JSON.stringify(await load(fake, EDITOR))).not.toContain("colour_set");
 	});
 });

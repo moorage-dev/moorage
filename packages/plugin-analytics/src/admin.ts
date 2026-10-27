@@ -2,6 +2,7 @@
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 
+import { cleanColourChoice, COLOUR_OPTIONS, OWN_COLOURS } from "./colour-sets.js";
 import {
 	cleanColors,
 	cleanPolicyUrl,
@@ -495,14 +496,14 @@ type FormName = "tools" | "banner" | "colours" | "advanced";
  * part, so saving one form never clears what is typed, and not yet saved, in another.
  */
 function formPart(name: FormName, config: AnalyticsConfig): unknown {
-	const { colors, darkColors, darkOn, ...banner } = config.banner;
+	const { colourSet, colors, darkColors, darkOn, ...banner } = config.banner;
 	switch (name) {
 		case "tools":
 			return [config.tools, config.hubspotEu, config.cloudflareWait, config.enquiries];
 		case "banner":
 			return banner;
 		case "colours":
-			return [colors, darkColors, darkOn];
+			return [colourSet, colors, darkColors, darkOn];
 		case "advanced":
 			return [config.exclude, config.gtmLoading];
 	}
@@ -684,10 +685,14 @@ function bannerBlocks(state: PageState): Block[] {
 	];
 }
 
-/** The colours, folded away: most sites keep the standard ones. A form of their own, inside the fold. */
+/** The colours, folded away: most sites keep the theme's. A form of their own, inside the fold. */
 function coloursBlock(state: PageState): Block {
 	const { config, draft } = state;
 	const { banner } = config;
+	const own = { field: "colour_set", eq: OWN_COLOURS };
+	// Dark mode boxes are empty while dark mode uses the same colours.
+	const dark = (key: "background" | "text" | "accent") =>
+		banner.darkOn ? banner.darkColors[key] : "";
 	return {
 		type: "accordion",
 		label: "Colours",
@@ -695,18 +700,26 @@ function coloursBlock(state: PageState): Block {
 		blocks: [
 			{
 				type: "context",
-				text: "Leave these empty for the standard light and dark colours. Accept all and Reject all always share one colour, so neither is pushed.",
+				text: "Your theme's colours suit most sites. Each ready-made set has a matching dark version for visitors whose device is in dark mode, and Popups offers the same sets, so the two can match. Accept all and Reject all always share one colour, so neither is pushed.",
 			},
 			{
 				type: "form",
 				block_id: formId("colours", config),
 				fields: [
 					{
+						type: "radio",
+						action_id: "colour_set",
+						label: "Colours",
+						options: [...COLOUR_OPTIONS],
+						initial_value: banner.colourSet,
+					},
+					{
 						type: "text_input",
 						action_id: "color_background",
-						label: "Banner background colour, for example #fbf7f0 (empty: the standard colours)",
+						label: "Banner background colour, for example #fbf7f0",
 						placeholder: "#ffffff",
 						initial_value: text(draft, "color_background", banner.colors.background),
+						condition: own,
 					},
 					{
 						type: "text_input",
@@ -714,6 +727,7 @@ function coloursBlock(state: PageState): Block {
 						label: "Banner text colour, set together with the background",
 						placeholder: "#141414",
 						initial_value: text(draft, "color_text", banner.colors.text),
+						condition: own,
 					},
 					{
 						type: "text_input",
@@ -721,36 +735,32 @@ function coloursBlock(state: PageState): Block {
 						label: "Button colour, used for both Accept all and Reject all",
 						placeholder: "#141414",
 						initial_value: text(draft, "color_accent", banner.colors.accent),
-					},
-					{
-						type: "toggle",
-						action_id: "dark_colors",
-						label: "Different colours when the visitor's device is in dark mode",
-						initial_value: banner.darkOn,
+						condition: own,
 					},
 					{
 						type: "text_input",
 						action_id: "dark_background",
-						label: "Dark mode: banner background colour, for example #1c1c1c",
+						label:
+							"Dark mode: banner background colour, for example #1c1c1c (empty: the colours above)",
 						placeholder: "#1c1c1c",
-						initial_value: text(draft, "dark_background", banner.darkColors.background),
-						condition: { field: "dark_colors", eq: true },
+						initial_value: text(draft, "dark_background", dark("background")),
+						condition: own,
 					},
 					{
 						type: "text_input",
 						action_id: "dark_text",
 						label: "Dark mode: banner text colour, set together with the background",
 						placeholder: "#f2f2f2",
-						initial_value: text(draft, "dark_text", banner.darkColors.text),
-						condition: { field: "dark_colors", eq: true },
+						initial_value: text(draft, "dark_text", dark("text")),
+						condition: own,
 					},
 					{
 						type: "text_input",
 						action_id: "dark_accent",
 						label: "Dark mode: button colour",
 						placeholder: "#f2f2f2",
-						initial_value: text(draft, "dark_accent", banner.darkColors.accent),
-						condition: { field: "dark_colors", eq: true },
+						initial_value: text(draft, "dark_accent", dark("accent")),
+						condition: own,
 					},
 				],
 				submit: { label: "Save colours", action_id: "save_colours" },
@@ -1020,45 +1030,48 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		}
 		if (has(values, "title")) banner.title = cleanText(values.title, 80, DEFAULT_TITLE);
 		if (has(values, "message")) banner.message = cleanText(values.message, 400, DEFAULT_MESSAGE);
-		if (
-			has(values, "color_background") ||
-			has(values, "color_text") ||
-			has(values, "color_accent")
-		) {
-			const typed = {
-				background:
-					typeof values.color_background === "string"
-						? values.color_background.trim()
-						: banner.colors.background,
-				text: typeof values.color_text === "string" ? values.color_text.trim() : banner.colors.text,
-				accent:
-					typeof values.color_accent === "string"
-						? values.color_accent.trim()
-						: banner.colors.accent,
-			};
-			const problems = colorProblems(typed);
-			if (problems.length) return refuse(problems, TAB.banner);
-			banner.colors = cleanColors(typed);
+		if (has(values, "colour_set")) {
+			banner.colourSet = cleanColourChoice(values.colour_set, banner.colourSet);
 		}
-		banner.darkOn = flag("dark_colors", banner.darkOn);
-		if (has(values, "dark_background") || has(values, "dark_text") || has(values, "dark_accent")) {
-			const typed = {
-				background:
-					typeof values.dark_background === "string"
-						? values.dark_background.trim()
-						: banner.darkColors.background,
-				text:
-					typeof values.dark_text === "string" ? values.dark_text.trim() : banner.darkColors.text,
-				accent:
-					typeof values.dark_accent === "string"
-						? values.dark_accent.trim()
-						: banner.darkColors.accent,
-			};
-			const problems = banner.darkOn
-				? colorProblems(typed).map((problem) => `Dark mode: ${problem}`)
-				: [];
-			if (problems.length) return refuse(problems, TAB.banner);
-			banner.darkColors = cleanColors(typed);
+		// The colour boxes count only under "My own colours". Under any other choice they are
+		// hidden but still sent; what is stored stays as it is, for older versions and for coming back.
+		if (banner.colourSet === OWN_COLOURS) {
+			const typed = (key: string, saved: string) =>
+				typeof values[key] === "string" ? (values[key] as string).trim() : saved;
+			if (
+				has(values, "color_background") ||
+				has(values, "color_text") ||
+				has(values, "color_accent")
+			) {
+				const light = {
+					background: typed("color_background", banner.colors.background),
+					text: typed("color_text", banner.colors.text),
+					accent: typed("color_accent", banner.colors.accent),
+				};
+				const problems = colorProblems(light);
+				if (problems.length) return refuse(problems, TAB.banner);
+				banner.colors = cleanColors(light);
+			}
+			if (
+				has(values, "dark_background") ||
+				has(values, "dark_text") ||
+				has(values, "dark_accent")
+			) {
+				const shown = (key: "background" | "text" | "accent") =>
+					banner.darkOn ? banner.darkColors[key] : "";
+				const dark = {
+					background: typed("dark_background", shown("background")),
+					text: typed("dark_text", shown("text")),
+					accent: typed("dark_accent", shown("accent")),
+				};
+				// All empty: dark mode uses the colours above, and the old dark ones stay stored.
+				banner.darkOn = Object.values(dark).some((value) => value !== "");
+				if (banner.darkOn) {
+					const problems = colorProblems(dark).map((problem) => `Dark mode: ${problem}`);
+					if (problems.length) return refuse(problems, TAB.banner);
+					banner.darkColors = cleanColors(dark);
+				}
+			}
 		}
 		const raw = {
 			...banner,
