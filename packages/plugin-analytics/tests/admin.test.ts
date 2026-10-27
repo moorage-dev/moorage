@@ -60,8 +60,8 @@ describe("the admin page", () => {
 		const tabs = response.blocks.find((block) => block.type === "tab");
 		expect(tabs?.type === "tab" && tabs.panels.map((panel) => panel.label)).toEqual([
 			"Status",
-			"Tracking tools",
-			"Cookie banner",
+			"Tools",
+			"Banner",
 			"Advanced",
 		]);
 		expect(tabs?.type === "tab" && tabs.default_tab).toBe(0);
@@ -474,7 +474,7 @@ describe("status wording", () => {
 			{
 				title: 'The "Cookies" button is off',
 				description:
-					'Visitors must be able to change their answer as easily as they gave it. Add a menu item called "Cookie settings" to your footer menu, with the link /#cookie-settings, or turn the button back on under Cookie banner.',
+					'Visitors must be able to change their answer as easily as they gave it. Add a menu item called "Cookie settings" to your footer menu, with the link /#cookie-settings, or switch the button back on in the Banner tab.',
 			},
 		]);
 		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
@@ -545,13 +545,11 @@ describe("dark mode colours and the preview", () => {
 		expect(text).toContain("https://acme.test/?cookie_preview=dark");
 	});
 
-	it("points to the Tracking tools tab when there is no tool to preview", async () => {
+	it("points to the Tools tab when there is no tool to preview", async () => {
 		const response = await load(fakeContext());
 		expectValid(response);
 		const text = JSON.stringify(response);
-		expect(text).toContain(
-			"Add a tool on the Tracking tools tab to preview the banner on your site.",
-		);
+		expect(text).toContain("Add a tool on the Tools tab to preview the banner on your site.");
 		expect(text).not.toContain("cookie_preview=");
 	});
 });
@@ -827,10 +825,10 @@ describe("the page's layout", () => {
 		}
 	});
 
-	it("folds the colours on the Cookie banner tab into their own Colours section", async () => {
+	it("folds the colours on the Banner tab into their own Colours section", async () => {
 		const response = await load(fakeContext());
 		expectValid(response);
-		const blocks = panel(response, "Cookie banner");
+		const blocks = panel(response, "Banner");
 		const accordion = blocks.find((block) => block.type === "accordion");
 		expect(accordion?.type === "accordion" && accordion.label).toBe("Colours");
 		expect(accordion?.type === "accordion" && accordion.default_open).toBeFalsy();
@@ -875,7 +873,7 @@ describe("the page's layout", () => {
 		});
 		const tabs = response.blocks.find((block) => block.type === "tab");
 		expect(tabs?.type === "tab" && tabs.default_tab).toBe(2);
-		const accordion = panel(response, "Cookie banner").find((block) => block.type === "accordion");
+		const accordion = panel(response, "Banner").find((block) => block.type === "accordion");
 		expect(accordion?.type === "accordion" && accordion.default_open).toBe(true);
 
 		const refused = await submit(fakeContext(), "save_colours", {
@@ -883,7 +881,7 @@ describe("the page's layout", () => {
 			color_accent: "green",
 		});
 		expect(refused.toast?.type).toBe("error");
-		const open = panel(refused, "Cookie banner").find((block) => block.type === "accordion");
+		const open = panel(refused, "Banner").find((block) => block.type === "accordion");
 		expect(open?.type === "accordion" && open.default_open).toBe(true);
 	});
 
@@ -904,15 +902,54 @@ describe("the page's layout", () => {
 		expect(afterTools).not.toContain(tools);
 		expect(afterTools).toContain(advanced);
 	});
+
+	it("fits a phone: short tab names, long choices as a list that wraps, short dropdowns", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		const fields = flatten(response.blocks)
+			.flatMap((block) => (block.type === "accordion" ? [block, ...block.blocks] : [block]))
+			.flatMap((block) => (block.type === "form" ? block.fields : []));
+		const field = (id: string) => fields.find((f) => f.action_id === id);
+		// A dropdown is as wide as its chosen words and never wraps, so these are lists now.
+		for (const id of ["position", "settings_side", "gtm_loading"]) {
+			expect(field(id)?.type, id).toBe("radio");
+		}
+		expect(field("position")).toMatchObject({
+			options: [
+				{ value: "bar", label: "Across the bottom of the screen (recommended)" },
+				{ value: "left", label: "Box in the bottom left corner" },
+				{ value: "right", label: "Box in the bottom right corner" },
+			],
+		});
+		expect(field("settings_side")).toMatchObject({
+			options: [
+				{ value: "left", label: "Bottom left (chat buttons usually sit on the right)" },
+				{ value: "right", label: "Bottom right" },
+			],
+		});
+		expect(field("gtm_loading")).toMatchObject({
+			options: [
+				{ value: "choice", label: "After the visitor has chosen (recommended)" },
+				{
+					value: "immediate",
+					label: "Immediately (only if every tag in your container waits for consent)",
+				},
+			],
+		});
+		// The dropdowns left fit 390 px with room to spare: "Follow the visitor's device (light or dark)".
+		for (const f of fields) {
+			if (f.type !== "select") continue;
+			for (const option of f.options)
+				expect(option.label.length, option.label).toBeLessThanOrEqual(43);
+		}
+	});
 });
 
 describe("the colours choice", () => {
 	function coloursForm(response: BlockResponse) {
 		const tabs = response.blocks.find((block) => block.type === "tab");
 		const blocks =
-			tabs?.type === "tab"
-				? (tabs.panels.find((p) => p.label === "Cookie banner")?.blocks ?? [])
-				: [];
+			tabs?.type === "tab" ? (tabs.panels.find((p) => p.label === "Banner")?.blocks ?? []) : [];
 		const accordion = blocks.find((block) => block.type === "accordion");
 		const form = (accordion?.type === "accordion" ? accordion.blocks : []).find(
 			(block) => block.type === "form",

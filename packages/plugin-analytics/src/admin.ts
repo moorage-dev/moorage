@@ -28,7 +28,7 @@ import type { ConsentSummary } from "./record.js";
 import type { SiteCheck } from "./site-check.js";
 
 /**
- * The one admin page, as Block Kit: Status, Tracking tools, Cookie banner,
+ * The one admin page, as Block Kit: Status, Tools, Banner,
  * Advanced. Everything here is a pure function of the settings, so it is
  * tested without a running site.
  */
@@ -132,28 +132,28 @@ function allWarnings(config: AnalyticsConfig): Array<Warning & { area: "tracking
 		list.push({
 			title: "Your tools load without asking anyone",
 			description:
-				'You chose "No one: another consent tool asks instead". Make sure that tool really holds these tools back until visitors agree, or choose who sees the banner under Cookie banner.',
+				'You chose "No one: another consent tool asks instead". Make sure that tool really holds these tools back until visitors agree, or choose who sees the banner on the Banner tab.',
 		});
 	}
 	if (asks && banner.audience !== "none" && banner.policyUrl === "") {
 		list.push({
 			title: "The banner has no link to your privacy policy",
 			description:
-				"Visitors must be able to read what they are agreeing to. Add your privacy policy page under Cookie banner.",
+				"Visitors must be able to read what they are agreeing to. Add your privacy policy page on the Banner tab.",
 		});
 	}
 	const watching = (["clarity", "meta", "ads"] as const).filter((tool) => tools[tool]);
 	if (watching.length && (banner.audience === "europe" || banner.audience === "europe-india")) {
 		list.push({
 			title: "Consider asking every visitor",
-			description: `${watching.map((tool) => TOOL_NAMES[tool]).join(", ")} ${watching.length > 1 ? "record visits or advertise" : toolDoes(watching[0]!)}. In the US and elsewhere that is safer with consent first. Choose "Everyone, everywhere" under Cookie banner.`,
+			description: `${watching.map((tool) => TOOL_NAMES[tool]).join(", ")} ${watching.length > 1 ? "record visits or advertise" : toolDoes(watching[0]!)}. In the US and elsewhere that is safer with consent first. Choose "Everyone, everywhere" on the Banner tab.`,
 		});
 	}
 	if (asks && banner.audience !== "none" && !banner.settingsButton) {
 		list.push({
 			title: 'The "Cookies" button is off',
 			description:
-				'Visitors must be able to change their answer as easily as they gave it. Add a menu item called "Cookie settings" to your footer menu, with the link /#cookie-settings, or turn the button back on under Cookie banner.',
+				'Visitors must be able to change their answer as easily as they gave it. Add a menu item called "Cookie settings" to your footer menu, with the link /#cookie-settings, or switch the button back on in the Banner tab.',
 		});
 	}
 	if (tools.gtm && config.gtmLoading === "immediate" && banner.audience !== "none") {
@@ -161,7 +161,7 @@ function allWarnings(config: AnalyticsConfig): Array<Warning & { area: "tracking
 			area: "tracking",
 			title: "Google Tag Manager loads before visitors answer",
 			description:
-				"Every tag inside your container must wait for consent by itself. If you are not sure, set Tag Manager to load after the visitor has chosen, under Advanced.",
+				'Every tag inside your container must wait for consent by itself. If you are not sure, set Tag Manager to load "After the visitor has chosen" on the Advanced tab.',
 		});
 	}
 	if (tools.ga4 && tools.gtm) {
@@ -251,7 +251,7 @@ function trackingBlocks(state: PageState): Block[] {
 			type: "banner",
 			title: "Nothing is being tracked yet",
 			description: state.admin
-				? "Open Tracking tools and paste the ID of each tool you use."
+				? "Open Tools and paste the ID of each tool you use."
 				: "An administrator has not added any tracking tools.",
 		});
 		return blocks;
@@ -619,7 +619,7 @@ function bannerBlocks(state: PageState): Block[] {
 					initial_value: text(draft, "message", banner.message),
 				},
 				{
-					type: "select",
+					type: "radio",
 					action_id: "position",
 					label: "Where it appears",
 					options: [
@@ -647,7 +647,7 @@ function bannerBlocks(state: PageState): Block[] {
 					initial_value: banner.settingsButton,
 				},
 				{
-					type: "select",
+					type: "radio",
 					action_id: "settings_side",
 					label: 'Corner for the "Cookies" button',
 					options: [
@@ -777,7 +777,7 @@ function previewBlocks(state: PageState): Block[] {
 			{ type: "header", text: "Preview" },
 			{
 				type: "context",
-				text: "Add a tool on the Tracking tools tab to preview the banner on your site.",
+				text: "Add a tool on the Tools tab to preview the banner on your site.",
 			},
 		];
 	}
@@ -820,7 +820,7 @@ function advancedBlocks(state: PageState): Block[] {
 					initial_value: text(draft, "exclude", config.exclude.join("\n")),
 				},
 				{
-					type: "select",
+					type: "radio",
 					action_id: "gtm_loading",
 					label: "When Google Tag Manager loads",
 					options: [
@@ -851,8 +851,8 @@ export function renderPage(state: PageState, tab: number = TAB.status): BlockRes
 			default_tab: tab,
 			panels: [
 				{ label: "Status", blocks: statusBlocks(state) },
-				{ label: "Tracking tools", blocks: toolsBlocks(tab === TAB.tools ? state : clean(state)) },
-				{ label: "Cookie banner", blocks: bannerBlocks(tab === TAB.banner ? state : clean(state)) },
+				{ label: "Tools", blocks: toolsBlocks(tab === TAB.tools ? state : clean(state)) },
+				{ label: "Banner", blocks: bannerBlocks(tab === TAB.banner ? state : clean(state)) },
 				{ label: "Advanced", blocks: advancedBlocks(tab === TAB.advanced ? state : clean(state)) },
 			],
 		});

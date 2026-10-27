@@ -846,7 +846,7 @@ test("Popups", async ({ browser }) => {
 	}
 });
 
-// ---------- Analytics & Cookie Consent: Status, Tracking tools and Cookie banner ----------
+// ---------- Analytics & Cookie Consent: Status, Tools and Banner ----------
 
 const ANALYTICS = `${API}/plugins/analytics-consent/admin`;
 
@@ -932,12 +932,12 @@ test("Analytics & Cookie Consent", async ({ browser }) => {
 			await fullShot(page, name("status"), width, min);
 
 			await page.setViewportSize({ width, height: min });
-			await page.getByRole("tab", { name: "Tracking tools" }).click();
+			await page.getByRole("tab", { name: "Tools" }).click();
 			await expect(page.getByRole("button", { name: "Save tools" })).toBeVisible();
 			await fullShot(page, name("tracking-tools"), width, min);
 
 			await page.setViewportSize({ width, height: min });
-			await page.getByRole("tab", { name: "Cookie banner" }).click();
+			await page.getByRole("tab", { name: "Banner" }).click();
 			await page.getByRole("button", { name: "Colours" }).first().click();
 			await expect(
 				page.getByRole("radio", { name: "Warm cream with brown buttons" }),
