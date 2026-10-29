@@ -1,0 +1,79 @@
+name: Bug
+description: Something in one of the plugins does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. A security problem goes by email to security@moorage.dev, not here.
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Which plugin?
+      options:
+        - SEO & Schema Markup
+        - Analytics & Cookies
+        - Lead Delivery
+        - Site Health & Broken Links
+        - Popups
+        - Content Approval
+        - Backup & Restore
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: Shown in the EmDash admin under Plugins, or in your site's package.json.
+      placeholder: "0.1.11"
+    validations:
+      required: true
+  - type: input
+    id: emdash-version
+    attributes:
+      label: EmDash version
+      description: The `emdash` version in your site's package.json.
+      placeholder: "1.3.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Sandboxed or in-process?
+      description: Installed from the EmDash plugin registry, or listed under `sandboxed` in astro.config.mjs, is sandboxed. Listed under `plugins` is in-process.
+      options:
+        - Sandboxed
+        - In-process
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Copy any error message exactly.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Optional. Drag pictures here. Hide anything private first.
+    validations:
+      required: false

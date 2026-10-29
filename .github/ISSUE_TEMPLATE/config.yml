@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/moorage-dev/moorage/blob/main/SECURITY.md
+    about: Please report it by email, not in a public issue.
+  - name: A problem in EmDash itself
+    url: https://github.com/emdash-cms/emdash/issues
+    about: For EmDash core and the official @emdash-cms plugins.

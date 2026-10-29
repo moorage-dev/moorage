@@ -1,0 +1,32 @@
+name: Idea
+description: Suggest a change to a plugin, or a new one.
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Which plugin?
+      options:
+        - SEO & Schema Markup
+        - Analytics & Cookies
+        - Lead Delivery
+        - Site Health & Broken Links
+        - Popups
+        - Content Approval
+        - Backup & Restore
+        - A new plugin
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you need to do that you can't today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How would you like it to work?
+      description: Optional. A sketch, or how another tool does it, helps.
+    validations:
+      required: false

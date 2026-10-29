@@ -1,0 +1,26 @@
+name: Question
+description: Ask how to do something with one of the plugins.
+labels: ["question"]
+body:
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Which plugin?
+      options:
+        - SEO & Schema Markup
+        - Analytics & Cookies
+        - Lead Delivery
+        - Site Health & Broken Links
+        - Popups
+        - Content Approval
+        - Backup & Restore
+        - More than one, or none yet
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What are you trying to do, and what have you tried?
+    validations:
+      required: true
