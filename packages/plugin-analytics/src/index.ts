@@ -116,7 +116,9 @@ export function createPlugin() {
 		capabilities: ["hooks.page-fragments:register"],
 		storage: STORAGE,
 		admin: {
-			pages: [{ path: "/settings", label: "Analytics", icon: "chart-bar", group: "Marketing" }],
+			pages: [
+				{ path: "/settings", label: "Analytics & Cookies", icon: "chart-bar", group: "Marketing" },
+			],
 		},
 		hooks: {
 			// May run three times for one page. The settings are kept in memory between
