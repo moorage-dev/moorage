@@ -54,6 +54,12 @@ function expectValid(response: BlockResponse): void {
 }
 
 describe("the admin page", () => {
+	it("is listed in the sidebar under Marketing by the plugin's full name", () => {
+		expect(createPlugin().admin?.pages).toEqual([
+			{ path: "/settings", label: "Analytics & Cookies", icon: "chart-bar", group: "Marketing" },
+		]);
+	});
+
 	it("shows an admin four tabs, starting on Status", async () => {
 		const response = await load(fakeContext());
 		expectValid(response);

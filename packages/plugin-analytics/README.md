@@ -98,7 +98,7 @@ EmDash does not add a nonce or hash to scripts that plugins put on the page. If 
 
 ## The Analytics page
 
-One page, **Analytics & Cookies** (labelled Analytics under Marketing in the admin sidebar), with four tabs.
+One page, **Analytics & Cookies** (under Marketing in the admin sidebar), with four tabs.
 
 - **Status**: three short sections, each with its warnings first.
   - **Tracking**: a tick and one line per tool saying what it waits for ("Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies."), with a link to each tool's own numbers (Microsoft Clarity straight to your project; the others to their home page). With a Google tool, a link to Google's Tag Assistant and a tip to check Realtime in Google Analytics.

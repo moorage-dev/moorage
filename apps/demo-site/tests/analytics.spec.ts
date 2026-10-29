@@ -980,8 +980,10 @@ test.describe("the consent record and the admin page", () => {
 		});
 		await expect(page.getByRole("tab", { name: "Status" })).toBeVisible({ timeout: 60_000 });
 		await expect(page.getByText("Nothing is being tracked yet")).toBeVisible();
-		// The sidebar files the page under Marketing, by its plain name.
-		await expect(page.getByRole("link", { name: "Analytics", exact: true })).toBeVisible();
+		// The sidebar files the page under Marketing, by the plugin's full name.
+		await expect(
+			page.getByRole("link", { name: "Analytics & Cookies", exact: true }),
+		).toBeVisible();
 
 		await page.getByRole("tab", { name: "Tools" }).click();
 		const ga = page.getByRole("textbox", { name: /Google Analytics: Measurement ID/ });
