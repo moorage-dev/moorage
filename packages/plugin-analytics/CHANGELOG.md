@@ -1,5 +1,11 @@
 # @moorage/plugin-analytics
 
+## 0.3.2
+
+### Patch Changes
+
+- 48be346: The sidebar entry under Marketing now reads "Analytics & Cookies", the plugin's full name, instead of "Analytics".
+
 ## 0.3.1
 
 ### Patch Changes
