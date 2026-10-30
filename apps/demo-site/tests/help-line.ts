@@ -35,6 +35,8 @@ export async function setHidden(page: Page, hidden: boolean, submit = "Save"): P
 	const toggle = page.getByRole("switch", { name: HIDE_SWITCH });
 	await expect(toggle).toBeVisible();
 	if ((await toggle.isChecked()) !== hidden) await toggle.click();
-	const form = page.locator("form").filter({ has: toggle });
+	// EmDash 1.3 renders a Block Kit form as <form>; 1.4.0 (emdash-cms/emdash#4183) as a
+	// <div role="group">. The innermost one holding the switch is the form to save.
+	const form = page.locator('form, [role="group"]').filter({ has: toggle }).last();
 	await form.getByRole("button", { name: submit, exact: true }).click();
 }
