@@ -6,6 +6,16 @@ import { approverRole, type Config } from "./config.js";
 import type { Meter } from "./meter.js";
 import { approverPageFor, personName, type ApprovalRequest, when } from "./requests.js";
 
+/**
+ * "Email is not configured" from the sandbox, on a site whose email service works, is the EmDash
+ * 1.3.x bug on Cloudflare: plugins installed from the registry could not use it at all (fixed in
+ * 1.4.0, emdash-cms/emdash#4281). The log then says what fixes it.
+ */
+export function emailFailureHint(errors: string[]): string | undefined {
+	if (!errors.some((message) => /^email is not configured/i.test(message))) return undefined;
+	return "On Cloudflare, plugins installed from the EmDash registry can send email from EmDash 1.4.0 on: update EmDash.";
+}
+
 /** A request email is sent at most once a day per page, however often Publish is pressed. */
 export const EMAIL_EVERY_MS = 24 * 60 * 60 * 1000;
 export const REMIND_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
@@ -330,11 +340,13 @@ export async function deliver(m: Meter, input: MailJob[]): Promise<void> {
 	}
 
 	const failed = new Map<MailJob, string[]>();
+	const errors: string[] = [];
 	for (const { job, to } of batch) {
 		try {
 			await email.send({ to, ...job.message });
-		} catch {
+		} catch (error) {
 			failed.set(job, [...(failed.get(job) ?? []), to]);
+			errors.push(error instanceof Error ? error.message : String(error));
 		}
 	}
 	if (failed.size === 0) return;
@@ -360,6 +372,7 @@ export async function deliver(m: Meter, input: MailJob[]): Promise<void> {
 				sent,
 				retrying,
 				givenUp: lost + notQueued,
+				...(emailFailureHint(errors) ? { fix: emailFailureHint(errors) } : {}),
 			}),
 		).catch(() => {});
 	}

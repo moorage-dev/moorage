@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 
+import { publishFailedMessage } from "../src/actions.js";
+import { emailFailureHint } from "../src/notify.js";
 import {
 	cleanReason,
 	describeChanges,
@@ -132,5 +134,27 @@ describe("dates in the text copy and the review", () => {
 		const now = textCopy(fields, { title: "Bake sale", starts: "2026-10-19T14:05:00.000Z" }, null);
 		expect(describeChanges(saved, now, "past")).toEqual([]);
 		expect(readableDates(saved[1]!.text)).toBe("19 Oct 2026, 14:05 UTC");
+	});
+});
+
+describe("why a publish or an email did not go through", () => {
+	it("asks to wait when EmDash was still finishing the page's last publish", () => {
+		// EmDash 1.4.0 refuses a second action on an entry while its after-publish hooks run.
+		const busy = Object.assign(new Error("busy"), { name: "CONTENT_ACTION_REENTRANT" });
+		expect(publishFailedMessage(busy)).toBe(
+			"Approved. The page was still finishing its last publish: press Publish on the page in a moment.",
+		);
+	});
+
+	it("keeps the general message for any other failure", () => {
+		expect(publishFailedMessage(new Error("CONFLICT"))).toBe(
+			"Approved, but it could not be published just now. Press Publish on the page.",
+		);
+	});
+
+	it("names the EmDash update when the sandbox could not use the site's email service", () => {
+		expect(emailFailureHint(["Email is not configured"])).toContain("EmDash 1.4.0");
+		expect(emailFailureHint(["Rate limit exceeded"])).toBeUndefined();
+		expect(emailFailureHint([])).toBeUndefined();
 	});
 });

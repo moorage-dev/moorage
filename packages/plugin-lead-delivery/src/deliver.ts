@@ -314,6 +314,24 @@ export async function scheduleDelivery(
 	});
 }
 
+/**
+ * What a failed email send means. "Email is not configured" from the sandbox, when the site has an
+ * email service (ctx.email is there), is the EmDash 1.3.x bug on Cloudflare: plugins installed from
+ * the registry could not use it at all (fixed in 1.4.0, emdash-cms/emdash#4281). Trying again
+ * cannot help, so it needs a person. Anything else is the email service and is tried again.
+ */
+export function emailFailure(error: unknown): Outcome {
+	const message = error instanceof Error ? error.message : String(error);
+	if (/^email is not configured/i.test(message)) {
+		return {
+			kind: "fixing",
+			plain:
+				"Your site has an email service, but this plugin could not use it: on Cloudflare, plugins installed from the EmDash registry can send email from EmDash 1.4.0 on. Ask your web person to update EmDash, then press Send again.",
+		};
+	}
+	return { kind: "retry", raw: `The email could not be sent: ${String(error)}` };
+}
+
 /** Send one enquiry through one delivery, without touching the log. One call. */
 export async function sendTo(
 	ctx: PluginContext,
@@ -345,7 +363,7 @@ export async function sendTo(
 			});
 			return done({ kind: "delivered" });
 		} catch (error) {
-			return done({ kind: "retry", raw: `The email could not be sent: ${String(error)}` });
+			return done(emailFailure(error));
 		}
 	}
 	if (!ctx.http) return done({ kind: "retry", raw: "Web requests are not available." });

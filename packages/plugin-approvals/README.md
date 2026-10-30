@@ -42,6 +42,8 @@ export default defineConfig({
 
 On a site without a sandbox runner, list it under `plugins: [approvals]` instead; it behaves the same. Needs EmDash 1.3.0 or later. Since 0.1.6 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the Approvals page once, then move it.
 
+**Emails from a registry install on Cloudflare need EmDash 1.4.0 or later.** On EmDash 1.3, a plugin installed from the EmDash registry (which always runs sandboxed) cannot use the site's email service on Cloudflare: every email fails with "Email is not configured", although the site's own emails work. EmDash 1.4.0 fixes this. From 0.2.2 the log says so when approval emails fail this way.
+
 **Sandboxed on Cloudflare, use 0.2.0 or later.** There a sandboxed plugin may make at most 10 calls to the site for each click, page or background run. Up to 0.1.6 the Approvals page with two or more pages waiting, most Approve and Publish buttons, and emails to many approvers needed more, and failed part-way; with those versions, list the plugin under `plugins: [approvals]`. From 0.2.0 every page, button and background run makes at most 9 calls, however many pages wait and however many people approve.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.

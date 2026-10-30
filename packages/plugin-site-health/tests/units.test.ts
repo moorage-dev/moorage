@@ -446,6 +446,20 @@ describe("the Email row, worked out on every load", () => {
 		expect(row.text).toContain("press Send a test email to check now");
 	});
 
+	it("names the EmDash update when the site has a service but the sandbox could not use it", () => {
+		// EmDash 1.3.x on Cloudflare: sandboxed (registry) plugins got "Email is not configured"
+		// even with an email service chosen; fixed in 1.4.0 (emdash-cms/emdash#4281).
+		const row = emailStatus(
+			data(list, { state: "not-set-up", at: ago(2), to: 0, error: "Email is not configured" }),
+			true,
+			NOW,
+		);
+		expect(row.status).toBe("attention");
+		expect(row.text).toContain("EmDash 1.4.0");
+		expect(row.text).toContain("press Send a test email");
+		expect(row.text).not.toContain("no email service chosen");
+	});
+
 	it("tells an email service that turned the email down apart from a missing one", () => {
 		const row = emailStatus(
 			data(list, { state: "failed", at: ago(1), to: 0, error: "Sender not verified" }),
