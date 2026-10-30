@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ago, parseAddresses, privateEmail, since } from "../src/config.js";
-import { isQuiet } from "../src/deliver.js";
+import { emailFailure, isQuiet } from "../src/deliver.js";
 import { fromEmail, fromWebhook, humanize } from "../src/enquiry.js";
 import {
 	autoChoice,
@@ -541,6 +541,25 @@ describe("emails and words", () => {
 		expect(isThrowaway("x@mailinator.com")).toBe(true);
 		expect(isThrowaway("x@gmail.com")).toBe(false);
 		expect(THROWAWAY_COUNT).toBeGreaterThanOrEqual(140);
+	});
+});
+
+describe("an email that could not be sent", () => {
+	it("names the EmDash update when the sandbox could not use the site's email service", () => {
+		// EmDash 1.3.x on Cloudflare: registry (sandboxed) plugins got "Email is not configured"
+		// although the site had an email service; fixed in 1.4.0 (emdash-cms/emdash#4281).
+		const outcome = emailFailure(new Error("Email is not configured"));
+		expect(outcome.kind).toBe("fixing");
+		expect(outcome.plain).toContain("EmDash 1.4.0");
+		expect(outcome.plain).toContain("press Send again");
+	});
+
+	it("tries again later when the email service turned it down", () => {
+		const outcome = emailFailure(new Error("Rate limit exceeded"));
+		expect(outcome).toEqual({
+			kind: "retry",
+			raw: "The email could not be sent: Error: Rate limit exceeded",
+		});
 	});
 });
 

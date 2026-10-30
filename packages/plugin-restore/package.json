@@ -63,6 +63,7 @@
 	},
 	"devDependencies": {
 		"@emdash-cms/blocks": "catalog:",
+		"@emdash-cms/cloudflare": "catalog:",
 		"@emdash-cms/plugin-cli": "catalog:",
 		"@emdash-cms/plugin-test": "catalog:",
 		"@moorage/typescript-config": "workspace:*",

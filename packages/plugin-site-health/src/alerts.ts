@@ -45,6 +45,13 @@ export type SendResult = { ok: true } | { ok: false; error: string };
  */
 export const NO_EMAIL_SERVICE = /no email provider|not configured/i;
 
+/**
+ * The sandbox's words for the same thing. With an email service chosen for the site, they mean the
+ * EmDash 1.3.x bug on Cloudflare: sandboxed (registry) plugins could not use the site's email
+ * service at all. Fixed in EmDash 1.4.0 (emdash-cms/emdash#4281).
+ */
+export const SANDBOX_NO_EMAIL = /^email is not configured/i;
+
 /** What to remember about an email just sent, for the Checklist's Email row. */
 function noteEmail(
 	result: SendResult,

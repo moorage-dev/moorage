@@ -3,7 +3,13 @@
 import type { ActionElement, Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { NO_EMAIL_SERVICE, parseRecipients, problemLine, sendTest } from "./alerts.js";
+import {
+	NO_EMAIL_SERVICE,
+	SANDBOX_NO_EMAIL,
+	parseRecipients,
+	problemLine,
+	sendTest,
+} from "./alerts.js";
 import { fits, type Counter } from "./budget.js";
 import { afterExternal, afterOwnPage, afterOwnPath, request, verdict } from "./check.js";
 import { linksInData, scanHtml } from "./extract.js";
@@ -499,6 +505,13 @@ export function emailStatus(
 		return {
 			status: "working",
 			text: `Last checked ${ago}: ${what} was sent. ${goes} To check again, press Send a test email.`,
+		};
+	}
+	// The site has an email service, yet the sandbox said it has none: EmDash 1.3.x on Cloudflare.
+	if (SANDBOX_NO_EMAIL.test(last.error ?? "")) {
+		return {
+			status: "attention",
+			text: `Last checked ${ago}: nothing was sent. Your site has an email service, but this plugin could not use it: on Cloudflare, plugins installed from the EmDash registry can send email from EmDash 1.4.0 on. Whoever looks after your site can update EmDash, then press Send a test email.`,
 		};
 	}
 	// The error's words, not the stored state: before 0.1.x every failure was stored as "not-set-up".

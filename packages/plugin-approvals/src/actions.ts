@@ -35,6 +35,21 @@ import {
 } from "./requests.js";
 import { fieldHashes, nameList, secondPerson } from "./text.js";
 
+/**
+ * What the approver reads when the publish after an approval did not go through. EmDash 1.4.0
+ * refuses a second action on an entry while its after-publish hooks still run
+ * (CONTENT_ACTION_REENTRANT): that one only needs a moment.
+ */
+export function publishFailedMessage(error: unknown): string {
+	const code =
+		error && typeof error === "object"
+			? ((error as { code?: unknown; name?: unknown }).code ?? (error as { name?: unknown }).name)
+			: undefined;
+	if (code === "CONTENT_ACTION_REENTRANT")
+		return "Approved. The page was still finishing its last publish: press Publish on the page in a moment.";
+	return "Approved, but it could not be published just now. Press Publish on the page.";
+}
+
 export interface Outcome {
 	ok: boolean;
 	message: string;
@@ -227,7 +242,7 @@ export async function approve(
 			warnIfRoom(known.meter, "approved but could not publish", { error: String(error) });
 		return {
 			ok: false,
-			message: "Approved, but it could not be published just now. Press Publish on the page.",
+			message: publishFailedMessage(error),
 			request: approved,
 			draft,
 			info,

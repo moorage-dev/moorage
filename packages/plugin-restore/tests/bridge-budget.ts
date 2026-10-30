@@ -17,10 +17,11 @@
 //
 // The same file is copied into each sandbox-capable plugin's tests; keep the copies identical.
 
+import { CloudflareSandboxRunner } from "@emdash-cms/cloudflare/sandbox";
 import { PluginBridge } from "@emdash-cms/plugin-test/worker";
 import { env } from "cloudflare:workers";
 
-/** Worker Loader's subrequest limit for one sandboxed invocation in EmDash 1.3.1. */
+/** Worker Loader's subrequest limit for one sandboxed invocation (EmDash 1.3.1 and 1.4.0). */
 export const SANDBOX_SUBREQUESTS = 10;
 
 /**
@@ -108,6 +109,30 @@ export const BRIDGE_RPCS = [
 ] as const;
 
 /**
+ * EmDash 1.4.0 (emdash-cms/emdash#4394) moved the content actions, content.create, taxonomy writes
+ * and comment moderation off PluginBridge onto a PluginRuntimeBridge: an RpcTarget the host creates
+ * for each invocation and hands to the sandbox with the call. Its calls still cross from the
+ * sandbox isolate to the host, so they are counted as subrequests too (whether Worker Loader counts
+ * calls on a stub received this way is not documented; counting them is the safe reading, and the
+ * pinned totals are the same as on 1.3.1 when they count). One instance serves a whole invocation
+ * and its methods never call each other, so every call is counted.
+ */
+export const RUNTIME_RPCS = [
+	"commentSetStatus",
+	"contentCreate",
+	"contentGetTrashedVersioned",
+	"contentGetVersioned",
+	"contentPublish",
+	"contentRestore",
+	"contentSchedule",
+	"contentUnpublish",
+	"contentUnschedule",
+	"taxonomyAddEntryTerms",
+	"taxonomyCreateTerm",
+	"taxonomyRemoveEntryTerms",
+] as const;
+
+/**
  * RPCs after which the host may run hooks, including this plugin's own (email:beforeSend,
  * content:beforeSave, content:afterSave, content:afterPublish ...). Those hook runs are separate
  * sandbox invocations with their own budget, so calls made while one of these is pending are
@@ -166,20 +191,38 @@ interface Window {
 let window: Window | null = null;
 const counted = new WeakSet<object>();
 
-function install(): void {
-	const proto = PluginBridge.prototype as unknown as Record<string | symbol, unknown>;
+/**
+ * A test's failure injection for PluginRuntimeBridge calls (it cannot patch a class it cannot
+ * import). Return an error to make that call fail after it is counted; undefined lets it through.
+ */
+let runtimeFault: ((name: string) => Error | undefined) | undefined;
+export function setRuntimeFault(fault: ((name: string) => Error | undefined) | undefined): void {
+	runtimeFault = fault;
+}
+
+/** Wraps each RPC method of `proto` so a call made while a window is open is recorded in it. */
+function patch(
+	proto: Record<string | symbol, unknown>,
+	names: readonly string[],
+	kind: string,
+	oncePerInstance: boolean,
+): void {
 	if (proto[PATCHED]) return;
 	proto[PATCHED] = true;
-	for (const name of BRIDGE_RPCS) {
+	for (const name of names) {
 		const original = proto[name];
 		if (typeof original !== "function")
-			throw new Error(`PluginBridge.${name} is gone; update BRIDGE_RPCS for this EmDash version`);
+			throw new Error(`${kind}.${name} is gone; update the RPC lists for this EmDash version`);
+		const run = (self: object, args: unknown[]): unknown => {
+			const fault = kind === "PluginRuntimeBridge" ? runtimeFault?.(name) : undefined;
+			return fault ? Promise.reject(fault) : (original as AnyFn).apply(self, args);
+		};
 		proto[name] = function (this: object, ...args: unknown[]) {
 			const open = window;
-			// A fresh instance per RPC: a second patched call on the same instance is the bridge
-			// calling itself (settings.* -> this.kv*), not another subrequest.
-			if (!open || counted.has(this)) return (original as AnyFn).apply(this, args);
-			counted.add(this);
+			// PluginBridge: a fresh instance per RPC, so a second patched call on the same instance is
+			// the bridge calling itself (settings.* -> this.kv*), not another subrequest.
+			if (!open || (oncePerInstance && counted.has(this))) return run(this, args);
+			if (oncePerInstance) counted.add(this);
 			if (open.pending > 0) open.nested.push(name);
 			else {
 				open.calls.push(name);
@@ -188,12 +231,11 @@ function install(): void {
 					return Promise.reject(new Error(TOO_MANY));
 				}
 			}
-			if (!HOOK_TRIGGERS.has(name) || open.pending > 0)
-				return (original as AnyFn).apply(this, args);
+			if (!HOOK_TRIGGERS.has(name) || open.pending > 0) return run(this, args);
 			open.pending++;
 			const done = () => void open.pending--;
 			try {
-				const out = (original as AnyFn).apply(this, args) as unknown;
+				const out = run(this, args);
 				return Promise.resolve(out).finally(done);
 			} catch (error) {
 				done();
@@ -201,6 +243,45 @@ function install(): void {
 			}
 		};
 	}
+}
+
+function install(): void {
+	patch(
+		PluginBridge.prototype as unknown as Record<string | symbol, unknown>,
+		BRIDGE_RPCS,
+		"PluginBridge",
+		true,
+	);
+}
+
+/**
+ * PluginRuntimeBridge is not exported, so its prototype is taken from the first instance the
+ * loaded plugin creates. Patched before any host starts: hosts load the plugin when they start.
+ */
+function installRuntimeBridge(): void {
+	const runner = CloudflareSandboxRunner.prototype as unknown as Record<string | symbol, unknown>;
+	if (runner[PATCHED]) return;
+	runner[PATCHED] = true;
+	const load = runner.load as AnyFn;
+	runner.load = async function (this: object, ...args: unknown[]) {
+		const plugin = (await load.apply(this, args)) as {
+			createRuntimeBridge?: (id: string) => object;
+		};
+		const create = plugin.createRuntimeBridge;
+		if (typeof create === "function") {
+			plugin.createRuntimeBridge = (id: string) => {
+				const bridge = create(id);
+				patch(
+					Object.getPrototypeOf(bridge) as Record<string | symbol, unknown>,
+					RUNTIME_RPCS,
+					"PluginRuntimeBridge",
+					false,
+				);
+				return bridge;
+			};
+		}
+		return plugin;
+	};
 }
 
 /**
@@ -269,6 +350,7 @@ function drainUnawaitedCalls(): void {
 
 // Before any host is created: the runtime host reads the plugin code when it starts.
 drainUnawaitedCalls();
+installRuntimeBridge();
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
