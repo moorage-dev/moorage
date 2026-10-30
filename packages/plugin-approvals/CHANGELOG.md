@@ -1,5 +1,12 @@
 # @moorage/plugin-approvals
 
+## 0.2.2
+
+### Patch Changes
+
+- dd67159: On EmDash 1.4.0, approving and publishing a page whose last publish is still finishing now says "The page was still finishing its last publish: press Publish on the page in a moment." instead of the general "could not be published just now".
+- dd67159: Installed from the EmDash registry on Cloudflare, these plugins could not send email on EmDash 1.3: every email failed with "Email is not configured", although the site's own emails worked. EmDash 1.4.0 fixes that. Until a site updates, Lead Delivery marks such a delivery as needing a person and asks for the EmDash update instead of trying again, Site Health's Checklist says the same after a test email, and Content Approval's log names the update when approval emails fail this way.
+
 ## 0.2.1
 
 ### Patch Changes
