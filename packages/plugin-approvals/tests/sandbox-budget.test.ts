@@ -17,7 +17,13 @@ import { PluginBridge } from "@emdash-cms/plugin-test/worker";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { ApprovalRequest } from "../src/requests.js";
-import { describeCalls, measure, SANDBOX_SUBREQUESTS, type Measured } from "./bridge-budget.js";
+import {
+	describeCalls,
+	measure,
+	SANDBOX_SUBREQUESTS,
+	type Measured,
+	setRuntimeFault,
+} from "./bridge-budget.js";
 
 /** The plugin's own ceiling per invocation: one call below Cloudflare's limit. */
 const BUDGET = SANDBOX_SUBREQUESTS - 1;
@@ -43,6 +49,13 @@ const failTimes = new Map<string, number>();
 		};
 	}
 }
+// EmDash 1.4.0 sends content actions (publish) through PluginRuntimeBridge instead: the same
+// failures for those calls, applied by bridge-budget after it counts the call.
+setRuntimeFault((name) => {
+	const times = failTimes.get(name) ?? 0;
+	if (times > 0) failTimes.set(name, times - 1);
+	return failing.has(name) || times > 0 ? new Error(`${name} failed (test)`) : undefined;
+});
 
 let host: PluginRuntimeTestHost | undefined;
 
