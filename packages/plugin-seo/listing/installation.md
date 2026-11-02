@@ -1,4 +1,4 @@
-Install from **Plugins** in your EmDash admin, or pin it in code:
+Install from **Registry** in your EmDash admin, or pin it in code:
 
 ```sh
 npm install @moorage/plugin-seo

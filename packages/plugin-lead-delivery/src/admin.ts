@@ -768,7 +768,7 @@ function newStep1(data: Data, view: Extract<View, { screen: "new" }>): Block[] {
 				{
 					type: "text_input",
 					action_id: "short_name",
-					label: "Its short name (Forms lists it under each form's name)",
+					label: "Its short name (the Slug column in Forms)",
 					placeholder: "for example: quote",
 					initial_value: str(draft.short_name),
 					condition: { field: "form", eq: OTHER },

@@ -140,7 +140,7 @@ test("one-click connect: the code screen, an empty approval page, and a denial t
 	await open(page);
 	await page.getByRole("button", { name: "+ New delivery" }).first().click();
 	await page
-		.getByRole("textbox", { name: /Its short name \(Forms lists it under each form's name\)/ })
+		.getByRole("textbox", { name: /Its short name \(the Slug column in Forms\)/ })
 		.fill(FORM);
 	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("textbox", { name: /Send each enquiry to/ }).fill("orders@acme.test");

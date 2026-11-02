@@ -842,7 +842,7 @@ describe("New delivery", () => {
 		const form = flatten(empty.blocks).find((b) => b.type === "form");
 		expect(form?.type === "form" && form.fields.map((f) => f.label)).toEqual([
 			"Which form?",
-			"Its short name (Forms lists it under each form's name)",
+			"Its short name (the Slug column in Forms)",
 			"Send to?",
 		]);
 		const which = form?.type === "form" ? form.fields[0] : undefined;

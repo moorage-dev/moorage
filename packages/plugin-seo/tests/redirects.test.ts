@@ -135,7 +135,8 @@ describe("reading a pasted list", () => {
 		);
 		// A new address may be a file; only the old one has to reach EmDash.
 		expect(plan.ready).toEqual([{ source: "/about", destination: "/files/about.pdf", type: 301 }]);
-		const reason = "Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash";
+		const reason =
+			"Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash";
 		expect(plan.skipped.map((row) => [row.line, row.reason])).toEqual([
 			[1, reason],
 			[2, reason],
@@ -434,6 +435,13 @@ describe("Redirects tab", () => {
 			destination: "https://other.example/y",
 		});
 		expect(JSON.stringify(elsewhere.blocks)).toContain("Points to another website.");
+		const file = await runtime.admin.submit(PAGE, "add_redirect", {
+			source: "/sitemap_index.xml",
+			destination: "/sitemap.xml",
+		});
+		expect(JSON.stringify(file.blocks)).toContain(
+			"Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash.",
+		);
 		expect(await sources(runtime)).toEqual(["/a"]);
 	});
 
