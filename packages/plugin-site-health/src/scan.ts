@@ -304,6 +304,18 @@ export function resolveLocal(row: LinkRow, page: PageRow | undefined, now: numbe
 	return broken;
 }
 
+/**
+ * A page row as the running check knows it. Its walk saves every page that still
+ * exists before links are judged, so a row from an earlier check is a page deleted
+ * since: deleting an entry leaves its row behind (the entry's address is no longer
+ * known then), and the sweep removes it only at the end of the check. Until then it
+ * must not count as a published page; the link is left for the live check to open.
+ */
+function thisPass(found: Map<string, PageRow>, url: string, pass: number): PageRow | undefined {
+	const page = found.get(url);
+	return page && page.pass === pass ? page : undefined;
+}
+
 async function resolveStep(ctx: PluginContext, scan: ScanState, now: number): Promise<void> {
 	const batch = await links(ctx).query({
 		where: { pass: scan.pass },
@@ -316,7 +328,7 @@ async function resolveStep(ctx: PluginContext, scan: ScanState, now: number): Pr
 		await links(ctx).putMany(
 			internal.map((item) => ({
 				id: item.id,
-				data: resolveLocal(item.data, found.get(item.data.url), now),
+				data: resolveLocal(item.data, thisPass(found, item.data.url, scan.pass), now),
 			})),
 		);
 	}
@@ -391,7 +403,7 @@ async function mergeLive(
 			item.extra,
 		);
 		if (row.kind === "internal") {
-			row = resolveLocal(row, known.get(row.url), now);
+			row = resolveLocal(row, thisPass(known, row.url, scan.pass), now);
 			if (row.state === "broken") row.group = groupOf(row);
 		}
 		if (row.kind === "page") {
@@ -490,7 +502,8 @@ async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): P
 async function livePagesStep(ctx: PluginContext, scan: ScanState, now: number): Promise<void> {
 	const origin = publicOrigin(ctx.site.url);
 	const batch = await pages(ctx).query({
-		where: { status: "published" },
+		// Only pages this check walked: a row left from an earlier check is a deleted page.
+		where: { status: "published", pass: scan.pass },
 		limit: LIVE_BATCH,
 		...(scan.cursor ? { cursor: scan.cursor } : {}),
 	});
