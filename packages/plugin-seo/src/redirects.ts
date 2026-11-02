@@ -50,7 +50,13 @@ const REASON = {
 	conflict: "Conflicts with an existing redirect",
 	loop: "Would send visitors in a circle",
 	tooMany: `Only the first ${MAX_ROWS} rows are imported at once`,
+	file: "Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash",
 } as const;
+
+// EmDash's redirect middleware passes such requests straight on as files
+// (ASSET_EXTENSION in emdash's astro/middleware/redirect.ts, 1.4.0), so a
+// redirect from one would never run.
+const FILE_PATH = /\.\w{1,10}$/;
 
 /** Split one CSV or tab-separated line, honouring double-quoted cells. */
 function splitLine(line: string, delimiter: string): string[] {
@@ -259,6 +265,10 @@ export function planImport(text: string, existing: ExistingRedirect[]): ImportPl
 		const source = toPath(sourceText);
 		if ("reason" in source) {
 			skip(source.reason);
+			continue;
+		}
+		if (FILE_PATH.test(source.path)) {
+			skip(REASON.file);
 			continue;
 		}
 

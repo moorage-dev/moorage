@@ -9,6 +9,7 @@ import {
 	NO_SOCIAL_IMAGE,
 	excerptOf,
 	estimateTitlePixels,
+	shownTitle,
 	statusOf,
 	truncateTitle,
 	type CheckInput,
@@ -126,6 +127,19 @@ describe("page checks", () => {
 			["nearly-empty", "look"],
 		]);
 		expect(statusOf(issues, false)).toBe("look");
+	});
+
+	it("measures the title with the site's name after it, as the page shows it", () => {
+		const title = "Sourdough, rye and spelt loaves baked daily in our Springfield bakery";
+		// It fits on its own; it is the site's name that pushes it past the cut.
+		expect(estimateTitlePixels(title)).toBeLessThanOrEqual(580);
+		expect(estimateTitlePixels(`${title}: Acme`)).toBeGreaterThan(580);
+		expect(shownTitle(title, "Acme")).toBe(`${title}: Acme`);
+		expect(ids({ title, siteName: "Acme" })).toEqual(["title-long"]);
+		expect(ids({ title })).toEqual([]);
+		// A title that already names the site is shown as it is.
+		expect(shownTitle("Acme: fresh bread", "Acme")).toBe("Acme: fresh bread");
+		expect(shownTitle("About us", "")).toBe("About us");
 	});
 
 	it("says shared links have no picture only when the page has no image at all", () => {
@@ -782,7 +796,8 @@ describe("Google preview panel", () => {
 			type: "context",
 			text: "Acme · acme.test › services › wedding-cakes",
 		});
-		expect(panel.blocks[1]).toEqual({ type: "header", text: "Wedding cakes" });
+		// The headline as the page shows it: the site's name after the title.
+		expect(panel.blocks[1]).toEqual({ type: "header", text: "Wedding cakes: Acme" });
 		expect(text(panel)).toContain("No description yet. Google will pick some text from the page.");
 		expect(text(panel)).toContain('{"label":"Shown to Google as","value":"Service"}');
 		expect(text(panel)).toContain("To fix: No search description,");
@@ -792,6 +807,19 @@ describe("Google preview panel", () => {
 			"https://search.google.com/test/rich-results?url=https%3A%2F%2Facme.test%2Fservices%2Fwedding-cakes",
 		);
 		expect(text(panel)).toContain("View the markup");
+	});
+
+	it("flags a title that is cut off once the site's name follows it, and shows it cut", async () => {
+		const { runtime } = await start();
+		const title = "Sourdough, rye and spelt loaves baked daily in our Springfield bakery";
+		const entry = await runtime.fixtures.content("services", {
+			slug: "loaves",
+			data: { title, body: LONG_TEXT },
+			status: "published",
+		});
+		const panel = await runtime.admin.loadEditorPanel("preview", "services", entry.id);
+		expect(text(panel)).toContain("Worth a look: The end of this title may be cut off in Google.");
+		expect(panel.blocks[1]).toEqual({ type: "header", text: truncateTitle(`${title}: Acme`) });
 	});
 
 	it("shows the excerpt as the description and says where it came from", async () => {

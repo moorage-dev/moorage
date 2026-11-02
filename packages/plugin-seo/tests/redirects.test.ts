@@ -122,6 +122,28 @@ describe("reading a pasted list", () => {
 		]);
 	});
 
+	it("skips old addresses that end in a file type, which EmDash never redirects", () => {
+		const plan = planImport(
+			[
+				"/sitemap_index.xml,/sitemap.xml",
+				"https://old.example/wp-content/uploads/a.jpg,/images/a",
+				"/feed.rss,/blog,410",
+				"/old-page.html,/new-page",
+				"/about,/files/about.pdf",
+			].join("\n"),
+			[],
+		);
+		// A new address may be a file; only the old one has to reach EmDash.
+		expect(plan.ready).toEqual([{ source: "/about", destination: "/files/about.pdf", type: 301 }]);
+		const reason = "Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash";
+		expect(plan.skipped.map((row) => [row.line, row.reason])).toEqual([
+			[1, reason],
+			[2, reason],
+			[3, reason],
+			[4, reason],
+		]);
+	});
+
 	it("never overwrites: existing, conflicting and repeated rows are skipped", () => {
 		const plan = planImport("/a,/b\n/c,/d\n/e,/f\n/e,/g", [
 			{ source: "/a", destination: "/b" },

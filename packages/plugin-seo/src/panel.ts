@@ -3,7 +3,7 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { excerptOf, truncateTitle } from "./checks.js";
+import { excerptOf, shownTitle, truncateTitle } from "./checks.js";
 import { defaultTypeForCollection, loadConfig, type PageSchemaType } from "./config.js";
 import { buildGraph } from "./graph.js";
 import { PAGE_TYPES, typeLabel } from "./page-types.js";
@@ -114,7 +114,7 @@ export async function handlePanel(
 			type: "context",
 			text: siteName ? `${siteName} · ${breadcrumbLine(url)}` : breadcrumbLine(url),
 		},
-		{ type: "header", text: truncateTitle(title) },
+		{ type: "header", text: truncateTitle(record.title ? shownTitle(title, siteName) : title) },
 		{
 			type: "section",
 			text:
@@ -132,7 +132,7 @@ export async function handlePanel(
 			: []),
 		{
 			type: "context",
-			text: "What Google sees: the published page, with the SEO title and description as last saved. Google may rewrite them, and your site may add its name to the title.",
+			text: "What Google sees: the published page, with the SEO title and description as last saved, and your site's name after the title as most sites show it. Google may rewrite them.",
 		},
 		{
 			type: "fields",

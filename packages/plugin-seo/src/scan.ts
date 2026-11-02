@@ -200,6 +200,7 @@ async function entriesStep(
 					previous: before,
 					config,
 					siteUrl: ctx.site.url,
+					siteName: config.site.name ?? ctx.site.name,
 					// Kept as it was; the title pass below settles it for the whole site.
 					duplicateTitle: before ? isDuplicate(before) : false,
 				}),
@@ -290,6 +291,7 @@ async function sweepStep(ctx: PluginContext, state: ScanState, config: SeoConfig
 					previous: data,
 					config,
 					siteUrl: ctx.site.url,
+					siteName: config.site.name ?? ctx.site.name,
 					duplicateTitle: false,
 				}),
 			});
