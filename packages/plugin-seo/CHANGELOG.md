@@ -1,5 +1,14 @@
 # @moorage/plugin-seo
 
+## 0.1.12
+
+### Patch Changes
+
+- b497b9a: Install texts corrected: the admin's entry for installing plugins is **Registry**, not Plugins; running sandboxed on Cloudflare needs both the `LOADER` Worker Loader binding in `wrangler.jsonc` and `sandboxRunner: sandbox()` in `astro.config.mjs` (answering Yes in `create-emdash` adds only the binding). Content Approval: its package homepage now points to https://moorage.dev/plugins/content-approval, and the FAQ says Contributors still see "Plugin action failed" in the editor on EmDash 1.4.0.
+- b497b9a: Importing redirects (from Redirection, Yoast, Rank Math or a plain list) now skips rows whose old address ends in a file type, such as `/sitemap_index.xml` or `/wp-content/uploads/photo.jpg`, with the reason "Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash". EmDash treats such addresses as file requests and never runs a redirect for them, so these rows were added but never worked. Adding one redirect by hand gives the same reason.
+- b497b9a: The progress bar while adding or removing imported redirects now shows the right percentage: removing 3 read "1%" and "2%" instead of 33% and 67%, because the admin's meter prints its value as a share of 100. The bar now counts out of 100, which screen readers also announce correctly.
+- b497b9a: "The end of this title may be cut off in Google" now measures the title as most pages show it: the page's title followed by the site's name. Before, a title that fitted on its own but not with ": Your site" after it was not flagged. The Google preview's headline shows the same, so the two agree. EmDash leaves the title tag to the theme and a plugin cannot read the separator a site uses, so the check assumes ": " (" | " or " — " are about as wide); a title that already contains the site's name is measured as it is.
+
 ## 0.1.11
 
 ### Patch Changes

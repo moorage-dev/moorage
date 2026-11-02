@@ -1,5 +1,12 @@
 # @moorage/plugin-site-health
 
+## 0.1.7
+
+### Patch Changes
+
+- b497b9a: Install texts corrected: the admin's entry for installing plugins is **Registry**, not Plugins; running sandboxed on Cloudflare needs both the `LOADER` Worker Loader binding in `wrangler.jsonc` and `sandboxRunner: sandbox()` in `astro.config.mjs` (answering Yes in `create-emdash` adds only the binding). Content Approval: its package homepage now points to https://moorage.dev/plugins/content-approval, and the FAQ says Contributors still see "Plugin action failed" in the editor on EmDash 1.4.0.
+- b497b9a: The first full check after a page is deleted now reports links to it as broken. Before, that check still counted the deleted page as published, so links to it showed as fine until the check after; it also opened the deleted page's address as one of the site's pages.
+
 ## 0.1.6
 
 ### Patch Changes
