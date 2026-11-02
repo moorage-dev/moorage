@@ -50,7 +50,7 @@ In the entry editor, the **Google preview** panel shows how the published page m
 
 ### The checks
 
-To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off; no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
+To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off (measured with your site's name after it, as most sites show it); no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
