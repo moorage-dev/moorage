@@ -14,7 +14,7 @@
 	],
 	"license": "MIT",
 	"author": "Moorage (https://moorage.dev)",
-	"homepage": "https://moorage.dev/plugins/approvals",
+	"homepage": "https://moorage.dev/plugins/content-approval",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/moorage-dev/moorage.git",

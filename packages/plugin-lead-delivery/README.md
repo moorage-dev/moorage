@@ -65,7 +65,7 @@ emdash({
 });
 ```
 
-From 0.4.0 it also runs in `sandboxed`. On Cloudflare a sandboxed plugin may make only 10 calls to the site per request, and from 0.4.0 every page, button, arriving enquiry and scheduled run stays within that, however many deliveries and enquiries you have. To do so, an arriving enquiry is stored with its log rows and sent by the scheduled run that follows, usually within a minute; when many arrive at once, each run sends a few and the next run carries on.
+From 0.4.0 it also runs in `sandboxed`, which needs a sandbox runner. On Cloudflare that is two things: the `LOADER` Worker Loader binding in `wrangler.jsonc` (Workers Paid only) and `sandboxRunner: sandbox()` in `astro.config.mjs`, with `sandbox` imported from `@emdash-cms/cloudflare`; answering Yes to sandboxed plugins in `create-emdash` adds only the binding. On Cloudflare a sandboxed plugin may make only 10 calls to the site per request, and from 0.4.0 every page, button, arriving enquiry and scheduled run stays within that, however many deliveries and enquiries you have. To do so, an arriving enquiry is stored with its log rows and sent by the scheduled run that follows, usually within a minute; when many arrive at once, each run sends a few and the next run carries on.
 
 **Emails from a registry install on Cloudflare need EmDash 1.4.0 or later.** On EmDash 1.3, a plugin installed from the EmDash registry (which always runs sandboxed) cannot use the site's email service on Cloudflare: every email fails with "Email is not configured", although the site's own emails work. EmDash 1.4.0 fixes this. From 0.4.2 a delivery that hits this says so and asks for the update, instead of trying again.
 
@@ -89,7 +89,7 @@ If the form already sends to another address (Zapier, for example), nothing is c
 
 **By hand, with written instructions** (every other site, and always available under "Instructions for your web person"): someone who looks after the site's code connects each form once. The screen shows the instructions for that form and can email them to your web person. Press **I have done this** once they have, or **Skip for now**: the delivery's page says "Not sending yet: … is not connected" with a **Connect this form** button until the form is connected.
 
-In **New delivery**, "Which form?" lists the forms Lead Delivery already knows (from enquiries, and from forms named before). For another form, choose **Another form** and type its short name: Forms lists it under each form's name.
+In **New delivery**, "Which form?" lists the forms Lead Delivery already knows (from enquiries, and from forms named before). For another form, choose **Another form** and type its short name: it is in the **Slug** column under Forms.
 
 When enquiries arrive from a form no delivery takes (for example because the form's email names it differently from the short name you typed), they are kept and listed as Not sent, and the page says so: "2 enquiries from Contact us were not sent: no delivery takes this form". One press adds that form to your delivery (or lets you choose which, starting with the one that has received nothing) and sends them. A delivery that has received nothing also asks "Enquiries arrived from Contact us instead: is that the one?".
 

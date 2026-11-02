@@ -84,12 +84,15 @@ function redirect(to: string): Response {
 }
 
 /** The site's own pages, as the site would answer them. */
-async function ownSite(runtime: PluginRuntimeTestHost): Promise<void> {
+async function ownSite(runtime: PluginRuntimeTestHost, aboutGone = false): Promise<void> {
 	await runtime.http.respond(
 		`${SITE}/`,
 		html(HOME_HTML, 200, { "cache-control": "public, max-age=60" }),
 	);
-	await runtime.http.respond(`${SITE}/about`, html("<html><body>About</body></html>"));
+	await runtime.http.respond(
+		`${SITE}/about`,
+		aboutGone ? html("Not found", 404) : html("<html><body>About</body></html>"),
+	);
 	await runtime.http.respond(`${SITE}/home`, html("<html><body>Home</body></html>"));
 	await runtime.http.respond(`${SITE}/old-page`, html("Not found", 404));
 	await runtime.http.respond(`${SITE}/menu-2024`, html("Not found", 404));
@@ -189,6 +192,35 @@ describe("a full check of a public site", () => {
 			"Secure connection. The insecure address sends visitors to the secure one.",
 		);
 		expect(words).toContain("www.acme.test sends visitors on to your address.");
+	});
+
+	it("the first check after a page is deleted reports links to it", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect((await summary(runtime)).rows.link.map((r) => r.url)).not.toContain("/about");
+
+		// About goes to the bin; the site answers its address with "not found" from now on.
+		const about = (await runtime.inspect.content.list("pages")).find((e) => e.slug === "about");
+		expect(about).toBeTruthy();
+		await runtime.actions.content.trash("pages", about!.id);
+		await ownSite(runtime, true);
+
+		// The next full check, due now.
+		const scan = await runtime.inspect.kv.get<ScanState>("scan");
+		await runtime.fixtures.plugin.kv("scan", {
+			...scan,
+			nextAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		await cron(runtime);
+		expect((await runtime.inspect.kv.get<ScanState>("scan"))?.pass).toBe((scan?.pass ?? 0) + 1);
+		await finish(runtime);
+
+		const result = await summary(runtime);
+		expect(result.pages).toBe(1);
+		// About is in the site menu too, so it is listed under every page.
+		expect(result.rows.site.map((r) => `${r.url} ${r.reason}`)).toContain("/about missing");
 	});
 
 	it("checks links to other sites politely, and calls one broken only after two answers a day apart", async () => {

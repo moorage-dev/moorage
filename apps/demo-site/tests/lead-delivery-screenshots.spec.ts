@@ -116,7 +116,7 @@ test("a bakery's deliveries and enquiries", async ({ request }) => {
 	// Email: the shop's inbox, with a copy to the owner.
 	await page.getByRole("button", { name: "+ New delivery" }).click();
 	await page
-		.getByRole("textbox", { name: /Its short name \(Forms lists it under each form's name\)/ })
+		.getByRole("textbox", { name: /Its short name \(the Slug column in Forms\)/ })
 		.fill(FORM);
 	await page.getByRole("button", { name: "Continue" }).click();
 	const name = page.getByRole("textbox", { name: /Name \(only admins see it\)/ });

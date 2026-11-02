@@ -81,7 +81,7 @@ export async function findForm(
 	if (!isShortName(slug)) {
 		return {
 			error:
-				"A short name has only small letters, numbers and dashes, like contact or wedding-cakes. Forms lists it under each form's name.",
+				"A short name has only small letters, numbers and dashes, like contact or wedding-cakes. Forms shows it in the Slug column.",
 		};
 	}
 	const found = await lookUpForm(ctx, origin, slug);

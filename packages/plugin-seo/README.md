@@ -14,7 +14,7 @@ It does not write the page title, the sitemap or robots.txt; EmDash core and you
 
 ## Install
 
-From **Plugins** in your EmDash admin (it is listed in the [EmDash registry](https://plugins.emdashcms.com/plugins/@moorage.dev/seo)), or from npm, registered in your site's code:
+From **Registry** in your EmDash admin (it is listed in the [EmDash registry](https://plugins.emdashcms.com/plugins/@moorage.dev/seo)), or from npm, registered in your site's code:
 
 ```sh
 pnpm add @moorage/plugin-seo
@@ -30,7 +30,7 @@ export default defineConfig({
 });
 ```
 
-`sandboxed` needs a sandbox runner: on Cloudflare it is the Worker Loader binding from `@emdash-cms/cloudflare`; on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the SEO page once, then move it.
+`sandboxed` needs a sandbox runner: on Cloudflare it takes two things: the `LOADER` Worker Loader binding in `wrangler.jsonc` (`"worker_loaders": [{ "binding": "LOADER" }]`, Workers Paid only) and `sandboxRunner: sandbox()` in `astro.config.mjs`, with `sandbox` imported from `@emdash-cms/cloudflare` (answering Yes to sandboxed plugins in `create-emdash` adds only the binding); on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the SEO page once, then move it.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
@@ -50,7 +50,7 @@ In the entry editor, the **Google preview** panel shows how the published page m
 
 ### The checks
 
-To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off; no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
+To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off (measured with your site's name after it, as most sites show it); no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
@@ -64,7 +64,7 @@ Not yet: Product and Event types (they need price and date fields on the collect
 - Is there an SEO score or a traffic light? No, on purpose. You get a list of things to fix that can reach zero.
 - Does it add FAQ rich results? No. Google stopped showing FAQ rich results in May 2026.
 - How do I import redirects from WordPress? Export them as CSV from Redirection, Yoast SEO Premium or Rank Math (Rank Math's CSV export is in its paid version; Redirection's JSON, .htaccess and Nginx exports are not read), open SEO > Redirects > Import from WordPress, paste the list and press Check list. Nothing is added until you confirm.
-- Why were some redirects skipped? EmDash has no regular-expression redirects. Exact addresses and "everything under a folder" are converted; other patterns are listed for you to rewrite by hand. Redirects to another website and addresses with a `?` are not supported by EmDash.
+- Why were some redirects skipped? EmDash has no regular-expression redirects. Exact addresses and "everything under a folder" are converted; other patterns are listed for you to rewrite by hand. Redirects to another website and addresses with a `?` are not supported by EmDash. Nor are old addresses that end in a file type, such as `/sitemap_index.xml` or `/wp-content/uploads/photo.jpg`: EmDash treats them as file requests and never redirects them.
 - Why does a large import take a while on Cloudflare? Sandboxed plugins may only do a few operations per request, so a long list is added a few rows at a time in the background, and removing an import works the same way. The page shows how far it got. You can leave the page.
 - What is the line at the foot of the page? Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" at the bottom of the Settings tab and press Save.
 - Why do the Google preview and the checks show the site's old address? Plugins keep the site address EmDash had when the server started; SEO uses it for the preview, for checking canonicals and logo links, and for the structured data when a page has no address of its own. After changing the site's address, restart the site.

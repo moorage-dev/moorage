@@ -369,7 +369,8 @@ describe("hooks: cron, the full check", () => {
 		expect(counts.walk).toBe(6);
 		expect(counts.resolve).toBe(6);
 		expect(counts["live-home"]).toBe(6);
-		expect(counts["live-pages"]).toBe(7);
+		// Only the pages this check walked are opened: the deleted About is not among them.
+		expect(counts["live-pages"]).toBe(4);
 		expect(counts["live-paths"]).toBe(6);
 		// The Checklist is opened once a week; the second check skips it.
 		expect(counts.checklist).toBe(2);

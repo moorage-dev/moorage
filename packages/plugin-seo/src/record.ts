@@ -118,6 +118,8 @@ export function makeRecord(input: {
 	previous: EntryRecord | null;
 	config: SeoConfig;
 	siteUrl: string;
+	/** The site's name as the plugin tells Google: its own setting, else EmDash's. */
+	siteName: string;
 	duplicateTitle: boolean;
 	/** False for a collection without public pages (testimonials, settings). */
 	hasPages: boolean;
@@ -135,6 +137,7 @@ export function makeRecord(input: {
 				data: entry.data,
 				seo: entry.seo,
 				title: entryTitle(entry),
+				siteName: input.siteName,
 				siteUrl,
 				isArticle: (ARTICLE_TYPES as readonly string[]).includes(type),
 				authorCount: authors.length,
@@ -334,6 +337,7 @@ export async function viewRecord(
 		previous: null,
 		config,
 		siteUrl: ctx.site.url,
+		siteName: config.site.name ?? ctx.site.name,
 		duplicateTitle: false,
 		// It is being shown as a page of its own.
 		hasPages: true,
@@ -366,6 +370,7 @@ async function prepareEntry(
 		previous,
 		config,
 		siteUrl: ctx.site.url,
+		siteName: config.site.name ?? ctx.site.name,
 		duplicateTitle: false,
 		// Without schema access, assume the collection has pages.
 		hasPages: schema ? schema.routable && !schema.hidden : true,

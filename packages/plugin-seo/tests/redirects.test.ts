@@ -122,6 +122,29 @@ describe("reading a pasted list", () => {
 		]);
 	});
 
+	it("skips old addresses that end in a file type, which EmDash never redirects", () => {
+		const plan = planImport(
+			[
+				"/sitemap_index.xml,/sitemap.xml",
+				"https://old.example/wp-content/uploads/a.jpg,/images/a",
+				"/feed.rss,/blog,410",
+				"/old-page.html,/new-page",
+				"/about,/files/about.pdf",
+			].join("\n"),
+			[],
+		);
+		// A new address may be a file; only the old one has to reach EmDash.
+		expect(plan.ready).toEqual([{ source: "/about", destination: "/files/about.pdf", type: 301 }]);
+		const reason =
+			"Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash";
+		expect(plan.skipped.map((row) => [row.line, row.reason])).toEqual([
+			[1, reason],
+			[2, reason],
+			[3, reason],
+			[4, reason],
+		]);
+	});
+
 	it("never overwrites: existing, conflicting and repeated rows are skipped", () => {
 		const plan = planImport("/a,/b\n/c,/d\n/e,/f\n/e,/g", [
 			{ source: "/a", destination: "/b" },
@@ -211,6 +234,10 @@ describe("Redirects tab", () => {
 			`${removing?.removed} removed so far. The rest are removed in the background, a few each minute.`,
 		);
 		expect(JSON.stringify(removed.blocks)).toContain(`${removing?.removed} of 5 removed`);
+		// The admin's meter prints its value as a percentage of 100 whatever its max, so the
+		// share is given out of 100: 1 of 5 is 20%, not "1%".
+		const share = Math.round(((removing?.removed ?? 0) / 5) * 100);
+		expect(JSON.stringify(removed.blocks)).toContain(`"value":${share},"max":100`);
 		for (let run = 0; run < 10 && (await state(runtime)); run += 1)
 			await runtime.transport.invokeHook("cron", { name: "redirects-import" });
 		expect(await sources(runtime)).toEqual(["/kept"]);
@@ -305,6 +332,7 @@ describe("Redirects tab", () => {
 
 		const page = await runtime.admin.loadPage(PAGE);
 		expect(JSON.stringify(page.blocks)).toContain("1 of 2 added");
+		expect(JSON.stringify(page.blocks)).toContain('"value":50,"max":100');
 
 		const stopped = await runtime.admin.act(PAGE, "stop_redirects");
 		expect(stopped.toast?.message).toBe("Stopped. 1 redirect added.");
@@ -412,6 +440,13 @@ describe("Redirects tab", () => {
 			destination: "https://other.example/y",
 		});
 		expect(JSON.stringify(elsewhere.blocks)).toContain("Points to another website.");
+		const file = await runtime.admin.submit(PAGE, "add_redirect", {
+			source: "/sitemap_index.xml",
+			destination: "/sitemap.xml",
+		});
+		expect(JSON.stringify(file.blocks)).toContain(
+			"Addresses ending in a file type, like .xml or .jpg, are not redirected by EmDash.",
+		);
 		expect(await sources(runtime)).toEqual(["/a"]);
 	});
 

@@ -29,6 +29,8 @@ export interface CheckInput {
 	};
 	/** The entry's own title, used when there is no search title. */
 	title: string;
+	/** The site's name, which a page's title tag usually ends with. */
+	siteName?: string;
 	siteUrl: string;
 	isArticle: boolean;
 	authorCount: number;
@@ -54,6 +56,22 @@ export function estimateTitlePixels(title: string): number {
 		else width += 9.5;
 	}
 	return Math.round(width);
+}
+
+/**
+ * The title as the page's title tag most likely reads: the page's title, then
+ * the site's name. EmDash 1.4.0 leaves this to the theme: its `getSeoMeta`
+ * helper joins them with whatever separator the theme passes (" | " when none),
+ * the stock templates write " — ", and a plugin cannot read the separator
+ * setting at all. So ": " stands in for whichever the site uses; their widths
+ * barely differ. A title that already names the site is left as it is, as the
+ * templates do.
+ */
+export function shownTitle(title: string, siteName: string | undefined): string {
+	const name = siteName?.trim() ?? "";
+	const own = title.trim();
+	if (name === "" || own === "" || own.toLowerCase().includes(name.toLowerCase())) return own;
+	return `${own}: ${name}`;
 }
 
 /** A title as Google would probably show it, cut with an ellipsis when too wide. */
@@ -187,7 +205,10 @@ export function checkEntry(input: CheckInput): Issue[] {
 		}
 	}
 
-	if (searchTitle !== "" && estimateTitlePixels(searchTitle) > TITLE_PIXELS) {
+	if (
+		searchTitle !== "" &&
+		estimateTitlePixels(shownTitle(searchTitle, input.siteName)) > TITLE_PIXELS
+	) {
 		issues.push({
 			id: "title-long",
 			level: "look",

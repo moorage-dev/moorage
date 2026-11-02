@@ -134,7 +134,7 @@ test("New delivery: a form by its short name, an inbox, a test, then Connect thi
 	).toBeVisible();
 	// No form is known yet, so only "Another form" is offered, with its short-name box.
 	await page
-		.getByRole("textbox", { name: /Its short name \(Forms lists it under each form's name\)/ })
+		.getByRole("textbox", { name: /Its short name \(the Slug column in Forms\)/ })
 		.fill(FORM);
 	await expect(page.getByRole("radio", { name: /^Email: an inbox, or several/ })).toBeChecked();
 	await page.getByRole("button", { name: "Continue" }).click();

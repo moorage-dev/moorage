@@ -49,7 +49,7 @@ Editors see the links they can fix. Page errors, the Checklist and Options are f
 
 ## Install
 
-Install from **Plugins** in your EmDash admin, or pin it in code:
+Install from **Registry** in your EmDash admin, or pin it in code:
 
 ```sh
 npm install @moorage/plugin-site-health
@@ -62,7 +62,7 @@ import siteHealth from "@moorage/plugin-site-health";
 emdash({ sandboxed: [siteHealth] });
 ```
 
-On a site without a sandbox runner (the Workers free plan), list it under `plugins: [siteHealth]` instead. It works the same. Since 0.1.3 the email list and the outside-link choice survive moving the plugin from one list to the other (the check results are rebuilt by the next check); when updating from an earlier version, update first, open the Site Health page once, then move it.
+`sandboxed` needs a sandbox runner. On Cloudflare that is two things: the `LOADER` Worker Loader binding in `wrangler.jsonc` (Workers Paid only) and `sandboxRunner: sandbox()` in `astro.config.mjs`, with `sandbox` imported from `@emdash-cms/cloudflare`; answering Yes to sandboxed plugins in `create-emdash` adds only the binding. On a site without one (such as the Workers free plan), list it under `plugins: [siteHealth]` instead. It works the same. Since 0.1.3 the email list and the outside-link choice survive moving the plugin from one list to the other (the check results are rebuilt by the next check); when updating from an earlier version, update first, open the Site Health page once, then move it.
 
 **Emails from a registry install on Cloudflare need EmDash 1.4.0 or later.** On EmDash 1.3, a plugin installed from the EmDash registry (which always runs sandboxed) cannot use the site's email service on Cloudflare: every email fails with "Email is not configured", although the site's own emails work. EmDash 1.4.0 fixes this. From 0.1.6 the Checklist's Email row says so after a test email fails this way.
 
