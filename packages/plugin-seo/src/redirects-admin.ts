@@ -285,6 +285,16 @@ export function plural(count: number, word: string): string {
 	return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
+/**
+ * A progress meter out of 100. The admin's meter (Kumo, on Base UI) prints and
+ * announces its value as a percentage of 100 whatever its max, so a value of 1
+ * with a max of 3 read "1%"; the share done, out of 100, reads 33%.
+ */
+function progress(label: string, done: number, total: number): Block {
+	const share = total > 0 ? Math.round((Math.min(done, total) / total) * 100) : 0;
+	return { type: "meter", label, value: share, max: 100 };
+}
+
 function skippedTable(skipped: SkippedRow[]): Block[] {
 	if (skipped.length === 0) return [];
 	const blocks: Block[] = [
@@ -484,12 +494,7 @@ function importBlocks(state: ImportState | null): Block[] {
 	if (state.status === "removing") {
 		const removed = state.removed ?? 0;
 		return [
-			{
-				type: "meter",
-				label: `${removed} of ${state.added} removed`,
-				value: removed,
-				max: Math.max(state.added, removed, 1),
-			},
+			progress(`${removed} of ${state.added} removed`, removed, Math.max(state.added, removed, 1)),
 			{
 				type: "context",
 				text: "The rest are removed in the background, a few each minute. You can leave this page.",
@@ -510,12 +515,7 @@ function importBlocks(state: ImportState | null): Block[] {
 	}
 	if (state.status === "adding") {
 		return [
-			{
-				type: "meter",
-				label: `${state.added} of ${state.rows.length} added`,
-				value: state.cursor,
-				max: state.rows.length,
-			},
+			progress(`${state.added} of ${state.rows.length} added`, state.cursor, state.rows.length),
 			{
 				type: "context",
 				text: "The rest are added in the background, a few each minute. You can leave this page.",

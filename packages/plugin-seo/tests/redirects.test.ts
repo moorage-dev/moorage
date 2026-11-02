@@ -234,6 +234,10 @@ describe("Redirects tab", () => {
 			`${removing?.removed} removed so far. The rest are removed in the background, a few each minute.`,
 		);
 		expect(JSON.stringify(removed.blocks)).toContain(`${removing?.removed} of 5 removed`);
+		// The admin's meter prints its value as a percentage of 100 whatever its max, so the
+		// share is given out of 100: 1 of 5 is 20%, not "1%".
+		const share = Math.round(((removing?.removed ?? 0) / 5) * 100);
+		expect(JSON.stringify(removed.blocks)).toContain(`"value":${share},"max":100`);
 		for (let run = 0; run < 10 && (await state(runtime)); run += 1)
 			await runtime.transport.invokeHook("cron", { name: "redirects-import" });
 		expect(await sources(runtime)).toEqual(["/kept"]);
@@ -328,6 +332,7 @@ describe("Redirects tab", () => {
 
 		const page = await runtime.admin.loadPage(PAGE);
 		expect(JSON.stringify(page.blocks)).toContain("1 of 2 added");
+		expect(JSON.stringify(page.blocks)).toContain('"value":50,"max":100');
 
 		const stopped = await runtime.admin.act(PAGE, "stop_redirects");
 		expect(stopped.toast?.message).toBe("Stopped. 1 redirect added.");
