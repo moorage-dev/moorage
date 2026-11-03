@@ -31,7 +31,13 @@ import { helpLinks } from "./help-line.js";
 // Checklist are replaced with what a public bakery site would get; the rest of the page is its own.
 
 const SHOTS = process.env.PLUGIN_SCREENSHOTS === "1";
-const VERSION = { seo: "0-1-11", siteHealth: "0-1-5", popups: "0-2-1", analytics: "0-3-1" };
+// Popups is still 0.2.1 but was retaken on EmDash 1.4.0, so its pictures carry "-emdash-1-4" to get new names.
+const VERSION = {
+	seo: "0-1-12",
+	siteHealth: "0-1-7",
+	popups: "0-2-1-emdash-1-4",
+	analytics: "0-3-2",
+};
 const API = "/_emdash/api";
 const H = { "X-EmDash-Request": "1" };
 const PACKAGES = resolve(import.meta.dirname, "../../../packages");
@@ -306,6 +312,11 @@ const HEALTH = "/_emdash/admin/plugins/site-health/health";
 
 test("Site Health", async ({ browser }) => {
 	test.setTimeout(400_000);
+	// Links to other sites are never opened from the test machine: the setting is off before the first check
+	// (where the plugin keeps it: see its src/state.ts, OPTIONS). The Checklist keeps it under Options, closed.
+	sql(
+		`insert into options (name, value, revision) values ('plugin:site-health:settings:options', '{"outbound":false}', lower(hex(randomblob(16)))) on conflict(name) do update set value = json_set(value, '$.outbound', json('false'))`,
+	);
 	// A real first check, so everything the page keeps exists; then wait for it to finish.
 	const { context: first, page } = await open(browser, HEALTH, { width: 1280, height: 900 }, 1);
 	await expect(page.getByRole("tab", { name: "Problems" })).toBeVisible({ timeout: 120_000 });

@@ -18,7 +18,7 @@ const ROLE = { contributor: 20, editor: 40 };
 const SCREENSHOTS = process.env.APPROVALS_SCREENSHOTS === "1";
 const SITE_TITLE = "Harbour Street Bakery";
 // The version the pictures ship in, in their file names.
-const VERSION = "0-2-1";
+const VERSION = "0-2-3";
 const IMAGES = new URL("../../../packages/plugin-approvals/images/", import.meta.url);
 
 async function shot(
