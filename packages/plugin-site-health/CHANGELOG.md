@@ -1,5 +1,11 @@
 # @moorage/plugin-site-health
 
+## 0.1.8
+
+### Patch Changes
+
+- f421512: New screenshots of the admin pages on EmDash 1.4.0.
+
 ## 0.1.7
 
 ### Patch Changes

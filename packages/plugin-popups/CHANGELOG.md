@@ -1,5 +1,11 @@
 # @moorage/plugin-popups
 
+## 0.2.2
+
+### Patch Changes
+
+- f421512: New screenshots of the admin pages on EmDash 1.4.0.
+
 ## 0.2.1
 
 ### Patch Changes

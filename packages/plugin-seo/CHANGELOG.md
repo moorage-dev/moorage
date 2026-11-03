@@ -1,5 +1,11 @@
 # @moorage/plugin-seo
 
+## 0.1.13
+
+### Patch Changes
+
+- f421512: New screenshots of the admin pages on EmDash 1.4.0.
+
 ## 0.1.12
 
 ### Patch Changes

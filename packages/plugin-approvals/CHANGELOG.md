@@ -1,5 +1,11 @@
 # @moorage/plugin-approvals
 
+## 0.2.4
+
+### Patch Changes
+
+- f421512: New screenshots of the admin pages on EmDash 1.4.0.
+
 ## 0.2.3
 
 ### Patch Changes

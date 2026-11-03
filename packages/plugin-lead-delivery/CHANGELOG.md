@@ -1,5 +1,11 @@
 # @moorage/plugin-lead-delivery
 
+## 0.4.4
+
+### Patch Changes
+
+- f421512: New screenshots of the admin pages on EmDash 1.4.0.
+
 ## 0.4.3
 
 ### Patch Changes
