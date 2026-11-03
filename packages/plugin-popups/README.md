@@ -4,7 +4,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 
 **A developer installs it once.** It is a native plugin: someone adds one line to the site's `astro.config.mjs` (below). After that, everything is done on the admin page under Marketing > Popups. It cannot be installed from the plugin registry.
 
-![The Popups list](images/admin-list-0-2-1-desktop-light.png)
+![The Popups list](images/admin-list-0-2-1-emdash-1-4-desktop-light.png)
 
 ## What it does
 
@@ -29,9 +29,9 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 - **Colours:** your theme's colours (the default), one of five ready-made sets, or your own. Each set has a matching dark version for visitors whose device is in dark mode, and the cookie banner in Analytics & Cookies offers the same sets, so the two match.
 - **Checks:** the form's short name is checked when you save. Your own colours are refused when they are hard to read, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
 
-| A popup's results                                       | A popup's results, on a phone                        |
-| ------------------------------------------------------- | ---------------------------------------------------- |
-| ![](images/admin-popup-results-0-2-1-desktop-light.png) | ![](images/admin-popup-results-0-2-1-phone-dark.png) |
+| A popup's results                                                  | A popup's results, on a phone                                   |
+| ------------------------------------------------------------------ | --------------------------------------------------------------- |
+| ![](images/admin-popup-results-0-2-1-emdash-1-4-desktop-light.png) | ![](images/admin-popup-results-0-2-1-emdash-1-4-phone-dark.png) |
 
 | Popup, computer                            | Popup, phone                            | Slide-in                                     | Box in a page                                    |
 | ------------------------------------------ | --------------------------------------- | -------------------------------------------- | ------------------------------------------------ |
@@ -134,13 +134,13 @@ A new popup is made one step at a time. Once it is finished, its own page has, f
 - Edit: one form for what it says, when and where, and its dates, with one "Save changes" at the end. If something cannot be saved, every problem is listed together and everything you typed stays in place. "Preview in dark mode" is under it, and for a popup that opens with a click, the instructions for your web person.
 - "Delete popup" at the very foot. It asks first.
 
-| A popup's page                                       | Results: how your popups compare                  |
-| ---------------------------------------------------- | ------------------------------------------------- |
-| ![](images/admin-popup-page-0-2-1-desktop-light.png) | ![](images/admin-results-0-2-1-desktop-light.png) |
+| A popup's page                                                  | Results: how your popups compare                             |
+| --------------------------------------------------------------- | ------------------------------------------------------------ |
+| ![](images/admin-popup-page-0-2-1-emdash-1-4-desktop-light.png) | ![](images/admin-results-0-2-1-emdash-1-4-desktop-light.png) |
 
-| New popup: the kind                                 | Settings: colours                                 | The "Popups box" block in a post                     |
-| --------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
-| ![](images/admin-new-popup-0-2-1-desktop-light.png) | ![](images/admin-colours-0-2-1-desktop-light.png) | ![](images/editor-which-box-0-2-1-desktop-light.png) |
+| New popup: the kind                                            | Settings: colours                                            | The "Popups box" block in a post                                |
+| -------------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------- |
+| ![](images/admin-new-popup-0-2-1-emdash-1-4-desktop-light.png) | ![](images/admin-colours-0-2-1-emdash-1-4-desktop-light.png) | ![](images/editor-which-box-0-2-1-emdash-1-4-desktop-light.png) |
 
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
 

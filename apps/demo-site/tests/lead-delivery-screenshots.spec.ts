@@ -21,7 +21,7 @@ import { helpLinks } from "./help-line.js";
 // host, and email goes to the dev console provider (`/_emdash/api/dev/emails`).
 
 const SHOTS = process.env.DEMO_SITE_SCREENSHOTS === "1";
-const VERSION = "0-4-1";
+const VERSION = "0-4-3";
 const API = "/_emdash/api/plugins/lead-delivery";
 const PAGE = "/_emdash/admin/plugins/lead-delivery/enquiries";
 const FORM = "cake-order";

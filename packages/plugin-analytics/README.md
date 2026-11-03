@@ -2,7 +2,7 @@
 
 Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analytics, Google Tag Manager, Google Ads, Meta Pixel, Microsoft Clarity, HubSpot and Cloudflare Web Analytics by pasting one ID each, with a cookie banner that holds every one of them back until the visitor agrees. Tools and banner live in one plugin, so "nothing loads before consent" is true by construction, and there is no theme file to edit. Runs on any EmDash site, self-hosted or on Cloudflare, with no account and no key.
 
-![The Status tab: what is on, the cookie banner checklist and how visitors answered](images/status-0-3-1-desktop-light.png)
+![The Status tab: what is on, the cookie banner checklist and how visitors answered](images/status-0-3-2-desktop-light.png)
 
 ## What it does
 
@@ -16,7 +16,7 @@ Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analy
 
 | Tools                                              | Banner, with its colour sets                      | Status, dark mode                         | Status, phone                            |
 | -------------------------------------------------- | ------------------------------------------------- | ----------------------------------------- | ---------------------------------------- |
-| ![](images/tracking-tools-0-3-1-desktop-light.png) | ![](images/cookie-banner-0-3-1-desktop-light.png) | ![](images/status-0-3-1-desktop-dark.png) | ![](images/status-0-3-1-phone-light.png) |
+| ![](images/tracking-tools-0-3-2-desktop-light.png) | ![](images/cookie-banner-0-3-2-desktop-light.png) | ![](images/status-0-3-2-desktop-dark.png) | ![](images/status-0-3-2-phone-light.png) |
 
 ## What it does not do
 
