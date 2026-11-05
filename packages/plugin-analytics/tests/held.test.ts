@@ -189,12 +189,12 @@ describe("the block components", () => {
 			} as unknown as RouteContext);
 		};
 		expect(createPlugin().routes.embeds!.public).toBe(true);
-		expect(await ask({ tools: { ga4: "G-AB12CD34EF" } })).toEqual({ hold: true });
-		expect(await ask(undefined)).toEqual({ hold: false });
-		expect(await ask({ tools: { cloudflare: "0123456789abcdef0123456789abcdef" } })).toEqual({
+		expect(await ask({ tools: { ga4: "G-AB12CD34EF" } })).toMatchObject({ hold: true });
+		expect(await ask(undefined)).toMatchObject({ hold: false });
+		expect(await ask({ tools: { cloudflare: "0123456789abcdef0123456789abcdef" } })).toMatchObject({
 			hold: false,
 		});
-		expect(await ask({ tools: { ga4: "G-AB12CD34EF" }, banner: { audience: "none" } })).toEqual({
+		expect(await ask({ tools: { ga4: "G-AB12CD34EF" }, banner: { audience: "none" } })).toMatchObject({
 			hold: false,
 		});
 	});
@@ -206,8 +206,8 @@ describe("in the browser", () => {
 	};
 	const PLAYER =
 		'<div class="emdash-iframe"><iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe></div>';
-	const box = (kind = "video", name = "YouTube") =>
-		`<div class="cc-held" data-cc-held="${kind}" data-cc-name="${name}"><div class="cc-held-ask" hidden><p class="cc-held-text">x</p><button type="button" data-cc-load>Load</button><a class="cc-held-link" href="#">open</a></div><template>${PLAYER}</template></div>`;
+	const box = (kind = "video", name = "YouTube", named = true) =>
+		`<div class="cc-held" data-cc-held="${kind}" data-cc-name="${name}"${named ? " data-cc-named" : ""}><div class="cc-held-ask" hidden><p class="cc-held-text">x</p><button type="button" data-cc-load>Load</button><a class="cc-held-link" href="#">open</a></div><template>${PLAYER}</template></div>`;
 	const frames = () => document.querySelectorAll("iframe").length;
 	const asking = () => document.querySelector<HTMLElement>(".cc-held-ask")!;
 	let state: { analytics: boolean; marketing: boolean } | undefined;
@@ -253,6 +253,16 @@ describe("in the browser", () => {
 		reveal(document, w);
 		tell({ analytics: false, marketing: false });
 		tell({ analytics: true, marketing: true });
+		expect(frames()).toBe(1);
+	});
+
+	it("a provider the banner does not name yet is not released by Marketing: only by its own Load button", () => {
+		document.body.innerHTML = box("video", "Vimeo", false);
+		reveal(document, w);
+		tell({ analytics: true, marketing: true });
+		expect(frames()).toBe(0);
+		expect(asking().hidden).toBe(false);
+		document.querySelector<HTMLElement>("[data-cc-load]")!.click();
 		expect(frames()).toBe(1);
 	});
 

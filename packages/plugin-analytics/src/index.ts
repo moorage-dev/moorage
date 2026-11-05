@@ -344,7 +344,8 @@ export function createPlugin() {
 							await changeSeen(ctx, (list) => [...list, name]);
 						}
 					}
-					return { hold };
+					// Only a provider the banner names is released by the visitor's Marketing answer.
+					return { hold, named: hold && !!name && config.heldEmbeds.includes(name) };
 				},
 			},
 			// Public, never cached: tells the browser which country the visitor is in.

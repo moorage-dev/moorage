@@ -308,7 +308,8 @@ export function placeholderWords(lang, held) {
 }
 
 /**
- * In the browser: show each held player once Marketing is allowed, or as soon
+ * In the browser: show each held player once Marketing is allowed (for a
+ * provider the banner names), or as soon
  * as the page loads where nobody is asked (no `data-cookie-consent` on <html>:
  * no banner on this site or this page, a preview, an excluded page). While the
  * visitor has not allowed Marketing, the placeholder says why and offers Load,
@@ -329,7 +330,13 @@ export function reveal(d, w) {
 	const check = () => {
 		const state = w.cookieConsent;
 		for (const box of d.querySelectorAll("[data-cc-held]")) {
-			if (!html.hasAttribute("data-cookie-consent") || state?.marketing) open(box);
+			// Marketing releases only a provider the banner names (data-cc-named): one it does not
+			// name yet was never told to the visitor, so only its own Load button shows it.
+			if (
+				!html.hasAttribute("data-cookie-consent") ||
+				(state?.marketing && box.hasAttribute("data-cc-named"))
+			)
+				open(box);
 			// Until the visitor's rule is known the box stays plain, so nobody who is not asked sees it flash.
 			else if (state) {
 				const ask = /** @type {HTMLElement | null} */ (box.querySelector(".cc-held-ask"));

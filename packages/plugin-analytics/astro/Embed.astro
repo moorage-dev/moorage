@@ -14,12 +14,14 @@ import Held from "./Held.astro";
 
 const { node } = Astro.props as { node?: { url?: unknown; provider?: unknown; html?: unknown } };
 const held = heldEmbed(node);
-const hold = held ? await holding(Astro.locals, Astro.url, held.name) : false;
+const { hold, named } = held
+	? await holding(Astro.locals, Astro.url, held.name)
+	: { hold: false, named: false };
 ---
 
 {
 	hold && held ? (
-		<Held kind={held.kind} name={held.name} link={held.link}>
+		<Held kind={held.kind} name={held.name} link={held.link} named={named}>
 			<Embed node={node as never} />
 		</Held>
 	) : (

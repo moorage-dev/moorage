@@ -47,8 +47,8 @@ describe("learning which videos and maps a site holds back", () => {
 	it("notes each provider a held block names, once, in a fixed order, apart from the settings", async () => {
 		const fake = fakeContext({ [CONFIG_KEY]: GA });
 		const version = bannerVersion(normalizeConfig(GA));
-		expect(await ask(fake, "Google Maps")).toEqual({ hold: true });
-		expect(await ask(fake, "YouTube")).toEqual({ hold: true });
+		expect(await ask(fake, "Google Maps")).toMatchObject({ hold: true });
+		expect(await ask(fake, "YouTube")).toMatchObject({ hold: true });
 		await ask(fake, "YouTube");
 		expect(seen(fake)).toEqual(["YouTube", "Google Maps"]);
 		// This route is public: what it is told never changes the banner or its version.
@@ -73,7 +73,7 @@ describe("learning which videos and maps a site holds back", () => {
 		expect(fake.reads()).toBe(reads);
 		expect(seen(fake)).toEqual([]);
 		const quiet = fakeContext({ [CONFIG_KEY]: { ...GA, banner: { audience: "none" } } });
-		expect(await ask(quiet, "YouTube")).toEqual({ hold: false });
+		expect(await ask(quiet, "YouTube")).toMatchObject({ hold: false });
 		expect(seen(quiet)).toEqual([]);
 	});
 
@@ -112,6 +112,33 @@ describe("learning which videos and maps a site holds back", () => {
 		await admin(fake, { type: "block_action", action_id: `${FORGET_HELD_ACTION}Vimeo` });
 		expect(named(fake)).toEqual(["YouTube"]);
 		expect(seen(fake)).toEqual(["YouTube"]);
+	});
+
+	it("tells the block whether the banner names its provider, so Marketing releases only named ones", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: GA });
+		expect(await ask(fake, "YouTube")).toEqual({ hold: true, named: false });
+		await admin(fake, { type: "block_action", action_id: NAME_HELD_ACTION });
+		expect(await ask(fake, "YouTube")).toEqual({ hold: true, named: true });
+		expect(await ask(fake, "Vimeo")).toEqual({ hold: true, named: false });
+	});
+
+	it("shows the prompt to name them above the tabs, to Admins only", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: GA });
+		await ask(fake, "Vimeo");
+		const page = (await admin(fake, { type: "page_load", page: "/settings" })) as {
+			blocks: Array<{ type: string; title?: string }>;
+		};
+		const notice = page.blocks.findIndex(
+			(block) => block.type === "banner" && block.title?.includes("Your pages show"),
+		);
+		const tabs = page.blocks.findIndex((block) => block.type === "tab");
+		expect(notice).toBeGreaterThan(-1);
+		expect(notice).toBeLessThan(tabs);
+		const editor = JSON.stringify(
+			await admin(fake, { type: "page_load", page: "/settings" }, EDITOR),
+		);
+		expect(editor).not.toContain("Your pages show");
+		expect(editor).not.toContain(NAME_HELD_ACTION);
 	});
 
 	it("two admin saves at the same moment both stick", async () => {

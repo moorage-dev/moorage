@@ -1473,6 +1473,13 @@ test.describe("added in 0.4", () => {
 		);
 		await page.reload();
 		await expect(banner(page)).not.toContainText("YouTube");
+		// Not named yet: Accept all does not release them; each waits for its own Load button.
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await settle(page);
+		await expect(held(page)).toHaveCount(3);
+		expect(embeds.some((url) => /youtube|vimeo|google\.com\/maps/.test(url))).toBe(false);
+		// That answer loaded Google Analytics; from here on only the videos' own switch is used.
+		hits.splice(0);
 		const naming = await admin.post(`${API}/admin`, {
 			headers: { "X-EmDash-Request": "1" },
 			data: { type: "block_action", action_id: "name_held" },

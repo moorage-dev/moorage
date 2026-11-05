@@ -334,10 +334,9 @@ const list = (names: readonly string[]) => new Intl.ListFormat("en-GB").format(n
  * Held videos and maps. Their providers are noted by a public route, so they are
  * named in the banner (which asks visitors again) only once an Admin says so here.
  */
-function heldBlocks(config: AnalyticsConfig, seen: readonly HeldName[]): Block[] {
+function heldBlocks(config: AnalyticsConfig): Block[] {
 	const blocks: Block[] = [];
 	const named = config.heldEmbeds;
-	const fresh = seen.filter((name) => !named.includes(name));
 	if (named.length) {
 		blocks.push(
 			{
@@ -355,6 +354,18 @@ function heldBlocks(config: AnalyticsConfig, seen: readonly HeldName[]): Block[]
 			},
 		);
 	}
+	return blocks;
+}
+
+/**
+ * Above the tabs, for Admins only: providers seen on the site's pages that the
+ * banner does not name yet, with the button that names them.
+ */
+function namePrompt(state: PageState): Block[] {
+	const { config } = state;
+	if (!state.admin || !needsConsent(config) || config.banner.audience === "none") return [];
+	const fresh = (state.heldSeen ?? []).filter((name) => !config.heldEmbeds.includes(name));
+	const blocks: Block[] = [];
 	if (fresh.length) {
 		blocks.push(
 			{
@@ -362,7 +373,7 @@ function heldBlocks(config: AnalyticsConfig, seen: readonly HeldName[]): Block[]
 				variant: "alert",
 				title: `Your pages show videos or maps from ${list(fresh)}`,
 				description:
-					"They wait until visitors allow them, but the banner does not name them yet, so visitors do not know what they agree to. Name them in the banner: visitors who answered before are asked again once.",
+					"The banner does not name them yet, so visitors were never told about them: until you name them, each one loads only when a visitor presses its own Load button, even after Accept all. Name them in the banner and Marketing releases them; visitors who answered before are asked again once.",
 			},
 			{
 				type: "actions",
@@ -413,7 +424,7 @@ function consentBlocks(state: PageState): Block[] {
 		type: "section",
 		text: `✓ Asks ${whoWaits(banner.audience)} first. They are asked again after ${banner.months} months, or when you add or remove a tool.`,
 	});
-	blocks.push(...heldBlocks(config, state.heldSeen ?? []));
+	blocks.push(...heldBlocks(config));
 	if (banner.policyUrl) {
 		const url = banner.policyUrl.startsWith("/")
 			? state.origin
@@ -1011,7 +1022,7 @@ function advancedBlocks(state: PageState): Block[] {
 }
 
 export function renderPage(state: PageState, tab: number = TAB.status): BlockResponse {
-	const blocks: Block[] = [{ type: "header", text: "Analytics & Cookies" }];
+	const blocks: Block[] = [{ type: "header", text: "Analytics & Cookies" }, ...namePrompt(state)];
 	if (state.admin) {
 		blocks.push({
 			type: "tab",
@@ -1045,6 +1056,7 @@ function clean(state: PageState): PageState {
 		siteHost: state.siteHost,
 		exportUrl: state.exportUrl,
 		siteCheck: state.siteCheck,
+		heldSeen: state.heldSeen,
 	};
 }
 

@@ -13,9 +13,11 @@ interface Props {
 	name: string;
 	/** Opens the same video or map on its own site; empty when not known (a playlist). */
 	link: string;
+	/** The banner names this provider: the visitor's Marketing answer releases it. */
+	named?: boolean;
 }
 
-const { kind, name, link } = Astro.props;
+const { kind, name, link, named = false } = Astro.props;
 const words = placeholderWords("en", { kind, name, link });
 const css =
 	".cc-held{position:relative;margin:1.5rem 0;width:100%}" +
@@ -29,7 +31,7 @@ const css =
 ---
 
 <style is:inline set:html={css} />
-<div class="cc-held" data-cc-held={kind} data-cc-name={name}>
+<div class="cc-held" data-cc-held={kind} data-cc-name={name} data-cc-named={named ? "" : undefined}>
 	{link && <noscript><a href={link} rel="noopener noreferrer">{words.open}</a></noscript>}
 	<div class="cc-held-ask" hidden>
 		<p class="cc-held-text">{words.text}</p>

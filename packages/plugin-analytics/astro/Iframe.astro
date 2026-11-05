@@ -13,12 +13,14 @@ import Held from "./Held.astro";
 
 const { node } = Astro.props as { node?: { src?: unknown } };
 const held = heldIframe(node?.src);
-const hold = held ? await holding(Astro.locals, Astro.url, held.name) : false;
+const { hold, named } = held
+	? await holding(Astro.locals, Astro.url, held.name)
+	: { hold: false, named: false };
 ---
 
 {
 	hold && held ? (
-		<Held kind={held.kind} name={held.name} link={held.link}>
+		<Held kind={held.kind} name={held.name} link={held.link} named={named}>
 			<Iframe node={node as never} />
 		</Held>
 	) : (
