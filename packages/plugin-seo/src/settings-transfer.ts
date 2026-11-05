@@ -7,27 +7,31 @@
 
 import {
 	defaultTypeForCollection,
+	isFoundingDate,
 	normalizeConfig,
 	type CollectionRule,
+	type OpeningHours,
 	type SeoConfig,
 	type SiteIdentity,
 } from "./config.js";
-import { DAYS, formatDayHours } from "./hours.js";
+import { DAYS, formatDayHours, readWeekHours } from "./hours.js";
 import { BUSINESS_GROUPS, PRICE_RANGES, typeLabel } from "./page-types.js";
-import { parseUrl, readLogo } from "./url.js";
+import { readLogo, readProfileLink } from "./url.js";
 
 /** Marks pasted text as settings copied from this plugin. */
 export const TRANSFER_FORMAT = "emdash-seo-settings";
 const TRANSFER_VERSION = 1;
 
-/** The settings as copied: what describes the site, none of the per-site switches. */
+/**
+ * The settings as copied: what describes the site, none of the per-site switches. The field a
+ * page's own markup is read from is left out: no form sets it, so each site keeps its own.
+ */
 export interface Transfer {
 	format: typeof TRANSFER_FORMAT;
 	version: number;
 	site: SiteIdentity;
 	collections: Record<string, { type?: string; noindex?: boolean }>;
 	robots: SeoConfig["robots"];
-	jsonLdField: string;
 	breadcrumbs: boolean;
 }
 
@@ -52,7 +56,6 @@ function toTransfer(config: SeoConfig, slugs = Object.keys(config.collections)):
 		site: config.site,
 		collections,
 		robots: config.robots,
-		jsonLdField: config.jsonLdField,
 		breadcrumbs: config.breadcrumbs,
 	};
 }
@@ -93,65 +96,128 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const NOT_SETTINGS =
 	"This is not a copy of SEO settings. On the other site, open SEO > Settings > Copy settings to another site and copy the whole text.";
-const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 
-/** The site's kind in the words of the setup question. */
+/** The site's kind as the "This site is for" question words it. */
 function kindLabel(type: string): string {
 	if (type === "Organization") return "A company or organisation";
 	if (type === "Person") return "A person";
-	const group = BUSINESS_GROUPS.find((candidate) => candidate.value === type);
-	return `A local business: ${group?.label ?? type}`;
+	return "A local business customers visit (shop, cafe, clinic)";
 }
 
-/** Check the parts of the identity the forms check, so a paste cannot store what they refuse. */
-function checkSite(raw: Record<string, unknown>, siteUrl: string): string | null {
+/**
+ * Read the pasted identity through the same checks and changes as the forms that set it, so a
+ * paste cannot store what they refuse or keep what they would change. Returns the identity
+ * ready for the normaliser, or why it was refused.
+ */
+function readSite(
+	raw: Record<string, unknown>,
+	siteUrl: string,
+): { site: Record<string, unknown> } | { error: string } {
 	const type = raw.type ?? "Organization";
-	if (
-		type !== "Organization" &&
-		type !== "Person" &&
-		!BUSINESS_GROUPS.some((group) => group.value === type)
-	) {
-		return "Couldn't read the kind of site in these settings.";
+	const local = BUSINESS_GROUPS.some((group) => group.value === type);
+	if (type !== "Organization" && type !== "Person" && !local) {
+		return { error: "Couldn't read the kind of site in these settings." };
 	}
+	const site: Record<string, unknown> = { ...raw, type };
+
+	// The Logo form: a path on this site is stored as a full address.
+	site.logo = undefined;
 	if (raw.logo !== undefined && raw.logo !== "") {
-		if (typeof raw.logo !== "string" || "error" in readLogo(raw.logo, siteUrl)) {
-			return "Couldn't read the logo link in these settings: it must be a web address starting with https://";
+		const read = typeof raw.logo === "string" ? readLogo(raw.logo.trim(), siteUrl) : undefined;
+		if (!read || "error" in read) {
+			return {
+				error:
+					"Couldn't read the logo link in these settings: it must be a web address starting with https://",
+			};
 		}
+		site.logo = read.logo;
 	}
+
+	// The Profiles form: empty lines skipped, "instagram.com/name" made a full link.
 	if (raw.sameAs !== undefined) {
-		const links = Array.isArray(raw.sameAs) ? raw.sameAs : [null];
+		const links: unknown[] = Array.isArray(raw.sameAs) ? raw.sameAs : [null];
+		const sameAs: string[] = [];
 		for (const link of links) {
-			const protocol = typeof link === "string" ? parseUrl(link)?.protocol : undefined;
-			if (protocol !== "https:" && protocol !== "http:") {
-				return "Couldn't read a profile link in these settings: each must be a web address.";
+			if (typeof link === "string" && link.trim() === "") continue;
+			const href = typeof link === "string" ? readProfileLink(link.trim()) : null;
+			if (!href) {
+				return {
+					error: "Couldn't read a profile link in these settings: each must be a web address.",
+				};
 			}
+			sameAs.push(href);
 		}
+		site.sameAs = sameAs;
 	}
-	if (raw.openingHours !== undefined) {
-		const rows = Array.isArray(raw.openingHours) ? raw.openingHours : [null];
-		for (const row of rows) {
-			const ok =
+
+	// The Opening hours form: each day read as typed, at most two ranges a day. Hours are only
+	// kept for a local business, as saving who the site is for drops them for any other kind.
+	if (!local) {
+		site.openingHours = [];
+	} else if (raw.openingHours !== undefined) {
+		const rows: unknown[] = Array.isArray(raw.openingHours) ? raw.openingHours : [null];
+		const shaped = rows.every(
+			(row) =>
 				isRecord(row) &&
 				Array.isArray(row.days) &&
 				row.days.length > 0 &&
 				row.days.every((day) => (DAYS as readonly unknown[]).includes(day)) &&
 				typeof row.opens === "string" &&
-				typeof row.closes === "string" &&
-				CLOCK.test(row.opens) &&
-				CLOCK.test(row.closes);
-			if (!ok) return "Couldn't read the opening hours in these settings.";
+				typeof row.closes === "string",
+		);
+		const read = shaped
+			? readWeekHours((day) => formatDayHours(day, rows as OpeningHours[]))
+			: undefined;
+		if (!read || "day" in read) {
+			return { error: "Couldn't read the opening hours in these settings." };
+		}
+		site.openingHours = read.hours;
+	}
+
+	// The Address and phone form: a price range from its list, the country code in capitals.
+	if (raw.priceRange !== undefined && !PRICE_RANGES.includes(String(raw.priceRange))) {
+		return { error: "Couldn't read the price range in these settings." };
+	}
+	if (isRecord(raw.address) && typeof raw.address.addressCountry === "string") {
+		site.address = { ...raw.address, addressCountry: raw.address.addressCountry.toUpperCase() };
+	}
+
+	// The Company details form: a founding year, or a full date.
+	if (raw.foundingDate !== undefined && raw.foundingDate !== "") {
+		if (typeof raw.foundingDate !== "string" || !isFoundingDate(raw.foundingDate.trim())) {
+			return {
+				error:
+					"Couldn't read the founding date in these settings: write it as a year, like 2012, or as 2012-05-01.",
+			};
 		}
 	}
-	if (raw.priceRange !== undefined && !PRICE_RANGES.includes(String(raw.priceRange))) {
-		return "Couldn't read the price range in these settings.";
-	}
-	return null;
+	return { site };
 }
 
-/** Each setting in words, for showing what an import changes. */
+/**
+ * How much of a page search engines may show, as the settings form offers it: no text, a short
+ * line (160 characters) or no limit. Video previews are limited the same way: 160 seconds or none.
+ */
+function readRobots(raw: unknown): SeoConfig["robots"] {
+	const { robots } = normalizeConfig({ robots: raw });
+	return {
+		...robots,
+		maxSnippet: !robots.nosnippet && robots.maxSnippet >= 0 ? 160 : -1,
+		maxVideoPreview: robots.maxVideoPreview >= 0 ? 160 : -1,
+	};
+}
+
+const IMAGE_PREVIEW: Record<SeoConfig["robots"]["maxImagePreview"], string> = {
+	large: "Large",
+	standard: "Small",
+	none: "No image",
+};
+
+/** Each setting in words, as the forms show it, for showing what an import changes. */
 function described(
 	config: SeoConfig,
 	collections: Array<{ slug: string; label: string }>,
+	siteName: string,
 ): Array<[string, string]> {
 	const { site } = config;
 	const none = "(none)";
@@ -172,10 +238,12 @@ function described(
 	})
 		.filter(Boolean)
 		.join("; ");
+	const business = BUSINESS_GROUPS.find((group) => group.value === site.type)?.label;
 	const { robots } = config;
 	const rows: Array<[string, string]> = [
-		["Who the site is for", kindLabel(site.type)],
-		["Name", site.name ?? "(the site's name)"],
+		["This site is for", kindLabel(site.type)],
+		["Kind of business", business ?? none],
+		["Name", site.name ?? siteName],
 		["Also known as", site.alternateName ?? none],
 		["Registered legal name", site.legalName ?? none],
 		["What you do", site.description ?? none],
@@ -186,7 +254,7 @@ function described(
 		["Address", address || none],
 		["Map position", site.geo ? `${site.geo.latitude}, ${site.geo.longitude}` : none],
 		["Opening hours", hours || none],
-		["Price range", site.priceRange ?? none],
+		["Price range", site.priceRange ?? "Not shown"],
 		["Areas served", site.areaServed.join(", ") || none],
 		["Founded", site.foundingDate ?? none],
 		["VAT number", site.vatID ?? none],
@@ -210,10 +278,17 @@ function described(
 		["Path to each page on Google", config.breadcrumbs ? "Shown" : "Not shown"],
 		[
 			"Text in search results",
-			robots.nosnippet ? "None" : robots.maxSnippet >= 0 ? "Short" : "As long as Google likes",
+			robots.nosnippet
+				? "No text"
+				: robots.maxSnippet >= 0
+					? "A short line"
+					: "As much as Google likes",
 		],
-		["Picture size in search results", robots.maxImagePreview],
-		["Field for a page's own markup", config.jsonLdField],
+		["Picture size in search results", IMAGE_PREVIEW[robots.maxImagePreview]],
+		[
+			"Video previews in search results",
+			robots.maxVideoPreview >= 0 ? "Up to 160 seconds" : "As long as Google likes",
+		],
 	);
 	return rows;
 }
@@ -227,6 +302,7 @@ export function readTransfer(
 	current: SeoConfig,
 	collections: Array<{ slug: string; label: string }>,
 	siteUrl: string,
+	siteName = "",
 ): ReadTransfer | { error: string } {
 	let raw: unknown = input;
 	if (typeof input === "string") {
@@ -245,19 +321,16 @@ export function readTransfer(
 			error: "These settings come from a newer version of SEO. Update it on this site first.",
 		};
 	}
-	const problem = checkSite(raw.site, siteUrl);
-	if (problem) return { error: problem };
+	const read = readSite(raw.site, siteUrl);
+	if ("error" in read) return read;
 
 	// Read through the same normaliser as stored settings, so the result has the stored shape.
-	const logo = typeof raw.site.logo === "string" ? readLogo(raw.site.logo, siteUrl) : {};
 	const pasted = normalizeConfig({
-		// A logo given as a path on the site is stored as a full address, as the form stores it.
-		site: { ...raw.site, logo: "logo" in logo ? logo.logo : undefined },
+		site: read.site,
 		collections: raw.collections,
-		robots: raw.robots,
-		jsonLdField: raw.jsonLdField,
 		breadcrumbs: raw.breadcrumbs,
 	});
+	const robots = readRobots(raw.robots);
 	const known = new Map(collections.map((collection) => [collection.slug, collection.label]));
 	const merged: Record<string, CollectionRule> = { ...current.collections };
 	const leftOut: string[] = [];
@@ -283,16 +356,15 @@ export function readTransfer(
 		...current,
 		site: pasted.site,
 		collections: merged,
-		robots: pasted.robots,
-		jsonLdField: pasted.jsonLdField,
+		robots,
 		breadcrumbs: pasted.breadcrumbs,
 		// The question of who the site is for is answered by the paste.
 		steps: { ...current.steps, identity: true },
 	};
-	const before = new Map(described(current, collections));
-	const changes = described(config, collections)
+	const before = new Map(described(current, collections, siteName));
+	const changes = described(config, collections, siteName)
 		.filter(([what, after]) => before.get(what) !== after)
 		.map(([what, after]) => ({ what, now: before.get(what) ?? "", after }));
-	const transfer = toTransfer(pasted);
+	const transfer = toTransfer({ ...pasted, robots });
 	return { config, transfer, changes, leftOut, hides };
 }

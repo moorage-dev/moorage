@@ -764,6 +764,80 @@ describe("copying settings to another site", () => {
 		expect(saved?.collections.recipes).toBeUndefined();
 	});
 
+	it("imports a paste as the forms would save it, and never the markup field", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			site: { type: "Organization", priceRange: "$$" },
+		});
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: {
+				type: "Store",
+				name: "Acme Shop",
+				foundingDate: "2012",
+				sameAs: ["instagram.com/acme", "", "https://www.facebook.com/acme"],
+				address: { streetAddress: "1 Main St", addressCountry: "gb" },
+				openingHours: [
+					{ days: ["Monday", "Tuesday"], opens: "9:00", closes: "17:00" },
+					{ days: ["Monday"], opens: "18:00", closes: "20:00" },
+				],
+			},
+			robots: { maxSnippet: 50, maxVideoPreview: 30, maxImagePreview: "standard" },
+			jsonLdField: "custom_markup",
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(checked.toast?.type).toBe("success");
+		const shown = texts(checked);
+		expect(JSON.stringify(applyButton(checked)?.value)).not.toContain("custom_markup");
+		expect(shown).not.toContain("Field for a page's own markup");
+		expect(shown).toContain("Video previews in search results");
+		expect(shown).toContain("https://instagram.com/acme");
+		expect(shown).toContain("Not shown");
+		expect(shown).toContain("A local business customers visit (shop, cafe, clinic)");
+		expect(shown).toContain("Small");
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		const saved = await config(runtime);
+		expect(saved?.jsonLdField).toBe("json_ld");
+		expect(saved?.site.foundingDate).toBe("2012");
+		expect(saved?.site.sameAs).toEqual([
+			"https://instagram.com/acme",
+			"https://www.facebook.com/acme",
+		]);
+		expect(saved?.site.address?.addressCountry).toBe("GB");
+		expect(saved?.site.openingHours).toEqual([
+			{ days: ["Monday"], opens: "09:00", closes: "17:00" },
+			{ days: ["Monday"], opens: "18:00", closes: "20:00" },
+			{ days: ["Tuesday"], opens: "09:00", closes: "17:00" },
+		]);
+		expect(saved?.robots).toMatchObject({
+			maxSnippet: 160,
+			maxVideoPreview: 160,
+			maxImagePreview: "standard",
+			nosnippet: false,
+		});
+	});
+
+	it("drops pasted hours when the site is not a local business, and maps no text to -1", async () => {
+		const runtime = await start();
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: {
+				type: "Organization",
+				openingHours: [{ days: ["Monday"], opens: "09:00", closes: "17:00" }],
+			},
+			robots: { nosnippet: true, maxSnippet: 160, maxVideoPreview: -5 },
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(checked.toast?.type).toBe("success");
+		expect(texts(checked)).not.toContain("Mon 09:00");
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		const saved = await config(runtime);
+		expect(saved?.site.openingHours).toEqual([]);
+		expect(saved?.robots).toMatchObject({ nosnippet: true, maxSnippet: -1, maxVideoPreview: -1 });
+	});
+
 	it("refuses what is not settings from this plugin, or settings the forms would refuse", async () => {
 		const runtime = await start();
 		const settings = (site: Record<string, unknown>) =>
@@ -782,6 +856,26 @@ describe("copying settings to another site", () => {
 			],
 			[settings({ type: "Organization", logo: "javascript:alert(1)" }), "logo"],
 			[settings({ type: "Organization", sameAs: ["not a link"] }), "profile"],
+			[settings({ type: "Organization", sameAs: ["https://localhost/me"] }), "profile"],
+			[settings({ type: "Organization", foundingDate: "May 2012" }), "founding date"],
+			[
+				settings({
+					type: "Store",
+					openingHours: [
+						{ days: ["Monday"], opens: "08:00", closes: "10:00" },
+						{ days: ["Monday"], opens: "11:00", closes: "13:00" },
+						{ days: ["Monday"], opens: "14:00", closes: "17:00" },
+					],
+				}),
+				"opening hours",
+			],
+			[
+				settings({
+					type: "Store",
+					openingHours: [{ days: ["Funday"], opens: "08:00", closes: "10:00" }],
+				}),
+				"opening hours",
+			],
 		] as const) {
 			const response = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
 			expect(response.toast?.type, paste).toBe("error");

@@ -54,3 +54,19 @@ export function formatDayHours(day: string, hours: OpeningHours[]): string {
 		.map((range) => `${range.opens}-${range.closes}`)
 		.join(", ");
 }
+
+/**
+ * Read a whole week as the Opening hours form does, one day's text at a time: at most two
+ * ranges a day, each stored as its own row for that day. Returns the day that cannot be read.
+ */
+export function readWeekHours(
+	textFor: (day: (typeof DAYS)[number]) => string,
+): { hours: OpeningHours[] } | { day: string } {
+	const hours: OpeningHours[] = [];
+	for (const day of DAYS) {
+		const parsed = parseDayHours(day, textFor(day));
+		if (!parsed) return { day };
+		hours.push(...parsed);
+	}
+	return { hours };
+}

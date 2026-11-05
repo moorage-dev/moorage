@@ -6,13 +6,14 @@ import type { CollectionSchemaInfo, PluginContext } from "emdash";
 import {
 	CONFIG,
 	defaultTypeForCollection,
+	isFoundingDate,
 	normalizeConfig,
 	type PageSchemaType,
 	type SeoConfig,
 	type SiteIdentity,
 } from "./config.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
-import { DAYS, formatDayHours, parseDayHours } from "./hours.js";
+import { DAYS, formatDayHours, readWeekHours } from "./hours.js";
 import { BUSINESS_GROUPS, PAGE_TYPES, PRICE_RANGES, typeLabel } from "./page-types.js";
 import {
 	addMore,
@@ -46,7 +47,7 @@ import {
 import { forgetSettings } from "./settings-memo.js";
 import { copyForward, needsCopy, pickSettings, writeSettings } from "./settings-store.js";
 import { exportSettings, readTransfer, type ReadTransfer } from "./settings-transfer.js";
-import { parseUrl, readLogo } from "./url.js";
+import { parseUrl, readLogo, readProfileLink } from "./url.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
 const ADMIN_ROLE = 50;
@@ -1225,20 +1226,19 @@ function saveContact(data: AdminData, values: Record<string, unknown>): Outcome 
 
 function saveHours(data: AdminData, values: Record<string, unknown>): Outcome {
 	const state: PageState = { tab: TAB.identity };
-	const openingHours = [];
-	for (const day of DAYS) {
-		const key = `hours_${day.toLowerCase()}`;
-		const typed = str(values, key, formatDayHours(day, data.config.site.openingHours));
-		const parsed = parseDayHours(day, typed);
-		if (!parsed) {
-			return {
-				error: `Couldn't read the hours for ${day}. Write them like 9:00-17:00, with at most two ranges.`,
-				state,
-			};
-		}
-		openingHours.push(...parsed);
+	const read = readWeekHours((day) =>
+		str(values, `hours_${day.toLowerCase()}`, formatDayHours(day, data.config.site.openingHours)),
+	);
+	if ("day" in read) {
+		return {
+			error: `Couldn't read the hours for ${read.day}. Write them like 9:00-17:00, with at most two ranges.`,
+			state,
+		};
 	}
-	return { config: { ...data.config, site: { ...data.config.site, openingHours } }, state };
+	return {
+		config: { ...data.config, site: { ...data.config.site, openingHours: read.hours } },
+		state,
+	};
 }
 
 function saveProfiles(data: AdminData, values: Record<string, unknown>): Outcome {
@@ -1253,14 +1253,14 @@ function saveProfiles(data: AdminData, values: Record<string, unknown>): Outcome
 	const sameAs = [];
 	for (const link of typed) {
 		// People paste "instagram.com/name"; accept it.
-		const url = parseUrl(/^https?:\/\//i.test(link) ? link : `https://${link}`);
-		if (!url || !url.host.includes(".")) {
+		const href = readProfileLink(link);
+		if (!href) {
 			return {
 				error: `"${link}" is not a web address. Paste the full link to the profile.`,
 				state,
 			};
 		}
-		sameAs.push(url.href);
+		sameAs.push(href);
 	}
 	return { config: { ...data.config, site: { ...data.config.site, sameAs } }, state };
 }
@@ -1269,7 +1269,7 @@ function saveCompany(data: AdminData, values: Record<string, unknown>): Outcome 
 	const state: PageState = { tab: TAB.identity };
 	const { site } = data.config;
 	const founded = str(values, "founded", site.foundingDate ?? "");
-	if (founded !== "" && !/^\d{4}(-\d{2}-\d{2})?$/.test(founded)) {
+	if (founded !== "" && !isFoundingDate(founded)) {
 		return { error: "Write the founding date as a year, like 2012, or as 2012-05-01.", state };
 	}
 	return {
@@ -1479,7 +1479,13 @@ export async function handleAdmin(
 		}
 		if (action === "apply_settings") {
 			// The button sends back what was checked; it is checked again, as anything sent may be.
-			const read = readTransfer(interaction.value, data.config, data.collections, ctx.site.url);
+			const read = readTransfer(
+				interaction.value,
+				data.config,
+				data.collections,
+				ctx.site.url,
+				ctx.site.name,
+			);
 			if ("error" in read) {
 				return render(data, ctx, admin, {
 					tab: TAB.identity,
@@ -1605,7 +1611,7 @@ export async function handleAdmin(
 	}
 	if (action === "check_settings") {
 		const pasted = str(values, "settings");
-		const read = readTransfer(pasted, data.config, data.collections, ctx.site.url);
+		const read = readTransfer(pasted, data.config, data.collections, ctx.site.url, ctx.site.name);
 		if ("error" in read) {
 			return render(data, ctx, admin, {
 				tab: TAB.identity,

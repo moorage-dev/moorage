@@ -28,3 +28,12 @@ export function readLogo(pasted: string, siteUrl: string): { logo?: string } | {
 	}
 	return { logo: url.href };
 }
+
+/**
+ * Read one profile link as the Profiles form reads it: "instagram.com/name" is accepted as
+ * https://instagram.com/name. Returns the full link, or null when it is not a web address.
+ */
+export function readProfileLink(link: string): string | null {
+	const url = parseUrl(/^https?:\/\//i.test(link) ? link : `https://${link}`);
+	return url && url.host.includes(".") ? url.href : null;
+}
