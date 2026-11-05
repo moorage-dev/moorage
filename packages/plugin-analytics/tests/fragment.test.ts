@@ -8,7 +8,7 @@ import clientCode from "virtual:client-script";
 import { describe, expect, it } from "vitest";
 
 import type { ClientConfig } from "../src/client/types.js";
-import { CONFIG_KEY, normalizeConfig } from "../src/config.js";
+import { CONFIG_KEY, HELD_SEEN_KEY, normalizeConfig } from "../src/config.js";
 import {
 	clientColors,
 	clientConfig,
@@ -140,6 +140,36 @@ describe("the page hook", () => {
 		expect(await run(event("/internal/report"), ctx)).toBeNull();
 		expect(await run(event("/thanks"), ctx)).not.toBeNull();
 		expect(await run(event("/_emdashboard"), ctx)).not.toBeNull();
+	});
+
+	it("on an excluded page of a site with held videos or maps, adds only a marker that keeps them held", async () => {
+		for (const stored of [
+			{ [CONFIG_KEY]: { tools: ALL_TOOLS, exclude: ["/thank-you"], heldEmbeds: ["YouTube"] } },
+			// Seen on the site's pages, not yet named in the banner.
+			{ [CONFIG_KEY]: { tools: ALL_TOOLS, exclude: ["/thank-you"] }, [HELD_SEEN_KEY]: ["Vimeo"] },
+		]) {
+			const { ctx } = fakeContext(stored);
+			const fragment = (await hook()(event("/thank-you"), ctx)) as { key: string; code: string };
+			expect(fragment).toMatchObject({ kind: "inline-script", placement: "head" });
+			expect(fragment.key).toBe(`${PLUGIN_ID}:bootstrap`);
+			expect(fragment.code).toContain("data-cookie-consent");
+			// Nothing of the tracking script: no tool, no banner.
+			expect(fragment.code).not.toContain("googletagmanager");
+			expect(fragment.code.length).toBeLessThan(600);
+			// Previews, the admin and the editor stay without anything.
+			expect(await hook()(event("/thank-you", "?_preview=token"), ctx)).toBeNull();
+			expect(await hook()(event("/_emdash/admin"), ctx)).toBeNull();
+		}
+		// Nobody asked, or no tools: nothing is held, so nothing is added.
+		const quiet = fakeContext({
+			[CONFIG_KEY]: {
+				tools: ALL_TOOLS,
+				exclude: ["/thank-you"],
+				heldEmbeds: ["YouTube"],
+				banner: { audience: "none" },
+			},
+		});
+		expect(await hook()(event("/thank-you"), quiet.ctx)).toBeNull();
 	});
 
 	it("adds nothing in the visual editor or on a verified preview", () => {

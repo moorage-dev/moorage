@@ -9,8 +9,9 @@ import type { RouteContext } from "emdash";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { heldEmbed, heldIframe, heldKind, placeholderWords, reveal } from "../astro/held.mjs";
-import { CONFIG_KEY } from "../src/config.js";
-import { analyticsPlugin, createPlugin } from "../src/index.js";
+import { bannerVersion, CONFIG_KEY, normalizeConfig } from "../src/config.js";
+import { pageFragments } from "../src/fragment.js";
+import { analyticsPlugin, createPlugin, PLUGIN_ID } from "../src/index.js";
 import { fakeContext } from "./helpers.js";
 
 describe("what is held back", () => {
@@ -285,6 +286,42 @@ describe("in the browser", () => {
 		expect(document.querySelector(".cc-held-text")!.textContent).toBe(
 			"Dieses Video wird von YouTube angezeigt, das Cookies setzen kann.",
 		);
+	});
+
+	it("on a page excluded from tracking, stays held unless the visitor allowed Marketing", async () => {
+		const config = normalizeConfig({
+			tools: { ga4: "G-AB12CD34EF" },
+			exclude: ["/thank-you"],
+			heldEmbeds: ["YouTube"],
+		});
+		const page = {
+			path: "/thank-you",
+			url: "https://acme.test/thank-you",
+			editMode: false,
+			preview: false,
+		};
+		const marker = pageFragments(config, PLUGIN_ID, page) as { code: string };
+		const run = () => {
+			delete (window as { cookieConsent?: unknown }).cookieConsent;
+			document.documentElement.removeAttribute("data-cookie-consent");
+			document.body.innerHTML = box();
+			new Function(marker.code)();
+			reveal(document, w);
+		};
+		run();
+		expect(frames()).toBe(0);
+		expect(asking().hidden).toBe(false);
+		expect(w.cookieConsent).toEqual({ analytics: false, marketing: false });
+		// A saved answer for this banner that allows Marketing shows them.
+		const day = Math.floor(Date.now() / 864e5);
+		document.cookie = `cookie_consent=${bannerVersion(config)}.01.${day}.abc123;path=/`;
+		run();
+		expect(frames()).toBe(1);
+		// An answer to an older banner does not.
+		document.cookie = `cookie_consent=old1.11.${day}.abc123;path=/`;
+		run();
+		expect(frames()).toBe(0);
+		document.cookie = "cookie_consent=;path=/;max-age=0";
 	});
 
 	it("follows Astro's <ClientRouter /> to the next page", () => {

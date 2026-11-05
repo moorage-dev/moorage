@@ -17,13 +17,14 @@ import {
 	HELD_SEEN_KEY,
 	isHeldName,
 	CONFIG_KEY,
+	enabledTools,
 	needsConsent,
 	normalizeConfig,
 	type AnalyticsConfig,
 	type HeldName,
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
-import { pageFragments, siteHostOf } from "./fragment.js";
+import { heldOnly, pageFragments, siteHostOf } from "./fragment.js";
 import {
 	consentCsv,
 	consentSummary,
@@ -169,17 +170,21 @@ export function createPlugin() {
 				const config = await memoSettings(ctx, () => readConfig(ctx), {
 					fresh: isOwnerView(event.page.url, request),
 				});
-				return pageFragments(
-					config,
-					PLUGIN_ID,
-					{
-						path: event.page.path,
-						url: event.page.url,
-						editMode: request?.editMode === true,
-						preview: request?.preview !== undefined,
-					},
-					siteHostOf(ctx.site?.url),
-				);
+				const page = {
+					path: event.page.path,
+					url: event.page.url,
+					editMode: request?.editMode === true,
+					preview: request?.preview !== undefined,
+				};
+				// Only an excluded page on a site that asks, and has no named providers yet, needs to
+				// know whether videos or maps were seen; every other page reads nothing more.
+				const seen =
+					enabledTools(config).length > 0 &&
+					config.heldEmbeds.length === 0 &&
+					heldOnly(config, page, ["any"])
+						? await seenHeld(ctx).catch(() => [])
+						: [];
+				return pageFragments(config, PLUGIN_ID, page, siteHostOf(ctx.site?.url), seen);
 			},
 			"plugin:activate": async (_event, ctx) => {
 				await ensurePruneScheduled(ctx);

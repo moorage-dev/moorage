@@ -160,6 +160,36 @@ export function siteHostOf(siteUrl: string | undefined): string | undefined {
 }
 
 /**
+ * True for a page excluded from tracking (Advanced) on a site whose banner asks
+ * and whose pages hold videos or maps (named in the banner, or seen and not yet
+ * named). Such a page gets `heldMarker` instead of the tracking script, so its
+ * videos and maps stay held. Previews, the admin and the editor get nothing.
+ */
+export function heldOnly(
+	config: AnalyticsConfig,
+	page: PageFacts,
+	seenHeld: readonly string[] = [],
+): boolean {
+	if (page.editMode || page.preview || /[?&]_preview=/.test(page.url)) return false;
+	if (page.path === "/_emdash" || page.path.startsWith("/_emdash/")) return false;
+	if (!isExcluded(page.path, config.exclude)) return false;
+	if (!needsConsent(config) || config.banner.audience === "none") return false;
+	return config.heldEmbeds.length > 0 || seenHeld.length > 0;
+}
+
+/**
+ * The script for an excluded page with held videos and maps: no tool and no
+ * banner, only what held.mjs's `reveal` reads. The videos and maps show when
+ * the visitor's saved answer to the current banner allows Marketing (and Global
+ * Privacy Control does not refuse it); otherwise each keeps its Load button.
+ * Visitors who are not asked and never answered see the Load button here too.
+ */
+export function heldMarker(config: AnalyticsConfig): string {
+	const rule = scriptJson({ v: bannerVersion(config), d: config.banner.months === 12 ? 365 : 183 });
+	return `(function(r,d,w){var c=/(?:^|; )cookie_consent=([a-z0-9]+)\\.[01]([01])\\.(\\d+)\\./.exec(d.cookie),s=Object.freeze({analytics:false,marketing:!!c&&c[1]===r.v&&Math.floor(Date.now()/864e5)-c[3]<r.d&&c[2]==="1"&&!w.navigator.globalPrivacyControl});d.documentElement.setAttribute("data-cookie-consent","settled");try{Object.defineProperty(w,"cookieConsent",{configurable:true,get:function(){return s}})}catch(e){}})(${rule},document,window)`;
+}
+
+/**
  * Everything the plugin adds to a public page: one inline script in the head,
  * or nothing. Pure: the same settings and page always give the same answer.
  */
@@ -168,8 +198,19 @@ export function pageFragments(
 	pluginId: string,
 	page: PageFacts,
 	siteHost?: string,
+	seenHeld: readonly string[] = [],
 ): PageFragmentContribution | null {
-	if (enabledTools(config).length === 0 || isUntracked(config, page)) return null;
+	if (enabledTools(config).length === 0) return null;
+	if (isUntracked(config, page)) {
+		return heldOnly(config, page, seenHeld)
+			? {
+					kind: "inline-script",
+					placement: "head",
+					key: `${pluginId}:bootstrap`,
+					code: heldMarker(config),
+				}
+			: null;
+	}
 	return {
 		kind: "inline-script",
 		placement: "head",
