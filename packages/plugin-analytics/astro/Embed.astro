@@ -1,24 +1,19 @@
 ---
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 //
-// EmDash's embed block (links, mostly from imported posts). A YouTube or Vimeo
-// video is held back where the cookie banner can ask; anything else, and every
-// embed where nobody is asked, renders exactly as EmDash renders it.
+// EmDash's embed block (links, mostly from imported posts). Whatever EmDash
+// renders as a YouTube or Vimeo player, or oEmbed code with a YouTube, Vimeo or
+// Google iframe, is held back where the cookie banner can ask (heldEmbed in
+// held.mjs); anything else, and every embed where nobody is asked, renders
+// exactly as EmDash renders it.
 import { Embed } from "emdash/ui";
 
-import { heldKind } from "./held.mjs";
+import { heldEmbed } from "./held.mjs";
 import { holding } from "./holding.mjs";
 import Held from "./Held.astro";
 
-const { node } = Astro.props as { node?: { url?: unknown; provider?: unknown } };
-const local = node?.provider === "video" || node?.provider === "audio";
-// Only what EmDash's Embed renders as a player (its own two patterns); a link stays a link.
-const url = typeof node?.url === "string" ? node.url : "";
-const player =
-	/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}/.test(url) ||
-	/vimeo\.com\/\d+/.test(url);
-const found = local || !player ? undefined : heldKind(url);
-const held = found?.kind === "video" ? found : undefined;
+const { node } = Astro.props as { node?: { url?: unknown; provider?: unknown; html?: unknown } };
+const held = heldEmbed(node);
 const hold = held ? await holding(Astro.locals, Astro.url, held.name) : false;
 ---
 

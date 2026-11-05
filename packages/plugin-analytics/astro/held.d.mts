@@ -10,6 +10,8 @@ export interface Held {
 }
 
 export function heldKind(value: unknown): Held | undefined;
+export function heldIframe(src: unknown): Held | undefined;
+export function heldEmbed(node: unknown): Held | undefined;
 export const WORDS: Record<
 	"en" | "de" | "fr" | "es" | "it" | "nl" | "pt",
 	{ video: string; map: string; loadVideo: string; loadMap: string; open: string }

@@ -11,6 +11,7 @@ import { placeholderWords } from "./held.mjs";
 interface Props {
 	kind: "video" | "map";
 	name: string;
+	/** Opens the same video or map on its own site; empty when not known (a playlist). */
 	link: string;
 }
 
@@ -29,11 +30,17 @@ const css =
 
 <style is:inline set:html={css} />
 <div class="cc-held" data-cc-held={kind} data-cc-name={name}>
-	<noscript><a href={link} rel="noopener noreferrer">{words.open}</a></noscript>
+	{link && <noscript><a href={link} rel="noopener noreferrer">{words.open}</a></noscript>}
 	<div class="cc-held-ask" hidden>
 		<p class="cc-held-text">{words.text}</p>
 		<button type="button" data-cc-load>{words.load}</button>
-		<a class="cc-held-link" href={link} target="_blank" rel="noopener noreferrer">{words.open}</a>
+		{
+			link && (
+				<a class="cc-held-link" href={link} target="_blank" rel="noopener noreferrer">
+					{words.open}
+				</a>
+			)
+		}
 	</div>
 	<template><slot /></template>
 </div>

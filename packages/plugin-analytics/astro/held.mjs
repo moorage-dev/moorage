@@ -14,15 +14,7 @@
  */
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
-const VIMEO_ID = /^\d{6,12}$/;
-const YOUTUBE_HOSTS = new Set([
-	"youtube.com",
-	"www.youtube.com",
-	"m.youtube.com",
-	"youtube-nocookie.com",
-	"www.youtube-nocookie.com",
-	"youtu.be",
-]);
+const VIMEO_ID = /^\d{1,12}$/;
 const VIMEO_HOSTS = new Set(["vimeo.com", "www.vimeo.com", "player.vimeo.com"]);
 
 /** @param {unknown} value */
@@ -37,21 +29,32 @@ function https(value) {
 
 /** @param {URL} url */
 function youtubeId(url) {
-	if (!YOUTUBE_HOSTS.has(url.hostname)) return undefined;
+	if (providerOf(url.hostname)?.name !== "YouTube") return undefined;
 	const parts = url.pathname.split("/").filter(Boolean);
 	const id =
 		url.hostname === "youtu.be"
 			? parts[0]
 			: (url.searchParams.get("v") ??
 				(["embed", "shorts", "live", "v"].includes(parts[0] ?? "") ? parts[1] : undefined));
-	return id && YOUTUBE_ID.test(id) ? id : undefined;
+	// "videoseries" is the playlist player, not a video.
+	return id && id !== "videoseries" && YOUTUBE_ID.test(id) ? id : undefined;
 }
 
 /** @param {URL} url */
 function vimeoId(url) {
 	if (!VIMEO_HOSTS.has(url.hostname)) return undefined;
 	const parts = url.pathname.split("/").filter(Boolean);
-	const id = url.hostname === "player.vimeo.com" ? parts[1] : parts.find((p) => VIMEO_ID.test(p));
+	// vimeo.com/123, /channels/name/123, /groups/name/videos/123; player.vimeo.com/video/123.
+	const id =
+		url.hostname === "player.vimeo.com"
+			? parts[0] === "video"
+				? parts[1]
+				: undefined
+			: parts[0] === "channels"
+				? parts[2]
+				: parts[0] === "groups" && parts[2] === "videos"
+					? parts[3]
+					: parts[0];
 	return id && VIMEO_ID.test(id) ? id : undefined;
 }
 
@@ -59,7 +62,7 @@ function vimeoId(url) {
 function isGoogleMap(url) {
 	const host = url.hostname;
 	const google = /^(?:www\.)?google\.[a-z]{2,3}(?:\.[a-z]{2})?$/.test(host);
-	if (google && /^\/maps\/(?:embed|d\/embed)/.test(url.pathname)) return true;
+	if (google && /^\/maps\/(?:embed|d\/(?:u\/\d+\/)?embed)/.test(url.pathname)) return true;
 	return (
 		/^maps\.google\.[a-z]{2,3}(?:\.[a-z]{2})?$/.test(host) &&
 		url.searchParams.get("output") === "embed"
@@ -100,6 +103,138 @@ export function heldKind(value) {
 		};
 	}
 	if (isGoogleMap(url)) return { kind: "map", name: "Google Maps", link: url.href };
+	return undefined;
+}
+
+const GOOGLE_HOST = /^(?:[a-z0-9-]+\.)*google\.[a-z]{2,3}(?:\.[a-z]{2})?$/;
+
+/**
+ * Who shows a page on this host, when it is one this plugin holds back: any
+ * address on YouTube, Vimeo or Google, whatever the path.
+ * @param {string} host
+ * @returns {Held | undefined}
+ */
+function providerOf(host) {
+	const name = host.toLowerCase().replace(/\.$/, "");
+	const on = (/** @type {string} */ domain) => name === domain || name.endsWith(`.${domain}`);
+	if (on("youtube.com") || on("youtube-nocookie.com") || on("youtu.be")) {
+		return { kind: "video", name: "YouTube", link: "" };
+	}
+	if (on("vimeo.com")) return { kind: "video", name: "Vimeo", link: "" };
+	if (GOOGLE_HOST.test(name)) return { kind: "map", name: "Google Maps", link: "" };
+	return undefined;
+}
+
+/**
+ * The provider of a page, and the link to it when its address names the video or map.
+ * @param {Held} provider
+ * @param {URL | undefined} url
+ * @returns {Held}
+ */
+function withLink(provider, url) {
+	const known = url ? heldKind(url.href) : undefined;
+	return known?.name === provider.name
+		? known
+		: { kind: provider.kind, name: provider.name, link: "" };
+}
+
+/**
+ * What EmDash's iframe block shows, when it is held: any https address on
+ * YouTube, Vimeo or Google (playlists and other players included; EmDash
+ * renders nothing for other schemes). `link` is empty when no video ID or map
+ * address can be read from it.
+ * @param {unknown} src
+ * @returns {Held | undefined}
+ */
+export function heldIframe(src) {
+	const url = https(src);
+	const provider = url && providerOf(url.hostname);
+	return provider ? withLink(provider, url) : undefined;
+}
+
+// EmDash's Embed.astro: what it renders as a YouTube or Vimeo player. Not anchored, on purpose.
+const EMDASH_YOUTUBE = /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+const EMDASH_VIMEO = /vimeo\.com\/(\d+)/;
+
+const NAMED = /** @type {Record<string, string>} */ ({
+	amp: "&",
+	colon: ":",
+	sol: "/",
+	bsol: "\\",
+	period: ".",
+	quest: "?",
+	equals: "=",
+	num: "#",
+	percnt: "%",
+	lowbar: "_",
+	dash: "-",
+	hyphen: "-",
+	quot: '"',
+	apos: "'",
+	Tab: "",
+	NewLine: "",
+});
+
+/**
+ * An attribute value as an HTML parser reads it. Unknown named entities are
+ * kept as written, so the address cannot be read and the iframe is held anyway.
+ * @param {string} value
+ */
+function decode(value) {
+	return value.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));?/gi, (whole, dec, hex, name) => {
+		if (dec || hex) {
+			const code = parseInt(dec ?? hex, dec ? 10 : 16);
+			return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : "";
+		}
+		return NAMED[name] ?? whole;
+	});
+}
+
+const IFRAME = /<iframe\b([^>]*)>/gi;
+const SRC = /(?:^|[\s"'/])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+
+/**
+ * What EmDash's embed block shows, when it is held: an address its own two
+ * patterns render as a YouTube or Vimeo player, whatever the scheme or host
+ * (as EmDash plays it), or oEmbed code with an iframe from YouTube, Vimeo or
+ * Google (EmDash's sanitiser lets YouTube and Vimeo players through). An iframe
+ * whose address cannot be read is held too. Self-hosted video and audio, links
+ * and other code are left alone.
+ * @param {unknown} node  the block: `{ url, provider, html }`
+ * @returns {Held | undefined}
+ */
+export function heldEmbed(node) {
+	const block = /** @type {{ url?: unknown; provider?: unknown; html?: unknown }} */ (node ?? {});
+	if (block.provider === "video" || block.provider === "audio") return undefined;
+	const url = typeof block.url === "string" ? block.url : "";
+	if (!url) return undefined;
+	const yt = EMDASH_YOUTUBE.exec(url)?.[1];
+	if (yt) {
+		const link = yt === "videoseries" ? "" : `https://www.youtube.com/watch?v=${yt}`;
+		return { kind: "video", name: "YouTube", link };
+	}
+	const vimeo = EMDASH_VIMEO.exec(url)?.[1];
+	if (vimeo) return { kind: "video", name: "Vimeo", link: `https://vimeo.com/${vimeo}` };
+	if (typeof block.html !== "string") return undefined;
+	for (const [, attributes = ""] of block.html.matchAll(IFRAME)) {
+		const found = SRC.exec(attributes);
+		const src = decode(found?.[1] ?? found?.[2] ?? found?.[3] ?? "").trim();
+		let address;
+		try {
+			address = new URL(src, "https://invalid.invalid/");
+		} catch {
+			address = undefined;
+		}
+		if (address && address.hostname !== "invalid.invalid") {
+			const provider = providerOf(address.hostname);
+			if (provider) return withLink(provider, address);
+			continue;
+		}
+		// Not readable: held, named after what the code mentions.
+		const text = decode(block.html);
+		const name = /vimeo/i.test(text) ? "Vimeo" : /google/i.test(text) ? "Google Maps" : "YouTube";
+		return { kind: name === "Google Maps" ? "map" : "video", name, link: "" };
+	}
 	return undefined;
 }
 
@@ -208,11 +343,10 @@ export function reveal(d, w) {
 					const [p, button, link] = [".cc-held-text", "[data-cc-load]", ".cc-held-link"].map((s) =>
 						box.querySelector(s),
 					);
-					if (p && button && link) {
-						p.textContent = text.text;
-						button.textContent = text.load;
-						link.textContent = text.open;
-					}
+					// A playlist has no link to open: each part is set on its own.
+					if (p) p.textContent = text.text;
+					if (button) button.textContent = text.load;
+					if (link) link.textContent = text.open;
 					ask.hidden = false;
 				}
 			}

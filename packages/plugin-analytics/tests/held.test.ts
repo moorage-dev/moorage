@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { RouteContext } from "emdash";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { heldKind, placeholderWords, reveal } from "../astro/held.mjs";
+import { heldEmbed, heldIframe, heldKind, placeholderWords, reveal } from "../astro/held.mjs";
 import { CONFIG_KEY } from "../src/config.js";
 import { analyticsPlugin, createPlugin } from "../src/index.js";
 import { fakeContext } from "./helpers.js";
@@ -69,6 +69,103 @@ describe("what is held back", () => {
 			"Karte laden",
 		);
 		expect(placeholderWords("pl", yt).load).toBe("Load the video");
+	});
+});
+
+describe("everything EmDash renders as a player is held", () => {
+	it("an embed block whose address EmDash's own patterns play, whatever the scheme or host", () => {
+		for (const [url, name] of [
+			["http://www.youtube.com/watch?v=dQw4w9WgXcQ", "YouTube"],
+			["www.youtube.com/watch?v=dQw4w9WgXcQ", "YouTube"],
+			["https://music.youtube.com/watch?v=dQw4w9WgXcQ", "YouTube"],
+			["youtu.be/dQw4w9WgXcQ", "YouTube"],
+			// EmDash's patterns are not anchored: this plays YouTube too.
+			["https://evil.test/youtube.com/watch?v=dQw4w9WgXcQ", "YouTube"],
+			["https://vimeo.com/1234", "Vimeo"],
+			["http://vimeo.com/76979871", "Vimeo"],
+		] as const) {
+			expect(heldEmbed({ url }), url).toMatchObject({ kind: "video", name });
+		}
+		// The link opens the same video when its ID is known.
+		expect(heldEmbed({ url: "https://music.youtube.com/watch?v=dQw4w9WgXcQ" })?.link).toBe(
+			"https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		);
+		expect(heldEmbed({ url: "https://vimeo.com/1234" })?.link).toBe("https://vimeo.com/1234");
+	});
+
+	it("an embed block whose oEmbed code holds a YouTube or Vimeo player, however its address is written", () => {
+		const page = "https://www.youtube.com/playlist?list=PL123";
+		for (const [html, name] of [
+			['<iframe src="https://www.youtube.com/embed/videoseries?list=PL123"></iframe>', "YouTube"],
+			["<IFRAME SRC='//www.youtube.com/embed/videoseries?list=PL123'></IFRAME>", "YouTube"],
+			['<iframe src="https&#58;//www.youtube.com/embed/x"></iframe>', "YouTube"],
+			[
+				'<iframe src="https&colon;&sol;&sol;www&period;youtube&period;com/embed/x"></iframe>',
+				"YouTube",
+			],
+			['<iframe src="&#x68;ttps://player&#46;vimeo&#46;com/video/1"></iframe>', "Vimeo"],
+			['<p>x</p><iframe width="560" src=https://player.vimeo.com/video/12></iframe>', "Vimeo"],
+			['<iframe src="https://www.google.com/maps/embed?pb=1"></iframe>', "Google Maps"],
+		] as const) {
+			expect(heldEmbed({ url: page, html }), html).toMatchObject({ name });
+		}
+		// An iframe whose address cannot be read is held all the same.
+		expect(heldEmbed({ url: page, html: '<iframe src="&bogus;youtube"></iframe>' })?.name).toBe(
+			"YouTube",
+		);
+	});
+
+	it("leaves links, self-hosted media and other embeds alone", () => {
+		for (const node of [
+			{ url: "https://www.youtube.com/channel/abc" },
+			{ url: "https://example.com/watch" },
+			{ url: "https://cdn.test/v.mp4", provider: "video" },
+			{ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", provider: "audio" },
+			{ url: "https://x.com/a/status/1", html: "<blockquote>post</blockquote>" },
+			{
+				url: "https://example.com/",
+				html: '<iframe src="https://open.spotify.com/embed/1"></iframe>',
+			},
+			{},
+			undefined,
+		]) {
+			expect(heldEmbed(node), JSON.stringify(node)).toBeUndefined();
+		}
+	});
+
+	it("an iframe block on a YouTube, Vimeo or Google address, whatever the path", () => {
+		const watch = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+		for (const [src, name, link] of [
+			["https://www.youtube.com/embed/videoseries?list=PL123", "YouTube", undefined],
+			["https://www.youtube-nocookie.com/embed?listType=playlist&list=PL1", "YouTube", undefined],
+			["https://music.youtube.com/embed/dQw4w9WgXcQ", "YouTube", watch],
+			["https://www.youtube.com/embed/dQw4w9WgXcQ", "YouTube", watch],
+			["https://player.vimeo.com/video/1234", "Vimeo", "https://vimeo.com/1234"],
+			["https://vimeo.com/showcase/123/embed", "Vimeo", undefined],
+			["https://player.vimeo.com/video/76979871", "Vimeo", "https://vimeo.com/76979871"],
+			[
+				"https://www.google.com/maps/d/u/0/embed?mid=1",
+				"Google Maps",
+				"https://www.google.com/maps/d/u/0/embed?mid=1",
+			],
+			["https://maps.google.com/maps?q=Berlin", "Google Maps", undefined],
+		] as const) {
+			const held = heldIframe(src);
+			expect(held?.name, src).toBe(name);
+			// No link when the address names no video or map.
+			expect(held?.link || undefined, src).toBe(link);
+		}
+		for (const src of [
+			"https://open.spotify.com/embed/track/1",
+			"https://evil.test/www.youtube.com/embed/dQw4w9WgXcQ",
+			"https://youtube.com.evil.test/embed/x",
+			// EmDash renders nothing for an iframe that is not https.
+			"http://www.youtube.com/embed/dQw4w9WgXcQ",
+			"",
+			undefined,
+		]) {
+			expect(heldIframe(src), String(src)).toBeUndefined();
+		}
 	});
 });
 
@@ -176,6 +273,17 @@ describe("in the browser", () => {
 		expect(document.querySelector("[data-cc-load]")!.textContent).toBe("Charger la carte");
 		expect(document.querySelector(".cc-held-text")!.textContent).toBe(
 			"Cette carte est fournie par Google Maps, qui peut déposer des cookies.",
+		);
+	});
+
+	it("speaks the page's language in a box with no link to open, as for a playlist", () => {
+		document.documentElement.setAttribute("lang", "de");
+		document.body.innerHTML = box().replace(/<a class="cc-held-link"[^>]*>open<\/a>/, "");
+		reveal(document, w);
+		tell({ analytics: false, marketing: false });
+		expect(document.querySelector("[data-cc-load]")!.textContent).toBe("Video laden");
+		expect(document.querySelector(".cc-held-text")!.textContent).toBe(
+			"Dieses Video wird von YouTube angezeigt, das Cookies setzen kann.",
 		);
 	});
 

@@ -1,17 +1,18 @@
 ---
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 //
-// EmDash's iframe block (what /youtube, /vimeo and /map make in the editor). A
-// YouTube or Vimeo video or a Google map is held back where the cookie banner
-// can ask; every other page renders exactly as EmDash renders it.
+// EmDash's iframe block (what /youtube, /vimeo and /map make in the editor). Any
+// page from YouTube, Vimeo or Google, playlists included, is held back where the
+// cookie banner can ask (heldIframe in held.mjs); every other page renders
+// exactly as EmDash renders it.
 import { Iframe } from "emdash/ui";
 
-import { heldKind } from "./held.mjs";
+import { heldIframe } from "./held.mjs";
 import { holding } from "./holding.mjs";
 import Held from "./Held.astro";
 
 const { node } = Astro.props as { node?: { src?: unknown } };
-const held = heldKind(node?.src);
+const held = heldIframe(node?.src);
 const hold = held ? await holding(Astro.locals, Astro.url, held.name) : false;
 ---
 
