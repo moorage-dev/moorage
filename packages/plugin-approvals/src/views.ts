@@ -31,7 +31,34 @@ export const ACTION = {
 	back: "back",
 	saveSettings: "save_settings",
 	ask: "ask",
+	withdraw: "withdraw",
 } as const;
+
+/** Whether this person asked for this request and may take it back. */
+export function mayWithdraw(request: ApprovalRequest, user: UserInfo | undefined): boolean {
+	return (
+		request.status === "waiting" &&
+		!request.ai &&
+		Boolean(user) &&
+		request.requestedBy?.id === user?.id
+	);
+}
+
+/** "Withdraw", for the person who asked, with a confirmation first. */
+export function withdrawButton(key: string) {
+	return {
+		type: "button" as const,
+		action_id: ACTION.withdraw,
+		label: "Withdraw",
+		value: { key },
+		confirm: {
+			title: "Withdraw this request?",
+			text: "The approvers will no longer see it. Nothing is published. You can ask again later.",
+			confirm: "Withdraw",
+			deny: "Keep it waiting",
+		},
+	};
+}
 
 /** What changes when this version goes live, against the live page. */
 export function liveChanges(info: CollectionInfo, draft: Draft): FieldChange[] | null {

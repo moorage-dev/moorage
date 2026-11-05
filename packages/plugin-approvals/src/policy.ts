@@ -115,6 +115,13 @@ export function holdRequest(
 	}
 	const changed =
 		existing?.status === "approved" && existing.approval?.fingerprint !== input.fingerprint;
+	// Asked again soon after withdrawing: the approvers were emailed less than a day ago, and
+	// are not emailed again before the day is out (they see it in Approvals).
+	const recentlyEmailed =
+		existing?.status === "closed" &&
+		existing.withdrawn !== undefined &&
+		existing.emailedAt !== undefined &&
+		Date.parse(now) - Date.parse(existing.emailedAt) < EMAIL_EVERY_MS;
 	const request: ApprovalRequest = {
 		collection: input.collection,
 		entryId: input.entryId,
@@ -129,6 +136,7 @@ export function holdRequest(
 		fingerprint: input.fingerprint,
 		fields: input.fields,
 		...(existing?.approval ? { approval: existing.approval } : {}),
+		...(recentlyEmailed && existing?.emailedAt ? { emailedAt: existing.emailedAt } : {}),
 		history: existing?.history ?? [],
 		updatedAt: now,
 	};
@@ -144,7 +152,7 @@ export function holdRequest(
 	);
 	return {
 		request,
-		notify: true,
+		notify: !recentlyEmailed,
 		again: false,
 		changed,
 		...(changed && existing?.approval ? { approvedBy: existing.approval.by.name } : {}),

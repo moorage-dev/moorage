@@ -340,6 +340,35 @@ export async function saveNote(
 }
 
 /**
+ * The person who asked takes a waiting request back. 2 calls: the request, and the request
+ * again. The approvers' email task and reminder read the request when they run and find
+ * nothing waiting, so nothing more is sent.
+ */
+export async function withdraw(
+	ctx: PluginContext,
+	user: UserInfo | undefined,
+	key: string,
+): Promise<Decision> {
+	const store = requests(ctx);
+	const request = await store.get(key);
+	if (!request || request.status !== "waiting")
+		return fail("This request is no longer waiting.", request ? { request } : {});
+	// Work from an AI tool is decided by a person (its key's owner may approve or send it back).
+	if (!user || request.ai || request.requestedBy?.id !== user.id)
+		return fail("Only the person who asked can withdraw it.", { request });
+	const now = new Date().toISOString();
+	const by = personFromUser(user);
+	const updated: ApprovalRequest = { ...request, status: "closed", withdrawn: { by, at: now } };
+	addHistory(updated, now, `${by.name} withdrew the request`);
+	await store.put(key, updated);
+	return {
+		ok: true,
+		message: "Withdrawn. The approvers no longer see it; ask again when it is ready.",
+		request: updated,
+	};
+}
+
+/**
  * "Ask for approval" from the editor toolbar or the Approvals page. 8 calls with the
  * caller's settings read: the content type, the request, the page (2), the request again,
  * the email task, and the approvers' names.

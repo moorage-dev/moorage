@@ -716,28 +716,32 @@ describe("the Approvals page (route admin)", () => {
 		const s = await site({ settings: "none" });
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
-		pin("page load, admin, settings never saved", m, 4);
+		pin("page load, admin, settings never saved", m, 5);
 		expect(text(m.result)).toContain("Approval is off until you save these settings");
+		expect(text(m.result)).toContain(
+			"Taking a page off the site (Unpublish) is not held, by choice",
+		);
 	});
 
 	it("opens for an admin on a migrated site with nothing waiting, copying the settings forward", async () => {
 		const s = await site({ settings: "legacy" });
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
-		pin("page load, admin, migrated settings, nothing waiting", m, 5);
+		pin("page load, admin, migrated settings, nothing waiting", m, 6);
 		expect(text(m.result)).toContain("For you to approve");
 		expect(await s.host.inspect.setting("config")).toMatchObject({ collections: ["pages"] });
 	});
 
 	// kvList storageQuery schemaListCollections userList, however many pages wait: each row's
-	// "things to check" is noted on the request when the page is held or saved.
+	// "things to check" is noted on the request when the page is held or saved. + contentList: the
+	// pages already scheduled in Pages, for the Settings tab.
 	for (const count of [1, 2, 25]) {
 		it(`lists ${count} waiting page(s) for an admin`, async () => {
 			const s = await site();
 			for (let i = 0; i < count; i++) await waiting(s, `Page ${i + 1}`);
 			await cold(s);
 			const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
-			pin(`page load, admin, ${count} waiting`, m, 4);
+			pin(`page load, admin, ${count} waiting`, m, 5);
 			expect(text(m.result)).toContain(`"label":"Waiting for you","value":${count}`);
 		});
 	}
@@ -753,7 +757,7 @@ describe("the Approvals page (route admin)", () => {
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
 		// + storageGetMany for the approved text copies.
-		pin("page load, admin, 1 waiting + 1 approved", m, 5);
+		pin("page load, admin, 1 waiting + 1 approved", m, 6);
 		expect(text(m.result)).toContain("Show the approved text");
 	});
 
@@ -815,7 +819,7 @@ describe("the Approvals page (route admin)", () => {
 		const m = await measure(() =>
 			s.host.admin.submit("/overview", "save_settings", HELD, { user: admin(s) }),
 		);
-		pin("save settings, first time", m, 6);
+		pin("save settings, first time", m, 7);
 		expect(m.result?.toast?.type).toBe("success");
 		expect(await s.host.inspect.setting("config")).toMatchObject({ collections: ["pages"] });
 	});
@@ -827,7 +831,7 @@ describe("the Approvals page (route admin)", () => {
 		const m = await measure(() =>
 			s.host.admin.submit("/overview", "save_settings", HELD, { user: admin(s) }),
 		);
-		pin("save settings, 3 waiting", m, 6);
+		pin("save settings, 3 waiting", m, 7);
 		expect(m.result?.toast?.type).toBe("success");
 	});
 
@@ -1188,6 +1192,208 @@ describe("Ask for approval (route editor/ask)", () => {
 		);
 		pin("editor ask, 1 approver, migrated settings", m, 8);
 		expect(m.result?.toast?.type).toBe("success");
+	});
+});
+
+/** Jo, a Contributor, asks from the Approvals page: her draft waits. */
+async function contributorWaiting(s: Site, title = "Picnic ideas"): Promise<string> {
+	const id = await page(s, s.contributor, title);
+	const asked = await s.host.admin.act("/overview", "ask", {
+		user: s.contributor,
+		value: { collection: "pages", id },
+	});
+	expect(asked.toast?.type).toBe("success");
+	return id;
+}
+
+/** Schedule a page, an hour from now. */
+async function schedule(s: Site, id: string, by: User = admin(s)): Promise<string> {
+	const at = new Date(Date.now() + 3_600_000).toISOString();
+	const result = await s.host.actions.content.schedule("pages", id, at, actor(by));
+	if (!result.success) throw new Error(result.error.message);
+	return at;
+}
+
+describe("Withdraw (the person who asked)", () => {
+	it("shows Withdraw under 'Yours, waiting' for a Contributor", async () => {
+		const s = await site();
+		await contributorWaiting(s);
+		await cold(s);
+		const m = await measure(() => s.host.admin.loadPage("/overview", { user: s.contributor }));
+		// kvList storageQuery schemaListCollections userList, + contentList for the drafts.
+		pin("page load, contributor, own page waiting", m, 5);
+		expect(text(m.result)).toContain('"action_id":"withdraw"');
+		expect(text(m.result)).toContain("Withdraw this request?");
+	});
+
+	it("withdraws from the page: closed, and the approvers' email is never sent", async () => {
+		const s = await site();
+		const id = await contributorWaiting(s);
+		await cold(s);
+		const before = await emails(s);
+		const m = await measure(() =>
+			s.host.admin.act("/overview", "withdraw", {
+				user: s.contributor,
+				value: { key: `pages:${id}` },
+			}),
+		);
+		// kvList storageGet storagePut.
+		pin("page withdraw, contributor", m, 3);
+		expect(m.result?.toast).toEqual({
+			type: "success",
+			message: "Withdrawn. The approvers no longer see it; ask again when it is ready.",
+		});
+		expect(text(m.result)).toContain("Back to the list");
+		const stored = await request(s, id);
+		expect(stored?.status).toBe("closed");
+		expect(stored?.history[0]?.text).toBe("Jo Park withdrew the request");
+		// The email task queued by the ask finds nothing waiting.
+		await runMail(s);
+		expect(await newMail(s, before)).toEqual([]);
+	});
+
+	it("refuses a withdraw from anyone but the person who asked", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.act("/overview", "withdraw", { user: admin(s), value: { key: `pages:${id}` } }),
+		);
+		pin("page withdraw, someone else refused", m, 2);
+		expect(m.result?.toast).toEqual({
+			type: "error",
+			message: "Only the person who asked can withdraw it.",
+		});
+		expect((await request(s, id))?.status).toBe("waiting");
+	});
+
+	it("shows Withdraw in the writer's panel, not in an approver's", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.loadEditorPanel("approval", "pages", id, { user: s.editor }),
+		);
+		pin("panel load, writer, own page waiting", m, 6);
+		expect(text(m.result)).toContain('"action_id":"withdraw"');
+		const approver = await s.host.admin.loadEditorPanel("approval", "pages", id, {
+			user: admin(s),
+		});
+		expect(text(approver)).not.toContain('"action_id":"withdraw"');
+	});
+
+	it("withdraws from the panel", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.actEditorPanel("approval", "pages", id, "withdraw", {
+				user: s.editor,
+				value: { key: `pages:${id}` },
+			}),
+		);
+		// kvList schemaGetCollection storageGet storagePut.
+		pin("panel withdraw, writer", m, 4);
+		expect(m.result?.toast?.type).toBe("success");
+		expect(text(m.result)).toContain("You withdrew the request");
+		expect((await request(s, id))?.status).toBe("closed");
+	});
+
+	it("does not email the approvers twice in a day when the writer withdraws and asks again", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await flushMail(s);
+		await s.host.admin.actEditorPanel("approval", "pages", id, "withdraw", {
+			user: s.editor,
+			value: { key: `pages:${id}` },
+		});
+		const emailedAt = (await request(s, id))?.emailedAt;
+		expect(emailedAt).toBeTruthy();
+		const held = await s.host.actions.content.publish("pages", id, actor(s.editor));
+		expect(held.success).toBe(false);
+		const again = await request(s, id);
+		expect(again?.status).toBe("waiting");
+		expect(again?.emailedAt).toBe(emailedAt);
+		await drain();
+		expect(await mailTasks(s)).toEqual([]);
+	});
+});
+
+describe("Settings: pages already scheduled", () => {
+	it("names the pages already scheduled that approval will hold", async () => {
+		const s = await site({ settings: "none" });
+		const sale = await page(s, s.editor, "Summer sale");
+		await schedule(s, sale);
+		await cold(s);
+		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
+		// kvList storageQuery schemaListCollections userList, + contentList for Pages.
+		pin("page load, admin, settings never saved, 1 scheduled", m, 5);
+		expect(text(m.result)).toMatch(/Summer sale \(Pages, \d+ \w+, \d\d:\d\d UTC\)/);
+
+		const saved = await measure(() =>
+			s.host.admin.submit("/overview", "save_settings", HELD, { user: admin(s) }),
+		);
+		pin("save settings, first time, 1 scheduled", saved, 7);
+		expect(text(saved.result)).toContain(
+			"Already scheduled, and will need approval before they go live: Summer sale (Pages,",
+		);
+	});
+
+	it("leaves out what an admin scheduled with approval on, and says when nothing is scheduled", async () => {
+		const s = await site();
+		const own = await page(s, admin(s), "Opening hours");
+		await schedule(s, own);
+		await cold(s);
+		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
+		pin("page load, admin, own schedule cleared", m, 6);
+		expect(text(m.result)).not.toContain("Opening hours (Pages,");
+		expect(text(m.result)).toContain("Nothing already scheduled needs approval.");
+	});
+
+	it("reads scheduled pages only with calls to spare: save settings, worst case", async () => {
+		const types = ["posts", "news", "events"];
+		const s = await site({ config: { ...HELD, collections: ["pages", ...types] } });
+		for (const slug of types) {
+			await s.host.fixtures.collection({
+				slug,
+				label: slug.charAt(0).toUpperCase() + slug.slice(1),
+				supports: ["drafts", "revisions"],
+				fields: [{ slug: "title", label: "Title", type: "string" }],
+			});
+		}
+		const done = await waiting(s, "Page 1");
+		await s.host.admin.act("/overview", "approve", {
+			user: admin(s),
+			value: { key: `pages:${done}` },
+		});
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.submit(
+				"/overview",
+				"save_settings",
+				{ ...HELD, collections: ["pages", ...types] },
+				{ user: admin(s) },
+			),
+		);
+		pin("save settings, 1 approved, 4 types", m, 9);
+		expect(text(m.result)).toContain("weren't checked here");
+	});
+
+	it("does not read scheduled pages after a decision", async () => {
+		const s = await site();
+		await waiting(s, "Page 1");
+		const id = await waiting(s, "Page 2");
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.submit(
+				"/overview",
+				"send_back",
+				{ note: "Iced coffee is £3.40" },
+				{ user: admin(s), blockId: `sb:pages:${id}` },
+			),
+		);
+		expect(m.calls).not.toContain("contentList");
+		expect(text(m.result)).toContain("Pages already scheduled will need approval");
 	});
 });
 

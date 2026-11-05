@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { publishFailedMessage } from "../src/actions.js";
 import { emailFailureHint } from "../src/notify.js";
+import { when } from "../src/requests.js";
 import {
 	cleanReason,
 	describeChanges,
@@ -156,5 +157,12 @@ describe("why a publish or an email did not go through", () => {
 		expect(emailFailureHint(["Email is not configured"])).toContain("EmDash 1.4.0");
 		expect(emailFailureHint(["Rate limit exceeded"])).toBeUndefined();
 		expect(emailFailureHint([])).toBeUndefined();
+	});
+});
+
+describe("times on screen and in emails", () => {
+	it("says the time is UTC: EmDash does not tell plugins the site's time zone", () => {
+		expect(when("2026-10-16T10:42:00.000Z")).toBe("16 Oct, 10:42 UTC");
+		expect(when("2026-01-02T09:05:00Z")).toBe("2 Jan, 09:05 UTC");
 	});
 });

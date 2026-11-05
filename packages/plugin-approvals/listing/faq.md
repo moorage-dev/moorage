@@ -28,7 +28,11 @@ Yes. Requests show on the dashboard and on the Approvals page. With email set up
 
 ## What does approval not cover?
 
-Things EmDash saves straight to the live page: the SEO panel, categories, tags and bylines of a page already live, and content types that keep no drafts. The Settings tab lists them for your site.
+Things EmDash saves straight to the live page: the SEO panel, categories, tags and bylines of a page already live, and content types that keep no drafts. The Settings tab lists them for your site. Taking a page off the site (Unpublish) is not held either, by choice, so a wrong page can always come down at once.
+
+## What time zone are the times in?
+
+UTC, and every time says so. EmDash does not tell plugins the site's time zone.
 
 ## Is it free?
 

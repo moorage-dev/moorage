@@ -9,8 +9,10 @@ Content Approval for [EmDash](https://emdashcms.com): a second person OKs a page
 - **Holds publishing** on the content types you tick: Publish and Schedule, from the editor, from AI tools, from other plugins and from scheduled runs. A held Publish makes the request by itself.
 - **Ask for approval**: a button in the editor's toolbar for Authors (on their own pages), Editors and Admins. Contributors ask from **Approvals > Your drafts**, which has an "Ask for approval" button on each of their drafts (from the first three content types that need approval). EmDash 1.3.1 and 1.4.0 still show Contributors the editor's button and the Approval panel but refuse them before the plugin runs, so the button says "Plugin action failed" and the panel "Plugin panel unavailable." (see the FAQ).
 - **Decide** in the page's Approval panel or on the Approvals page: **Approve and publish**, **Approve** (publish later), or **Send back** with a note. Admins can also **Approve without review**, with a reason that is recorded and emailed to the other approvers. On the Approvals page a decision ends on a short confirmation with **Back to the list**. Nobody approves their own request: the Approvals page lists yours apart, under **Yours, waiting**, with what it waits for, and an admin can open their own and **Publish without review**, with a reason.
+- **Withdraw**: the person who asked can take a waiting request back, from the page's Approval panel or from **Yours, waiting** on the Approvals page (Contributors use the Approvals page). Nothing is published and the page stays as it is; approvers no longer see it, and the email about it is not sent if it has not gone yet. Asking again the same day does not email the approvers a second time.
 - **What changed, in words**: `Content: "£3.20" becomes "£3.40"; adds "pavlova"`, against the live page; after an approval, against the version that was approved. Pictures say "changed". The page's own Revisions panel compares every version.
-- **A text copy of what was approved**: the History tab shows, for each page decided recently, the text of its latest approval, so nobody can say they never saw it. Earlier approved texts are not shown; the page's own Revisions panel keeps every version. Dates read "19 Oct 2026", or "19 Oct 2026, 14:05 UTC" with a time: the plugin cannot see the site's time zone, so times are in UTC.
+- **A text copy of what was approved**: the History tab shows, for each page decided recently, the text of its latest approval, so nobody can say they never saw it. Earlier approved texts are not shown; the page's own Revisions panel keeps every version. Dates read "19 Oct 2026", or "19 Oct 2026, 14:05 UTC" with a time.
+- **Times are in UTC, and say so**, on every screen and in emails ("16 Oct, 10:42 UTC"): EmDash does not tell plugins the site's time zone.
 - **Approvers can fix a typo**: they edit and save the page as usual, then approve. The history says "Edited by Ellen Marsh before approving: Content".
 - **An approval belongs to one version.** Any saved change afterwards asks again, and says what changed since.
 - **Checks**: no search description, no sharing picture (from EmDash's SEO panel), shown as a reminder, required before approval, or off.
@@ -18,7 +20,8 @@ Content Approval for [EmDash](https://emdashcms.com): a second person OKs a page
 
 ## What it does not do
 
-- **It cannot hold what EmDash saves straight to a live page**: the SEO panel, categories, tags and bylines of a page that is already live, and every save in a content type that keeps no drafts. Taking a page off the site (Unpublish) is not held either. The Settings tab lists these for your site.
+- **It cannot hold what EmDash saves straight to a live page**: the SEO panel, categories, tags and bylines of a page that is already live, and every save in a content type that keeps no drafts. The Settings tab lists these for your site.
+- **Taking a page off the site (Unpublish) is not held, by choice.** EmDash would let a plugin hold it too, but a page that is wrong should always be able to come down at once, without waiting for anyone.
 - No discussion threads, mentions or inline comments; no chains of approvers, named approvers or approval by several people; no Slack.
 - No editing inside the Approval panel: approvers edit the page in the editor.
 
@@ -48,7 +51,7 @@ export default defineConfig({
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
-Then open **Approvals** in the sidebar. **Nothing is held until an admin saves the Settings tab once**, AI tools included.
+Then open **Approvals** in the sidebar. **Nothing is held until an admin saves the Settings tab once**, AI tools included. Pages already scheduled when approval is switched on need approval too before they go live; the Settings tab names them, with their time (from the first three content types; it says when there are more to check).
 
 ## Settings
 
@@ -77,7 +80,7 @@ Holds publishing (`hooks.content-policy:register`); reads content, drafts and th
 
 **Why does the editor say "Failed to publish"?** That title is EmDash's own and a plugin cannot change it. The text under it starts "Sent for approval. Not live yet.": nothing failed.
 
-**Why does a Contributor see "Plugin action failed" in the editor?** EmDash still does this in 1.4.0 (checked 2026-11-02), as in 1.3.1: it shows plugin buttons and panels in the editor to Contributors, then refuses what they press, because it lets only Authors and up use them. A plugin cannot hide them or change that. Contributors ask from **Approvals > Your drafts** instead, and see their requests there.
+**Why does a Contributor see "Plugin action failed" in the editor?** EmDash still does this in 1.4.0 (checked 2026-11-05), as in 1.3.1: it shows plugin buttons and panels in the editor to Contributors, then refuses what they press, because it lets only Authors and up use them. A plugin cannot hide them or change that. Contributors ask from **Approvals > Your drafts** instead, and see their requests there.
 
 **Can a writer get around it?** Not through Publish or Schedule on a ticked content type, from anywhere. What EmDash saves straight to a live page (see above) is not held.
 

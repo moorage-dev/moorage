@@ -57,6 +57,8 @@ export interface ApprovalRequest {
 	approval?: Approval;
 	sentBack?: { by: Person; at: string; note: string };
 	publishedAt?: string;
+	/** The person who asked took the request back (status "closed"). */
+	withdrawn?: { by: Person; at: string };
 	/** When the approvers were last emailed about this request (at most once a day). */
 	emailedAt?: string;
 	/**
@@ -284,13 +286,17 @@ export function mayApprove(
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "16 Oct, 10:42" in UTC: the plugin cannot know the reader's time zone. */
+/**
+ * "16 Oct, 10:42 UTC". EmDash keeps the site's time zone (`site:timezone`) but does not pass
+ * it to plugins (`ctx.site` has the name, address and locale only), so times are in UTC and
+ * say so.
+ */
 export function when(iso: string): string {
 	const date = new Date(iso);
 	if (Number.isNaN(date.getTime())) return iso;
 	const hh = String(date.getUTCHours()).padStart(2, "0");
 	const mm = String(date.getUTCMinutes()).padStart(2, "0");
-	return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}, ${hh}:${mm}`;
+	return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}, ${hh}:${mm} UTC`;
 }
 
 /** "4 hours ago", "1 day ago". */
