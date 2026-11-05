@@ -49,15 +49,6 @@
 			{ "path": "/enquiries", "label": "Lead delivery", "icon": "bell", "group": "Marketing" },
 		],
 		"widgets": [{ "id": "enquiries", "title": "Enquiries this week", "size": "third" }],
-		// The deliveries' secrets (app signing secrets, Slack and Discord channel addresses), which
-		// EmDash encrypts with EMDASH_ENCRYPTION_KEY. Lead delivery writes it; it is not for typing.
-		"settingsSchema": {
-			"secrets": {
-				"type": "secret",
-				"label": "Delivery secrets",
-				"description": "Kept by the Lead delivery page. Clearing it removes every app's signing secret and every Slack or Discord channel address.",
-			},
-		},
 	},
 	"storage": {
 		// One row per enquiry and delivery: the log, the retry queue (name kept from 0.1 so the log survives).

@@ -61,7 +61,6 @@ import {
 	kindWord,
 	rowLabel,
 } from "./names.js";
-import { hasPlainSecret, SECRETS_SETTING, sealSecrets, secretStore, unsealed } from "./secrets.js";
 import {
 	type Config,
 	type Delivery,
@@ -78,15 +77,6 @@ import { newSecret } from "./webhook.js";
 
 // EmDash role levels: an Editor can open the page and press Send again; only an Admin changes anything.
 const ADMIN_ROLE = 50;
-/** What the page still does while the saved secrets cannot be read (secrets.ts). */
-const WHILE_UNREADABLE = new Set([
-	"see_all",
-	"open_log",
-	"filter_log",
-	"log_page",
-	"open",
-	"forget_secrets",
-]);
 export const PAGE = "/enquiries";
 const LOG_ROWS = 25;
 const HOME_ROWS = 10;
@@ -440,71 +430,10 @@ function settingsAccordion(data: Data, open: boolean): Block {
 					},
 				}),
 			]),
-			...secretsSection(data),
 			context(KEEP_NOTE),
 			hideForm(config.hideHelpLine === true),
 		],
 	};
-}
-
-/** Where the deliveries' secrets are kept: apps' signing secrets, channels' webhook addresses. */
-function secretsSection(data: Data): Block[] {
-	const store = secretStore(data.config, data.state.secretsUnreadable);
-	const blocks: Block[] = [header("Delivery secrets")];
-	if (store === "none") {
-		blocks.push(
-			section(
-				"No delivery has a secret yet. Apps' signing secrets and Slack or Discord channel addresses are kept encrypted with the site's EMDASH_ENCRYPTION_KEY when it has one.",
-			),
-		);
-	} else if (store === "encrypted") {
-		blocks.push(
-			section(
-				"Encrypted with the site's EMDASH_ENCRYPTION_KEY: apps' signing secrets and Slack or Discord channel addresses. Keep that key with the site's backups; without it they cannot be read.",
-			),
-		);
-	} else if (store === "plain") {
-		const at = data.config.secretsPlainAt;
-		blocks.push(
-			section(
-				`Kept as plain text in the site's database${at ? `: this site has no EMDASH_ENCRYPTION_KEY (checked ${ago(at)})` : ""}. Ask your web person to set one (\`emdash secrets generate\`), then press Encrypt them now.`,
-			),
-			actions([button("seal_secrets", "Encrypt them now")]),
-		);
-	} else {
-		blocks.push(section(UNREADABLE_TEXT), actions([forgetButton()]));
-	}
-	return blocks;
-}
-
-const UNREADABLE_TEXT =
-	"The site's EMDASH_ENCRYPTION_KEY was changed or removed, so the apps' signing secrets and channel addresses saved with it cannot be read, and those deliveries are not sent. Enquiries still arrive and every other delivery still sends. Ask your web person to put the old key back (it can stay next to a new one, separated by a comma). If it is lost, press Forget the saved secrets, then make a new secret for each app and paste each channel's address again.";
-
-function forgetButton(): ButtonElement {
-	return button("forget_secrets", "Forget the saved secrets", {
-		style: "danger",
-		confirm: {
-			title: "Forget the saved secrets?",
-			text: "Apps then need a new secret (Make a new secret on each), and each Slack or Discord delivery its channel address again (Edit). Do this only if the old key is lost.",
-			confirm: "Forget them",
-			deny: "Cancel",
-			style: "danger",
-		},
-	});
-}
-
-/** The banner while the saved secrets cannot be read: admins only. */
-function secretsBanner(data: Data): Block[] {
-	if (!data.admin || !data.state.secretsUnreadable) return [];
-	return [
-		{
-			type: "banner",
-			variant: "error",
-			title: "Lead delivery cannot read its saved secrets",
-			description: UNREADABLE_TEXT,
-		},
-		actions([forgetButton()]),
-	];
 }
 
 /** EmDash ends an access it did not revoke after 90 days; the banner goes then too. */
@@ -529,7 +458,6 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 	const { ctx, config, admin } = data;
 	const blocks: Block[] = [header("Lead delivery")];
 	if (admin) blocks.push(actions([button("new", "+ New delivery", { style: "primary" })]));
-	blocks.push(...secretsBanner(data));
 	blocks.push(...accessLeftBanner(data));
 	if (admin && config.notice) {
 		blocks.push({
@@ -1056,7 +984,7 @@ function sendsTo(data: Data, d: Delivery): string {
 	if (d.kind === "email") return `Email to ${(d.to ?? []).join(", ")} · ${from}`;
 	if (d.kind === "hubspot") return `HubSpot form in account ${d.portalId} · ${from}`;
 	if (d.kind === "chat") {
-		const url = unsealed(d, data.state.secrets).delivery.url;
+		const url = d.url;
 		return `${chatLabel(d.chat)} channel${url ? ` at ${maskChatUrl(url)}` : ""} · ${d.leaveOut ? "without what people wrote · " : ""}${from}`;
 	}
 	let host = d.url ?? "";
@@ -1170,7 +1098,6 @@ async function deliveryPage(
 	const blocks: Block[] = [back()];
 	if (view.secret && d.kind === "app") blocks.push(secretAccordion(view.secret, d));
 	blocks.push(header(d.name), context(`${sendsTo(data, d)} · ${d.on ? "On" : "Off"}`));
-	blocks.push(...secretsBanner(data));
 	blocks.push(...accessLeftBanner(data));
 	const latest = status.fixing[0]?.data;
 	if (latest) {
@@ -1380,7 +1307,7 @@ function editPage(data: Data, d: Delivery, view: Extract<View, { screen: "edit" 
 			initial_value: value("to", (d.to ?? []).join(", ")),
 		});
 	} else if (d.kind === "chat") {
-		const url = unsealed(d, data.state.secrets).delivery.url;
+		const url = d.url;
 		fields.push(
 			...chatFields(
 				value("url", ""),
@@ -1800,7 +1727,7 @@ function detailsFromForm(
 		if (!typed) return { error: "Paste the channel's webhook address." };
 		const parsed = parseChatUrl(typed);
 		if ("error" in parsed) return { error: parsed.error };
-		return { details: { chat: parsed.platform, url: parsed.url, leaveOut, sealed: false } };
+		return { details: { chat: parsed.platform, url: parsed.url, leaveOut } };
 	}
 	const url = str(values.url).trim();
 	let parsedUrl: URL | null = null;
@@ -1814,11 +1741,9 @@ function detailsFromForm(
 	}
 	if (isPrivateHost(parsedUrl.hostname)) return { error: PRIVATE_ADDRESS };
 	const app = APPS.some((a) => a.value === values.app) ? (values.app as Delivery["app"]) : "other";
-	// The secret stays, wherever it is kept (plain, or encrypted: `sealed`).
-	if (existing?.kind === "app" && (existing.secret || existing.sealed))
-		return { details: { app, url: parsedUrl.href } };
-	const secret = newSecret();
-	return { details: { app, url: parsedUrl.href, secret, sealed: false }, secret };
+	const keep = existing?.kind === "app" && existing.secret;
+	const secret = keep ? existing.secret! : newSecret();
+	return { details: { app, url: parsedUrl.href, secret }, ...(keep ? {} : { secret }) };
 }
 
 /** HubSpot matching for one form from a form's values; or the field that still needs a name. */
@@ -1841,7 +1766,6 @@ function sameDestination(
 	b: Partial<Delivery> & { kind: DeliveryKind },
 ): boolean {
 	if (a.kind !== b.kind) return false;
-	if (a.kind === "chat") return unsealed(a, data.state.secrets).delivery.url === b.url;
 	if (a.kind === "email") return (a.to ?? []).some((x) => (b.to ?? []).includes(x));
 	if (a.kind === "hubspot") return a.portalId === b.portalId && a.formGuid === b.formGuid;
 	return a.url === b.url;
@@ -2028,12 +1952,8 @@ async function adminScreen(
 	}
 	// A key made, or the setup moved from 0.1 or from the plain key: one save for all of it.
 	await ensureConfig(ctx, state);
-	// Key lost (state.secretsUnreadable): the short-lived keys could not be read, so these would
-	// write every visit for nothing; the every-minute task and the site's address are still there.
-	if (!state.secretsUnreadable) {
-		await ensureSchedule(ctx, state);
-		await rememberOrigin(ctx, state, requestUrl);
-	}
+	await ensureSchedule(ctx, state);
+	await rememberOrigin(ctx, state, requestUrl);
 	const data: Data = {
 		ctx,
 		m,
@@ -2051,12 +1971,6 @@ async function adminScreen(
 		data.config = config;
 		await saveConfig(ctx, config, { mirror });
 	};
-	/** Move secrets kept as plain text into EmDash's encrypted storage: one call when there are any. */
-	const seal = async (config: Config): Promise<Config> => {
-		const result = await sealSecrets(ctx, config, state.secrets, state.secretsUnreadable);
-		state.secrets = result.secrets;
-		return result.config;
-	};
 	const keepForms = async (forms: Record<string, KnownForm>, mirror = true) => {
 		state.forms = forms;
 		data.forms = forms;
@@ -2070,32 +1984,7 @@ async function adminScreen(
 
 	if (interaction.type === "page_load" && str(interaction.page) === "widget:enquiries")
 		return widget(data);
-	// The first admin visit after updating moves secrets kept as plain text into EmDash's encrypted
-	// storage, once: tried again only by a new secret or "Encrypt them now". Moved: the save and
-	// its copy for 0.3.0, which must lose the plain secrets too (three calls). Not moved (no key):
-	// the note of it, without the copy (two).
-	if (
-		admin &&
-		interaction.type === "page_load" &&
-		!state.config.secretsPlainAt &&
-		!state.secretsUnreadable &&
-		state.config.deliveries.some(hasPlainSecret)
-	) {
-		const sealed = await seal(state.config);
-		await save(sealed, !sealed.secretsPlainAt);
-	}
 	if (interaction.type === "page_load" || action === "" || action === "home") return render(data);
-
-	// Key lost (secretsUnreadable): reading took two more calls and the short-lived keys are
-	// missing, so only looking around and Forget the saved secrets are offered until it is fixed.
-	if (state.secretsUnreadable && !WHILE_UNREADABLE.has(action)) {
-		return render(data, {
-			screen: "home",
-			toast: fail(
-				"Sending and changes wait until the saved secrets can be read again. Ask your web person to put the site's old EMDASH_ENCRYPTION_KEY back.",
-			),
-		});
-	}
 
 	// Anyone who can open the page may look through the log and send an enquiry again.
 	if (action === "see_all") return render(data, { screen: "log", filter: "" });
@@ -2254,13 +2143,8 @@ async function adminScreen(
 		const after = () => (connected ? 3 : oneClick(data) || !data.config.reach ? 2 : 0);
 		let toast: BlockResponse["toast"];
 		if (kind !== "hubspot" || values.test_now === true) {
-			// The save (one call), the move of its secret into encrypted storage (one) and what
-			// follows stay; the test's log row only if a call is left.
-			const test = await sendTest(
-				data,
-				delivery,
-				1 + after() + 1 + (hasPlainSecret(delivery) && !state.secretsUnreadable ? 1 : 0),
-			);
+			// The save (one call) and what follows it stay; the test's log row only if a call is left.
+			const test = await sendTest(data, delivery, 1 + after() + 1);
 			delivery = test.delivery;
 			toast = test.ok
 				? ok(`Saved as "${name}". ${test.message}`)
@@ -2276,9 +2160,6 @@ async function adminScreen(
 			);
 		}
 		let config: Config = { ...data.config, deliveries: [...data.config.deliveries, delivery] };
-		// Its secret into EmDash's encrypted storage, when a call is left for it (one): otherwise it
-		// stays plain until the next visit.
-		if (hasPlainSecret(delivery) && m.left() > 1 + after()) config = await seal(config);
 		if (!connected && !config.reach && m.left() >= 3 + 1) {
 			const result = await checkReach(ctx, data.origin);
 			config = { ...config, reach: { result, at: new Date().toISOString() } };
@@ -2344,14 +2225,10 @@ async function adminScreen(
 	if (action === "new_secret") {
 		const id = str(value);
 		const secret = newSecret();
-		await save(
-			await seal({
-				...data.config,
-				deliveries: data.config.deliveries.map((d) =>
-					d.id === id ? { ...d, secret, sealed: false } : d,
-				),
-			}),
-		);
+		await save({
+			...data.config,
+			deliveries: data.config.deliveries.map((d) => (d.id === id ? { ...d, secret } : d)),
+		});
 		return render(data, {
 			screen: "delivery",
 			id,
@@ -2405,8 +2282,7 @@ async function adminScreen(
 			...data.config,
 			deliveries: data.config.deliveries.map((x) => (x.id === id ? updated : x)),
 		};
-		// A new channel address goes into encrypted storage; an unchanged secret stays where it is.
-		await save(parsed.details.sealed === false ? await seal(edited) : edited);
+		await save(edited);
 		const message =
 			forms === "all" && picked.length > 1
 				? "Saved. It takes all forms, including new ones, so the other ticks were not needed."
@@ -2676,34 +2552,6 @@ async function adminScreen(
 	}
 
 	// Settings for the whole site
-	if (action === "seal_secrets") {
-		const result = await sealSecrets(ctx, data.config, state.secrets, state.secretsUnreadable);
-		state.secrets = result.secrets;
-		await save(result.config);
-		return render(data, {
-			screen: "home",
-			settingsOpen: true,
-			toast: result.sealed
-				? ok("Encrypted. The secrets are now kept with the site's EMDASH_ENCRYPTION_KEY.")
-				: result.tried
-					? fail(
-							"EmDash could not encrypt them: this site has no EMDASH_ENCRYPTION_KEY yet. They stay as plain text.",
-						)
-					: info("Nothing to encrypt."),
-		});
-	}
-	if (action === "forget_secrets") {
-		await ctx.settings.delete(SECRETS_SETTING);
-		state.secrets = {};
-		state.secretsUnreadable = false;
-		return render(data, {
-			screen: "home",
-			settingsOpen: true,
-			toast: ok(
-				"Forgotten. Make a new secret for each app, and paste each Slack or Discord channel's address again under Edit.",
-			),
-		});
-	}
 	if (action === "dismiss_notice") {
 		const { notice: _notice, ...rest } = data.config;
 		await save(rest);

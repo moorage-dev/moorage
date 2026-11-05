@@ -3,12 +3,10 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import { validateBlockResponse } from "@emdash-cms/blocks/server";
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
-import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import type { Config, Delivery, KnownForm, Send } from "../src/types.js";
-import { sign } from "../src/webhook.js";
 import { runQueued } from "./queue.js";
 
 const PAGE = "/enquiries";
@@ -1618,22 +1616,6 @@ describe("what EmDash will accept", () => {
 
 const SLACK = "https://hooks.slack.com/services/T0ABC/B0DEF/slackSECRETtoken1234";
 const DISCORD = "https://discord.com/api/webhooks/123456789/discordSECRETtokenABCD";
-const ENCRYPTION_KEY = `emdash_enc_v1_${"A".repeat(43)}`;
-
-/** The site's EMDASH_ENCRYPTION_KEY, as EmDash reads it (the host and the sandbox bridge). */
-function encryptionKey(on: boolean) {
-	const bound = env as unknown as Record<string, unknown>;
-	if (on) {
-		process.env.EMDASH_ENCRYPTION_KEY = ENCRYPTION_KEY;
-		bound.EMDASH_ENCRYPTION_KEY = ENCRYPTION_KEY;
-	} else {
-		delete process.env.EMDASH_ENCRYPTION_KEY;
-		delete bound.EMDASH_ENCRYPTION_KEY;
-	}
-}
-
-afterEach(() => encryptionKey(false));
-
 function bodyOf(request: { body: Uint8Array }) {
 	return JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
 }
@@ -1751,132 +1733,6 @@ describe("a Slack or Discord channel", () => {
 		expect(again.toast?.type).toBe("error");
 		expect(again.toast?.message).toContain("no longer exists");
 		expect(JSON.stringify(await rows(runtime))).not.toContain("slackSECRETtoken");
-	});
-});
-
-describe("delivery secrets in EmDash's encrypted storage", () => {
-	it("keeps them as plain text, and says so, when the site has no EMDASH_ENCRYPTION_KEY", async () => {
-		const { runtime, admin } = await start();
-		await setForms(runtime, [known("contact", "Contact form")]);
-		await runtime.http.respond(HOOK, new Response("ok"));
-		await saveNew(runtime, admin, "app", "contact", { app: "zapier", url: HOOK });
-		expect((await config(runtime)).deliveries[0]!.secret).toMatch(/^whsec_/);
-		expect(await runtime.inspect.settings.raw("secrets")).toBeNull();
-		const settings = await runtime.admin.loadPage(PAGE, { user: admin });
-		expect(text(settings)).toContain("plain text");
-		expect(text(settings)).toContain("EMDASH_ENCRYPTION_KEY");
-	});
-
-	it("encrypts new secrets when the key is set, and still signs with them", async () => {
-		encryptionKey(true);
-		const { runtime, admin } = await start();
-		await setForms(runtime, [known("contact", "Contact form")]);
-		await runtime.http.respond(HOOK, new Response("ok"));
-		const saved = await saveNew(runtime, admin, "app", "contact", { app: "zapier", url: HOOK });
-		const shown = /whsec_[A-Za-z0-9+/=]+/.exec(JSON.stringify(saved.blocks))![0];
-		const d = (await config(runtime)).deliveries[0]!;
-		expect(d.secret).toBeUndefined();
-		expect(d.sealed).toBe(true);
-		expect(JSON.stringify(await runtime.inspect.setting("config"))).not.toContain("whsec_");
-		const raw = await runtime.inspect.settings.raw("secrets");
-		expect(raw).toMatchObject({ $emdash: "plugin-setting" });
-		expect(JSON.stringify(raw)).not.toContain("whsec_");
-
-		await runtime.http.respond(HOOK, new Response("ok"));
-		await inbound(runtime, payload("01E"));
-		const request = runtime.http
-			.requests()
-			.filter((r) => r.url === HOOK)
-			.at(-1)!;
-		const body = new TextDecoder().decode(request.body);
-		expect(request.headers["webhook-signature"]).toBe(
-			await sign(shown, "01E", Number(request.headers["webhook-timestamp"]), body),
-		);
-		const settings = await runtime.admin.loadPage(PAGE, { user: admin });
-		expect(text(settings)).toContain("Encrypted with the site's EMDASH_ENCRYPTION_KEY");
-	});
-
-	it("moves plain secrets saved by 0.4.4 into encrypted storage, keeping each one", async () => {
-		encryptionKey(true);
-		const { runtime, admin } = await start();
-		const old = delivery();
-		const chat = delivery({
-			kind: "chat",
-			chat: "slack",
-			name: "Contact us → Slack",
-			url: SLACK,
-			secret: undefined,
-			app: undefined,
-		});
-		await setDeliveries(runtime, [old, chat]);
-		// Plain until an admin opens the page: still read, still signed.
-		await runtime.http.respond(HOOK, new Response("ok"));
-		await runtime.http.respond(SLACK, new Response("ok"));
-		await inbound(runtime, payload("01U"));
-		const first = runtime.http
-			.requests()
-			.filter((r) => r.url === HOOK)
-			.at(-1)!;
-		expect(first.headers["webhook-signature"]).toBe(
-			await sign(
-				old.secret!,
-				"01U",
-				Number(first.headers["webhook-timestamp"]),
-				new TextDecoder().decode(first.body),
-			),
-		);
-		await runtime.admin.loadPage(PAGE, { user: admin });
-		const saved = await config(runtime);
-		expect(JSON.stringify(saved)).not.toContain("whsec_");
-		expect(JSON.stringify(saved)).not.toContain("slackSECRETtoken");
-		expect(saved.deliveries.every((d) => d.sealed)).toBe(true);
-		await runtime.http.respond(HOOK, new Response("ok"));
-		await runtime.http.respond(SLACK, new Response("ok"));
-		await inbound(runtime, payload("01V"));
-		const later = runtime.http
-			.requests()
-			.filter((r) => r.url === HOOK)
-			.at(-1)!;
-		expect(later.headers["webhook-signature"]).toBe(
-			await sign(
-				old.secret!,
-				"01V",
-				Number(later.headers["webhook-timestamp"]),
-				new TextDecoder().decode(later.body),
-			),
-		);
-		expect(runtime.http.requests().filter((r) => r.url === SLACK)).toHaveLength(2);
-	});
-
-	it("still opens and still takes enquiries when the key is lost, and can forget the secrets", async () => {
-		encryptionKey(true);
-		const { runtime, admin } = await start();
-		await setForms(runtime, [known("contact", "Contact form")]);
-		await runtime.http.respond(HOOK, new Response("ok"));
-		await saveNew(runtime, admin, "app", "contact", { app: "zapier", url: HOOK });
-		encryptionKey(false);
-		await runtime.restart();
-		const home = await runtime.admin.loadPage(PAGE, { user: admin });
-		const banner = flatten(home.blocks).find((b) => b.type === "banner");
-		expect(banner).toMatchObject({
-			variant: "error",
-			title: "Lead delivery cannot read its saved secrets",
-		});
-		const arrived = await inbound(runtime, payload("01L"));
-		expect(arrived.status).toBe(200);
-		const [row] = await rows(runtime);
-		expect(row).toMatchObject({ status: "fixing" });
-		expect(row!.plain).toContain("EMDASH_ENCRYPTION_KEY was changed or removed");
-		expect(runtime.http.requests().filter((r) => r.url === HOOK)).toHaveLength(1);
-		// No alert email every run: the note of today's alerts cannot be read either.
-		expect(await runtime.inspect.email()).toEqual([]);
-		const forgot = await runtime.admin.act(PAGE, "forget_secrets", { user: admin });
-		expect(forgot.toast?.type).toBe("success");
-		expect(await runtime.inspect.settings.raw("secrets")).toBeNull();
-		const after = await runtime.admin.loadPage(PAGE, { user: admin });
-		expect(text(after)).not.toContain("cannot read its saved secrets");
-		// The delivery says what to do now: make a new secret.
-		expect(text(after)).toContain("Make a new secret");
 	});
 });
 

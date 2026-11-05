@@ -553,14 +553,9 @@ test("an admin sees the help line, and the switch in the site settings hides it"
 	await page.close();
 });
 
-test("Slack or Discord channels are offered, and the delivery secrets are kept encrypted", async () => {
-	// The demo site has an EMDASH_ENCRYPTION_KEY (.env), so the app secret saved above is encrypted.
+test("Slack or Discord channels are offered, and only their webhook addresses are accepted", async () => {
 	const page = await adminContext.newPage();
 	await open(page);
-	const settings = page.getByRole("button", { name: "Settings for the whole site" });
-	if ((await settings.getAttribute("aria-expanded")) === "false") await settings.click();
-	await expect(page.getByText(/^Encrypted with the site's EMDASH_ENCRYPTION_KEY/)).toBeVisible();
-
 	await page.getByRole("button", { name: "+ New delivery" }).click();
 	await expect(
 		page.getByRole("radio", { name: /^Slack or Discord channel: a message in the channel/ }),

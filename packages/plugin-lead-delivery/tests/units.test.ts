@@ -22,7 +22,6 @@ import {
 	quietAlert,
 	repeatNote,
 } from "../src/messages.js";
-import { parseSecrets } from "../src/secrets.js";
 import { isThrowaway, THROWAWAY_COUNT } from "../src/throwaway.js";
 import type { Delivery, Enquiry, KnownForm, Send } from "../src/types.js";
 import { appPayload, classifyApp, sign } from "../src/webhook.js";
@@ -825,25 +824,6 @@ describe("a Slack or Discord channel's message", () => {
 		expect(JSON.stringify(classifyChat(slack, 200, "https://slack.com/signin", ""))).not.toContain(
 			"SECRET",
 		);
-	});
-});
-
-describe("the secrets kept in EmDash's encrypted storage", () => {
-	it("are read back only from what Lead delivery wrote", () => {
-		expect(
-			parseSecrets(
-				JSON.stringify({
-					v: 1,
-					d: { a: { secret: "whsec_x" }, b: { url: "https://hooks.slack.com/services/T/B/x" } },
-				}),
-			),
-		).toEqual({
-			a: { secret: "whsec_x" },
-			b: { url: "https://hooks.slack.com/services/T/B/x" },
-		});
-		expect(parseSecrets(null)).toEqual({});
-		expect(parseSecrets("typed by hand")).toEqual({});
-		expect(parseSecrets(JSON.stringify({ v: 1, d: { a: { secret: 3 } } }))).toEqual({});
 	});
 });
 

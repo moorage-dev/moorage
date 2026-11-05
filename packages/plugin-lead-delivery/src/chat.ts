@@ -9,8 +9,7 @@ import { marksOf } from "./webhook.js";
 /**
  * A "Slack or Discord channel" delivery: one message in the channel for each enquiry, through
  * the channel's incoming webhook. The webhook address is the only key, so it is a secret: it is
- * never shown again after it is saved, never logged, and kept in EmDash's encrypted storage when
- * the site has a key (secrets.ts).
+ * never shown in full after it is saved (host and last four characters) and never logged.
  */
 
 const SLACK_HOSTS = new Set(["hooks.slack.com"]);

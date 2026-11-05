@@ -72,18 +72,13 @@ export interface Delivery {
 	throwawayField?: string;
 	// Another app
 	app?: AppKind;
-	/** Another app's address (plain); a channel's webhook address (a secret, see `sealed`). */
+	/** Another app's address; a channel's webhook address (a secret: never shown or logged in full). */
 	url?: string;
 	secret?: string;
 	// Slack or Discord channel
 	chat?: ChatKind;
 	/** Leave what people wrote out of the channel's message: it only says an enquiry arrived. */
 	leaveOut?: boolean;
-	/**
-	 * Its secret (an app's signing secret, a channel's address) is in EmDash's encrypted storage
-	 * (secrets.ts), not here: `secret`, and for a channel `url`, are then left out.
-	 */
-	sealed?: boolean;
 }
 
 /** What the site-reach check found. */
@@ -114,8 +109,6 @@ export interface Config {
 	accessLeft?: { at: string; form: string };
 	/** The admin's choice to hide the help line at the foot of the page (shown when unset). */
 	hideHelpLine?: true;
-	/** When encrypting the delivery secrets last failed (the site has no EMDASH_ENCRYPTION_KEY). */
-	secretsPlainAt?: string;
 }
 
 /** One enquiry as this plugin received it. Contents are deleted once all its deliveries are done. */

@@ -19,7 +19,6 @@
 // this plugin's own email:beforeSend cancels resolves without an error.
 
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
-import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, Enquiry, KnownForm, Send } from "../src/types.js";
@@ -90,17 +89,6 @@ const mail: Delivery = {
 	to: ["orders@crumb.test"],
 };
 
-const CONFIG: Config = {
-	version: 2,
-	deliveries: [],
-	alertTo: ["anna@crumb.test"],
-	key: KEY,
-	keySetAt: "2026-10-01T00:00:00.000Z",
-	// A site already on this release without EMDASH_ENCRYPTION_KEY: its secrets stay plain, and
-	// the page has noted it once (so a visit does not try again).
-	secretsPlainAt: "2026-11-01T00:00:00.000Z",
-};
-
 const SLACK = "https://hooks.slack.com/services/T0ABC/B0DEF/slackSECRETtoken1234";
 const slack: Delivery = {
 	id: "slackdeliv",
@@ -114,21 +102,14 @@ const slack: Delivery = {
 	chat: "slack",
 	url: SLACK,
 };
-const ENCRYPTION_KEY = `emdash_enc_v1_${"A".repeat(43)}`;
 
-/** The site's EMDASH_ENCRYPTION_KEY, as the host and the sandbox bridge read it. */
-function encryptionKey(on: boolean) {
-	const bound = env as unknown as Record<string, unknown>;
-	if (on) {
-		process.env.EMDASH_ENCRYPTION_KEY = ENCRYPTION_KEY;
-		bound.EMDASH_ENCRYPTION_KEY = ENCRYPTION_KEY;
-	} else {
-		delete process.env.EMDASH_ENCRYPTION_KEY;
-		delete bound.EMDASH_ENCRYPTION_KEY;
-	}
-}
-
-afterEach(() => encryptionKey(false));
+const CONFIG: Config = {
+	version: 2,
+	deliveries: [],
+	alertTo: ["anna@crumb.test"],
+	key: KEY,
+	keySetAt: "2026-10-01T00:00:00.000Z",
+};
 
 const CONTACT: KnownForm = {
 	slug: "contact",
@@ -195,9 +176,7 @@ async function running(
 /** Right after updating from 0.3.0: the old KV keys only, nothing under settings. */
 async function justUpdated(deliveries: Delivery[] = [zap]): Promise<Host> {
 	const h = await newHost();
-	// 0.3.0 never wrote secretsPlainAt.
-	const { secretsPlainAt: _never, ...old } = CONFIG;
-	await h.fixtures.plugin.kv("config", { ...old, deliveries });
+	await h.fixtures.plugin.kv("config", { ...CONFIG, deliveries });
 	await h.fixtures.plugin.kv("forms", { contact: CONTACT });
 	await h.fixtures.plugin.kv("schedule", "* * * * *");
 	await h.fixtures.plugin.kv("origin", ORIGIN);
@@ -978,7 +957,7 @@ describe("admin page and widget", () => {
 				expect((await h.inspect.setting<Config>("config"))?.key).toBe(KEY);
 				expect(await h.inspect.setting("forms")).toBeTruthy();
 			},
-			count: 8,
+			count: 6,
 			before: 21,
 		},
 		{
@@ -1251,7 +1230,7 @@ const ACTIONS: ActionCase[] = [
 		blockId: "new2:app:contact",
 		values: { url: HOOK2, app: "make", name: "" },
 		seed: async (h) => h.http.respond(HOOK2, ok()),
-		count: 9,
+		count: 8,
 		before: 32,
 	},
 	{
@@ -1276,7 +1255,7 @@ const ACTIONS: ActionCase[] = [
 			await h.http.respond(CODE, codeAnswer());
 		},
 		did: async (_h, m) => expect(JSON.stringify(m.result)).toContain("ABCD-EFGH"),
-		count: 8,
+		count: 7,
 		before: 30,
 	},
 	{
@@ -1328,7 +1307,7 @@ const ACTIONS: ActionCase[] = [
 		count: 6,
 		before: 14,
 	},
-	{ action: "new_secret", value: zap.id, count: 7, before: 14 },
+	{ action: "new_secret", value: zap.id, count: 6, before: 14 },
 	{
 		action: "delete",
 		label: "delete, with enquiries still on their way",
@@ -1498,6 +1477,8 @@ const ACTIONS: ActionCase[] = [
 		seed: approving([TOKEN, tokens], [LIST, conflictList], [REVOKE, ok]),
 		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
 		did: async (_h, m) => expect(JSON.stringify(m.result)).toContain("Replace it"),
+		// 2026-11: +2, the forms saved (and their copy for 0.3.0) now that the list notes each
+		// form's Forms auto-reply.
 		count: 7,
 	},
 	{
@@ -1639,96 +1620,14 @@ describe("admin actions, on a running site with one delivery", () => {
 	);
 });
 
-// ─── 2026-11: Slack or Discord channels, encrypted secrets ───────────
+// ─── 2026-11: Slack or Discord channels ─────────────────────────────
 
-/** A delivery whose secret is in EmDash's encrypted storage (written with the key on). */
-async function sealedSite(deliveries: Delivery[], secrets: Record<string, Record<string, string>>) {
-	encryptionKey(true);
-	const h = await running(
-		deliveries.map((d) => {
-			const { secret: _secret, ...rest } = d;
-			if (d.kind !== "chat") return { ...rest, sealed: true };
-			const { url: _url, ...noUrl } = rest;
-			return { ...noUrl, sealed: true };
-		}),
-	);
-	await h.actions.plugin.updateSettings({ secrets: JSON.stringify({ v: 1, d: secrets }) });
-	return h;
-}
-
-/** The same, after the site lost its key: EmDash cannot decrypt the secrets. */
-async function keyLost(deliveries: Delivery[]) {
-	const h = await sealedSite(deliveries, { [zap.id]: { secret: zap.secret! } });
-	encryptionKey(false);
-	return h;
-}
-
-describe("Slack or Discord channels and encrypted secrets", () => {
+describe("Slack or Discord channels", () => {
 	const admin = async (h: Host, invoke: (user: User) => Invoke) => ({
 		h,
 		invoke: invoke((await people(h)).admin),
 	});
 	run([
-		{
-			name: "admin home, first visit after updating from 0.4.4, no key: noted once",
-			setup: async () =>
-				admin(await running([zap], { secretsPlainAt: undefined }), (u) => page(host!, u)),
-			did: async (h) =>
-				expect((await h.inspect.setting<Config>("config"))?.secretsPlainAt).toBeTruthy(),
-			count: 6,
-		},
-		{
-			name: "admin home, first visit after updating from 0.4.4, the site has a key: secrets moved",
-			setup: async () => {
-				encryptionKey(true);
-				return admin(await running([zap, slack], { secretsPlainAt: undefined }), (u) =>
-					page(host!, u),
-				);
-			},
-			did: async (h) => {
-				const saved = JSON.stringify(await h.inspect.setting<Config>("config"));
-				expect(saved).not.toContain("whsec_");
-				expect(saved).not.toContain("slackSECRET");
-				expect(await h.inspect.settings.raw("secrets")).toMatchObject({
-					$emdash: "plugin-setting",
-				});
-			},
-			count: 7,
-		},
-		{
-			name: "admin home, secrets encrypted",
-			setup: async () =>
-				admin(await sealedSite([zap], { [zap.id]: { secret: zap.secret! } }), (u) =>
-					page(host!, u),
-				),
-			count: 4,
-		},
-		{
-			name: "admin home, the saved secrets cannot be read (key lost)",
-			setup: async () => admin(await keyLost([zap]), (u) => page(host!, u)),
-			did: async (_h, m) =>
-				expect(JSON.stringify(m.result)).toContain("cannot read its saved secrets"),
-			count: 6,
-		},
-		{
-			name: "admin seal_secrets, no key",
-			setup: async () =>
-				admin(
-					await running([zap]),
-					(u) => () => host!.admin.act(PAGE, "seal_secrets", { user: u }),
-				),
-			count: 7,
-		},
-		{
-			name: "admin forget_secrets, key lost",
-			setup: async () =>
-				admin(
-					await keyLost([zap]),
-					(u) => () => host!.admin.act(PAGE, "forget_secrets", { user: u }),
-				),
-			did: async (h) => expect(await h.inspect.settings.raw("secrets")).toBeNull(),
-			count: 7,
-		},
 		{
 			name: "admin new_save, Slack channel, form connected (sends a test)",
 			setup: async () => {
@@ -1750,32 +1649,7 @@ describe("Slack or Discord channels and encrypted secrets", () => {
 					kind: "chat",
 					chat: "slack",
 				}),
-			count: 9,
-		},
-		{
-			name: "admin new_save, app, form connected, the site has a key (secret encrypted)",
-			setup: async () => {
-				encryptionKey(true);
-				const h = await running([]);
-				await h.http.respond(HOOK2, ok());
-				return admin(
-					h,
-					(u) => () =>
-						h.admin.submit(
-							PAGE,
-							"new_save",
-							{ url: HOOK2, app: "make", name: "" },
-							{ user: u, blockId: "new2:app:contact" },
-						),
-				);
-			},
-			did: async (h) => {
-				expect((await h.inspect.setting<Config>("config"))?.deliveries[0]?.sealed).toBe(true);
-				expect(await h.inspect.settings.raw("secrets")).toMatchObject({
-					$emdash: "plugin-setting",
-				});
-			},
-			count: 9,
+			count: 8,
 		},
 		{
 			name: "admin open, a Slack channel",
@@ -1784,122 +1658,19 @@ describe("Slack or Discord channels and encrypted secrets", () => {
 					await running([slack]),
 					(u) => () => host!.admin.act(PAGE, "open", { user: u, value: slack.id }),
 				),
+			did: async (_h, m) => expect(JSON.stringify(m.result)).not.toContain("slackSECRET"),
 			count: 4,
 		},
 		{
-			name: "deliver, one due try through a Slack channel, its address encrypted",
+			name: "deliver, one due try through a Slack channel",
 			setup: async () => {
-				const h = await sealedSite([slack], { [slack.id]: { url: SLACK } });
+				const h = await running([slack]);
 				await row(h, "s1", slack.id, {}, { rows: [slack.id] });
 				await h.http.respond(SLACK, ok());
 				return { h, invoke: deliverRun(h) };
 			},
 			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
 			count: 7,
-		},
-		{
-			name: "deliver, one due try, the saved secrets cannot be read (key lost)",
-			setup: async () => {
-				const h = await keyLost([zap]);
-				await row(h, "s1", zap.id, {}, { rows: [zap.id] });
-				return { h, invoke: deliverRun(h) };
-			},
-			did: async (h) => {
-				expect(await statuses(h)).toEqual(["fixing"]);
-				expect(await h.inspect.email()).toEqual([]);
-			},
-			count: 6,
-		},
-		{
-			name: "admin home, first visit after updating from 0.3.0, the site has a key: secrets moved",
-			setup: async () => {
-				encryptionKey(true);
-				return admin(await justUpdated(), (u) => page(host!, u));
-			},
-			did: async (h) => {
-				expect(JSON.stringify(await h.inspect.setting<Config>("config"))).not.toContain("whsec_");
-				expect(JSON.stringify(await h.inspect.kv.get("config"))).not.toContain("whsec_");
-			},
-			count: 9,
-		},
-		{
-			name: "maintenance, any minute, one due try, the saved secrets cannot be read (key lost)",
-			setup: async () => {
-				const h = await keyLost([zap, mail]);
-				await row(h, "s1", mail.id, {}, { rows: [mail.id] });
-				return { h, invoke: deliverRun(h, { name: "maintenance", data: null }) };
-			},
-			// Two calls fewer for the batch: the try is left for the follow-up run it asks for.
-			did: async (h) => {
-				expect(await statuses(h)).toEqual(["retrying"]);
-				const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
-				expect(tasks.map((t) => t.name.split("-")[0])).toEqual(["deliver"]);
-			},
-			count: 7,
-		},
-		{
-			name: "daily, the saved secrets cannot be read (key lost): waits",
-			setup: async () => ({
-				h: await keyLost([zap]),
-				invoke: deliverRun(host!, { name: "daily", data: null }),
-			}),
-			count: 3,
-		},
-		{
-			name: "beforeSend, the email way, the saved secrets cannot be read (key lost)",
-			setup: async () => {
-				const h = await keyLost([zap, mail]);
-				return { h, invoke: emailWay(h, formEmail) };
-			},
-			did: async (h, m) => {
-				expect(m.result).toBe(false);
-				expect(await h.inspect.storage.list("enquiries")).toHaveLength(1);
-			},
-			count: 8,
-		},
-		{
-			name: "admin send_again, the saved secrets cannot be read (key lost): refused",
-			setup: async () => {
-				const h = await keyLost([zap]);
-				await row(h, "s1", zap.id, { status: "gaveup", nextAt: "" }, { rows: [zap.id] });
-				return admin(
-					h,
-					(u) => () => h.admin.act(PAGE, "send_again", { user: u, value: { row: `s1~${zap.id}` } }),
-				);
-			},
-			did: async (h, m) => {
-				expect(JSON.stringify(m.result)).toContain("wait until the saved secrets can be read");
-				expect(h.http.requests()).toEqual([]);
-			},
-			count: 6,
-		},
-		{
-			name: "admin connect_finish, the saved secrets cannot be read (key lost): refused, no access asked for",
-			setup: async () => {
-				const h = await keyLost([zap]);
-				return admin(
-					h,
-					(u) => () =>
-						h.admin.act(PAGE, "connect_finish", {
-							user: u,
-							value: { id: zap.id, form: "contact" },
-						}),
-				);
-			},
-			did: async (h) => expect(h.http.requests()).toEqual([]),
-			count: 6,
-		},
-		{
-			name: "inbound, one app delivery, the saved secrets cannot be read (key lost)",
-			setup: async () => {
-				const h = await keyLost([zap]);
-				return { h, invoke: inbound(h, payload("01A")) };
-			},
-			did: async (h, m) => {
-				expect(m.result).toMatchObject({ status: 200 });
-				expect(await h.inspect.storage.list("enquiries")).toHaveLength(1);
-			},
-			count: 8,
 		},
 	]);
 });

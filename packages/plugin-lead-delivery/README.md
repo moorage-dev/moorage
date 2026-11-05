@@ -27,8 +27,7 @@ Everything is on one page, **Lead delivery** under Marketing:
   - Consent goes to HubSpot only when someone ticked a consent box, or when you say your HubSpot account has its privacy (GDPR) settings on.
   - Possibly fake email addresses can be marked in a HubSpot field you choose.
 - **Another app (Zapier, Make, n8n or your own).** Each enquiry is sent as flat JSON, signed with the [Standard Webhooks](https://www.standardwebhooks.com/) headers, with one secret for each delivery. The JSON has a `marks` list (`throwaway`, `repeat`, `spam`) and, for a repeat, `repeatAfterMinutes`.
-- **A Slack or Discord channel.** Paste the channel's incoming-webhook address (Slack: an app with Incoming Webhooks; Discord: Channel settings → Integrations → Webhooks). Each enquiry becomes one message with the form's fields, the marks and a link to Forms → Submissions. What people wrote cannot ping the channel (`@here`, `<!channel>` and mentions are turned off), and **Leave out what people wrote** sends only "New enquiry: Contact form" with the link, for a channel where not everyone should read personal details. Retries, the log and alerts work as for an app. The address is a secret: it is never shown again after you save it, and Edit keeps it when its box is left empty.
-- **Secrets kept encrypted.** Apps' signing secrets and channels' webhook addresses are kept in EmDash's encrypted plugin storage when the site has an `EMDASH_ENCRYPTION_KEY` (`emdash secrets generate` makes one); without one they are kept as plain text in the site's database, as before. Settings for the whole site says which, with **Encrypt them now** once a key is set. Keep the key with the site's backups: if it is changed or lost, the page says so, enquiries still arrive and every other delivery still sends, and either the old key goes back or **Forget the saved secrets** lets you make them again.
+- **A Slack or Discord channel.** Paste the channel's incoming-webhook address (Slack: an app with Incoming Webhooks; Discord: Channel settings → Integrations → Webhooks). Each enquiry becomes one message with the form's fields, the marks and a link to Forms → Submissions. What people wrote cannot ping the channel (`@here`, `<!channel>` and mentions are turned off), and **Leave out what people wrote** sends only "New enquiry: Contact form" with the link, for a channel where not everyone should read personal details. Retries, the log and alerts work as for an app. The address is a secret, kept like an app's signing secret: after you save it the page shows only its host and last four characters, it never appears in the log, and Edit keeps it when its box is left empty.
 - **Forms' own auto-reply.** A delivery's page says whether Forms also sends its own auto-reply to the person who wrote, for forms connected in one step (Lead Delivery reads it from Forms then; for other forms it cannot see it).
 - **Safe addresses.** Only admins enter or change where enquiries go. An address on a private network (this machine, the local network, cloud-internal addresses, in any spelling) is refused when saved and again before every send. A public name that resolves to a private address cannot be caught this way.
 - **A delivery log** that Editors (usually your client) can read. It shows who sent the enquiry, through which delivery, and whether it arrived, with a Send again button. Each enquiry is sent by the scheduled run that follows its arrival, usually within a minute.
@@ -119,8 +118,7 @@ All on the one page:
 - **Settings for the whole site** (admins), folded at the bottom of the page. It opens by itself when nobody gets alerts or the forms have no way to hand enquiries over:
   - who hears when something needs fixing (prefilled with your own address);
   - this site's check, with Check again;
-  - the private address, with Reset;
-  - where the delivery secrets are kept (encrypted, or plain text without a key), with Encrypt them now.
+  - the private address, with Reset.
 
 These are fixed, not settings: the retry schedule, keeping log rows for 30 days, and deleting an enquiry's contents once all its deliveries are done.
 
@@ -143,8 +141,6 @@ Nothing to do. On the first run after the update, each inbox, HubSpot form or ap
 **How does my app check an enquiry came from my site?** Check the `webhook-signature` header with the secret shown when you saved the delivery. Any Standard Webhooks library does it.
 
 **Why does an unticked checkbox say "no"?** Forms leaves an unticked box out of the enquiry. Lead Delivery lists it as "no" (for forms whose fields it knows), so you can tell it was left unticked rather than missing. A box shown only on a condition is left out. HubSpot still receives nothing for an unticked box.
-
-**What happens to my secrets if I go back to 0.4.4?** 0.4.4 does not know encrypted secrets or channel deliveries. Before going back, clear "Delivery secrets" under Plugins → Lead delivery → Settings, or 0.4.4 cannot open; then make a new secret for each app (0.4.4 sends unsigned until then). Channel deliveries are dropped by 0.4.4.
 
 **Why does one-step connecting ask for full admin access?** EmDash has no narrower access for this yet. Lead Delivery uses it for two calls (list the forms, set one form's address) and throws it away straight after; it never stores it. You type the code yourself on EmDash's page, so a link someone sends you cannot approve anything on its own.
 

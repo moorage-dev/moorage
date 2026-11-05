@@ -32,7 +32,6 @@ import {
 	schedulerAlert,
 } from "./messages.js";
 import { type Meter, warnIfRoom } from "./meter.js";
-import { unsealed } from "./secrets.js";
 import {
 	type Config,
 	type Delivery,
@@ -372,9 +371,7 @@ export async function sendTo(
 		}
 	}
 	if (!ctx.http) return done({ kind: "retry", raw: "Web requests are not available." });
-	// The secret (an app's signing secret, a channel's address) from where it is kept.
-	const { delivery: d, missing } = unsealed(delivery, state.secrets);
-	if (missing) return done(secretMissing(delivery, state.secretsUnreadable));
+	const d = delivery;
 	// Checked again before every send: a delivery saved by an earlier version, with a laxer check.
 	const blocked =
 		d.kind === "hubspot"
@@ -425,21 +422,6 @@ export async function sendTo(
 		const words = d.kind === "chat" ? redactUrl(String(error), d.url) : String(error);
 		return done({ kind: "retry", raw: `No answer: ${words.slice(0, 200)}` });
 	}
-}
-
-/** A delivery whose secret is kept encrypted, but cannot be read now. */
-function secretMissing(d: Delivery, unreadable: boolean): Outcome {
-	const what = d.kind === "chat" ? "channel's webhook address" : "signing secret";
-	const fix =
-		d.kind === "chat"
-			? `paste the channel's webhook address again under Lead delivery → ${d.name} → Edit`
-			: `press Make a new secret on ${d.name} and give it to your app`;
-	return {
-		kind: "fixing",
-		plain: unreadable
-			? `This delivery's ${what} is kept encrypted, and this site cannot read it now: its EMDASH_ENCRYPTION_KEY was changed or removed. Ask your web person to put the old key back, then press Send again. If it is lost, ${fix}.`
-			: `This delivery's ${what} is missing from the encrypted storage. To send again, ${fix}.`,
-	};
 }
 
 /** Whether a try for this row makes a call: its delivery and its contents are both still here. */
@@ -731,9 +713,6 @@ export function canAlert(
 	kind: "failure" | "quiet" | "scheduler",
 ): boolean {
 	if (!ctx.email || state.config.alertTo.length === 0) return false;
-	// The saved secrets cannot be read (key lost): neither can the note of today's alerts, so each
-	// run would alert again. The page's banner says what is wrong instead.
-	if (state.secretsUnreadable) return false;
 	const sent = kvOf<Record<string, string>>(state, ALERTS_KEY) ?? {};
 	return sent[kind] !== day(new Date().toISOString());
 }
@@ -862,9 +841,7 @@ export async function maintenance(m: Meter, state: State) {
 	const now = new Date().toISOString();
 	await ctx.kv.set(TICK_KEY, now);
 	state.entries.set(TICK_KEY, now);
-	// Key lost (secretsUnreadable): the day's done-mark cannot be read, so the daily run would be
-	// asked for every minute. It waits until the key is back or the secrets are forgotten.
-	if (!state.secretsUnreadable && kvOf<string>(state, DAILY_KEY) !== day(now) && ctx.cron) {
+	if (kvOf<string>(state, DAILY_KEY) !== day(now) && ctx.cron) {
 		await ctx.cron.schedule(DAILY_TASK, { schedule: new Date(Date.now() + 1000).toISOString() });
 	}
 	await runBatch(m, state);
@@ -885,9 +862,6 @@ export async function daily(m: Meter, state: State) {
 	const ctx = m.ctx;
 	const today = day(new Date().toISOString());
 	if (kvOf<string>(state, DAILY_KEY) === today) return;
-	// Key lost (secretsUnreadable): reading cost two more calls and the day's mark cannot be read,
-	// so the day's work waits until the key is back or the secrets are forgotten.
-	if (state.secretsUnreadable) return;
 	await checkQuiet(m, state);
 	if (!(await cleanup(m))) return;
 	if (m.left() < 1) return;
