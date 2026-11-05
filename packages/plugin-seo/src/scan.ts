@@ -4,6 +4,7 @@ import type { PluginContext } from "emdash";
 
 import type { SeoConfig } from "./config.js";
 import {
+	creditedAuthors,
 	entryKey,
 	entryStore,
 	isDuplicate,
@@ -16,6 +17,13 @@ import {
 /** KV keys for the site-wide check and its cached results. */
 export const SCAN_KEY = "scan";
 export const STATS_KEY = "stats";
+/**
+ * What a check started by this release writes, so that a finished check from an earlier one is
+ * run again on the next visit to the SEO page. 2 (0.2.0): only bylines without a role label
+ * are authors, and hidden pages are not counted among the pages checked.
+ */
+export const SCAN_REV = 2;
+
 /** Name of the background task that continues a site-wide check. */
 export const SCAN_TASK = "seo-scan";
 
@@ -69,6 +77,8 @@ export interface ScanState {
 	/** Last title seen on the previous page of the title pass. */
 	lastTitle?: { key: string; id: string; flagged: boolean };
 	checked: number;
+	/** SCAN_REV of the release that started the check. Absent on checks started before 0.2.0. */
+	rev?: number;
 	/** The collections this check covers, all of them. Absent on checks started before 0.1.8. */
 	scope?: string[];
 	/**
@@ -87,6 +97,10 @@ export interface ScanState {
 }
 
 export interface Stats {
+	/**
+	 * Pages that can appear in search and were checked: ready, worth a look or to fix. Hidden pages
+	 * are counted in `hidden` only (since 0.2.0; before, they were in both).
+	 */
 	checked: number;
 	fix: number;
 	hidden: number;
@@ -120,6 +134,7 @@ export async function startScan(
 		scope: [...collections],
 		phase: "entries",
 		checked: 0,
+		rev: SCAN_REV,
 		tally: { checked: 0, fix: 0, hidden: 0, rows: [], more: false },
 		startedAt: new Date().toISOString(),
 	};
@@ -193,10 +208,7 @@ async function entriesStep(
 					hasPages: true,
 					collection,
 					entry,
-					authors: (authors.get(entry.id) ?? []).map(({ byline }) => ({
-						name: byline.displayName,
-						...(byline.websiteUrl ? { url: byline.websiteUrl } : {}),
-					})),
+					authors: creditedAuthors(authors.get(entry.id)),
 					previous: before,
 					config,
 					siteUrl: ctx.site.url,
@@ -394,7 +406,7 @@ function row(data: EntryRecord, level: "fix" | "look" = "fix"): Stats["rows"][nu
 /** Add (+1) or take away (-1) one record from the running totals. */
 function count(tally: Stats, data: EntryRecord, sign: 1 | -1): void {
 	if (!data.status || data.status === "draft" || data.status === "skip") return;
-	tally.checked += sign;
+	if (data.status !== "hidden") tally.checked += sign;
 	if (data.status === "hidden") {
 		tally.hidden += sign;
 		const titles = tally.hiddenTitles ?? [];
@@ -480,7 +492,7 @@ export async function scanStep(
 export async function readStats(ctx: PluginContext): Promise<Stats> {
 	const store = entryStore(ctx);
 	const [checked, fix, list, look, hidden] = await Promise.all([
-		store.count({ status: { in: ["ready", "look", "fix", "hidden"] } }),
+		store.count({ status: { in: ["ready", "look", "fix"] } }),
 		store.count({ status: "fix" }),
 		store.query({ where: { status: "fix" }, limit: FIX_ROWS }),
 		store.query({ where: { status: "look" }, limit: FIX_ROWS }),

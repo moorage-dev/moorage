@@ -215,6 +215,16 @@ export async function handlePanel(
 										url: `https://search.google.com/test/rich-results?url=${encodeURIComponent(url)}`,
 									},
 								},
+								// Google's test reads only the types Google shows results for; the
+								// schema.org Validator reads all of them, Organization and LocalBusiness too.
+								{
+									type: "link" as const,
+									label: "Check all markup",
+									target: {
+										kind: "external" as const,
+										url: `https://validator.schema.org/#url=${encodeURIComponent(url)}`,
+									},
+								},
 							]
 						: []),
 				],

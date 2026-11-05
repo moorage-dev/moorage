@@ -13,6 +13,25 @@ export const PAGE_TYPES: Array<{ value: PageSchemaType; label: string; short: st
 	{ value: "ProfilePage", label: "Person or team member", short: "Person" },
 ];
 
+/** Plain business groups mapped to the schema.org type each one emits. */
+export const BUSINESS_GROUPS: Array<{ value: string; label: string }> = [
+	{ value: "FoodEstablishment", label: "Restaurant, cafe or bakery" },
+	{ value: "Store", label: "Shop" },
+	{ value: "MedicalBusiness", label: "Health and medical" },
+	{ value: "Dentist", label: "Dentist" },
+	{ value: "LegalService", label: "Legal" },
+	{ value: "FinancialService", label: "Financial" },
+	{ value: "HomeAndConstructionBusiness", label: "Home services (plumber, electrician, builder)" },
+	{ value: "HealthAndBeautyBusiness", label: "Beauty and hair" },
+	{ value: "SportsActivityLocation", label: "Fitness" },
+	{ value: "LodgingBusiness", label: "Hotel or lodging" },
+	{ value: "AutomotiveBusiness", label: "Automotive" },
+	{ value: "ProfessionalService", label: "Professional service" },
+	{ value: "LocalBusiness", label: "Other" },
+];
+
+export const PRICE_RANGES = ["", "$", "$$", "$$$", "$$$$"];
+
 export function typeLabel(type: PageSchemaType): string {
 	return PAGE_TYPES.find((option) => option.value === type)?.short ?? type;
 }

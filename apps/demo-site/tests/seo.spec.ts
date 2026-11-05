@@ -350,6 +350,58 @@ test("a page's own picture is described with its size, and a picture the theme s
 	}
 });
 
+test("an admin copies settings from another site: checked, shown, applied, and on the page", async ({
+	page,
+}) => {
+	await openSeoPage(page);
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await page.getByRole("button", { name: "Copy settings to another site (optional)" }).click();
+	const own = page.locator("pre").filter({ hasText: '"format": "emdash-seo-settings"' });
+	await expect(own).toBeVisible();
+	const original = await own.innerText();
+
+	const box = page.getByRole("textbox", { name: "Paste settings copied from another site" });
+	const paste = async (text: string) => {
+		await box.fill(text);
+		await page.getByRole("button", { name: "Check", exact: true }).click();
+	};
+
+	// Something else pasted by mistake is refused.
+	await paste("source,target,code\n/old,/new,301");
+	await expect(page.getByText("This is not a copy of SEO settings").first()).toBeVisible();
+
+	const other = JSON.parse(original) as { site: Record<string, unknown> };
+	other.site = { ...other.site, type: "FoodEstablishment", name: "Harbour Cafe" };
+	await paste(JSON.stringify(other));
+	await expect(page.getByText("Checked. Nothing has been saved yet.")).toBeVisible();
+	await expect(page.getByText("What will change")).toBeVisible();
+	await expect(page.getByRole("cell", { name: "Harbour Cafe" })).toBeVisible();
+	await page.goto("/");
+	expect(graphOf((await jsonLdScripts(page))[0])[0]?.name).not.toBe("Harbour Cafe");
+
+	await openSeoPage(page);
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await page.getByRole("button", { name: "Copy settings to another site (optional)" }).click();
+	await paste(JSON.stringify(other));
+	await page.getByRole("button", { name: "Apply these settings" }).click();
+	await expect(page.getByText(/^Settings copied\./).first()).toBeVisible();
+	await page.goto("/");
+	expect(graphOf((await jsonLdScripts(page))[0])[0]).toMatchObject({
+		"@type": "FoodEstablishment",
+		name: "Harbour Cafe",
+	});
+
+	// Back as it was, by pasting what this site had, for the tests after this one.
+	await openSeoPage(page);
+	await page.getByRole("tab", { name: "Settings" }).click();
+	await page.getByRole("button", { name: "Copy settings to another site (optional)" }).click();
+	await paste(original);
+	await page.getByRole("button", { name: "Apply these settings" }).click();
+	await expect(page.getByText(/^Settings copied\./).first()).toBeVisible();
+	await page.goto("/");
+	expect(graphOf((await jsonLdScripts(page))[0])[0]?.name).not.toBe("Harbour Cafe");
+});
+
 test("an admin sees the help line under every tab, and the switch in Settings hides it", async ({
 	page,
 }) => {
