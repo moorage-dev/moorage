@@ -194,7 +194,9 @@ describe("the block components", () => {
 		expect(await ask({ tools: { cloudflare: "0123456789abcdef0123456789abcdef" } })).toMatchObject({
 			hold: false,
 		});
-		expect(await ask({ tools: { ga4: "G-AB12CD34EF" }, banner: { audience: "none" } })).toMatchObject({
+		expect(
+			await ask({ tools: { ga4: "G-AB12CD34EF" }, banner: { audience: "none" } }),
+		).toMatchObject({
 			hold: false,
 		});
 	});
