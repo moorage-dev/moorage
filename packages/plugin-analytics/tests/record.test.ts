@@ -1,7 +1,10 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import type { RouteContext } from "emdash";
 import { describe, expect, it } from "vitest";
 
+import { bannerVersion, CONFIG_KEY, normalizeConfig } from "../src/config.js";
+import { createPlugin } from "../src/index.js";
 import {
 	consentCsv,
 	consentSummary,
@@ -254,5 +257,43 @@ describe("the consent log as a spreadsheet", () => {
 			},
 		]);
 		expect(csv).toContain(",'=cmd,");
+	});
+});
+
+describe("the record route", () => {
+	const TOOLS = { [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } };
+	const version = bannerVersion(normalizeConfig(TOOLS[CONFIG_KEY]));
+	const post = async (
+		fake: ReturnType<typeof fakeContext>,
+		body: Record<string, unknown>,
+		meta: { country?: string; header?: string } = {},
+	) =>
+		createPlugin().routes.record!.handler({
+			...fake.ctx,
+			input: body,
+			request: new Request("https://acme.test/_emdash/api/plugins/analytics-consent/record", {
+				method: "POST",
+				headers: meta.header ? { "cf-ipcountry": meta.header } : {},
+			}),
+			requestMeta: {
+				ip: null,
+				userAgent: null,
+				referer: null,
+				geo: meta.country ? { country: meta.country } : null,
+			},
+		} as unknown as RouteContext);
+
+	it("stores the country the server saw, not the one the browser sent", async () => {
+		const fake = fakeContext(TOOLS);
+		await post(fake, { ...GOOD, v: version, country: "US" }, { country: "FR" });
+		expect(fake.rows.get(GOOD.id)?.country).toBe("FR");
+		await post(fake, { ...GOOD, id: "second0001", v: version, country: null }, { header: "de" });
+		expect(fake.rows.get("second0001")?.country).toBe("DE");
+	});
+
+	it("keeps the browser's country only when the server does not know one", async () => {
+		const fake = fakeContext(TOOLS);
+		await post(fake, { ...GOOD, v: version, country: "IT" }, { header: "XX" });
+		expect(fake.rows.get(GOOD.id)?.country).toBe("IT");
 	});
 });

@@ -1,6 +1,6 @@
 # @moorage/plugin-analytics
 
-Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analytics, Google Tag Manager, Google Ads, Meta Pixel, Microsoft Clarity, HubSpot and Cloudflare Web Analytics by pasting one ID each, with a cookie banner that holds every one of them back until the visitor agrees. Tools and banner live in one plugin, so "nothing loads before consent" is true by construction, and there is no theme file to edit. Runs on any EmDash site, self-hosted or on Cloudflare, with no account and no key.
+Analytics & Cookies for [EmDash](https://emdashcms.com): add Google Analytics, Google Tag Manager, Google Ads, Meta Pixel, Microsoft Clarity, HubSpot, LinkedIn Insight Tag, TikTok Pixel, Cloudflare Web Analytics, Plausible and Umami by pasting one ID each, with a cookie banner that holds every one of them back until the visitor agrees. Tools and banner live in one plugin, so "nothing loads before consent" is true by construction, and there is no theme file to edit. Runs on any EmDash site, self-hosted or on Cloudflare, with no account and no key.
 
 ![The Status tab: what is on, the cookie banner checklist and how visitors answered](images/status-0-3-2-desktop-light.png)
 
@@ -12,7 +12,10 @@ Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analy
 - **Changing your mind.** After an answer, a small "Cookies" button stays in the bottom left corner (or right, if a chat button lives on the left) and reopens the panel. Any link to `/#cookie-settings` does the same, such as a "Cookie settings" item in your footer menu or a link on your privacy page; no code is needed, and while such a link is on screen the small button steps aside. Taking consent back tells the tools, deletes their cookies and reloads the page without them.
 - **Who is asked.** Where the law says ask first, the EU, EEA, UK and Switzerland (the default, right for sites that only count visits); those places plus India (its consent rules apply from about May 2027); everyone, everywhere (recommended with Clarity, Meta Pixel or Google Ads, which record visits or advertise); or no one, when another consent tool asks instead. Visitors who are not asked, for example in the US, can always turn the tools off with Cookie settings, as US state laws such as California's require, and Global Privacy Control is always respected. The admin says this beside each choice, and the Status tab suggests asking everyone when you use those tools.
 - **Enquiries.** Clicks on phone and email links, and forms sent through the official forms plugin, are counted as a lead (`generate_lead` in Google Analytics, `Lead` or `Contact` in Meta, an `enquiry` event in the data layer). Only the kind of enquiry is sent, never a number, an address or anything typed into a form.
-- **Never tracked.** The admin, preview links, the visual editor, a browser that has signed in to the admin, and any pages you list.
+- **Never tracked.** The admin, preview links, the visual editor, a browser that has signed in to the admin, and any pages you list. Nor are copies of the site on a `workers.dev` or `pages.dev` address or on your laptop (`localhost`), unless that is the Site URL in Settings > General: there the banner still shows, but no tool loads and no answer is recorded. Every other domain loads the tools as usual, since it may be your live site under a Site URL that was never updated; a staging copy on a domain of its own is therefore tracked, so list its pages or turn the tools off there. The Status tab says so when you open the admin on an address where tools do not load.
+- **Videos and maps wait too.** Where the banner can ask, YouTube and Vimeo videos and Google maps in your pages (EmDash's iframe and embed blocks, which the editor's `/youtube`, `/vimeo` and `/map` make; any iframe from YouTube, Vimeo or Google, playlists included; and every embed EmDash plays as a YouTube or Vimeo player, or whose imported embed code holds one) show a placeholder instead: "This video is shown by YouTube, which may set cookies.", a **Load the video** button for that one video, and a link to open it on YouTube when the address names the video. They appear by themselves once the visitor allows Marketing, and straight away for visitors who are not asked. Nothing for editors to do. Other embedded pages render as before. So that the answer is informed, the banner can name them: once a page with one has been shown, a notice above the tabs of the plugin's page (Admins only) says which providers your pages use, and **Name these in the banner** adds them; **Stop naming** (Status tab) takes one back. Until a provider is named, visitors were never told about it, so its videos and maps load only by their own Load button, even after Accept all or the Marketing switch. Named, the standard text adds "Marketing also covers videos and maps from YouTube and Google Maps." (only the providers your pages use), and Choose lists them under Marketing. On a site with no Marketing tools they get a switch of their own, "Videos and maps", which is stored and withdrawn like the others. Visitors who answered before a provider was first named are asked again. Naming is left to an Admin because anyone can open your pages: a visitor can never change what the banner says. On pages you exclude from tracking (Advanced) no banner shows, so videos and maps there appear only for visitors whose saved answer allows Marketing; everyone else, visitors who are not asked included, gets the Load button.
+- **Your site's language.** The banner and the placeholders speak the language your pages are marked with (`<html lang>`): English, German, French, Spanish, Italian, Dutch or Portuguese, the standard heading and text included. A heading, text or button words you type yourself are shown as typed.
+- **Ask everyone again.** One button on the Banner tab shows the banner again to every visitor, for example after a change to your privacy policy.
 
 | Tools                                              | Banner, with its colour sets                      | Status, dark mode                         | Status, phone                            |
 | -------------------------------------------------- | ------------------------------------------------- | ----------------------------------------- | ---------------------------------------- |
@@ -24,7 +27,7 @@ Analytics & Cookie Consent for [EmDash](https://emdashcms.com): add Google Analy
 - It does not make a site "GDPR compliant" by being installed. The banner is built to the EDPB cookie banner taskforce report and the UK ICO's guidance; what your tools do with the data is still yours to describe in your privacy policy.
 - No dashboards or reports: read your numbers in each tool (the Status tab links to each one).
 - No cookie scanner that claims to find everything, no cookie wall, no consent by scrolling. "Check what loads" looks for the common problems only (see below).
-- Not yet: custom code snippets, banner text per language.
+- Not yet: custom code snippets, a consent reference visitors can look up, languages beyond the seven.
 
 ## Install
 
@@ -64,7 +67,7 @@ const page = createPublicPageContext({ Astro, kind: "custom", pageType: "website
 </head>
 ```
 
-Only the `head` placement is used. `EmDashBodyStart` and `EmDashBodyEnd` are not needed by this plugin. The banner is built by the script inside a shadow root, so your theme's styles do not change it and it does not change your theme.
+Only the `head` placement is used. Videos and maps are held back by the plugin's own renderers for EmDash's `iframe` and `embed` blocks, which EmDash picks up by itself in `<PortableText>` from `emdash/ui`. If your theme passes its own `components` for those blocks to `PortableText`, yours win and nothing is held back. The official Embeds plugin's own YouTube and Vimeo blocks (`@emdash-cms/plugin-embeds`) are not held back: they show a preview picture from YouTube or Vimeo and load the player only when clicked. `EmDashBodyStart` and `EmDashBodyEnd` are not needed by this plugin. The banner is built by the script inside a shadow root, so your theme's styles do not change it and it does not change your theme.
 
 To put a "Cookie settings" link in your footer, no theme change is needed: in the admin, under Menus, add a custom link to your footer menu with the URL `/#cookie-settings`. Any link to `/#cookie-settings` or `#cookie-settings`, in a menu or in a page's text, opens the cookie choices on any page, and the floating "Cookies" button steps aside while it is on screen. Themes that mark a link or button with `data-cookie-settings` keep working the same way.
 
@@ -87,6 +90,18 @@ The banner takes these CSS variables from your page when you set them; they reac
 }
 ```
 
+Astro's `<ClientRouter />` works: the banner, the small Cookies button and held videos carry over to each page it swaps in.
+
+### Reading the answer from your own scripts
+
+`window.cookieConsent` is `{ analytics, marketing }` (true or false) once the visitor's answer, or the rule for visitors who are not asked, is known, and `undefined` before. It is read-only. A `cookie-consent:change` event on `document` carries the same object in `event.detail` each time it becomes known or changes; `cookie-consent:settled` fires once, when the banner has been answered or is not needed, with the same detail. `<html data-cookie-consent>` is `pending`, `asking` or `settled` on sites where the banner can appear.
+
+```js
+document.addEventListener("cookie-consent:change", (event) => {
+	if (event.detail.marketing) loadMyChatWidget();
+});
+```
+
 A colour set or your own colours chosen on the Banner tab win over these (their dark versions follow the visitor's device; a theme with its own light and dark switch is better served by these variables). There is no way to style Accept all and Reject all differently, on purpose.
 
 ### Content Security Policy
@@ -94,7 +109,8 @@ A colour set or your own colours chosen on the Banner tab win over these (their 
 EmDash does not add a nonce or hash to scripts that plugins put on the page. If your site sends a `Content-Security-Policy` header, it has to allow:
 
 - inline scripts (`script-src 'unsafe-inline'`, or a hash you maintain yourself, which changes whenever a setting changes), and inline styles for the banner (`style-src 'unsafe-inline'`);
-- the hosts of the tools you switch on, in `script-src` and `connect-src`: `www.googletagmanager.com` and `*.google-analytics.com` (Google), `connect.facebook.net` and `www.facebook.com` (Meta), `www.clarity.ms` and `*.clarity.ms` (Clarity), `js.hs-scripts.com` or `js-eu1.hs-scripts.com` plus the HubSpot hosts that script loads, `static.cloudflareinsights.com` and `cloudflareinsights.com` (Cloudflare).
+- the hosts of the tools you switch on, in `script-src` and `connect-src`: `www.googletagmanager.com` and `*.google-analytics.com` (Google), `connect.facebook.net` and `www.facebook.com` (Meta), `www.clarity.ms` and `*.clarity.ms` (Clarity), `js.hs-scripts.com` or `js-eu1.hs-scripts.com` plus the HubSpot hosts that script loads, `static.cloudflareinsights.com` and `cloudflareinsights.com` (Cloudflare), `plausible.io` (Plausible), `cloud.umami.is` (Umami), `snap.licdn.com` and `px.ads.linkedin.com` (LinkedIn), `analytics.tiktok.com` (TikTok);
+- for held videos and maps, in `frame-src`: `www.youtube.com` or `www.youtube-nocookie.com`, `player.vimeo.com`, `www.google.com`.
 
 ## The Analytics page
 
@@ -104,8 +120,8 @@ One page, **Analytics & Cookies** (under Marketing in the admin sidebar), with f
   - **Tracking**: a tick and one line per tool saying what it waits for ("Google Analytics: on. Waits for visitors in Europe and the UK to accept Analytics cookies."), with a link to each tool's own numbers (Microsoft Clarity straight to your project; the others to their home page). With a Google tool, a link to Google's Tag Assistant and a tip to check Realtime in Google Analytics.
   - **Cookie consent**: who is asked, your privacy policy link, when the last answer came in ("Last answer received 12 minutes ago"), the last 30 days' answers as numbers and a chart, and **Download the consent log (CSV)**: one line per answer from the last 12 months (time in UTC, country, answer, Analytics and Marketing yes or no, banner version, and the random reference the visitor's browser keeps in its cookie), newest first, up to 10,000 lines. The link is signed for the admin who opened the page and works for ten minutes.
   - **What loads on your site**: **Check what loads** fetches your home page and up to four more (from its links, then the sitemap), as a visitor gets them, and lists what it finds with a plain fix for each: tracking code pasted in outside this plugin (the same tool twice, which counts every visit twice, or another tool such as Hotjar, or Google AdSense), and embeds that set cookies before the visitor answers (YouTube: use youtube-nocookie.com; Vimeo without `dnt=1`; Google Maps; Calendly; Facebook, Instagram, TikTok and X posts; Typeform; Spotify; SoundCloud; Disqus; common chat boxes). It checks against that short list, never runs the pages' scripts, and only fetches your own address; pages may be cached for a few minutes. If the site cannot call its own address from the server, it says so. The result and the time it ran stay on the Status tab.
-- **Tools**: the seven ID boxes, "My HubSpot account is in the EU data centre", "Cloudflare Web Analytics: wait for consent anyway", and "Track enquiries automatically".
-- **Banner**: who sees it, your privacy policy page, the heading and text (leave the text empty for the standard wording, which names what your tools are used for), where it appears, light or dark, the "Cookies" button and its corner, and whether to ask again after 6 or 12 months, saved with **Save banner**. Under **Colours**, folded away with its own **Save colours**: your theme's colours (recommended), one of five ready-made sets (Warm cream with brown buttons, Clean white with blue buttons, Soft grey with green buttons, Pale pink with plum buttons, Dark with gold buttons), each with a matching dark version and the same as in Popups, or **My own colours**: three colours (background, text, buttons; a combination that is hard to read is refused, and button text is chosen for you), and three more for dark mode, left empty to use the same ones. Two buttons, **Preview the banner** and **Preview in dark mode**, open your home page with the banner shown as saved: to you, wherever you are, with nothing saved and no tool loaded.
+- **Tools**: the eleven ID boxes (Plausible takes your site's domain as it is in Plausible; Umami takes the website ID from Umami Cloud), "My HubSpot account is in the EU data centre", "Cloudflare Web Analytics: wait for consent anyway", and "Track enquiries automatically".
+- **Banner**: who sees it, your privacy policy page, the heading and text (leave the text empty for the standard wording, which names what your tools are used for), where it appears, light or dark, the "Cookies" button and its corner, and whether to ask again after 6 or 12 months, saved with **Save banner**. **Ask everyone again** (it asks you to confirm) shows the banner again to every visitor. Under **Button words**, folded away with its own **Save button words**: your own words for Accept all, Reject all, Choose, Save my choices and the small Cookies button; empty boxes keep the built-in words in the site's language. Under **Colours**, folded away with its own **Save colours**: your theme's colours (recommended), one of five ready-made sets (Warm cream with brown buttons, Clean white with blue buttons, Soft grey with green buttons, Pale pink with plum buttons, Dark with gold buttons), each with a matching dark version and the same as in Popups, or **My own colours**: three colours (background, text, buttons; a combination that is hard to read is refused, and button text is chosen for you), and three more for dark mode, left empty to use the same ones. Two buttons, **Preview the banner** and **Preview in dark mode**, open your home page with the banner shown as saved: to you, wherever you are, with nothing saved and no tool loaded.
 - **Advanced**: pages not to track (one address per line; everything under it is covered), and when Google Tag Manager loads.
 
 Admins can change settings. Editors see the Status tab, read-only: no download link and no Check what loads button, but the last check's result.
@@ -117,17 +133,18 @@ Admins can change settings. Editors see the Status tab, read-only: no download l
 Everything is decided in the visitor's browser, because the same cached page is sent to everyone.
 
 1. A saved answer for the current list of tools, not older than 6 months (or 12), is followed.
-2. Otherwise, a visitor who must be asked gets the banner and nothing loads. With "Visitors in Europe and the UK", that means the EU and EEA countries, the UK and Switzerland; "Europe, the UK and India" adds India. The country comes from Cloudflare when the site runs there (a small route on your own site reads it from the request; nothing is looked up and no outside service is called). When the country is unknown, the browser's time zone decides, and when that is unknown too the visitor is asked.
+2. Otherwise, a visitor who must be asked gets the banner and nothing loads. With "Visitors in Europe and the UK", that means the EU and EEA countries, the UK and Switzerland; "Europe, the UK and India" adds India. The country comes from Cloudflare when the site runs there (the consent record keeps the country the server saw, and the browser's only when the server knows none) (a small route on your own site reads it from the request; nothing is looked up and no outside service is called). When the country is unknown, the browser's time zone decides, and when that is unknown too the visitor is asked.
 3. Everyone else is not asked: the tools load when the browser is idle. They can still open the "Cookies" button, or your Cookie settings link, and say no.
 4. A browser that sends Global Privacy Control never gets Marketing tools, whatever was clicked. The panel says so.
 
-Adding or removing a tool asks everyone again, because they agreed to a different list. Changing an ID or the banner text does not.
+Adding or removing a tool asks everyone again, because they agreed to a different list, and so does **Ask everyone again**. Changing an ID or the banner text does not.
 
-| Category  | Tools                                                                         |
-| --------- | ----------------------------------------------------------------------------- |
-| Analytics | Google Analytics, Microsoft Clarity, Cloudflare Web Analytics if told to wait |
-| Marketing | Google Ads, Meta Pixel, HubSpot                                               |
-| Either    | Google Tag Manager: it loads once the visitor accepts at least one category   |
+| Category  | Tools                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------ |
+| Analytics | Google Analytics, Microsoft Clarity, Cloudflare Web Analytics if told to wait                                      |
+| Marketing | Google Ads, Meta Pixel, HubSpot, LinkedIn Insight Tag, TikTok Pixel; held YouTube and Vimeo videos and Google maps |
+| None      | Cloudflare Web Analytics, Plausible, Umami: no cookies, they load without asking                                   |
+| Either    | Google Tag Manager: it loads once the visitor accepts at least one category                                        |
 
 Google Tag Manager is a container. This plugin tells it the answer (Consent Mode signals and a `cookie_consent_update` event with `analytics` and `marketing` set to true or false, both in the data layer before the container starts); the tags inside must be set up to respect it. Cloudflare Web Analytics sets no cookies and starts without asking unless you turn on "wait for consent anyway".
 
@@ -145,7 +162,10 @@ On your site, one row per answer: the random reference, the time, the answer, th
 - **Is it free?** Yes, on any number of sites, your own or your clients', with no account and no key. It is open source under the MIT License: you may use, change, copy and share the code, in paid work too, as long as the copyright notice stays with it.
 - **I accepted the banner but my visit does not show in Google Analytics.** A browser that has signed in to the EmDash admin is treated as staff and never tracked. Test in a private window.
 - **I changed a setting and the site still shows the old one.** Pages are cached. Wait a few minutes, or publish the page again.
-- **Do I need the banner if I only use Cloudflare Web Analytics?** No. It sets no cookies, so no banner is shown.
+- **Do I need the banner if I only use Cloudflare Web Analytics, Plausible or Umami?** No. They set no cookies, so no banner is shown, and videos and maps are not held back either.
+- **Can I use self-hosted Plausible or Umami?** Not yet: the boxes load from plausible.io and Umami Cloud.
+- **Are page changes counted with Astro's `<ClientRouter />`?** Google Analytics, Clarity, Plausible and Umami count them by themselves. Meta Pixel, LinkedIn and TikTok count the first page only.
+- **Lead events for LinkedIn and TikTok?** Not yet: enquiries go to Google Analytics, Meta and the data layer (Google Tag Manager can pass them on).
 - **Can I use my own consent tool?** Yes: choose "No one: another consent tool asks instead". The tools then load for everyone without waiting and this plugin sends no consent signals, so your other tool has to hold them back itself. With Google Tag Manager that works well; with the other tools it usually does not, and the Status tab warns you.
 - **A form redirects to a thank-you page. Is it counted?** Not by the form itself: the page changes before the success message appears. Count the thank-you page as a conversion in your analytics tool instead.
 - **What is the line at the foot of the page?** Only admins see it: "Help · More free plugins · by Moorage", links to the guide on moorage.dev and to more free plugins. Editors never see it. To hide it, switch on "Hide the help line at the foot of this page" at the bottom of the Advanced tab and press Save.
@@ -167,10 +187,12 @@ pnpm --filter demo-site test:e2e                   # Playwright, on apps/demo-si
 The code has two halves.
 
 - **Server** (`src/*.ts`): settings (`config.ts`), ID checking (`ids.ts`), the admin page as Block Kit (`admin.ts`), the consent record (`record.ts`), and `fragment.ts`, which turns settings into the one script a page gets. All pure functions; `index.ts` wires them to EmDash.
+- **Block components** (`astro/`): shipped as source and compiled by the site's Astro. `held.mjs` decides which iframe and embed blocks are held back and reveals them in the browser; `Iframe.astro` and `Embed.astro` wrap EmDash's own renderers; `holding.mjs` asks the plugin's `embeds` route whether the banner can ask on this site.
+- **Words** (`src/words.ts`): the banner's words in English and the six other languages.
 - **Browser** (`src/client/*.ts`): `consent.ts` holds the rules (who is asked, what a saved answer allows) with no browser access, and `boot.ts` is the script itself: banner, loaders, enquiries.
 
 EmDash plugin routes cannot serve JavaScript files, so the browser half travels inside the page. It is still real TypeScript: `client-script.ts` is a small build plugin that bundles `src/client/main.ts` into one minified function and hands it to the server code as a string (`import code from "virtual:client-script"`). The server replaces one placeholder in it with the settings as JSON. The same plugin runs in `tsdown.config.ts` and `vitest.config.ts`, so tests see exactly the script that ships, and nothing generated is kept in the repository.
 
-Tests: `tests/consent.test.ts` and `tests/client.test.ts` (the browser script in a simulated page), `tests/fragment.test.ts` (the real page hook, the escaping, and the size budget: the whole inline script must stay under 6.25 KB gzipped; it is about 6.1 KB with every tool on), `tests/admin.test.ts` (every screen checked against EmDash's Block Kit validator, which EmDash does not run for native plugins), and `apps/demo-site/tests/analytics.spec.ts` (a real browser with the tracking hosts stubbed: no request before consent, the right ones after, keyboard use, the forms plugin).
+Tests: `tests/consent.test.ts` and `tests/client.test.ts` (the browser script in a simulated page), `tests/fragment.test.ts` (the real page hook, the escaping, and the size budget: the whole inline script must stay under 7 KB gzipped; it is about 6.9 KB with every tool on; the other languages are fetched from the plugin's `words` route only on pages marked with one of them), `tests/admin.test.ts` (every screen checked against EmDash's Block Kit validator, which EmDash does not run for native plugins), and `apps/demo-site/tests/analytics.spec.ts` (a real browser with the tracking hosts stubbed: no request before consent, the right ones after, keyboard use, the forms plugin).
 
 In browser tests the visitor's country is forced by answering the plugin's own route, `/_emdash/api/plugins/analytics-consent/geo`, with `{ "success": true, "data": { "country": "DE" } }`.

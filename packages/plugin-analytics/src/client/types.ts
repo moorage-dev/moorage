@@ -13,6 +13,8 @@ export interface ClientConfig {
 	days: number;
 	/** Base address of the plugin's public routes, ending in "/". */
 	api: string;
+	/** The site's own host name, without "www.": tools load only there. Absent when the site's address is not set. */
+	h?: string;
 	ga?: string;
 	gtm?: string;
 	aw?: string;
@@ -24,6 +26,14 @@ export interface ClientConfig {
 	cf?: string;
 	/** Cloudflare Web Analytics waits for Analytics consent. */
 	cfWait?: 1;
+	/** Plausible: the site's domain. Cookie-free, never waits. */
+	pl?: string;
+	/** Umami Cloud: the website ID. Cookie-free, never waits. */
+	um?: string;
+	/** LinkedIn Insight Tag partner ID. Marketing. */
+	li?: string;
+	/** TikTok Pixel ID. Marketing. */
+	tt?: string;
 	/** Load Google Tag Manager before the visitor has chosen. */
 	gtmNow?: 1;
 	/** Track enquiries (phone and email clicks, sent forms). */
@@ -65,7 +75,11 @@ export interface ClientConfig {
 		mkText: string;
 		uses: string;
 		gpc: string;
+		/** What the small "Cookies" button is called for screen readers; "Cookie settings" when absent. */
+		sl?: string;
 	};
+	/** Code of the words in every language, for fetching the page's language past the browser's cache. */
+	w?: string;
 }
 
 /** A visitor's saved answer. */

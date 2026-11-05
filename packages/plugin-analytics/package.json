@@ -1,7 +1,7 @@
 {
 	"name": "@moorage/plugin-analytics",
 	"version": "0.3.3",
-	"description": "Google Analytics, Google Tag Manager, Meta Pixel and Clarity for EmDash, with a cookie consent banner that holds them back until the visitor agrees.",
+	"description": "Google Analytics, Tag Manager, Meta Pixel, Clarity, LinkedIn, TikTok, Plausible and Umami for EmDash, with a cookie consent banner in seven languages that holds them, and YouTube and Maps embeds, back until the visitor agrees.",
 	"keywords": [
 		"emdash",
 		"emdash-plugin",
@@ -16,6 +16,10 @@
 		"facebook-pixel",
 		"microsoft-clarity",
 		"hubspot",
+		"plausible",
+		"umami",
+		"linkedin-insight-tag",
+		"tiktok-pixel",
 		"cookie-consent",
 		"cookie-banner",
 		"consent-mode",
@@ -39,10 +43,12 @@
 		".": {
 			"import": "./dist/index.mjs",
 			"types": "./dist/index.d.mts"
-		}
+		},
+		"./astro": "./astro/index.mjs"
 	},
 	"files": [
 		"dist",
+		"astro",
 		"CHANGELOG.md",
 		"LICENSE",
 		"README.md"
@@ -54,10 +60,12 @@
 		"test": "vitest run"
 	},
 	"peerDependencies": {
+		"astro": ">=6.0.0",
 		"emdash": ">=1.2.0"
 	},
 	"devDependencies": {
 		"@emdash-cms/blocks": "catalog:",
+		"astro": "catalog:",
 		"@moorage/typescript-config": "workspace:*",
 		"emdash": "catalog:",
 		"happy-dom": "catalog:",

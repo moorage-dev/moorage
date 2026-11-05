@@ -9,12 +9,12 @@ import {
 	bannerVersion,
 	enabledTools,
 	contrast,
-	defaultMessage,
 	isExcluded,
 	needsConsent,
 	vendorNames,
 	type AnalyticsConfig,
 } from "./config.js";
+import { wordsCode, wordsFor } from "./words.js";
 
 /** The name the browser bundle uses for its settings; swapped for JSON below. */
 const PLACEHOLDER = "__CC_CONFIG__";
@@ -23,29 +23,12 @@ const BACKSLASH = String.fromCharCode(92);
 /** `<` and the two line separators that older browsers treat as line ends inside a script. */
 const UNSAFE_IN_SCRIPT = new RegExp(`[<${String.fromCharCode(0x2028, 0x2029)}]`, "g");
 
-/** Fixed wording of the banner. The title and message come from settings. */
-const TEXT = {
-	policy: "Privacy policy",
-	accept: "Accept all",
-	reject: "Reject all",
-	choose: "Choose",
-	always: "Always on",
-	saved: "Your choice is saved. Change it any time under Cookies.",
-	save: "Save my choices",
-	settings: "Cookies",
-	panel: "Your cookie choices",
-	need: "Essential",
-	needText: "Remembers your answer, so you are not asked on every page.",
-	an: "Analytics",
-	anText: "Shows us how visitors use this site, so we can improve it.",
-	mk: "Marketing",
-	mkText: "Lets us measure our advertising and show you relevant ads elsewhere.",
-	uses: "Used by:",
-	gpc: "Your browser asks sites not to share your data (Global Privacy Control), so Marketing stays off.",
-} as const;
-
 /** What the browser needs to know, and nothing else from the settings. */
-export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientConfig {
+export function clientConfig(
+	config: AnalyticsConfig,
+	pluginId: string,
+	siteHost?: string,
+): ClientConfig {
 	const { tools, banner } = config;
 	// Nothing waits for an answer (no tools, or only cookie-free visitor counts): no banner at all.
 	const asks = needsConsent(config) && banner.audience !== "none";
@@ -63,9 +46,13 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 		pos: banner.position,
 		scheme: banner.scheme,
 		an: vendorNames(config, "analytics"),
-		mk: vendorNames(config, "marketing"),
-		t: { ...TEXT, title: banner.title, text: banner.message || defaultMessage(config) },
+		// Held videos and maps wait for Marketing too, so Choose names them there.
+		mk: [...vendorNames(config, "marketing"), ...(asks ? config.heldEmbeds : [])],
+		t: wordsFor(config),
 	};
+	// The browser fetches the words in the page's language only when someone can be asked.
+	if (asks) out.w = wordsCode(config);
+	if (siteHost) out.h = siteHost;
 	if (tools.ga4) out.ga = tools.ga4;
 	if (tools.gtm) out.gtm = tools.gtm;
 	if (tools.ads) out.aw = tools.ads;
@@ -75,6 +62,10 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 	if (tools.hubspot && config.hubspotEu) out.hsEu = 1;
 	if (tools.cloudflare) out.cf = tools.cloudflare;
 	if (tools.cloudflare && config.cloudflareWait) out.cfWait = 1;
+	if (tools.plausible) out.pl = tools.plausible;
+	if (tools.umami) out.um = tools.umami;
+	if (tools.linkedin) out.li = tools.linkedin;
+	if (tools.tiktok) out.tt = tools.tiktok;
 	if (tools.gtm && config.gtmLoading === "immediate") out.gtmNow = 1;
 	if (config.enquiries) out.ev = 1;
 	if (asks) out.rec = 1;
@@ -154,6 +145,51 @@ export function isUntracked(config: AnalyticsConfig, page: PageFacts): boolean {
 }
 
 /**
+ * The host name tools may load on: the site's address as set in EmDash, in lower
+ * case and without "www.", so both the bare domain and www count. Undefined when
+ * the address is not set, and then tools load wherever the site is opened, as before.
+ */
+export function siteHostOf(siteUrl: string | undefined): string | undefined {
+	try {
+		const url = new URL(siteUrl ?? "");
+		if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+		return url.hostname.toLowerCase().replace(/^www\./, "") || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * True for a page excluded from tracking (Advanced) on a site whose banner asks
+ * and whose pages hold videos or maps (named in the banner, or seen and not yet
+ * named). Such a page gets `heldMarker` instead of the tracking script, so its
+ * videos and maps stay held. Previews, the admin and the editor get nothing.
+ */
+export function heldOnly(
+	config: AnalyticsConfig,
+	page: PageFacts,
+	seenHeld: readonly string[] = [],
+): boolean {
+	if (page.editMode || page.preview || /[?&]_preview=/.test(page.url)) return false;
+	if (page.path === "/_emdash" || page.path.startsWith("/_emdash/")) return false;
+	if (!isExcluded(page.path, config.exclude)) return false;
+	if (!needsConsent(config) || config.banner.audience === "none") return false;
+	return config.heldEmbeds.length > 0 || seenHeld.length > 0;
+}
+
+/**
+ * The script for an excluded page with held videos and maps: no tool and no
+ * banner, only what held.mjs's `reveal` reads. The videos and maps show when
+ * the visitor's saved answer to the current banner allows Marketing (and Global
+ * Privacy Control does not refuse it); otherwise each keeps its Load button.
+ * Visitors who are not asked and never answered see the Load button here too.
+ */
+export function heldMarker(config: AnalyticsConfig): string {
+	const rule = scriptJson({ v: bannerVersion(config), d: config.banner.months === 12 ? 365 : 183 });
+	return `(function(r,d,w){var c=/(?:^|; )cookie_consent=([a-z0-9]+)\\.[01]([01])\\.(\\d+)\\./.exec(d.cookie),s=Object.freeze({analytics:false,marketing:!!c&&c[1]===r.v&&Math.floor(Date.now()/864e5)-c[3]<r.d&&c[2]==="1"&&!w.navigator.globalPrivacyControl});d.documentElement.setAttribute("data-cookie-consent","settled");try{Object.defineProperty(w,"cookieConsent",{configurable:true,get:function(){return s}})}catch(e){}})(${rule},document,window)`;
+}
+
+/**
  * Everything the plugin adds to a public page: one inline script in the head,
  * or nothing. Pure: the same settings and page always give the same answer.
  */
@@ -161,12 +197,24 @@ export function pageFragments(
 	config: AnalyticsConfig,
 	pluginId: string,
 	page: PageFacts,
+	siteHost?: string,
+	seenHeld: readonly string[] = [],
 ): PageFragmentContribution | null {
-	if (enabledTools(config).length === 0 || isUntracked(config, page)) return null;
+	if (enabledTools(config).length === 0) return null;
+	if (isUntracked(config, page)) {
+		return heldOnly(config, page, seenHeld)
+			? {
+					kind: "inline-script",
+					placement: "head",
+					key: `${pluginId}:bootstrap`,
+					code: heldMarker(config),
+				}
+			: null;
+	}
 	return {
 		kind: "inline-script",
 		placement: "head",
 		key: `${pluginId}:bootstrap`,
-		code: clientScriptFor(clientConfig(config, pluginId)),
+		code: clientScriptFor(clientConfig(config, pluginId, siteHost)),
 	};
 }

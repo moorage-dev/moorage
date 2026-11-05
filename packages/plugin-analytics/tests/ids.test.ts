@@ -103,5 +103,62 @@ fbq('init', '123456789012345'); fbq('track', 'PageView');</script>`;
 		expect(checkId("ga4", `G-ABCD1234"onload="x`).ok && value("ga4", `G-ABCD1234"onload="x`)).toBe(
 			"G-ABCD1234",
 		);
+		for (const tool of ["plausible", "umami", "linkedin", "tiktok"] as const) {
+			for (const attack of [`"</script><script>alert(1)</script>`, `';alert(1);//`, "a.com\nb"]) {
+				const result = checkId(tool, attack);
+				if (result.ok) expect(result.value).toMatch(/^[A-Za-z0-9.-]*$/);
+			}
+		}
+	});
+});
+
+describe("the four tools added in 0.4", () => {
+	const UUID = "94db1cb1-74f4-4a40-ad6c-962362670409";
+
+	it("Plausible takes the site's domain, as typed in Plausible", () => {
+		expect(value("plausible", " Example.COM ")).toBe("example.com");
+		expect(value("plausible", "shop.bakery.co.uk")).toBe("shop.bakery.co.uk");
+		expect(value("plausible", "https://www.example.com/")).toBe("www.example.com");
+		expect(
+			value(
+				"plausible",
+				'<script defer data-domain="bakery.de" src="https://plausible.io/js/script.js"></script>',
+			),
+		).toBe("bakery.de");
+		expect(message("plausible", "example")).toBe(
+			"Plausible: Type your site's domain as it is in Plausible. It looks like example.com.",
+		);
+		expect(message("plausible", "G-AB12CD34EF")).toMatch(/Google Analytics ID/);
+	});
+
+	it("Umami takes the website ID", () => {
+		expect(value("umami", UUID.toUpperCase())).toBe(UUID);
+		expect(
+			value(
+				"umami",
+				`<script defer src="https://cloud.umami.is/script.js" data-website-id="${UUID}"></script>`,
+			),
+		).toBe(UUID);
+		expect(message("umami", "1234")).toMatch(/^Umami: An Umami website ID is 36 characters/);
+	});
+
+	it("LinkedIn takes the partner ID, also out of the Insight Tag", () => {
+		expect(value("linkedin", "1234567")).toBe("1234567");
+		const tag = `<script type="text/javascript">
+_linkedin_partner_id = "7654321";
+window._linkedin_data_partner_ids = window._linkedin_data_partner_ids || [];
+window._linkedin_data_partner_ids.push(_linkedin_partner_id);
+</script><script type="text/javascript">(function(l) { /* ... */ })(window.lintrk);</script>`;
+		expect(value("linkedin", tag)).toBe("7654321");
+		expect(message("linkedin", "abc")).toMatch(
+			/^LinkedIn Insight Tag: A LinkedIn partner ID is a number/,
+		);
+	});
+
+	it("TikTok takes the pixel ID, also out of the base code", () => {
+		expect(value("tiktok", "c4abcdef1234567890ab")).toBe("C4ABCDEF1234567890AB");
+		const code = `<script>!function (w, d, t) { w.TiktokAnalyticsObject=t; /* ... */ ttq.load('CABC123DEF456GHI789J'); ttq.page(); }(window, document, 'ttq');</script>`;
+		expect(value("tiktok", code)).toBe("CABC123DEF456GHI789J");
+		expect(message("tiktok", "123")).toMatch(/^TikTok Pixel: A TikTok pixel ID is about 20/);
 	});
 });

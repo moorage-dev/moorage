@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500" role="img" aria-label="Analytics &amp; Cookie Consent. Tags load once visitors agree.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500" role="img" aria-label="Analytics &amp; Cookies. Tags load once visitors agree.">
 <!-- Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE. -->
 <!-- Registry banner (3:1). Words, the cleat and the drawing stay inside x 280-1220, the part a 2:1 or 1.91:1 share card keeps.
      Render: node scripts/render-banners.mjs (fonts: Newsreader, from moorage-web). -->
@@ -29,7 +29,7 @@
 <path class="contour" d="M1290 0C1270 90 1330 160 1310 250S1340 400 1320 500"/>
 <path class="contour" d="M1400 0C1384 100 1440 170 1420 260S1446 410 1432 500" style="stroke-dasharray:10 10"/>
 <text class="name" x="282" y="150">Analytics &amp;</text>
-<text class="name" x="282" y="224">Cookie Consent</text>
+<text class="name" x="282" y="224">Cookies</text>
 <text class="say" x="285" y="290">Tags load once visitors agree.</text>
 <use class="mark" href="#cleat" x="748" y="410" width="72" height="42"/>
 <rect class="box" x="944" y="146" width="276" height="218" rx="8"/><path class="line" d="M944 176H1220"/><circle cx="962" cy="161" r="4.5" class="disc"/><circle cx="978" cy="161" r="4.5" class="disc"/><circle cx="994" cy="161" r="4.5" class="disc"/>

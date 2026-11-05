@@ -2,6 +2,7 @@
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 
+import { devHost } from "./client/consent.js";
 import { cleanColourChoice, COLOUR_OPTIONS, OWN_COLOURS } from "./colour-sets.js";
 import {
 	cleanColors,
@@ -12,14 +13,18 @@ import {
 	defaultMessage,
 	DEFAULT_TITLE,
 	enabledTools,
+	MAX_LABEL,
 	needsConsent,
 	normalizeConfig,
 	parseExcludes,
 	shortHash,
 	TOOL_IDS,
 	toolCategories,
+	isHeldName,
+	cleanHeld,
 	type AnalyticsConfig,
 	type Audience,
+	type HeldName,
 } from "./config.js";
 import { clientConfig } from "./fragment.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
@@ -54,6 +59,10 @@ const TOOL_LABEL: Record<ToolId, string> = {
 	clarity: "Microsoft Clarity: project ID",
 	hubspot: "HubSpot: Hub ID (a number)",
 	cloudflare: "Cloudflare Web Analytics: token (simple visitor counts, no cookies)",
+	plausible: "Plausible: your site's domain, as in Plausible (visitor counts, no cookies)",
+	umami: "Umami Cloud: website ID (visitor counts, no cookies)",
+	linkedin: "LinkedIn Insight Tag: partner ID (a number)",
+	tiktok: "TikTok Pixel: pixel ID",
 };
 
 export interface PageState {
@@ -63,18 +72,24 @@ export interface PageState {
 	answers: ConsentSummary | null;
 	/** The time the page was made, for "N minutes ago". */
 	now?: number;
-	/** The site's own address (https://example.com), for the preview links. */
+	/** The address the admin is open on (https://example.com), for the preview links. */
 	origin?: string;
+	/** The site's own host name from its Site URL, without "www.": tools load only there. */
+	siteHost?: string;
 	/** The signed address of the consent log download. Admins only. */
 	exportUrl?: string;
 	/** The last "Check what loads", if it ever ran. */
 	siteCheck?: SiteCheck | null;
+	/** The providers of held videos and maps seen on the site's pages (see HELD_SEEN_KEY). */
+	heldSeen?: HeldName[];
 	/** What was typed, kept on screen when a save was refused. */
 	draft?: Record<string, unknown>;
 	errors?: string[];
 	toast?: BlockResponse["toast"];
 	/** Show the Colours section open: after its own save, or a refused one. */
 	openColours?: boolean;
+	/** The same for Button words. */
+	openWording?: boolean;
 }
 
 // ── Status ──────────────────────────────────────────────────
@@ -109,7 +124,7 @@ function toolRule(config: AnalyticsConfig, tool: ToolId): string {
 	return `Waits for ${whoWaits(audience)} to accept ${kind} cookies.${rest}`;
 }
 
-function toolDoes(tool: "clarity" | "meta" | "ads"): string {
+function toolDoes(tool: "clarity" | "meta" | "ads" | "linkedin" | "tiktok"): string {
 	return tool === "clarity" ? "records visits" : "is used for advertising";
 }
 
@@ -142,7 +157,9 @@ function allWarnings(config: AnalyticsConfig): Array<Warning & { area: "tracking
 				"Visitors must be able to read what they are agreeing to. Add your privacy policy page on the Banner tab.",
 		});
 	}
-	const watching = (["clarity", "meta", "ads"] as const).filter((tool) => tools[tool]);
+	const watching = (["clarity", "meta", "ads", "linkedin", "tiktok"] as const).filter(
+		(tool) => tools[tool],
+	);
 	if (watching.length && (banner.audience === "europe" || banner.audience === "europe-india")) {
 		list.push({
 			title: "Consider asking every visitor",
@@ -195,6 +212,14 @@ export function toolLink(config: AnalyticsConfig, tool: ToolId): string {
 			return config.hubspotEu ? "https://app-eu1.hubspot.com/" : "https://app.hubspot.com/";
 		case "cloudflare":
 			return "https://dash.cloudflare.com/";
+		case "plausible":
+			return `https://plausible.io/${encodeURIComponent(config.tools.plausible)}`;
+		case "umami":
+			return "https://cloud.umami.is/";
+		case "linkedin":
+			return "https://www.linkedin.com/campaignmanager/";
+		case "tiktok":
+			return "https://ads.tiktok.com/";
 	}
 }
 
@@ -206,6 +231,10 @@ const TOOL_SHORT: Record<ToolId, string> = {
 	clarity: "Open Clarity",
 	hubspot: "Open HubSpot",
 	cloudflare: "Open Cloudflare",
+	plausible: "Open Plausible",
+	umami: "Open Umami",
+	linkedin: "Open Campaign Manager",
+	tiktok: "Open TikTok Ads Manager",
 };
 
 const external = (label: string, url: string) => ({
@@ -236,6 +265,17 @@ function trackingBlocks(state: PageState): Block[] {
 	const { config } = state;
 	const on = enabledTools(config);
 	const blocks: Block[] = [{ type: "header", text: "Tracking" }];
+	const here = state.origin ? new URL(state.origin).hostname.replace(/^www\./, "") : undefined;
+	// The browser's rule (client/boot.ts): only a workers.dev, pages.dev or local address other
+	// than the Site URL goes without tools; any other domain may be the live site.
+	if (on.length && state.siteHost && here && here !== state.siteHost && devHost(here)) {
+		blocks.push({
+			type: "banner",
+			variant: "alert",
+			title: "Tools do not load on this address",
+			description: `You are on ${here}, and your Site URL in Settings > General is ${state.siteHost}. On a workers.dev or pages.dev address, or on this computer, the banner shows but no tool loads and no answer is recorded. If your site now lives at ${here}, change the Site URL there.`,
+		});
+	}
 	for (const warning of allWarnings(config)) {
 		if (warning.area === "tracking") {
 			blocks.push({
@@ -284,6 +324,73 @@ function trackingBlocks(state: PageState): Block[] {
 	return blocks;
 }
 
+export const NAME_HELD_ACTION = "name_held";
+/** Followed by the provider's name: "forget_held:YouTube". */
+export const FORGET_HELD_ACTION = "forget_held:";
+
+const list = (names: readonly string[]) => new Intl.ListFormat("en-GB").format(names);
+
+/**
+ * Held videos and maps. Their providers are noted by a public route, so they are
+ * named in the banner (which asks visitors again) only once an Admin says so here.
+ */
+function heldBlocks(config: AnalyticsConfig): Block[] {
+	const blocks: Block[] = [];
+	const named = config.heldEmbeds;
+	if (named.length) {
+		blocks.push(
+			{
+				type: "section",
+				text: `✓ Videos and maps from ${list(named)} wait until visitors allow them, and the banner names them.`,
+			},
+			{
+				type: "actions",
+				elements: named.map((name) => ({
+					type: "button" as const,
+					action_id: `${FORGET_HELD_ACTION}${name}`,
+					label: `Stop naming ${name}`,
+					style: "secondary" as const,
+				})),
+			},
+		);
+	}
+	return blocks;
+}
+
+/**
+ * Above the tabs, for Admins only: providers seen on the site's pages that the
+ * banner does not name yet, with the button that names them.
+ */
+function namePrompt(state: PageState): Block[] {
+	const { config } = state;
+	if (!state.admin || !needsConsent(config) || config.banner.audience === "none") return [];
+	const fresh = (state.heldSeen ?? []).filter((name) => !config.heldEmbeds.includes(name));
+	const blocks: Block[] = [];
+	if (fresh.length) {
+		blocks.push(
+			{
+				type: "banner",
+				variant: "alert",
+				title: `Your pages show videos or maps from ${list(fresh)}`,
+				description:
+					"The banner does not name them yet, so visitors were never told about them: until you name them, each one loads only when a visitor presses its own Load button, even after Accept all. Name them in the banner and Marketing releases them; visitors who answered before are asked again once.",
+			},
+			{
+				type: "actions",
+				elements: [
+					{
+						type: "button",
+						action_id: NAME_HELD_ACTION,
+						label: "Name these in the banner",
+						style: "primary",
+					},
+				],
+			},
+		);
+	}
+	return blocks;
+}
+
 function consentBlocks(state: PageState): Block[] {
 	const { config, answers } = state;
 	const { banner } = config;
@@ -317,6 +424,7 @@ function consentBlocks(state: PageState): Block[] {
 		type: "section",
 		text: `✓ Asks ${whoWaits(banner.audience)} first. They are asked again after ${banner.months} months, or when you add or remove a tool.`,
 	});
+	blocks.push(...heldBlocks(config));
 	if (banner.policyUrl) {
 		const url = banner.policyUrl.startsWith("/")
 			? state.origin
@@ -489,14 +597,14 @@ function formId(name: FormName, config: AnalyticsConfig): string {
 	return `${name}-${shortHash(JSON.stringify(formPart(name, config)))}`;
 }
 
-type FormName = "tools" | "banner" | "colours" | "advanced";
+type FormName = "tools" | "banner" | "colours" | "wording" | "advanced";
 
 /**
  * The part of the settings each form shows. A form's id follows only its own
  * part, so saving one form never clears what is typed, and not yet saved, in another.
  */
 function formPart(name: FormName, config: AnalyticsConfig): unknown {
-	const { colourSet, colors, darkColors, darkOn, ...banner } = config.banner;
+	const { colourSet, colors, darkColors, darkOn, labels, ...banner } = config.banner;
 	switch (name) {
 		case "tools":
 			return [config.tools, config.hubspotEu, config.cloudflareWait, config.enquiries];
@@ -504,6 +612,8 @@ function formPart(name: FormName, config: AnalyticsConfig): unknown {
 			return banner;
 		case "colours":
 			return [colourSet, colors, darkColors, darkOn];
+		case "wording":
+			return labels;
 		case "advanced":
 			return [config.exclude, config.gtmLoading];
 	}
@@ -531,7 +641,7 @@ function toolsBlocks(state: PageState): Block[] {
 		},
 		{
 			type: "context",
-			text: "Cloudflare Web Analytics sets no cookies, so it starts without asking unless you tell it to wait. Enquiries are clicks on phone and email links and forms that were sent, counted as a lead in Google Analytics and Meta; what people typed is never sent.",
+			text: "Cloudflare Web Analytics, Plausible and Umami set no cookies, so they start without asking (Cloudflare can be told to wait), and with only those no banner is needed. Enquiries are clicks on phone and email links and forms that were sent, counted as a lead in Google Analytics and Meta; what people typed is never sent.",
 		},
 		{
 			type: "form",
@@ -680,8 +790,40 @@ function bannerBlocks(state: PageState): Block[] {
 				},
 			],
 		},
+		...askAgainBlocks(config),
 		coloursBlock(state),
+		wordingBlock(state),
 		...previewBlocks(state),
+	];
+}
+
+export const ASK_AGAIN_ACTION = "ask_again";
+
+/** "Ask everyone again": shown only while the banner asks someone. */
+function askAgainBlocks(config: AnalyticsConfig): Block[] {
+	if (!needsConsent(config) || config.banner.audience === "none") return [];
+	return [
+		{
+			type: "context",
+			text: "Visitors are asked again by themselves after the months above, or when you add or remove a tool. After a change to your privacy policy or to what a tool does, you can ask everyone now.",
+		},
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: ASK_AGAIN_ACTION,
+					label: "Ask everyone again",
+					style: "secondary",
+					confirm: {
+						title: "Ask every visitor again?",
+						text: "Every visitor sees the banner again on their next visit, including those who already answered. Their earlier answers stay in the consent log.",
+						confirm: "Ask everyone again",
+						deny: "Cancel",
+					},
+				},
+			],
+		},
 	];
 }
 
@@ -769,6 +911,42 @@ function coloursBlock(state: PageState): Block {
 	};
 }
 
+const LABEL_FIELDS: Array<[keyof AnalyticsConfig["banner"]["labels"], string]> = [
+	["accept", "Accept all"],
+	["reject", "Reject all"],
+	["choose", "Choose"],
+	["save", "Save my choices"],
+	["settings", "Cookies (the small button)"],
+];
+
+/** The buttons in the owner's own words, folded away: the built-in ones suit most sites. */
+function wordingBlock(state: PageState): Block {
+	const { config, draft } = state;
+	return {
+		type: "accordion",
+		label: "Button words",
+		...(state.openWording ? { default_open: true } : {}),
+		blocks: [
+			{
+				type: "context",
+				text: "The banner speaks your site's language, from the language your pages are marked with: English, Deutsch, Français, Español, Italiano, Nederlands or Português. That includes the standard heading and text above. What you type here, and a heading or text of your own, is shown as typed, in every language. Leave a box empty for the built-in words. Keep Accept all and Reject all equally plain.",
+			},
+			{
+				type: "form",
+				block_id: formId("wording", config),
+				fields: LABEL_FIELDS.map(([key, built]) => ({
+					type: "text_input" as const,
+					action_id: `label_${key}`,
+					label: `Button: ${built}`,
+					placeholder: built,
+					initial_value: text(draft, `label_${key}`, config.banner.labels[key]),
+				})),
+				submit: { label: "Save button words", action_id: "save_wording" },
+			},
+		],
+	};
+}
+
 /** Two links that open the site's home page with the banner shown as saved, in light and in dark. */
 function previewBlocks(state: PageState): Block[] {
 	if (!state.origin) return [];
@@ -844,7 +1022,7 @@ function advancedBlocks(state: PageState): Block[] {
 }
 
 export function renderPage(state: PageState, tab: number = TAB.status): BlockResponse {
-	const blocks: Block[] = [{ type: "header", text: "Analytics & Cookies" }];
+	const blocks: Block[] = [{ type: "header", text: "Analytics & Cookies" }, ...namePrompt(state)];
 	if (state.admin) {
 		blocks.push({
 			type: "tab",
@@ -875,8 +1053,10 @@ function clean(state: PageState): PageState {
 		answers: state.answers,
 		now: state.now,
 		origin: state.origin,
+		siteHost: state.siteHost,
 		exportUrl: state.exportUrl,
 		siteCheck: state.siteCheck,
+		heldSeen: state.heldSeen,
 	};
 }
 
@@ -891,6 +1071,8 @@ export interface Interaction {
 export interface Outcome {
 	/** The settings to store, when something changed. */
 	save?: AnalyticsConfig;
+	/** A provider to take off the list of those seen on the site's pages. */
+	unseen?: HeldName;
 	response: BlockResponse;
 }
 
@@ -939,14 +1121,27 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		typeof input?.values === "object" && input.values !== null
 			? (input.values as Record<string, unknown>)
 			: {};
-	const done = (next: AnalyticsConfig, tab: number, message = "Saved."): Outcome => {
+	const done = (
+		next: AnalyticsConfig,
+		tab: number,
+		message = "Saved.",
+		unseen?: HeldName,
+	): Outcome => {
 		const save = normalizeConfig(next);
 		const seen = visitorView(normalizeConfig(config)) !== visitorView(save);
 		const said = !seen ? message : message === "Saved." ? SAVED : `${message} ${LATER}`;
 		return {
 			save,
+			...(unseen ? { unseen } : {}),
 			response: renderPage(
-				{ ...state, config: save, openColours, toast: { type: "success", message: said } },
+				{
+					...state,
+					...(unseen ? { heldSeen: state.heldSeen?.filter((name) => name !== unseen) } : {}),
+					config: save,
+					openColours,
+					openWording,
+					toast: { type: "success", message: said },
+				},
 				tab,
 			),
 		};
@@ -955,6 +1150,7 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		response: renderPage({ ...state, draft: values, errors, openColours, toast: REFUSED }, tab),
 	});
 	const openColours = action === "save_colours";
+	const openWording = action === "save_wording";
 	const flag = (key: string, saved: boolean) =>
 		typeof values[key] === "boolean" ? (values[key] as boolean) : saved;
 
@@ -987,6 +1183,30 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 			{ ...config, banner: { ...config.banner, title: DEFAULT_TITLE, message: DEFAULT_MESSAGE } },
 			TAB.banner,
 			"The original heading and text are back.",
+		);
+	}
+	if (input?.type === "block_action" && action === ASK_AGAIN_ACTION) {
+		return done(
+			{ ...config, askAgain: config.askAgain + 1 },
+			TAB.banner,
+			"Every visitor will be asked again.",
+		);
+	}
+	if (input?.type === "block_action" && action === NAME_HELD_ACTION) {
+		const heldEmbeds = cleanHeld([...config.heldEmbeds, ...(state.heldSeen ?? [])]);
+		if (heldEmbeds.length === config.heldEmbeds.length) {
+			return { response: renderPage(state, TAB.status) };
+		}
+		return done({ ...config, heldEmbeds }, TAB.status, `The banner now names ${list(heldEmbeds)}.`);
+	}
+	if (input?.type === "block_action" && action.startsWith(FORGET_HELD_ACTION)) {
+		const name = action.slice(FORGET_HELD_ACTION.length);
+		if (!isHeldName(name)) return { response: renderPage(state, TAB.status) };
+		return done(
+			{ ...config, heldEmbeds: config.heldEmbeds.filter((held) => held !== name) },
+			TAB.status,
+			`The banner no longer names ${name}.`,
+			name,
 		);
 	}
 	if (input?.type !== "form_submit") return { response: renderPage(state) };
@@ -1093,6 +1313,15 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 			},
 			TAB.banner,
 		);
+	}
+
+	if (action === "save_wording") {
+		const labels = { ...config.banner.labels };
+		for (const [key] of LABEL_FIELDS) {
+			if (has(values, `label_${key}`))
+				labels[key] = cleanText(values[`label_${key}`], MAX_LABEL, "");
+		}
+		return done({ ...config, banner: { ...config.banner, labels } }, TAB.banner);
 	}
 
 	if (action === "save_advanced") {

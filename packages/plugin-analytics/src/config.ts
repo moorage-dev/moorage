@@ -14,6 +14,10 @@ export const TOOL_IDS: readonly ToolId[] = [
 	"clarity",
 	"hubspot",
 	"cloudflare",
+	"plausible",
+	"umami",
+	"linkedin",
+	"tiktok",
 ];
 
 export type Audience = "europe" | "europe-india" | "everyone" | "none";
@@ -56,12 +60,45 @@ export interface AnalyticsConfig {
 		darkColors: { background: string; text: string; accent: string };
 		/** Ask again after this many months. */
 		months: 6 | 12;
+		/** The owner's own words for the buttons; empty means the built-in ones, in the site's language. */
+		labels: { accept: string; reject: string; choose: string; save: string; settings: string };
 	};
 	/** Address prefixes that are never tracked, e.g. "/thank-you". */
 	exclude: string[];
 	gtmLoading: GtmLoading;
 	/** The admin's choice to hide the help line at the foot of the page (shown by default). */
 	hideHelpLine: boolean;
+	/** How many times "Ask everyone again" was pressed. Part of the banner version once above 0. */
+	askAgain: number;
+	/**
+	 * The providers of videos and maps this site holds back, as its pages were shown
+	 * (the block components tell the `embeds` route). Named in the banner; part of the
+	 * banner version once there is one.
+	 */
+	heldEmbeds: HeldName[];
+}
+
+/** Who shows the videos and maps that are held back, in the order the banner names them. */
+export const HELD_NAMES = ["YouTube", "Vimeo", "Google Maps"] as const;
+export type HeldName = (typeof HELD_NAMES)[number];
+
+/**
+ * Where the public `embeds` route notes the providers it has seen held on the
+ * site's pages, kept apart from the settings: a visitor's request must never
+ * change the banner or its version. An Admin names them in the banner
+ * (`heldEmbeds`) from the Status tab.
+ */
+export const HELD_SEEN_KEY = "heldSeen";
+
+/** True for one of the known provider names. */
+export function isHeldName(value: unknown): value is HeldName {
+	return (HELD_NAMES as readonly unknown[]).includes(value);
+}
+
+/** The known providers in `value`, once each, in the fixed order. */
+export function cleanHeld(value: unknown): HeldName[] {
+	const list = Array.isArray(value) ? value : [];
+	return HELD_NAMES.filter((name) => list.includes(name));
 }
 
 export const DEFAULT_TITLE = "Can we use cookies?";
@@ -88,9 +125,34 @@ export function defaultMessage(config: AnalyticsConfig): string {
 }
 
 export const NO_COLORS = { background: "", text: "", accent: "" } as const;
+export const NO_LABELS = { accept: "", reject: "", choose: "", save: "", settings: "" } as const;
+/** The longest button word an owner may type. */
+export const MAX_LABEL = 40;
+
+/** The owner's button words, each one short line of text or "". */
+export function cleanLabels(value: unknown): AnalyticsConfig["banner"]["labels"] {
+	const source = isRecord(value) ? value : {};
+	const out = { ...NO_LABELS } as AnalyticsConfig["banner"]["labels"];
+	for (const key of Object.keys(NO_LABELS) as Array<keyof typeof NO_LABELS>) {
+		out[key] = cleanText(source[key], MAX_LABEL, "");
+	}
+	return out;
+}
 
 export const DEFAULT_CONFIG: AnalyticsConfig = {
-	tools: { ga4: "", gtm: "", ads: "", meta: "", clarity: "", hubspot: "", cloudflare: "" },
+	tools: {
+		ga4: "",
+		gtm: "",
+		ads: "",
+		meta: "",
+		clarity: "",
+		hubspot: "",
+		cloudflare: "",
+		plausible: "",
+		umami: "",
+		linkedin: "",
+		tiktok: "",
+	},
 	hubspotEu: false,
 	cloudflareWait: false,
 	enquiries: true,
@@ -108,13 +170,18 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 		darkOn: false,
 		darkColors: { ...NO_COLORS },
 		months: 6,
+		labels: { ...NO_LABELS },
 	},
 	exclude: [],
 	gtmLoading: "choice",
 	hideHelpLine: false,
+	askAgain: 0,
+	heldEmbeds: [],
 };
 
 const MAX_EXCLUDES = 50;
+/** More presses than anyone makes; a larger stored number is treated as never pressed. */
+const MAX_ASK_AGAIN = 100_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -318,10 +385,18 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 			darkOn,
 			darkColors,
 			months: rawBanner.months === 12 || rawBanner.months === "12" ? 12 : 6,
+			labels: cleanLabels(rawBanner.labels),
 		},
 		exclude: parseExcludes(source.exclude),
 		gtmLoading: oneOf(source.gtmLoading, ["choice", "immediate"], defaults.gtmLoading),
 		hideHelpLine: source.hideHelpLine === true,
+		askAgain:
+			Number.isInteger(source.askAgain) &&
+			(source.askAgain as number) > 0 &&
+			(source.askAgain as number) <= MAX_ASK_AGAIN
+				? (source.askAgain as number)
+				: 0,
+		heldEmbeds: cleanHeld(source.heldEmbeds),
 	};
 }
 
@@ -340,7 +415,13 @@ export function toolCategories(config: AnalyticsConfig, tool: ToolId): Category[
 		case "ads":
 		case "meta":
 		case "hubspot":
+		case "linkedin":
+		case "tiktok":
 			return ["marketing"];
+		// Cookie-free visitor counts: nothing is stored on the visitor's device.
+		case "plausible":
+		case "umami":
+			return ["none"];
 		case "gtm":
 			return ["analytics", "marketing"];
 		case "cloudflare":
@@ -370,11 +451,14 @@ export function needsConsent(config: AnalyticsConfig): boolean {
  * because they agreed to a different list.
  */
 export function bannerVersion(config: AnalyticsConfig): string {
-	return shortHash(
-		enabledTools(config)
-			.map((tool) => `${tool}:${toolCategories(config, tool).join("+")}`)
-			.join(","),
-	);
+	const tools = enabledTools(config)
+		.map((tool) => `${tool}:${toolCategories(config, tool).join("+")}`)
+		.join(",");
+	// "Ask everyone again" adds its count, held videos and maps their providers; without
+	// either the code is what it always was.
+	const again = config.askAgain > 0 ? `;again:${config.askAgain}` : "";
+	const held = config.heldEmbeds.length ? `;held:${config.heldEmbeds.join("+")}` : "";
+	return shortHash(tools + again + held);
 }
 
 /** A short, stable code for a piece of text (djb2, base 36). Not for secrets. */
