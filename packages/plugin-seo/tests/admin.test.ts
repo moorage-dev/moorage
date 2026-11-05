@@ -818,6 +818,57 @@ describe("copying settings to another site", () => {
 		});
 	});
 
+	it("keeps what no form edits on this site: map position, VAT and tax numbers, employees", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			site: {
+				type: "Organization",
+				name: "Here",
+				geo: { latitude: 1, longitude: 2 },
+				vatID: "GB1",
+				taxID: "T1",
+				numberOfEmployees: 5,
+			},
+		});
+		const own = exported(await runtime.admin.loadPage(PAGE));
+		for (const key of ["geo", "vatID", "taxID", "numberOfEmployees", "jsonLdField"]) {
+			expect(own, key).not.toContain(`"${key}"`);
+		}
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: {
+				type: "Organization",
+				name: "There",
+				geo: { latitude: 9, longitude: 9 },
+				vatID: "GB9",
+				taxID: "T9",
+				numberOfEmployees: 99,
+			},
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		const value = JSON.stringify(applyButton(checked)?.value);
+		for (const key of ["geo", "vatID", "taxID", "numberOfEmployees"]) {
+			expect(value, key).not.toContain(`"${key}"`);
+		}
+		const table = flatten(checked.blocks).find(
+			(block) => block.type === "table" && block.page_action_id === "transfer_table",
+		);
+		const rows = JSON.stringify(table);
+		expect(rows).toContain("There");
+		for (const row of ["Map position", "VAT number", "Tax number", "Employees"]) {
+			expect(rows, row).not.toContain(row);
+		}
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		expect((await config(runtime))?.site).toMatchObject({
+			name: "There",
+			geo: { latitude: 1, longitude: 2 },
+			vatID: "GB1",
+			taxID: "T1",
+			numberOfEmployees: 5,
+		});
+	});
+
 	it("drops pasted hours when the site is not a local business, and maps no text to -1", async () => {
 		const runtime = await start();
 		const paste = JSON.stringify({

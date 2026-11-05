@@ -23,13 +23,26 @@ export const TRANSFER_FORMAT = "emdash-seo-settings";
 const TRANSFER_VERSION = 1;
 
 /**
- * The settings as copied: what describes the site, none of the per-site switches. The field a
- * page's own markup is read from is left out: no form sets it, so each site keeps its own.
+ * Details no form sets, so an admin could not correct them after an import: each site keeps
+ * its own, as it keeps the field a page's own markup is read from.
+ */
+const PER_SITE = ["geo", "vatID", "taxID", "numberOfEmployees"] as const;
+type PerSite = (typeof PER_SITE)[number];
+
+/** The identity without what each site keeps for itself. */
+function sharedSite(site: SiteIdentity): Omit<SiteIdentity, PerSite> {
+	const { geo: _geo, vatID: _vat, taxID: _tax, numberOfEmployees: _staff, ...shared } = site;
+	return shared;
+}
+
+/**
+ * The settings as copied: what describes the site and the forms can change, none of the
+ * per-site switches or details no form sets.
  */
 export interface Transfer {
 	format: typeof TRANSFER_FORMAT;
 	version: number;
-	site: SiteIdentity;
+	site: Omit<SiteIdentity, PerSite>;
 	collections: Record<string, { type?: string; noindex?: boolean }>;
 	robots: SeoConfig["robots"];
 	breadcrumbs: boolean;
@@ -53,7 +66,7 @@ function toTransfer(config: SeoConfig, slugs = Object.keys(config.collections)):
 	return {
 		format: TRANSFER_FORMAT,
 		version: TRANSFER_VERSION,
-		site: config.site,
+		site: sharedSite(config.site),
 		collections,
 		robots: config.robots,
 		breadcrumbs: config.breadcrumbs,
@@ -252,14 +265,10 @@ function described(
 		["Email", site.email ?? none],
 		["Phone", site.telephone ?? none],
 		["Address", address || none],
-		["Map position", site.geo ? `${site.geo.latitude}, ${site.geo.longitude}` : none],
 		["Opening hours", hours || none],
 		["Price range", site.priceRange ?? "Not shown"],
 		["Areas served", site.areaServed.join(", ") || none],
 		["Founded", site.foundingDate ?? none],
-		["VAT number", site.vatID ?? none],
-		["Tax number", site.taxID ?? none],
-		["Employees", site.numberOfEmployees ? String(site.numberOfEmployees) : none],
 	];
 	for (const collection of collections) {
 		const rule = config.collections[collection.slug];
@@ -354,7 +363,10 @@ export function readTransfer(
 	}
 	const config: SeoConfig = {
 		...current,
-		site: pasted.site,
+		site: {
+			...sharedSite(pasted.site),
+			...Object.fromEntries(PER_SITE.map((key) => [key, current.site[key]])),
+		},
 		collections: merged,
 		robots,
 		breadcrumbs: pasted.breadcrumbs,
