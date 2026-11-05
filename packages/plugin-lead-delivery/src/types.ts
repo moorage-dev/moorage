@@ -6,6 +6,8 @@ export interface FieldInfo {
 	label: string;
 	/** The forms plugin's field type when known: text, email, tel, textarea, checkbox, … */
 	type?: string;
+	/** Shown only on a condition (the forms plugin's `condition`): its absence says nothing. */
+	conditional?: boolean;
 }
 
 /** A form this plugin knows about: named in New delivery, or seen in an enquiry. */
@@ -25,9 +27,16 @@ export interface KnownForm {
 	/** When the form was connected: marked by hand, or its first enquiry. A form with `lastAt` is connected too. */
 	connectedAt?: string;
 	connectedWay?: "straight" | "email" | "by hand";
+	/**
+	 * Whether the forms plugin sends its own auto-reply for this form, as one-click connect last
+	 * read it from Forms (an admin-only list). Unknown for forms never listed that way.
+	 */
+	autoReply?: { on: boolean; at: string };
 }
 
-export type DeliveryKind = "email" | "hubspot" | "app";
+export type DeliveryKind = "email" | "hubspot" | "app" | "chat";
+/** Which chat a "Slack or Discord channel" delivery posts to, from its address. */
+export type ChatKind = "slack" | "discord";
 export type AppKind = "zapier" | "make" | "n8n" | "other";
 /** The same email address again: send it anyway, or not within 24 hours or 7 days. */
 export type Repeat = "off" | "24h" | "7d";
@@ -63,8 +72,18 @@ export interface Delivery {
 	throwawayField?: string;
 	// Another app
 	app?: AppKind;
+	/** Another app's address (plain); a channel's webhook address (a secret, see `sealed`). */
 	url?: string;
 	secret?: string;
+	// Slack or Discord channel
+	chat?: ChatKind;
+	/** Leave what people wrote out of the channel's message: it only says an enquiry arrived. */
+	leaveOut?: boolean;
+	/**
+	 * Its secret (an app's signing secret, a channel's address) is in EmDash's encrypted storage
+	 * (secrets.ts), not here: `secret`, and for a channel `url`, are then left out.
+	 */
+	sealed?: boolean;
 }
 
 /** What the site-reach check found. */
@@ -95,6 +114,8 @@ export interface Config {
 	accessLeft?: { at: string; form: string };
 	/** The admin's choice to hide the help line at the foot of the page (shown when unset). */
 	hideHelpLine?: true;
+	/** When encrypting the delivery secrets last failed (the site has no EMDASH_ENCRYPTION_KEY). */
+	secretsPlainAt?: string;
 }
 
 /** One enquiry as this plugin received it. Contents are deleted once all its deliveries are done. */

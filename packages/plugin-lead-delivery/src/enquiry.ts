@@ -44,6 +44,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The fields with each unticked checkbox of a known form listed as "no". The forms plugin leaves
+ * an unticked box out of both its webhook and its email, so without this an enquiry cannot say
+ * the box was left unticked. Each goes where the form has it. A box shown only on a condition is
+ * left out: its absence may mean it was not shown. A ticked box the email wrote as "true" reads "yes".
+ */
+export function withUnticked(
+	fields: Enquiry["fields"],
+	known: KnownForm | undefined,
+): Enquiry["fields"] {
+	if (!known) return fields;
+	const out = fields.map((f) =>
+		f.type === "checkbox" && /^(true|on|1)$/i.test(f.value) ? { ...f, value: "yes" } : f,
+	);
+	const have = new Set(out.map((f) => f.key));
+	const order = known.fields.map((f) => f.key);
+	for (const [index, field] of known.fields.entries()) {
+		if (field.type !== "checkbox" || field.conditional || have.has(field.key)) continue;
+		// After the nearest earlier field of the form that is in the enquiry; first when none is.
+		const earlier = new Set(order.slice(0, index));
+		let at = 0;
+		for (const [i, f] of out.entries()) if (earlier.has(f.key)) at = i + 1;
+		out.splice(at, 0, { key: field.key, label: field.label, type: "checkbox", value: "no" });
+		have.add(field.key);
+	}
+	return out;
+}
+
 export interface Received {
 	id: string;
 	enquiry: Enquiry;
@@ -128,7 +156,7 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 			formId,
 			formName: typeof formName === "string" && formName ? formName.slice(0, 200) : formId,
 			receivedAt: new Date().toISOString(),
-			fields,
+			fields: withUnticked(fields, known),
 			via: "web",
 			hasFiles: files.length > 0,
 			...(pageUrl && /^https?:\/\//i.test(pageUrl) ? { pageUrl } : {}),
@@ -207,7 +235,10 @@ export async function fromEmail(
 			formId: known?.slug ?? slugify(formName),
 			formName,
 			receivedAt: new Date().toISOString(),
-			fields: fields.filter((f) => f.value),
+			fields: withUnticked(
+				fields.filter((f) => f.value),
+				known,
+			),
 			via: "email",
 			hasFiles,
 		}),

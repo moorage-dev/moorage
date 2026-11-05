@@ -141,13 +141,16 @@ const plugin: SandboxedPlugin = {
 				// run now, or (when the every-minute task has stopped) the alert that says so.
 				const result = await receive(m.ctx, state, received.id, received.enquiry);
 				if (result.duplicate) return text(200, "Already received.");
-				if (m.left() >= 2) await ensureSchedule(m.ctx, state);
+				// Key lost (secretsUnreadable): the schedule's mark and the site's address could not be read,
+				// so they are not written again for every enquiry.
+				const known = !state.secretsUnreadable;
+				if (known && m.left() >= 2) await ensureSchedule(m.ctx, state);
 				if (tickFresh(state)) {
 					if (result.queued > 0 && m.left() >= 1) await scheduleDelivery(m.ctx);
 				} else {
 					await alertIfStuck(m, state);
 				}
-				if (m.left() >= 1) await rememberOrigin(m.ctx, state, routeCtx.request.url);
+				if (known && m.left() >= 1) await rememberOrigin(m.ctx, state, routeCtx.request.url);
 				return text(200, "Received.");
 			},
 		},

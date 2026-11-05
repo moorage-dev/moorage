@@ -3,6 +3,7 @@
 import type { PluginContext } from "emdash";
 
 import { generatedName } from "./names.js";
+import { isSecretError, parseSecrets, SECRETS_SETTING, type SecretMap } from "./secrets.js";
 import { pickSettings, type SettingsKeys, writeSettings } from "./settings-store.js";
 import type { Config, Delivery, DeliveryKind, KnownForm, Repeat } from "./types.js";
 
@@ -51,7 +52,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const KINDS: DeliveryKind[] = ["email", "hubspot", "app"];
+const KINDS: DeliveryKind[] = ["email", "hubspot", "app", "chat"];
 const REPEATS: Repeat[] = ["off", "24h", "7d"];
 
 function strings(value: unknown): string[] {
@@ -74,6 +75,7 @@ function siteParts(value: Record<string, unknown>) {
 			? { accessLeft: { at: value.accessLeft.at, form: value.accessLeft.form } }
 			: {}),
 		...(value.hideHelpLine === true ? { hideHelpLine: true as const } : {}),
+		...(typeof value.secretsPlainAt === "string" ? { secretsPlainAt: value.secretsPlainAt } : {}),
 	};
 }
 
@@ -94,6 +96,9 @@ function copied(value: Record<string, unknown>): Partial<Delivery> {
 		"testedAt",
 		"testResult",
 		"oldName",
+		"chat",
+		"leaveOut",
+		"sealed",
 	]) {
 		if (value[key] !== undefined) out[key] = value[key];
 	}
@@ -182,13 +187,41 @@ export interface State {
 	/** The setup changed on reading (moved from 0.1, or its key found under the plain key): save it. */
 	dirty: boolean;
 	forms: Record<string, KnownForm>;
+	/** The deliveries' secrets kept in EmDash's encrypted storage (secrets.ts). */
+	secrets: SecretMap;
+	/**
+	 * EmDash could not decrypt them (EMDASH_ENCRYPTION_KEY changed or removed): the setup and the
+	 * forms were read on their own, and the short-lived keys are missing for this run.
+	 */
+	secretsUnreadable: boolean;
+}
+
+/**
+ * Every key at once; when EmDash cannot decrypt the secrets (and so fails the whole list), the
+ * setup and the forms on their own: two more calls, only in that state.
+ */
+async function readEntries(
+	ctx: PluginContext,
+): Promise<{ entries: Map<string, unknown>; unreadable: boolean }> {
+	try {
+		const list = await ctx.kv.list();
+		return { entries: new Map(list.map((entry) => [entry.key, entry.value])), unreadable: false };
+	} catch (error) {
+		if (!isSecretError(error)) throw error;
+		const entries = new Map<string, unknown>();
+		for (const keys of [CONFIG_SETTINGS, FORMS_SETTINGS]) {
+			const value = await ctx.settings.get<unknown>(keys.name);
+			if (value !== null && value !== undefined) entries.set(`settings:${keys.name}`, value);
+		}
+		return { entries, unreadable: true };
+	}
 }
 
 export async function loadState(
 	ctx: PluginContext,
 	{ copy = false }: { copy?: boolean } = {},
 ): Promise<State> {
-	const entries = new Map((await ctx.kv.list()).map((entry) => [entry.key, entry.value]));
+	const { entries, unreadable } = await readEntries(ctx);
 	const rawForms = await pickSettings(ctx, entries, FORMS_SETTINGS, { copy });
 	const forms = isRecord(rawForms) ? (rawForms as Record<string, KnownForm>) : {};
 	const raw = await pickSettings(ctx, entries, CONFIG_SETTINGS, { copy });
@@ -211,7 +244,8 @@ export async function loadState(
 			dirty = true;
 		}
 	}
-	return { entries, config, dirty, forms };
+	const secrets = parseSecrets(entries.get(`settings:${SECRETS_SETTING}`));
+	return { entries, config, dirty, forms, secrets, secretsUnreadable: unreadable };
 }
 
 /** A value from the state's KV entries. */

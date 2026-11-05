@@ -4,15 +4,18 @@ import type { PluginContext, StorageCollection } from "emdash";
 
 import { privateAddressError } from "./address.js";
 import { APPROVAL_PREFIX, isLiveApproval } from "./approval.js";
+import { chatRequest, classifyChat, redactUrl } from "./chat.js";
 import {
 	ALERTS_KEY,
 	DAILY_KEY,
 	day,
 	kvOf,
+	ORIGIN_KEY,
 	saveFormsQuietly,
 	SCHEDULE_KEY,
 	since,
 	siteLabel,
+	siteOrigin,
 	type State,
 	type Stats,
 	STATS_KEY,
@@ -29,6 +32,7 @@ import {
 	schedulerAlert,
 } from "./messages.js";
 import { type Meter, warnIfRoom } from "./meter.js";
+import { unsealed } from "./secrets.js";
 import {
 	type Config,
 	type Delivery,
@@ -368,40 +372,69 @@ export async function sendTo(
 		}
 	}
 	if (!ctx.http) return done({ kind: "retry", raw: "Web requests are not available." });
+	// The secret (an app's signing secret, a channel's address) from where it is kept.
+	const { delivery: d, missing } = unsealed(delivery, state.secrets);
+	if (missing) return done(secretMissing(delivery, state.secretsUnreadable));
 	// Checked again before every send: a delivery saved by an earlier version, with a laxer check.
-	const blocked = delivery.kind === "hubspot" ? undefined : privateAddressError(delivery.url ?? "");
+	const blocked = d.kind === "hubspot" ? undefined : privateAddressError(d.url ?? "");
 	if (blocked) {
 		return done({
 			kind: "fixing",
-			plain: `${blocked} Change the address in Lead delivery → ${delivery.name} → Edit.`,
+			plain: `${blocked} Change the address in Lead delivery → ${d.name} → Edit.`,
 		});
 	}
 	const request =
-		delivery.kind === "hubspot"
-			? {
-					url: submitUrl(delivery),
-					init: {
-						method: "POST",
-						headers: { "content-type": "application/json" },
-						body: JSON.stringify(hubspotBody(delivery, enquiry)),
-					},
-				}
-			: await appRequest(delivery, id, enquiry, test);
+		d.kind === "chat"
+			? chatRequest(
+					d,
+					d.url ?? "",
+					enquiry,
+					test,
+					kvOf<string>(state, ORIGIN_KEY) ?? siteOrigin(ctx),
+				)
+			: d.kind === "hubspot"
+				? {
+						url: submitUrl(delivery),
+						init: {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify(hubspotBody(delivery, enquiry)),
+						},
+					}
+				: await appRequest(d, id, enquiry, test);
 	try {
 		const response = await ctx.http.fetch(request.url, request.init);
 		const text = await response.text().catch(() => "");
 		const outcome =
-			delivery.kind === "hubspot"
-				? classifyHubSpot(response.status, text, delivery.name)
-				: classifyApp(delivery, response.status, response.url, text);
+			d.kind === "hubspot"
+				? classifyHubSpot(response.status, text, d.name)
+				: d.kind === "chat"
+					? classifyChat(d, response.status, response.url, text)
+					: classifyApp(d, response.status, response.url, text);
 		const retryAfter = Number(response.headers.get("retry-after"));
 		if (outcome.kind === "retry" && Number.isFinite(retryAfter) && retryAfter > 0) {
 			outcome.retryAfter = Math.min(retryAfter, 86_400);
 		}
 		return done(outcome);
 	} catch (error) {
-		return done({ kind: "retry", raw: `No answer: ${String(error).slice(0, 200)}` });
+		const words = d.kind === "chat" ? redactUrl(String(error), d.url) : String(error);
+		return done({ kind: "retry", raw: `No answer: ${words.slice(0, 200)}` });
 	}
+}
+
+/** A delivery whose secret is kept encrypted, but cannot be read now. */
+function secretMissing(d: Delivery, unreadable: boolean): Outcome {
+	const what = d.kind === "chat" ? "channel's webhook address" : "signing secret";
+	const fix =
+		d.kind === "chat"
+			? `paste the channel's webhook address again under Lead delivery → ${d.name} → Edit`
+			: `press Make a new secret on ${d.name} and give it to your app`;
+	return {
+		kind: "fixing",
+		plain: unreadable
+			? `This delivery's ${what} is kept encrypted, and this site cannot read it now: its EMDASH_ENCRYPTION_KEY was changed or removed. Ask your web person to put the old key back, then press Send again. If it is lost, ${fix}.`
+			: `This delivery's ${what} is missing from the encrypted storage. To send again, ${fix}.`,
+	};
 }
 
 /** Whether a try for this row makes a call: its delivery and its contents are both still here. */
@@ -693,6 +726,9 @@ export function canAlert(
 	kind: "failure" | "quiet" | "scheduler",
 ): boolean {
 	if (!ctx.email || state.config.alertTo.length === 0) return false;
+	// The saved secrets cannot be read (key lost): neither can the note of today's alerts, so each
+	// run would alert again. The page's banner says what is wrong instead.
+	if (state.secretsUnreadable) return false;
 	const sent = kvOf<Record<string, string>>(state, ALERTS_KEY) ?? {};
 	return sent[kind] !== day(new Date().toISOString());
 }

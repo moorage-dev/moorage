@@ -1,7 +1,7 @@
 {
 	"name": "@moorage/plugin-lead-delivery",
 	"version": "0.4.4",
-	"description": "Send EmDash form enquiries to HubSpot, Zapier, Make, n8n or email, with a delivery log, retries and an alert when one fails.",
+	"description": "Send EmDash form enquiries to HubSpot, Zapier, Make, n8n, Slack, Discord or email, with a delivery log, retries and an alert when one fails.",
 	"keywords": [
 		"emdash",
 		"emdash-plugin",
@@ -11,6 +11,8 @@
 		"leads",
 		"hubspot",
 		"zapier",
+		"slack",
+		"discord",
 		"webhooks",
 		"email"
 	],

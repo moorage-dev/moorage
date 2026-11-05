@@ -552,3 +552,28 @@ test("an admin sees the help line, and the switch in the site settings hides it"
 	await expectHelpLine(page, guide);
 	await page.close();
 });
+
+test("Slack or Discord channels are offered, and the delivery secrets are kept encrypted", async () => {
+	// The demo site has an EMDASH_ENCRYPTION_KEY (.env), so the app secret saved above is encrypted.
+	const page = await adminContext.newPage();
+	await open(page);
+	const settings = page.getByRole("button", { name: "Settings for the whole site" });
+	if ((await settings.getAttribute("aria-expanded")) === "false") await settings.click();
+	await expect(page.getByText(/^Encrypted with the site's EMDASH_ENCRYPTION_KEY/)).toBeVisible();
+
+	await page.getByRole("button", { name: "+ New delivery" }).click();
+	await expect(
+		page.getByRole("radio", { name: /^Slack or Discord channel: a message in the channel/ }),
+	).toBeVisible();
+	await page.close();
+
+	// No real channel is called: an address that is not a Slack or Discord webhook is refused first.
+	const refused = await interact({
+		type: "form_submit",
+		action_id: "new_save",
+		block_id: `new2:chat:${FORM}`,
+		values: { url: "https://hooks.lead-delivery-test.invalid/catch/1", name: "" },
+	});
+	expect(refused.toast).toMatchObject({ type: "error" });
+	expect(refused.toast?.message).toContain("not a Slack or Discord webhook address");
+});

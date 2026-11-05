@@ -5,6 +5,7 @@ import type { PluginContext } from "emdash";
 
 import { isPrivateHost, PRIVATE_ADDRESS } from "./address.js";
 import { APPROVAL_PREFIX } from "./approval.js";
+import { CHAT_HINT, maskChatUrl, parseChatUrl } from "./chat.js";
 import {
 	ago,
 	configuredOrigin,
@@ -52,6 +53,7 @@ import { type Meter, meter } from "./meter.js";
 import {
 	APPS,
 	appLabel,
+	chatLabel,
 	formName,
 	formWords,
 	formsLabel,
@@ -59,6 +61,7 @@ import {
 	kindWord,
 	rowLabel,
 } from "./names.js";
+import { hasPlainSecret, SECRETS_SETTING, sealSecrets, secretStore, unsealed } from "./secrets.js";
 import {
 	type Config,
 	type Delivery,
@@ -428,10 +431,71 @@ function settingsAccordion(data: Data, open: boolean): Block {
 					},
 				}),
 			]),
+			...secretsSection(data),
 			context(KEEP_NOTE),
 			hideForm(config.hideHelpLine === true),
 		],
 	};
+}
+
+/** Where the deliveries' secrets are kept: apps' signing secrets, channels' webhook addresses. */
+function secretsSection(data: Data): Block[] {
+	const store = secretStore(data.config, data.state.secretsUnreadable);
+	const blocks: Block[] = [header("Delivery secrets")];
+	if (store === "none") {
+		blocks.push(
+			section(
+				"No delivery has a secret yet. Apps' signing secrets and Slack or Discord channel addresses are kept encrypted with the site's EMDASH_ENCRYPTION_KEY when it has one.",
+			),
+		);
+	} else if (store === "encrypted") {
+		blocks.push(
+			section(
+				"Encrypted with the site's EMDASH_ENCRYPTION_KEY: apps' signing secrets and Slack or Discord channel addresses. Keep that key with the site's backups; without it they cannot be read.",
+			),
+		);
+	} else if (store === "plain") {
+		const at = data.config.secretsPlainAt;
+		blocks.push(
+			section(
+				`Kept as plain text in the site's database${at ? `: this site has no EMDASH_ENCRYPTION_KEY (checked ${ago(at)})` : ""}. Ask your web person to set one (\`emdash secrets generate\`), then press Encrypt them now.`,
+			),
+			actions([button("seal_secrets", "Encrypt them now")]),
+		);
+	} else {
+		blocks.push(section(UNREADABLE_TEXT), actions([forgetButton()]));
+	}
+	return blocks;
+}
+
+const UNREADABLE_TEXT =
+	"The site's EMDASH_ENCRYPTION_KEY was changed or removed, so the apps' signing secrets and channel addresses saved with it cannot be read, and those deliveries are not sent. Enquiries still arrive and every other delivery still sends. Ask your web person to put the old key back (it can stay next to a new one, separated by a comma). If it is lost, press Forget the saved secrets, then make a new secret for each app and paste each channel's address again.";
+
+function forgetButton(): ButtonElement {
+	return button("forget_secrets", "Forget the saved secrets", {
+		style: "danger",
+		confirm: {
+			title: "Forget the saved secrets?",
+			text: "Apps then need a new secret (Make a new secret on each), and each Slack or Discord delivery its channel address again (Edit). Do this only if the old key is lost.",
+			confirm: "Forget them",
+			deny: "Cancel",
+			style: "danger",
+		},
+	});
+}
+
+/** The banner while the saved secrets cannot be read: admins only. */
+function secretsBanner(data: Data): Block[] {
+	if (!data.admin || !data.state.secretsUnreadable) return [];
+	return [
+		{
+			type: "banner",
+			variant: "error",
+			title: "Lead delivery cannot read its saved secrets",
+			description: UNREADABLE_TEXT,
+		},
+		actions([forgetButton()]),
+	];
 }
 
 /** EmDash ends an access it did not revoke after 90 days; the banner goes then too. */
@@ -456,6 +520,7 @@ async function home(data: Data, view: Extract<View, { screen: "home" }>): Promis
 	const { ctx, config, admin } = data;
 	const blocks: Block[] = [header("Lead delivery")];
 	if (admin) blocks.push(actions([button("new", "+ New delivery", { style: "primary" })]));
+	blocks.push(...secretsBanner(data));
 	blocks.push(...accessLeftBanner(data));
 	if (admin && config.notice) {
 		blocks.push({
@@ -732,6 +797,7 @@ const KIND_LABELS = (hasEmail: boolean) => [
 		label:
 			"Another app: Zapier, Make, n8n or your own. Zapier needs a paid plan for this; Make and n8n do not",
 	},
+	{ value: "chat", label: "Slack or Discord channel: a message in the channel for each enquiry" },
 ];
 
 function knownForms(data: Data): KnownForm[] {
@@ -818,6 +884,45 @@ function matchingFields(
 	return fields;
 }
 
+/** A channel's address and the switch to leave out what people wrote. */
+function chatFields(url: string, kept: string, leaveOut: boolean): FormField[] {
+	return [
+		{
+			type: "text_input",
+			action_id: "url",
+			label: kept
+				? `New webhook address for the channel (leave empty to keep ${kept})`
+				: "The channel's webhook address (starts with https://hooks.slack.com/ or https://discord.com/api/webhooks/)",
+			initial_value: url,
+		},
+		{
+			type: "toggle",
+			action_id: "leave_out",
+			// The words are in the label: EmDash's admin does not show a switch's description.
+			label:
+				"Leave out what people wrote: the message only says an enquiry arrived, with a link to Forms → Submissions",
+			initial_value: leaveOut,
+		},
+	];
+}
+
+/** What Forms itself sends the person who wrote, when one-click connect read it from Forms. */
+function autoReplyNotes(data: Data, d: Delivery): Block[] {
+	const notes: Block[] = [];
+	for (const form of servedForms(data, d)) {
+		const reply = data.forms[form.slug]?.autoReply;
+		if (!reply) continue;
+		notes.push(
+			context(
+				reply.on
+					? `Forms also sends its own auto-reply to the person who wrote to ${form.name}. Change it in Forms → ${form.name} → Settings.`
+					: `Forms sends no auto-reply for ${form.name}: the person who wrote gets no email from the site. Turn one on in Forms → ${form.name} → Settings.`,
+			),
+		);
+	}
+	return notes;
+}
+
 function hubspotToggles(delivery: Partial<Delivery>): FormField[] {
 	return [
 		{
@@ -867,6 +972,8 @@ function newStep2(data: Data, view: Extract<View, { screen: "new2" }>): Block[] 
 			initial_value: value("hubspot", ""),
 		});
 		fields.push(...matchingFields({}, form), ...hubspotToggles({}));
+	} else if (kind === "chat") {
+		fields.push(...chatFields(value("url", ""), "", draft.leave_out === true));
 	} else {
 		fields.push(
 			{
@@ -908,6 +1015,7 @@ function newStep2(data: Data, view: Extract<View, { screen: "new2" }>): Block[] 
 			actions([button("open", `Open ${view.duplicate.name}`, { value: view.duplicate.id })]),
 		);
 	}
+	if (kind === "chat") blocks.push(context(CHAT_HINT));
 	if (kind === "hubspot") {
 		blocks.push(
 			context(
@@ -938,6 +1046,10 @@ function sendsTo(data: Data, d: Delivery): string {
 	const from = `from ${formsLabel(d.forms, data.forms)}`;
 	if (d.kind === "email") return `Email to ${(d.to ?? []).join(", ")} · ${from}`;
 	if (d.kind === "hubspot") return `HubSpot form in account ${d.portalId} · ${from}`;
+	if (d.kind === "chat") {
+		const url = unsealed(d, data.state.secrets).delivery.url;
+		return `${chatLabel(d.chat)} channel${url ? ` at ${maskChatUrl(url)}` : ""} · ${d.leaveOut ? "without what people wrote · " : ""}${from}`;
+	}
 	let host = d.url ?? "";
 	try {
 		host = new URL(host).host;
@@ -965,7 +1077,8 @@ function testText(d: Delivery): string {
 	const when = ago(d.testedAt);
 	if (!d.testResult.ok) return `Did not arrive: ${d.testResult.plain ?? "it was refused"}`;
 	if (d.kind === "email") return `Sent ${when}. Check the inbox, and the spam folder.`;
-	const who = d.kind === "hubspot" ? "HubSpot" : appLabel(d.app);
+	const who =
+		d.kind === "hubspot" ? "HubSpot" : d.kind === "chat" ? chatLabel(d.chat) : appLabel(d.app);
 	return `Arrived ${when}: ${who} accepted it.`;
 }
 
@@ -1048,6 +1161,7 @@ async function deliveryPage(
 	const blocks: Block[] = [back()];
 	if (view.secret && d.kind === "app") blocks.push(secretAccordion(view.secret, d));
 	blocks.push(header(d.name), context(`${sendsTo(data, d)} · ${d.on ? "On" : "Off"}`));
+	blocks.push(...secretsBanner(data));
 	blocks.push(...accessLeftBanner(data));
 	const latest = status.fixing[0]?.data;
 	if (latest) {
@@ -1089,6 +1203,7 @@ async function deliveryPage(
 			button("toggle", d.on ? "Turn off" : "Turn on", { value: d.id }),
 		]),
 	);
+	blocks.push(...autoReplyNotes(data, d));
 	// A typed short name that never received anything, while another form's enquiries went nowhere.
 	const silent = view.noHints ? undefined : silentForms(data, d)[0];
 	const arrived = silent
@@ -1163,7 +1278,9 @@ async function deliveryPage(
 			? (d.to ?? []).join(", ")
 			: d.kind === "hubspot"
 				? "HubSpot"
-				: appLabel(d.app);
+				: d.kind === "chat"
+					? `the ${chatLabel(d.chat)} channel`
+					: appLabel(d.app);
 	const names = formsLabel(d.forms, data.forms);
 	blocks.push(
 		divider(),
@@ -1253,6 +1370,15 @@ function editPage(data: Data, d: Delivery, view: Extract<View, { screen: "edit" 
 			label: "Send each enquiry to (separate several addresses with commas)",
 			initial_value: value("to", (d.to ?? []).join(", ")),
 		});
+	} else if (d.kind === "chat") {
+		const url = unsealed(d, data.state.secrets).delivery.url;
+		fields.push(
+			...chatFields(
+				value("url", ""),
+				url ? maskChatUrl(url) : "",
+				"leave_out" in draft ? draft.leave_out === true : d.leaveOut === true,
+			),
+		);
 	} else if (d.kind === "hubspot") {
 		fields.push({
 			type: "text_input",
@@ -1657,6 +1783,16 @@ function detailsFromForm(
 		}
 		return { details: { portalId: parsed.portalId, formGuid: parsed.formGuid } };
 	}
+	if (kind === "chat") {
+		const typed = str(values.url).trim();
+		const leaveOut = values.leave_out === true;
+		// Edit shows no address (it is a secret): an empty box keeps the one saved.
+		if (!typed && existing?.kind === "chat") return { details: { leaveOut } };
+		if (!typed) return { error: "Paste the channel's webhook address." };
+		const parsed = parseChatUrl(typed);
+		if ("error" in parsed) return { error: parsed.error };
+		return { details: { chat: parsed.platform, url: parsed.url, leaveOut, sealed: false } };
+	}
 	const url = str(values.url).trim();
 	let parsedUrl: URL | null = null;
 	try {
@@ -1669,9 +1805,11 @@ function detailsFromForm(
 	}
 	if (isPrivateHost(parsedUrl.hostname)) return { error: PRIVATE_ADDRESS };
 	const app = APPS.some((a) => a.value === values.app) ? (values.app as Delivery["app"]) : "other";
-	const keep = existing?.kind === "app" && existing.secret;
-	const secret = keep ? existing.secret! : newSecret();
-	return { details: { app, url: parsedUrl.href, secret }, ...(keep ? {} : { secret }) };
+	// The secret stays, wherever it is kept (plain, or encrypted: `sealed`).
+	if (existing?.kind === "app" && (existing.secret || existing.sealed))
+		return { details: { app, url: parsedUrl.href } };
+	const secret = newSecret();
+	return { details: { app, url: parsedUrl.href, secret, sealed: false }, secret };
 }
 
 /** HubSpot matching for one form from a form's values; or the field that still needs a name. */
@@ -1688,8 +1826,13 @@ function matchingFromForm(
 	return missing ? { missing: missing[0] } : { mapping, others };
 }
 
-function sameDestination(a: Delivery, b: Partial<Delivery> & { kind: DeliveryKind }): boolean {
+function sameDestination(
+	data: Data,
+	a: Delivery,
+	b: Partial<Delivery> & { kind: DeliveryKind },
+): boolean {
 	if (a.kind !== b.kind) return false;
+	if (a.kind === "chat") return unsealed(a, data.state.secrets).delivery.url === b.url;
 	if (a.kind === "email") return (a.to ?? []).some((x) => (b.to ?? []).includes(x));
 	if (a.kind === "hubspot") return a.portalId === b.portalId && a.formGuid === b.formGuid;
 	return a.url === b.url;
@@ -1745,7 +1888,14 @@ async function sendTest(
 	const enquiry = testEnquiry(data, d);
 	const { ctx } = data;
 	const outcome = await sendTo(ctx, data.state, d, id, enquiry, true);
-	const label = d.kind === "hubspot" ? "HubSpot" : d.kind === "app" ? appLabel(d.app) : "Email";
+	const label =
+		d.kind === "hubspot"
+			? "HubSpot"
+			: d.kind === "app"
+				? appLabel(d.app)
+				: d.kind === "chat"
+					? chatLabel(d.chat)
+					: "Email";
 	const result: Delivery["testResult"] =
 		outcome.kind === "delivered"
 			? { ok: true }
@@ -1869,8 +2019,12 @@ async function adminScreen(
 	}
 	// A key made, or the setup moved from 0.1 or from the plain key: one save for all of it.
 	await ensureConfig(ctx, state);
-	await ensureSchedule(ctx, state);
-	await rememberOrigin(ctx, state, requestUrl);
+	// Key lost (state.secretsUnreadable): the short-lived keys could not be read, so these would
+	// write every visit for nothing; the every-minute task and the site's address are still there.
+	if (!state.secretsUnreadable) {
+		await ensureSchedule(ctx, state);
+		await rememberOrigin(ctx, state, requestUrl);
+	}
 	const data: Data = {
 		ctx,
 		m,
@@ -1888,6 +2042,12 @@ async function adminScreen(
 		data.config = config;
 		await saveConfig(ctx, config, { mirror });
 	};
+	/** Move secrets kept as plain text into EmDash's encrypted storage: one call when there are any. */
+	const seal = async (config: Config): Promise<Config> => {
+		const result = await sealSecrets(ctx, config, state.secrets, state.secretsUnreadable);
+		state.secrets = result.secrets;
+		return result.config;
+	};
 	const keepForms = async (forms: Record<string, KnownForm>, mirror = true) => {
 		state.forms = forms;
 		data.forms = forms;
@@ -1901,6 +2061,20 @@ async function adminScreen(
 
 	if (interaction.type === "page_load" && str(interaction.page) === "widget:enquiries")
 		return widget(data);
+	// The first admin visit after updating moves secrets kept as plain text into EmDash's encrypted
+	// storage, once: tried again only by a new secret or "Encrypt them now". Moved: the save and
+	// its copy for 0.3.0, which must lose the plain secrets too (three calls). Not moved (no key):
+	// the note of it, without the copy (two).
+	if (
+		admin &&
+		interaction.type === "page_load" &&
+		!state.config.secretsPlainAt &&
+		!state.secretsUnreadable &&
+		state.config.deliveries.some(hasPlainSecret)
+	) {
+		const sealed = await seal(state.config);
+		await save(sealed, !sealed.secretsPlainAt);
+	}
 	if (interaction.type === "page_load" || action === "" || action === "home") return render(data);
 
 	// Anyone who can open the page may look through the log and send an enquiry again.
@@ -1962,7 +2136,8 @@ async function adminScreen(
 	}
 	if (action === "new_continue") {
 		const picked = str(values.form);
-		const kind = (["email", "hubspot", "app"] as const).find((k) => k === values.kind) ?? "email";
+		const kind =
+			(["email", "hubspot", "app", "chat"] as const).find((k) => k === values.kind) ?? "email";
 		const again = (message: string) =>
 			render(data, { screen: "new", draft: values, toast: fail(message) });
 		if (!picked) return again("Choose a form.");
@@ -1988,7 +2163,7 @@ async function adminScreen(
 	}
 	if (action === "new_save") {
 		const [, kindText, slug] = blockId.split(":");
-		const kind = (["email", "hubspot", "app"] as const).find((k) => k === kindText);
+		const kind = (["email", "hubspot", "app", "chat"] as const).find((k) => k === kindText);
 		if (!kind || !slug) return render(data, { screen: "new" });
 		const form = await findForm(ctx, data.origin, slug, data.forms);
 		if ("error" in form) return render(data, { screen: "new", toast: fail(form.error) });
@@ -2011,7 +2186,9 @@ async function adminScreen(
 		const draftDelivery = { kind, ...parsed.details };
 		const duplicate = data.config.deliveries.find(
 			(d) =>
-				servesForm(d, form.slug) && Array.isArray(d.forms) && sameDestination(d, draftDelivery),
+				servesForm(d, form.slug) &&
+				Array.isArray(d.forms) &&
+				sameDestination(data, d, draftDelivery),
 		);
 		if (duplicate) {
 			const where =
@@ -2019,7 +2196,9 @@ async function adminScreen(
 					? (duplicate.to ?? []).join(", ")
 					: kind === "hubspot"
 						? "that HubSpot form"
-						: "that address";
+						: kind === "chat"
+							? "that channel"
+							: "that address";
 			return again(`${form.name} already goes to ${where} (${duplicate.name}).`, duplicate);
 		}
 		if (!data.forms[form.slug]) await keepForms(withForm(data.forms, form));
@@ -2055,8 +2234,13 @@ async function adminScreen(
 		const after = () => (connected ? 3 : oneClick(data) || !data.config.reach ? 2 : 0);
 		let toast: BlockResponse["toast"];
 		if (kind !== "hubspot" || values.test_now === true) {
-			// The save (one call) and what follows it stay; the test's log row only if a call is left.
-			const test = await sendTest(data, delivery, 1 + after() + 1);
+			// The save (one call), the move of its secret into encrypted storage (one) and what
+			// follows stay; the test's log row only if a call is left.
+			const test = await sendTest(
+				data,
+				delivery,
+				1 + after() + 1 + (hasPlainSecret(delivery) && !state.secretsUnreadable ? 1 : 0),
+			);
 			delivery = test.delivery;
 			toast = test.ok
 				? ok(`Saved as "${name}". ${test.message}`)
@@ -2072,6 +2256,9 @@ async function adminScreen(
 			);
 		}
 		let config: Config = { ...data.config, deliveries: [...data.config.deliveries, delivery] };
+		// Its secret into EmDash's encrypted storage, when a call is left for it (one): otherwise it
+		// stays plain until the next visit.
+		if (hasPlainSecret(delivery) && m.left() > 1 + after()) config = await seal(config);
 		if (!connected && !config.reach && m.left() >= 3 + 1) {
 			const result = await checkReach(ctx, data.origin);
 			config = { ...config, reach: { result, at: new Date().toISOString() } };
@@ -2137,10 +2324,14 @@ async function adminScreen(
 	if (action === "new_secret") {
 		const id = str(value);
 		const secret = newSecret();
-		await save({
-			...data.config,
-			deliveries: data.config.deliveries.map((d) => (d.id === id ? { ...d, secret } : d)),
-		});
+		await save(
+			await seal({
+				...data.config,
+				deliveries: data.config.deliveries.map((d) =>
+					d.id === id ? { ...d, secret, sealed: false } : d,
+				),
+			}),
+		);
 		return render(data, {
 			screen: "delivery",
 			id,
@@ -2190,10 +2381,12 @@ async function adminScreen(
 			str(values.name).trim().slice(0, 100) ||
 			generatedName(forms, { ...d, ...parsed.details }, data.forms);
 		const updated: Delivery = { ...d, ...parsed.details, name, forms, on: values.on !== false };
-		await save({
+		const edited = {
 			...data.config,
 			deliveries: data.config.deliveries.map((x) => (x.id === id ? updated : x)),
-		});
+		};
+		// A new channel address goes into encrypted storage; an unchanged secret stays where it is.
+		await save(parsed.details.sealed === false ? await seal(edited) : edited);
 		const message =
 			forms === "all" && picked.length > 1
 				? "Saved. It takes all forms, including new ones, so the other ticks were not needed."
@@ -2463,6 +2656,34 @@ async function adminScreen(
 	}
 
 	// Settings for the whole site
+	if (action === "seal_secrets") {
+		const result = await sealSecrets(ctx, data.config, state.secrets, state.secretsUnreadable);
+		state.secrets = result.secrets;
+		await save(result.config);
+		return render(data, {
+			screen: "home",
+			settingsOpen: true,
+			toast: result.sealed
+				? ok("Encrypted. The secrets are now kept with the site's EMDASH_ENCRYPTION_KEY.")
+				: result.tried
+					? fail(
+							"EmDash could not encrypt them: this site has no EMDASH_ENCRYPTION_KEY yet. They stay as plain text.",
+						)
+					: info("Nothing to encrypt."),
+		});
+	}
+	if (action === "forget_secrets") {
+		await ctx.settings.delete(SECRETS_SETTING);
+		state.secrets = {};
+		state.secretsUnreadable = false;
+		return render(data, {
+			screen: "home",
+			settingsOpen: true,
+			toast: ok(
+				"Forgotten. Make a new secret for each app, and paste each Slack or Discord channel's address again under Edit.",
+			),
+		});
+	}
 	if (action === "dismiss_notice") {
 		const { notice: _notice, ...rest } = data.config;
 		await save(rest);
