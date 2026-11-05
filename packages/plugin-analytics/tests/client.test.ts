@@ -499,3 +499,14 @@ describe("links to #cookie-settings", () => {
 		expect(window.location.href).toBe("https://acme.test/pricing");
 	});
 });
+
+describe("an English site after the update", () => {
+	it("shows exactly the banner and panel it showed in 0.3.3", async () => {
+		boot(settings());
+		await ready();
+		// Everything after the style sheet: the words and the markup visitors get.
+		expect(shadow().innerHTML.replace(/^<style>.*?<\/style>/s, "")).toMatchInlineSnapshot(
+			`"<div class="b bar" role="region" aria-label="Can we use cookies?"><div class="i"><div><h2>Can we use cookies?</h2><p>We would like to use analytics cookies to see how this site is used, and marketing cookies to measure our ads. Essential cookies are always on. <a href="/privacy">Privacy policy</a></p></div><div class="r"><button type="button" class="p" data-k="a">Accept all</button><button type="button" class="p" data-k="r">Reject all</button><button type="button" class="q" data-k="c">Choose</button></div></div></div><button type="button" class="s" data-k="c" aria-label="Cookie settings" hidden=""><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><circle cx="6" cy="6" r="1"></circle><circle cx="10" cy="9" r="1"></circle><circle cx="6.5" cy="10.5" r=".8"></circle></svg><span>Cookies</span></button><p class="v" role="status"></p><dialog aria-labelledby="h"><h2 id="h">Your cookie choices</h2><div class="o"><b id="ln">Essential</b><em>Always on</em><p>Remembers your answer, so you are not asked on every page.</p></div><div class="o"><b id="la">Analytics</b><input type="checkbox" role="switch" name="a" aria-labelledby="la"><p>Shows us how visitors use this site, so we can improve it. Used by: Google Analytics, Microsoft Clarity.</p></div><div class="o"><b id="lm">Marketing</b><input type="checkbox" role="switch" name="m" aria-labelledby="lm"><p>Lets us measure our advertising and show you relevant ads elsewhere. Used by: Meta Pixel.</p></div><p class="g" hidden="">Your browser asks sites not to share your data (Global Privacy Control), so Marketing stays off.</p><div class="r"><button type="button" class="p" data-k="s">Save my choices</button><button type="button" class="p" data-k="r">Reject all</button><button type="button" class="p" data-k="a">Accept all</button></div></dialog>"`,
+		);
+	});
+});
