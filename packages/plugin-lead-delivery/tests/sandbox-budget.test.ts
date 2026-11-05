@@ -195,7 +195,9 @@ async function running(
 /** Right after updating from 0.3.0: the old KV keys only, nothing under settings. */
 async function justUpdated(deliveries: Delivery[] = [zap]): Promise<Host> {
 	const h = await newHost();
-	await h.fixtures.plugin.kv("config", { ...CONFIG, deliveries });
+	// 0.3.0 never wrote secretsPlainAt.
+	const { secretsPlainAt: _never, ...old } = CONFIG;
+	await h.fixtures.plugin.kv("config", { ...old, deliveries });
 	await h.fixtures.plugin.kv("forms", { contact: CONTACT });
 	await h.fixtures.plugin.kv("schedule", "* * * * *");
 	await h.fixtures.plugin.kv("origin", ORIGIN);
@@ -976,7 +978,7 @@ describe("admin page and widget", () => {
 				expect((await h.inspect.setting<Config>("config"))?.key).toBe(KEY);
 				expect(await h.inspect.setting("forms")).toBeTruthy();
 			},
-			count: 6,
+			count: 8,
 			before: 21,
 		},
 		{
@@ -1806,6 +1808,85 @@ describe("Slack or Discord channels and encrypted secrets", () => {
 				expect(await statuses(h)).toEqual(["fixing"]);
 				expect(await h.inspect.email()).toEqual([]);
 			},
+			count: 6,
+		},
+		{
+			name: "admin home, first visit after updating from 0.3.0, the site has a key: secrets moved",
+			setup: async () => {
+				encryptionKey(true);
+				return admin(await justUpdated(), (u) => page(host!, u));
+			},
+			did: async (h) => {
+				expect(JSON.stringify(await h.inspect.setting<Config>("config"))).not.toContain("whsec_");
+				expect(JSON.stringify(await h.inspect.kv.get("config"))).not.toContain("whsec_");
+			},
+			count: 9,
+		},
+		{
+			name: "maintenance, any minute, one due try, the saved secrets cannot be read (key lost)",
+			setup: async () => {
+				const h = await keyLost([zap, mail]);
+				await row(h, "s1", mail.id, {}, { rows: [mail.id] });
+				return { h, invoke: deliverRun(h, { name: "maintenance", data: null }) };
+			},
+			// Two calls fewer for the batch: the try is left for the follow-up run it asks for.
+			did: async (h) => {
+				expect(await statuses(h)).toEqual(["retrying"]);
+				const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
+				expect(tasks.map((t) => t.name.split("-")[0])).toEqual(["deliver"]);
+			},
+			count: 7,
+		},
+		{
+			name: "daily, the saved secrets cannot be read (key lost): waits",
+			setup: async () => ({
+				h: await keyLost([zap]),
+				invoke: deliverRun(host!, { name: "daily", data: null }),
+			}),
+			count: 3,
+		},
+		{
+			name: "beforeSend, the email way, the saved secrets cannot be read (key lost)",
+			setup: async () => {
+				const h = await keyLost([zap, mail]);
+				return { h, invoke: emailWay(h, formEmail) };
+			},
+			did: async (h, m) => {
+				expect(m.result).toBe(false);
+				expect(await h.inspect.storage.list("enquiries")).toHaveLength(1);
+			},
+			count: 8,
+		},
+		{
+			name: "admin send_again, the saved secrets cannot be read (key lost): refused",
+			setup: async () => {
+				const h = await keyLost([zap]);
+				await row(h, "s1", zap.id, { status: "gaveup", nextAt: "" }, { rows: [zap.id] });
+				return admin(
+					h,
+					(u) => () => h.admin.act(PAGE, "send_again", { user: u, value: { row: `s1~${zap.id}` } }),
+				);
+			},
+			did: async (h, m) => {
+				expect(JSON.stringify(m.result)).toContain("wait until the saved secrets can be read");
+				expect(h.http.requests()).toEqual([]);
+			},
+			count: 6,
+		},
+		{
+			name: "admin connect_finish, the saved secrets cannot be read (key lost): refused, no access asked for",
+			setup: async () => {
+				const h = await keyLost([zap]);
+				return admin(
+					h,
+					(u) => () =>
+						h.admin.act(PAGE, "connect_finish", {
+							user: u,
+							value: { id: zap.id, form: "contact" },
+						}),
+				);
+			},
+			did: async (h) => expect(h.http.requests()).toEqual([]),
 			count: 6,
 		},
 		{

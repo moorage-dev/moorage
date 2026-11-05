@@ -4,7 +4,7 @@ import type { PluginContext, StorageCollection } from "emdash";
 
 import { privateAddressError } from "./address.js";
 import { APPROVAL_PREFIX, isLiveApproval } from "./approval.js";
-import { chatRequest, classifyChat, redactUrl } from "./chat.js";
+import { chatAddressError, chatRequest, classifyChat, redactUrl } from "./chat.js";
 import {
 	ALERTS_KEY,
 	DAILY_KEY,
@@ -376,7 +376,12 @@ export async function sendTo(
 	const { delivery: d, missing } = unsealed(delivery, state.secrets);
 	if (missing) return done(secretMissing(delivery, state.secretsUnreadable));
 	// Checked again before every send: a delivery saved by an earlier version, with a laxer check.
-	const blocked = d.kind === "hubspot" ? undefined : privateAddressError(d.url ?? "");
+	const blocked =
+		d.kind === "hubspot"
+			? undefined
+			: d.kind === "chat"
+				? chatAddressError(d.url ?? "")
+				: privateAddressError(d.url ?? "");
 	if (blocked) {
 		return done({
 			kind: "fixing",
@@ -857,7 +862,9 @@ export async function maintenance(m: Meter, state: State) {
 	const now = new Date().toISOString();
 	await ctx.kv.set(TICK_KEY, now);
 	state.entries.set(TICK_KEY, now);
-	if (kvOf<string>(state, DAILY_KEY) !== day(now) && ctx.cron) {
+	// Key lost (secretsUnreadable): the day's done-mark cannot be read, so the daily run would be
+	// asked for every minute. It waits until the key is back or the secrets are forgotten.
+	if (!state.secretsUnreadable && kvOf<string>(state, DAILY_KEY) !== day(now) && ctx.cron) {
 		await ctx.cron.schedule(DAILY_TASK, { schedule: new Date(Date.now() + 1000).toISOString() });
 	}
 	await runBatch(m, state);
@@ -878,6 +885,9 @@ export async function daily(m: Meter, state: State) {
 	const ctx = m.ctx;
 	const today = day(new Date().toISOString());
 	if (kvOf<string>(state, DAILY_KEY) === today) return;
+	// Key lost (secretsUnreadable): reading cost two more calls and the day's mark cannot be read,
+	// so the day's work waits until the key is back or the secrets are forgotten.
+	if (state.secretsUnreadable) return;
 	await checkQuiet(m, state);
 	if (!(await cleanup(m))) return;
 	if (m.left() < 1) return;

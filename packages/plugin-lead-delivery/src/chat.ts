@@ -52,6 +52,16 @@ export function parseChatUrl(
 	};
 }
 
+/**
+ * Why a saved channel address cannot be sent to, or undefined: checked before every send, so an
+ * address written another way (Plugins → Lead delivery → Settings) still goes only to Slack or
+ * Discord, never to a private network.
+ */
+export function chatAddressError(url: string): string | undefined {
+	const parsed = parseChatUrl(url);
+	return "error" in parsed ? parsed.error : undefined;
+}
+
 /** The address as the page may show it: its host and the last four characters. */
 export function maskChatUrl(text: string | undefined): string {
 	try {

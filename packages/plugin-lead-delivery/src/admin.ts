@@ -78,6 +78,15 @@ import { newSecret } from "./webhook.js";
 
 // EmDash role levels: an Editor can open the page and press Send again; only an Admin changes anything.
 const ADMIN_ROLE = 50;
+/** What the page still does while the saved secrets cannot be read (secrets.ts). */
+const WHILE_UNREADABLE = new Set([
+	"see_all",
+	"open_log",
+	"filter_log",
+	"log_page",
+	"open",
+	"forget_secrets",
+]);
 export const PAGE = "/enquiries";
 const LOG_ROWS = 25;
 const HOME_ROWS = 10;
@@ -2076,6 +2085,17 @@ async function adminScreen(
 		await save(sealed, !sealed.secretsPlainAt);
 	}
 	if (interaction.type === "page_load" || action === "" || action === "home") return render(data);
+
+	// Key lost (secretsUnreadable): reading took two more calls and the short-lived keys are
+	// missing, so only looking around and Forget the saved secrets are offered until it is fixed.
+	if (state.secretsUnreadable && !WHILE_UNREADABLE.has(action)) {
+		return render(data, {
+			screen: "home",
+			toast: fail(
+				"Sending and changes wait until the saved secrets can be read again. Ask your web person to put the site's old EMDASH_ENCRYPTION_KEY back.",
+			),
+		});
+	}
 
 	// Anyone who can open the page may look through the log and send an enquiry again.
 	if (action === "see_all") return render(data, { screen: "log", filter: "" });
