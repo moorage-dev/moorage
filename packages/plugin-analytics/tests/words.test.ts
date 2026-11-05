@@ -123,6 +123,27 @@ describe("the words route", () => {
 		expect((await get("l=de&w=abc")).t).toEqual(wordsFor(normalizeConfig(GA), "de"));
 	});
 
+	it("reads the settings again when the page asks for newer words than it keeps, so a day's cache never holds old ones", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: GA });
+		const ask = async (w: string) =>
+			(await createPlugin().routes.words!.handler({
+				...fake.ctx,
+				input: undefined,
+				request: new Request(
+					`https://acme.test/_emdash/api/plugins/analytics-consent/words?l=en&w=${w}`,
+				),
+			} as unknown as RouteContext)) as { t: Record<string, string> };
+		const before = wordsCode(normalizeConfig(GA));
+		expect((await ask(before)).t.accept).toBe("Accept all");
+		// Saved in another isolate: this one still keeps the old settings in memory.
+		const saved = { ...GA, banner: { labels: { accept: "Yes please" } } };
+		fake.kv.set(CONFIG_KEY, saved);
+		const reads = fake.reads();
+		expect((await ask(before)).t.accept).toBe("Accept all");
+		expect(fake.reads()).toBe(reads);
+		expect((await ask(wordsCode(normalizeConfig(saved)))).t.accept).toBe("Yes please");
+	});
+
 	it("answers in English for a language it does not know, or none", async () => {
 		expect((await get("l=xx")).t.accept).toBe("Accept all");
 		expect((await get("")).t.accept).toBe("Accept all");

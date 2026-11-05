@@ -29,7 +29,7 @@ import {
 } from "./record.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import { checkSite, readSiteCheck, SITE_CHECK_KEY, type SiteCheck } from "./site-check.js";
-import { wordsFor } from "./words.js";
+import { wordsCode, wordsFor } from "./words.js";
 
 export type { AnalyticsConfig } from "./config.js";
 
@@ -241,7 +241,13 @@ export function createPlugin() {
 					const params = ctx.request
 						? new URL(ctx.request.url).searchParams
 						: new URLSearchParams();
-					const config = await memoSettings(ctx, () => readConfig(ctx));
+					let config = await memoSettings(ctx, () => readConfig(ctx));
+					// The page asks for other words than the ones kept here (saved in another isolate in
+					// the last 30 seconds): read them now, or the old ones would be cached for a day.
+					const asked = params.get("w");
+					if (asked && asked !== wordsCode(config)) {
+						config = await memoSettings(ctx, () => readConfig(ctx), { fresh: true });
+					}
 					return { t: wordsFor(config, params.get("l") ?? undefined) };
 				},
 			},
