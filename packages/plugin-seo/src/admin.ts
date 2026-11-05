@@ -589,9 +589,11 @@ function widget(data: AdminData): BlockResponse {
 			{
 				type: "stats",
 				items: [
-					stats.fix === 0
-						? { label: "SEO", value: "All pages ready" }
-						: { label: stats.fix === 1 ? "Page to fix" : "Pages to fix", value: stats.fix },
+					stats.checked === 0
+						? { label: "SEO", value: "Every page is hidden from Google" }
+						: stats.fix === 0
+							? { label: "SEO", value: "All pages ready" }
+							: { label: stats.fix === 1 ? "Page to fix" : "Pages to fix", value: stats.fix },
 				],
 			},
 			open,
@@ -1008,7 +1010,7 @@ function transferSection(data: AdminData, transfer: PageState["transfer"]): Bloc
 			type: "code",
 			block_id: "settings_export",
 			language: "jsonc",
-			code: exportSettings(data.config),
+			code: exportSettings(data.config, data.collections),
 		},
 		{
 			type: "form",

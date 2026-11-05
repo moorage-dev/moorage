@@ -31,17 +31,22 @@ export interface Transfer {
 	breadcrumbs: boolean;
 }
 
-/** The text shown for copying. */
-export function exportSettings(config: SeoConfig): string {
+/**
+ * The settings as copied. Every content type with pages is written out with the type it has and
+ * whether it is hidden, guessed ones too, so the other site ends up the same; `slugs` defaults
+ * to the content types that have a rule.
+ */
+function toTransfer(config: SeoConfig, slugs = Object.keys(config.collections)): Transfer {
 	const collections: Transfer["collections"] = {};
-	for (const [slug, rule] of Object.entries(config.collections)) {
+	for (const slug of slugs) {
+		const rule = config.collections[slug];
 		// The "this is intended" confirmation stays on the site it was given on.
 		collections[slug] = {
-			...(rule.type ? { type: rule.type } : {}),
-			...(rule.noindex ? { noindex: true } : {}),
+			type: rule?.type ?? defaultTypeForCollection(slug),
+			noindex: rule?.noindex === true,
 		};
 	}
-	const transfer: Transfer = {
+	return {
 		format: TRANSFER_FORMAT,
 		version: TRANSFER_VERSION,
 		site: config.site,
@@ -50,7 +55,18 @@ export function exportSettings(config: SeoConfig): string {
 		jsonLdField: config.jsonLdField,
 		breadcrumbs: config.breadcrumbs,
 	};
-	return JSON.stringify(transfer, null, 2);
+}
+
+/** The text shown for copying: the settings, with every content type of this site that has pages. */
+export function exportSettings(config: SeoConfig, collections: Array<{ slug: string }>): string {
+	return JSON.stringify(
+		toTransfer(
+			config,
+			collections.map((collection) => collection.slug),
+		),
+		null,
+		2,
+	);
 }
 
 export interface Change {
@@ -252,9 +268,16 @@ export function readTransfer(
 			leftOut.push(slug);
 			continue;
 		}
-		if (rule.noindex && !current.collections[slug]?.noindex) hides.push(label);
-		// Hiding needs this site's own "This is intended", so the warning shows here too.
-		merged[slug] = { type: rule.type, noindex: rule.noindex === true };
+		const before = current.collections[slug];
+		const hidden = rule.noindex === true;
+		if (hidden && !before?.noindex) hides.push(label);
+		// Newly hiding needs this site's own "This is intended", so the warning shows here too; a
+		// content type this site already hid keeps the confirmation it was given.
+		merged[slug] = {
+			type: rule.type,
+			noindex: hidden,
+			...(hidden && before?.noindex && before.hiddenOk ? { hiddenOk: true } : {}),
+		};
 	}
 	const config: SeoConfig = {
 		...current,
@@ -270,6 +293,6 @@ export function readTransfer(
 	const changes = described(config, collections)
 		.filter(([what, after]) => before.get(what) !== after)
 		.map(([what, after]) => ({ what, now: before.get(what) ?? "", after }));
-	const transfer = JSON.parse(exportSettings(pasted)) as Transfer;
+	const transfer = toTransfer(pasted);
 	return { config, transfer, changes, leftOut, hides };
 }

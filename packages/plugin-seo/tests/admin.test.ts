@@ -162,6 +162,7 @@ describe("the page counts", () => {
 		expect(texts(response)).toContain("1 page is hidden from Google");
 		const widget = await runtime.admin.loadWidget("seo");
 		expect(texts(widget)).not.toContain("Your pages are being checked.");
+		expect(texts(widget)).toContain("Every page is hidden from Google");
 	});
 });
 
@@ -687,6 +688,55 @@ describe("copying settings to another site", () => {
 		expect(saved?.hideHelpLine).toBe(false);
 		expect(saved?.steps.identity).toBe(true);
 		expect(texts(applied)).toContain("Some pages are hidden from Google");
+	});
+
+	it("copies every content type as it is, guessed types and shown ones too", async () => {
+		const runtime = await start();
+		// The source relies on the guesses: Pages as Web page, Services as Service, both shown.
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		expect(JSON.parse(text)).toMatchObject({
+			collections: {
+				pages: { type: "WebPage", noindex: false },
+				services: { type: "Service", noindex: false },
+			},
+		});
+		// This site changed both, and had its hidden Services confirmed.
+		await runtime.fixtures.plugin.setting("config", {
+			collections: {
+				pages: { type: "AboutPage" },
+				services: { noindex: true, hiddenOk: true },
+			},
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: text });
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		expect((await config(runtime))?.collections).toEqual({
+			pages: { type: "WebPage", noindex: false },
+			services: { type: "Service", noindex: false },
+		});
+	});
+
+	it("keeps this site's confirmation for a content type it already hid", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			collections: { services: { noindex: true, hiddenOk: true } },
+		});
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: { type: "Organization", name: "Acme Two" },
+			collections: { services: { type: "Service", noindex: true } },
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(texts(checked)).not.toContain("These settings hide every page");
+		const applied = await runtime.admin.act(PAGE, "apply_settings", {
+			value: applyButton(checked)?.value,
+		});
+		expect((await config(runtime))?.collections.services).toEqual({
+			type: "Service",
+			noindex: true,
+			hiddenOk: true,
+		});
+		expect(texts(applied)).not.toContain("Some pages are hidden from Google");
 	});
 
 	it("says when nothing would change", async () => {
