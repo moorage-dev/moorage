@@ -95,6 +95,19 @@ describe("config", () => {
 		expect(needsConsent(DEFAULT_CONFIG)).toBe(false);
 	});
 
+	it("files Plausible and Umami as cookie-free, LinkedIn and TikTok under Marketing", () => {
+		const cookieFree = normalizeConfig({
+			tools: { plausible: "bakery.de", umami: "94db1cb1-74f4-4a40-ad6c-962362670409" },
+		});
+		expect(needsConsent(cookieFree)).toBe(false);
+		const ads = normalizeConfig({ tools: { linkedin: "1234567", tiktok: "CABC123DEF456GHI789J" } });
+		expect(needsConsent(ads)).toBe(true);
+		expect(vendorNames(ads, "marketing")).toEqual(["LinkedIn Insight Tag", "TikTok Pixel"]);
+		expect(vendorNames(ads, "analytics")).toEqual([]);
+		// A stored value that is not a valid ID never reaches the page.
+		expect(normalizeConfig({ tools: { tiktok: "<script>" } }).tools.tiktok).toBe("");
+	});
+
 	it("changes the banner version only when the set of tools changes", () => {
 		const one = normalizeConfig({ tools: { ga4: "G-AB12CD34EF" } });
 		const sameToolNewId = normalizeConfig({ tools: { ga4: "G-ZZ99ZZ99ZZ" } });

@@ -24,6 +24,14 @@ export interface ClientConfig {
 	cf?: string;
 	/** Cloudflare Web Analytics waits for Analytics consent. */
 	cfWait?: 1;
+	/** Plausible: the site's domain. Cookie-free, never waits. */
+	pl?: string;
+	/** Umami Cloud: the website ID. Cookie-free, never waits. */
+	um?: string;
+	/** LinkedIn Insight Tag partner ID. Marketing. */
+	li?: string;
+	/** TikTok Pixel ID. Marketing. */
+	tt?: string;
 	/** Load Google Tag Manager before the visitor has chosen. */
 	gtmNow?: 1;
 	/** Track enquiries (phone and email clicks, sent forms). */

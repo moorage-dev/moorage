@@ -54,6 +54,10 @@ const TOOL_LABEL: Record<ToolId, string> = {
 	clarity: "Microsoft Clarity: project ID",
 	hubspot: "HubSpot: Hub ID (a number)",
 	cloudflare: "Cloudflare Web Analytics: token (simple visitor counts, no cookies)",
+	plausible: "Plausible: your site's domain, as in Plausible (visitor counts, no cookies)",
+	umami: "Umami Cloud: website ID (visitor counts, no cookies)",
+	linkedin: "LinkedIn Insight Tag: partner ID (a number)",
+	tiktok: "TikTok Pixel: pixel ID",
 };
 
 export interface PageState {
@@ -109,7 +113,7 @@ function toolRule(config: AnalyticsConfig, tool: ToolId): string {
 	return `Waits for ${whoWaits(audience)} to accept ${kind} cookies.${rest}`;
 }
 
-function toolDoes(tool: "clarity" | "meta" | "ads"): string {
+function toolDoes(tool: "clarity" | "meta" | "ads" | "linkedin" | "tiktok"): string {
 	return tool === "clarity" ? "records visits" : "is used for advertising";
 }
 
@@ -142,7 +146,9 @@ function allWarnings(config: AnalyticsConfig): Array<Warning & { area: "tracking
 				"Visitors must be able to read what they are agreeing to. Add your privacy policy page on the Banner tab.",
 		});
 	}
-	const watching = (["clarity", "meta", "ads"] as const).filter((tool) => tools[tool]);
+	const watching = (["clarity", "meta", "ads", "linkedin", "tiktok"] as const).filter(
+		(tool) => tools[tool],
+	);
 	if (watching.length && (banner.audience === "europe" || banner.audience === "europe-india")) {
 		list.push({
 			title: "Consider asking every visitor",
@@ -195,6 +201,14 @@ export function toolLink(config: AnalyticsConfig, tool: ToolId): string {
 			return config.hubspotEu ? "https://app-eu1.hubspot.com/" : "https://app.hubspot.com/";
 		case "cloudflare":
 			return "https://dash.cloudflare.com/";
+		case "plausible":
+			return `https://plausible.io/${encodeURIComponent(config.tools.plausible)}`;
+		case "umami":
+			return "https://cloud.umami.is/";
+		case "linkedin":
+			return "https://www.linkedin.com/campaignmanager/";
+		case "tiktok":
+			return "https://ads.tiktok.com/";
 	}
 }
 
@@ -206,6 +220,10 @@ const TOOL_SHORT: Record<ToolId, string> = {
 	clarity: "Open Clarity",
 	hubspot: "Open HubSpot",
 	cloudflare: "Open Cloudflare",
+	plausible: "Open Plausible",
+	umami: "Open Umami",
+	linkedin: "Open Campaign Manager",
+	tiktok: "Open TikTok Ads Manager",
 };
 
 const external = (label: string, url: string) => ({
@@ -531,7 +549,7 @@ function toolsBlocks(state: PageState): Block[] {
 		},
 		{
 			type: "context",
-			text: "Cloudflare Web Analytics sets no cookies, so it starts without asking unless you tell it to wait. Enquiries are clicks on phone and email links and forms that were sent, counted as a lead in Google Analytics and Meta; what people typed is never sent.",
+			text: "Cloudflare Web Analytics, Plausible and Umami set no cookies, so they start without asking (Cloudflare can be told to wait), and with only those no banner is needed. Enquiries are clicks on phone and email links and forms that were sent, counted as a lead in Google Analytics and Meta; what people typed is never sent.",
 		},
 		{
 			type: "form",

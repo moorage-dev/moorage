@@ -36,6 +36,9 @@ interface Globals {
 	fbq?: Queue;
 	_fbq?: Queue;
 	_hsp?: unknown[];
+	_linkedin_data_partner_ids?: string[];
+	TiktokAnalyticsObject?: string;
+	ttq?: unknown[] & Record<string, unknown>;
 	disableHubSpotCookieBanner?: boolean;
 	requestIdleCallback?: (run: () => void) => void;
 }
@@ -237,6 +240,27 @@ export function boot(c: ClientConfig): void {
 				"data-cf-beacon": JSON.stringify({ token: c.cf }),
 			});
 		}
+		// Cookie-free visitor counts: they start whatever the answer.
+		if (c.pl && once("pl")) load("https://plausible.io/js/script.js", { "data-domain": c.pl });
+		if (c.um && once("um")) load("https://cloud.umami.is/script.js", { "data-website-id": c.um });
+		if (c.li && m && once("li")) {
+			(w._linkedin_data_partner_ids = w._linkedin_data_partner_ids || []).push(c.li);
+			load("https://snap.licdn.com/li.lms-analytics/insight.min.js");
+		}
+		if (c.tt && m && once("tt")) {
+			// What TikTok's own base code sets up before its script arrives: a queue, and this pixel.
+			const src = "https://analytics.tiktok.com/i18n/pixel/events.js";
+			const ttq = (w.ttq = [] as unknown as unknown[] & Record<string, unknown>);
+			const one = (value: unknown) => ({ [c.tt!]: value });
+			const queue = [] as unknown as unknown[] & { _u?: string };
+			queue._u = src;
+			ttq._i = one(queue);
+			ttq._t = one(Date.now());
+			ttq._o = one({});
+			w.TiktokAnalyticsObject = "ttq";
+			ttq.push(["page"]);
+			load(src + "?sdkid=" + c.tt + "&lib=ttq");
+		}
 	};
 
 	/** An enquiry happened. Only its kind is sent, never a number, an address or a form value. */
@@ -293,7 +317,7 @@ export function boot(c: ClientConfig): void {
 			const name = pair.split("=")[0]!;
 			if (
 				(!a && /^_(ga|gid|gat|cl[cs]k)/.test(name)) ||
-				(!m && /^(_gcl|_fb[pc]|hubspotutk|__hs)/.test(name))
+				(!m && /^(_gcl|_fb[pc]|hubspotutk|__hs|li_|_tt|ttcsid)/.test(name))
 			) {
 				const gone = name + "=;path=/;max-age=0";
 				const host = here.hostname.split(".");

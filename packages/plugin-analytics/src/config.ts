@@ -14,6 +14,10 @@ export const TOOL_IDS: readonly ToolId[] = [
 	"clarity",
 	"hubspot",
 	"cloudflare",
+	"plausible",
+	"umami",
+	"linkedin",
+	"tiktok",
 ];
 
 export type Audience = "europe" | "europe-india" | "everyone" | "none";
@@ -92,7 +96,19 @@ export function defaultMessage(config: AnalyticsConfig): string {
 export const NO_COLORS = { background: "", text: "", accent: "" } as const;
 
 export const DEFAULT_CONFIG: AnalyticsConfig = {
-	tools: { ga4: "", gtm: "", ads: "", meta: "", clarity: "", hubspot: "", cloudflare: "" },
+	tools: {
+		ga4: "",
+		gtm: "",
+		ads: "",
+		meta: "",
+		clarity: "",
+		hubspot: "",
+		cloudflare: "",
+		plausible: "",
+		umami: "",
+		linkedin: "",
+		tiktok: "",
+	},
 	hubspotEu: false,
 	cloudflareWait: false,
 	enquiries: true,
@@ -351,7 +367,13 @@ export function toolCategories(config: AnalyticsConfig, tool: ToolId): Category[
 		case "ads":
 		case "meta":
 		case "hubspot":
+		case "linkedin":
+		case "tiktok":
 			return ["marketing"];
+		// Cookie-free visitor counts: nothing is stored on the visitor's device.
+		case "plausible":
+		case "umami":
+			return ["none"];
 		case "gtm":
 			return ["analytics", "marketing"];
 		case "cloudflare":

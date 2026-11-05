@@ -83,6 +83,31 @@ describe("what a page loads", () => {
 		).toEqual(["HubSpot (87654321) is pasted into your pages"]);
 	});
 
+	it("knows the four tools added in 0.4: pasted, or added twice", () => {
+		const linkedin = `<script>_linkedin_partner_id = "7654321";</script><script src="https://snap.licdn.com/li.lms-analytics/insight.min.js"></script>`;
+		expect(titles(page(linkedin))).toEqual([
+			"LinkedIn Insight Tag (7654321) is pasted into your pages",
+		]);
+		expect(titles(page(linkedin), { tools: { linkedin: "7654321" } })).toEqual([
+			"LinkedIn Insight Tag is added twice",
+		]);
+		const tiktok = `<script>!function(w,d,t){w.TiktokAnalyticsObject=t;}(window,document,'ttq');ttq.load('CABC123DEF456GHI789J');</script><script src="https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=CABC123DEF456GHI789J&lib=ttq"></script>`;
+		expect(titles(page(tiktok))).toEqual([
+			"TikTok Pixel (CABC123DEF456GHI789J) is pasted into your pages",
+		]);
+		// Cookie-free counting may load without asking: only a second copy is worth a word.
+		const plausible = `<script defer data-domain="bakery.de" src="https://plausible.io/js/script.js"></script>`;
+		expect(titles(page(plausible))).toEqual([]);
+		expect(titles(page(plausible), { tools: { plausible: "bakery.de" } })).toEqual([
+			"Plausible is added twice",
+		]);
+		const umami = `<script defer src="https://cloud.umami.is/script.js" data-website-id="94db1cb1-74f4-4a40-ad6c-962362670409"></script>`;
+		expect(titles(page(umami))).toEqual([]);
+		expect(
+			titles(page(umami), { tools: { umami: "94db1cb1-74f4-4a40-ad6c-962362670409" } }),
+		).toEqual(["Umami is added twice"]);
+	});
+
 	it("names old Universal Analytics, other trackers and Google ads, each with its own advice", () => {
 		const found = scanPage(
 			page(

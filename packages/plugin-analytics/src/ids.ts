@@ -12,7 +12,18 @@
  * the patterns are strict: letters, digits and a dash, nothing else.
  */
 
-export type ToolId = "ga4" | "gtm" | "ads" | "meta" | "clarity" | "hubspot" | "cloudflare";
+export type ToolId =
+	| "ga4"
+	| "gtm"
+	| "ads"
+	| "meta"
+	| "clarity"
+	| "hubspot"
+	| "cloudflare"
+	| "plausible"
+	| "umami"
+	| "linkedin"
+	| "tiktok";
 
 export const TOOL_NAMES: Record<ToolId, string> = {
 	ga4: "Google Analytics",
@@ -22,6 +33,10 @@ export const TOOL_NAMES: Record<ToolId, string> = {
 	clarity: "Microsoft Clarity",
 	hubspot: "HubSpot",
 	cloudflare: "Cloudflare Web Analytics",
+	plausible: "Plausible",
+	umami: "Umami",
+	linkedin: "LinkedIn Insight Tag",
+	tiktok: "TikTok Pixel",
 };
 
 /** What a correct ID looks like, shown in the field and in messages. */
@@ -33,6 +48,10 @@ export const TOOL_EXAMPLES: Record<ToolId, string> = {
 	clarity: "ab12cd34ef",
 	hubspot: "12345678",
 	cloudflare: "0123456789abcdef0123456789abcdef",
+	plausible: "example.com",
+	umami: "94db1cb1-74f4-4a40-ad6c-962362670409",
+	linkedin: "1234567",
+	tiktok: "CABC123DEF456GHI789J",
 };
 
 const VALID: Record<ToolId, RegExp> = {
@@ -43,6 +62,11 @@ const VALID: Record<ToolId, RegExp> = {
 	clarity: /^[a-z0-9]{8,14}$/,
 	hubspot: /^[0-9]{5,12}$/,
 	cloudflare: /^[a-f0-9]{32}$/,
+	// A domain as Plausible lists it: labels of letters, digits and dashes, a dot between them.
+	plausible: /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
+	umami: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+	linkedin: /^[0-9]{4,10}$/,
+	tiktok: /^[A-Z0-9]{16,24}$/,
 };
 
 /** Where the ID sits inside the snippet each tool asks people to copy. */
@@ -57,9 +81,15 @@ const IN_SNIPPET: Record<ToolId, RegExp[]> = {
 	],
 	hubspot: [/hs-scripts\.com\/([0-9]{5,12})\.js/i],
 	cloudflare: [/["']?token["']?\s*:\s*["']([a-f0-9]{32})["']/i],
+	plausible: [/data-domain\s*=\s*["']([^"',\s]+)["']/i, /^https?:\/\/([^/?#\s]+)/i],
+	umami: [/data-website-id\s*=\s*["']([0-9a-f-]{36})["']/i],
+	linkedin: [/_linkedin_partner_id\s*=\s*["']?([0-9]{4,10})\b/, /[?&]pid=([0-9]{4,10})\b/],
+	tiktok: [/ttq\.load\(\s*["']([A-Z0-9]{16,24})["']/i, /[?&]sdkid=([A-Z0-9]{16,24})\b/i],
 };
 
-const UPPERCASE: ReadonlySet<ToolId> = new Set(["ga4", "gtm", "ads"]);
+const UPPERCASE: ReadonlySet<ToolId> = new Set(["ga4", "gtm", "ads", "tiktok"]);
+/** The Google tools: an ID or snippet for one of them in another's box is named as such. */
+const GOOGLE: ReadonlySet<ToolId> = new Set(["ga4", "gtm", "ads"]);
 
 export type IdResult = { ok: true; value: string } | { ok: false; message: string };
 
@@ -113,6 +143,14 @@ function wrongShape(tool: ToolId, text: string): string {
 			return `A HubSpot Hub ID is a number. ${example}`;
 		case "cloudflare":
 			return `A Cloudflare Web Analytics token is 32 letters and numbers. ${example}`;
+		case "plausible":
+			return `Type your site's domain as it is in Plausible. ${example}`;
+		case "umami":
+			return `An Umami website ID is 36 characters, letters and numbers in five groups joined by dashes. ${example}`;
+		case "linkedin":
+			return `A LinkedIn partner ID is a number, shown in Campaign Manager under Insight Tag. ${example}`;
+		case "tiktok":
+			return `A TikTok pixel ID is about 20 capital letters and numbers. ${example}`;
 	}
 }
 
@@ -149,7 +187,7 @@ export function checkId(tool: ToolId, raw: unknown): IdResult {
 	}
 	// A snippet for a different Google product is the usual cause.
 	for (const other of ["gtm", "ga4", "ads"] as const) {
-		if (other === tool || !UPPERCASE.has(tool)) continue;
+		if (other === tool || !GOOGLE.has(tool)) continue;
 		if (IN_SNIPPET[other][0]?.test(text)) {
 			return fail(
 				`That code is for ${TOOL_NAMES[other]}. Paste it in the ${TOOL_NAMES[other]} box instead.`,

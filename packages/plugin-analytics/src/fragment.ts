@@ -75,6 +75,10 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 	if (tools.hubspot && config.hubspotEu) out.hsEu = 1;
 	if (tools.cloudflare) out.cf = tools.cloudflare;
 	if (tools.cloudflare && config.cloudflareWait) out.cfWait = 1;
+	if (tools.plausible) out.pl = tools.plausible;
+	if (tools.umami) out.um = tools.umami;
+	if (tools.linkedin) out.li = tools.linkedin;
+	if (tools.tiktok) out.tt = tools.tiktok;
 	if (tools.gtm && config.gtmLoading === "immediate") out.gtmNow = 1;
 	if (config.enquiries) out.ev = 1;
 	if (asks) out.rec = 1;

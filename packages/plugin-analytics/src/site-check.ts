@@ -151,7 +151,33 @@ const TOOL_RULES: ToolRule[] = [
 		present: /static\.cloudflareinsights\.com\/beacon(?:\.min)?\.js/i,
 		ids: [/["']?token["']?\s*:\s*["']([a-f0-9]{32})["']/gi],
 	},
+	{
+		tool: "plausible",
+		present: /plausible\.io\/js\//i,
+		ids: [/data-domain\s*=\s*["']([a-z0-9.-]+)["']/gi],
+	},
+	{
+		tool: "umami",
+		present: /umami\.is\/script\.js|data-website-id/i,
+		ids: [/data-website-id\s*=\s*["']([0-9a-f-]{36})["']/gi],
+	},
+	{
+		tool: "linkedin",
+		present: /snap\.licdn\.com|_linkedin_partner_id/i,
+		ids: [/_linkedin_partner_id\s*=\s*["']?(\d{4,10})\b/g],
+	},
+	{
+		tool: "tiktok",
+		present: /analytics\.tiktok\.com|ttq\.load\(/i,
+		ids: [
+			/ttq\.load\(\s*["']([A-Z0-9]{16,24})["']/gi,
+			/analytics\.tiktok\.com\/i18n\/pixel\/events\.js\?sdkid=([A-Z0-9]{16,24})/gi,
+		],
+	},
 ];
+
+/** Tools that set no cookies: pasted elsewhere they may load without asking, and only a second copy matters. */
+const COOKIE_FREE: ReadonlySet<ToolId> = new Set(["cloudflare", "plausible", "umami"]);
 
 interface OtherRule {
 	name: string;
@@ -173,8 +199,6 @@ const OTHER_TRACKERS: OtherRule[] = [
 			"Google switched it off in 2023, so it counts nothing, but it still loads Google's code before anyone is asked. Remove it.",
 	},
 	{ name: "Hotjar", present: /static\.hotjar\.com|hotjar\.com\/c\/hotjar-/i },
-	{ name: "TikTok Pixel", present: /analytics\.tiktok\.com/i },
-	{ name: "LinkedIn Insight Tag", present: /snap\.licdn\.com/i },
 	{ name: "Pinterest Tag", present: /s\.pinimg\.com\/ct\//i },
 	{ name: "X (Twitter) Pixel", present: /static\.ads-twitter\.com/i },
 	{ name: "Microsoft Advertising (UET)", present: /bat\.bing\.com\/bat\.js/i },
@@ -282,15 +306,16 @@ const EMBED_RULES: EmbedRule[] = [
 
 // ── One page ────────────────────────────────────────────────
 
+/** Tools whose IDs are written in lower case (the others in capitals). */
+const LOWER_IDS: ReadonlySet<ToolId> = new Set(["clarity", "cloudflare", "plausible", "umami"]);
+
 function idsOf(code: string, rule: ToolRule): string[] {
 	const found = new Set<string>();
 	for (const pattern of rule.ids) {
 		for (const match of code.matchAll(pattern)) {
 			const id = match[1];
 			if (!id) continue;
-			found.add(
-				rule.tool === "clarity" || rule.tool === "cloudflare" ? id.toLowerCase() : id.toUpperCase(),
-			);
+			found.add(LOWER_IDS.has(rule.tool) ? id.toLowerCase() : id.toUpperCase());
 		}
 	}
 	return [...found];
@@ -310,7 +335,7 @@ export function scanPage(html: string, config: AnalyticsConfig, pluginId: string
 		const mine = config.tools[rule.tool];
 		const ids = idsOf(code, rule);
 		const same =
-			mine !== "" && (ids.length === 0 ? rule.tool !== "cloudflare" : ids.includes(mine));
+			mine !== "" && (ids.length === 0 ? !COOKIE_FREE.has(rule.tool) : ids.includes(mine));
 		if (same) {
 			twice.push({
 				kind: "twice",
@@ -320,17 +345,17 @@ export function scanPage(html: string, config: AnalyticsConfig, pluginId: string
 		}
 		const others = ids.filter((id) => id !== mine);
 		if (others.length || (!same && ids.length === 0)) {
-			if (rule.tool === "cloudflare") {
-				// Cookie-free counting is allowed without asking; only a second copy is worth a word.
-				if (!mine) continue;
-			}
+			// Cookie-free counting is allowed without asking; only a second copy is worth a word.
+			if (COOKIE_FREE.has(rule.tool) && !mine) continue;
 			pasted.push({
 				kind: "pasted",
 				title: `${name}${others.length ? ` (${others.join(", ")})` : ""} is pasted into your pages`,
 				advice:
 					rule.tool === "cloudflare"
 						? "Cloudflare Web Analytics is also added outside this plugin, perhaps by Cloudflare itself (its automatic setup). It sets no cookies, but visits may be counted twice. Keep one: turn off the automatic setup in Cloudflare, or empty the box on the Tools tab."
-						: `It loads without waiting for the cookie banner. Remove the pasted code${mine ? "" : `, and if you still need ${name}, paste its ID on the Tools tab instead`}.`,
+						: COOKIE_FREE.has(rule.tool)
+							? `${name} is also added outside this plugin. It sets no cookies, but visits may be counted twice. Keep one: remove the pasted code, or empty the box on the Tools tab.`
+							: `It loads without waiting for the cookie banner. Remove the pasted code${mine ? "" : `, and if you still need ${name}, paste its ID on the Tools tab instead`}.`,
 			});
 		}
 	}

@@ -23,6 +23,11 @@ type Win = typeof window & {
 	_fbq?: unknown;
 	clarity?: unknown;
 	_hsp?: unknown;
+	ttq?: unknown;
+	TiktokAnalyticsObject?: unknown;
+	_linkedin_partner_id?: unknown;
+	_linkedin_data_partner_ids?: unknown;
+	cookieConsent?: unknown;
 	happyDOM: { setURL(url: string): void };
 };
 const win = window as Win;
@@ -82,7 +87,19 @@ beforeEach(() => {
 		document.cookie = `${pair.split("=")[0]}=;path=/;max-age=0`;
 	}
 	localStorage.clear();
-	for (const name of ["dataLayer", "gtag", "fbq", "_fbq", "clarity", "_hsp"] as const) {
+	for (const name of [
+		"dataLayer",
+		"gtag",
+		"fbq",
+		"_fbq",
+		"clarity",
+		"_hsp",
+		"ttq",
+		"TiktokAnalyticsObject",
+		"_linkedin_partner_id",
+		"_linkedin_data_partner_ids",
+		"cookieConsent",
+	] as const) {
 		delete win[name];
 	}
 	Object.defineProperty(navigator, "sendBeacon", { value: vi.fn(() => true), configurable: true });
@@ -497,6 +514,86 @@ describe("links to #cookie-settings", () => {
 		expect(document.querySelector("#cookie-consent")).toBeNull();
 		expect(click(link("#m"))).toBe(true);
 		expect(window.location.href).toBe("https://acme.test/pricing");
+	});
+});
+
+describe("the four tools added in 0.4", () => {
+	const UUID = "94db1cb1-74f4-4a40-ad6c-962362670409";
+	const four = {
+		plausible: "bakery.de",
+		umami: UUID,
+		linkedin: "1234567",
+		tiktok: "CABC123DEF456GHI789J",
+	};
+	const scripts = () =>
+		[...document.head.querySelectorAll("script")].map((script) => ({
+			src: script.src,
+			data: Object.fromEntries(
+				[...script.attributes]
+					.filter((attribute) => attribute.name.startsWith("data-"))
+					.map((attribute) => [attribute.name, attribute.value]),
+			),
+		}));
+
+	it("Plausible and Umami count visits without cookies, so they start before any answer", async () => {
+		boot(settings({ tools: four }));
+		await ready();
+		expect(bannerShown()).toBe(true);
+		expect(scripts()).toEqual([
+			{ src: "https://plausible.io/js/script.js", data: { "data-domain": "bakery.de" } },
+			{ src: "https://cloud.umami.is/script.js", data: { "data-website-id": UUID } },
+		]);
+	});
+
+	it("alone they need no banner at all", async () => {
+		boot(settings({ tools: { plausible: "bakery.de", umami: UUID } }));
+		await ready();
+		expect(document.querySelector("#cookie-consent")).toBeNull();
+		expect(requested()).toHaveLength(2);
+	});
+
+	it("LinkedIn and TikTok wait for Marketing", async () => {
+		boot(settings({ tools: four }));
+		await ready();
+		press("c");
+		const dialog = shadow().querySelector("dialog")!;
+		expect(dialog.textContent).toContain("Used by: LinkedIn Insight Tag, TikTok Pixel.");
+		shadow().querySelector<HTMLInputElement>("[name=a]")?.click();
+		press("s", dialog);
+		expect(requested()).toHaveLength(2);
+		document.head.innerHTML = "";
+		boot(settings({ tools: four }));
+		await ready();
+		press("a");
+		expect(requested()).toEqual([
+			"https://plausible.io/js/script.js",
+			"https://cloud.umami.is/script.js",
+			"https://snap.licdn.com/li.lms-analytics/insight.min.js",
+			"https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=CABC123DEF456GHI789J&lib=ttq",
+		]);
+		const w = window as unknown as {
+			_linkedin_data_partner_ids?: string[];
+			TiktokAnalyticsObject?: string;
+			ttq?: unknown[] & { _i?: Record<string, unknown> };
+		};
+		expect(w._linkedin_data_partner_ids).toEqual(["1234567"]);
+		expect(w.TiktokAnalyticsObject).toBe("ttq");
+		expect(Object.keys(w.ttq?._i ?? {})).toEqual(["CABC123DEF456GHI789J"]);
+		expect(w.ttq?.[0]).toEqual(["page"]);
+	});
+
+	it("taking Marketing back deletes LinkedIn's and TikTok's cookies", async () => {
+		vi.spyOn(window.location, "reload").mockImplementation(() => {});
+		boot(settings({ tools: four }));
+		await ready();
+		press("a");
+		document.cookie = "li_fat_id=x;path=/";
+		document.cookie = "_ttp=x;path=/";
+		document.cookie = "theme=dark;path=/";
+		press("r", shadow().querySelector("dialog")!);
+		expect(document.cookie).not.toMatch(/li_fat_id=[^;]/);
+		expect(document.cookie).not.toMatch(/_ttp=[^;]/);
+		expect(document.cookie).toContain("theme=dark");
 	});
 });
 
