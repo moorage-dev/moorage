@@ -13,7 +13,7 @@ import {
 	type AnalyticsConfig,
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
-import { pageFragments } from "./fragment.js";
+import { pageFragments, siteHostOf } from "./fragment.js";
 import {
 	consentCsv,
 	consentSummary,
@@ -128,12 +128,17 @@ export function createPlugin() {
 				const config = await memoSettings(ctx, () => readConfig(ctx), {
 					fresh: isOwnerView(event.page.url, request),
 				});
-				return pageFragments(config, PLUGIN_ID, {
-					path: event.page.path,
-					url: event.page.url,
-					editMode: request?.editMode === true,
-					preview: request?.preview !== undefined,
-				});
+				return pageFragments(
+					config,
+					PLUGIN_ID,
+					{
+						path: event.page.path,
+						url: event.page.url,
+						editMode: request?.editMode === true,
+						preview: request?.preview !== undefined,
+					},
+					siteHostOf(ctx.site?.url),
+				);
 			},
 			"plugin:activate": async (_event, ctx) => {
 				await ensurePruneScheduled(ctx);
@@ -171,6 +176,7 @@ export function createPlugin() {
 						answers,
 						now,
 						origin,
+						siteHost: siteHostOf(ctx.site?.url),
 						exportUrl: exportQuery
 							? `${origin}/_emdash/api/plugins/${PLUGIN_ID}/export?${exportQuery}`
 							: undefined,

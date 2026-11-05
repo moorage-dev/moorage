@@ -313,6 +313,29 @@ describe("who is asked", () => {
 		expect(requested()).toEqual([]);
 	});
 
+	it("on another address than the site's (staging, workers.dev) shows the banner but loads and records nothing", async () => {
+		win.happyDOM.setURL("https://bakery-staging.example.workers.dev/");
+		boot({ ...settings(), h: "bakery.test" });
+		await ready();
+		expect(bannerShown()).toBe(true);
+		press("a");
+		expect(requested()).toEqual([]);
+		expect(navigator.sendBeacon).not.toHaveBeenCalled();
+	});
+
+	it("on the site's own address, with or without www, loads as usual", async () => {
+		for (const address of ["https://bakery.test/", "https://www.bakery.test/"]) {
+			document.head.innerHTML = "";
+			document.body.innerHTML = "";
+			document.cookie = `${COOKIE}=;path=/;max-age=0`;
+			win.happyDOM.setURL(address);
+			boot({ ...settings(), h: "bakery.test" });
+			await ready();
+			press("a");
+			expect(requested(), address).toHaveLength(3);
+		}
+	});
+
 	it("builds no banner when another consent tool is in charge", async () => {
 		boot(settings({ banner: { audience: "none" } }));
 		await ready();

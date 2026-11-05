@@ -45,7 +45,11 @@ const TEXT = {
 } as const;
 
 /** What the browser needs to know, and nothing else from the settings. */
-export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientConfig {
+export function clientConfig(
+	config: AnalyticsConfig,
+	pluginId: string,
+	siteHost?: string,
+): ClientConfig {
 	const { tools, banner } = config;
 	// Nothing waits for an answer (no tools, or only cookie-free visitor counts): no banner at all.
 	const asks = needsConsent(config) && banner.audience !== "none";
@@ -66,6 +70,7 @@ export function clientConfig(config: AnalyticsConfig, pluginId: string): ClientC
 		mk: vendorNames(config, "marketing"),
 		t: { ...TEXT, title: banner.title, text: banner.message || defaultMessage(config) },
 	};
+	if (siteHost) out.h = siteHost;
 	if (tools.ga4) out.ga = tools.ga4;
 	if (tools.gtm) out.gtm = tools.gtm;
 	if (tools.ads) out.aw = tools.ads;
@@ -158,6 +163,21 @@ export function isUntracked(config: AnalyticsConfig, page: PageFacts): boolean {
 }
 
 /**
+ * The host name tools may load on: the site's address as set in EmDash, in lower
+ * case and without "www.", so both the bare domain and www count. Undefined when
+ * the address is not set, and then tools load wherever the site is opened, as before.
+ */
+export function siteHostOf(siteUrl: string | undefined): string | undefined {
+	try {
+		const url = new URL(siteUrl ?? "");
+		if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+		return url.hostname.toLowerCase().replace(/^www\./, "") || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
  * Everything the plugin adds to a public page: one inline script in the head,
  * or nothing. Pure: the same settings and page always give the same answer.
  */
@@ -165,12 +185,13 @@ export function pageFragments(
 	config: AnalyticsConfig,
 	pluginId: string,
 	page: PageFacts,
+	siteHost?: string,
 ): PageFragmentContribution | null {
 	if (enabledTools(config).length === 0 || isUntracked(config, page)) return null;
 	return {
 		kind: "inline-script",
 		placement: "head",
 		key: `${pluginId}:bootstrap`,
-		code: clientScriptFor(clientConfig(config, pluginId)),
+		code: clientScriptFor(clientConfig(config, pluginId, siteHost)),
 	};
 }

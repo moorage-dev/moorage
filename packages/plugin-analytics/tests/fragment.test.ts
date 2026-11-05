@@ -101,6 +101,21 @@ describe("the page hook", () => {
 		expect(renderFragments([fragment], "body:end")).toBe("");
 	});
 
+	it("tells the browser the site's own address, so tools load nowhere else", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const at = (url: string | undefined) => {
+			(fake.ctx as { site?: { url: string } }).site = url === undefined ? undefined : { url };
+			return hook()(event("/"), fake.ctx).then(
+				(result) => configIn((result as { code: string }).code).h,
+			);
+		};
+		expect(await at("https://www.Bakery.test")).toBe("bakery.test");
+		expect(await at("http://localhost:4321")).toBe("localhost");
+		// Not set: nothing to compare with, so tools load anywhere, as before.
+		expect(await at("")).toBeUndefined();
+		expect(await at(undefined)).toBeUndefined();
+	});
+
 	it("gives the same script every time it runs for a page", async () => {
 		const fake = fakeContext({ [CONFIG_KEY]: { tools: ALL_TOOLS } });
 		const runs = await Promise.all([1, 2, 3].map(() => hook()(event("/"), fake.ctx)));

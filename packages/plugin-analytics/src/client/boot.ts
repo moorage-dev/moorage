@@ -155,8 +155,10 @@ export function boot(c: ClientConfig): void {
 	let saved = readChoice(d.cookie);
 	let country: string | undefined;
 	let state: Decision = { a: false, m: false, ask: false };
-	// A browser that has been signed in to the admin is staff, not a visitor.
-	let staff = !!local("emdash-editor");
+	// A browser that has been signed in to the admin is staff, not a visitor. A copy of the site on
+	// another address (staging, workers.dev, a laptop) is treated the same: banner yes, tools no.
+	const away = !!c.h && here.hostname.replace(/^www\./, "") != c.h;
+	let staff = !!local("emdash-editor") || away;
 
 	const done: Record<string, 1> = {};
 	const once = (key: string): boolean => !done[key] && !!(done[key] = 1);
@@ -352,7 +354,7 @@ export function boot(c: ClientConfig): void {
 			c.days * 86400 +
 			(here.protocol === "https:" ? ";secure" : "");
 		// A beacon is sent in the background and survives the reload below.
-		if (c.rec && w.navigator.sendBeacon) {
+		if (c.rec && !away && w.navigator.sendBeacon) {
 			w.navigator.sendBeacon(
 				c.api + "record",
 				new Blob([JSON.stringify({ id: saved.id, a, m, v: c.v, country: country || null })], {

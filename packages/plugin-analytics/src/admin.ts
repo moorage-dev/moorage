@@ -67,8 +67,10 @@ export interface PageState {
 	answers: ConsentSummary | null;
 	/** The time the page was made, for "N minutes ago". */
 	now?: number;
-	/** The site's own address (https://example.com), for the preview links. */
+	/** The address the admin is open on (https://example.com), for the preview links. */
 	origin?: string;
+	/** The site's own host name from its Site URL, without "www.": tools load only there. */
+	siteHost?: string;
 	/** The signed address of the consent log download. Admins only. */
 	exportUrl?: string;
 	/** The last "Check what loads", if it ever ran. */
@@ -254,6 +256,15 @@ function trackingBlocks(state: PageState): Block[] {
 	const { config } = state;
 	const on = enabledTools(config);
 	const blocks: Block[] = [{ type: "header", text: "Tracking" }];
+	const here = state.origin ? new URL(state.origin).hostname.replace(/^www\./, "") : undefined;
+	if (on.length && state.siteHost && here && here !== state.siteHost) {
+		blocks.push({
+			type: "banner",
+			variant: "alert",
+			title: `Tools load only on ${state.siteHost}`,
+			description: `That is the Site URL in Settings > General. You are on ${here}: on any other address, such as a staging copy or workers.dev, the banner shows but no tool loads and no answer is recorded. If your site now lives at ${here}, change the Site URL there.`,
+		});
+	}
 	for (const warning of allWarnings(config)) {
 		if (warning.area === "tracking") {
 			blocks.push({
@@ -924,6 +935,7 @@ function clean(state: PageState): PageState {
 		answers: state.answers,
 		now: state.now,
 		origin: state.origin,
+		siteHost: state.siteHost,
 		exportUrl: state.exportUrl,
 		siteCheck: state.siteCheck,
 	};

@@ -13,6 +13,8 @@ export interface ClientConfig {
 	days: number;
 	/** Base address of the plugin's public routes, ending in "/". */
 	api: string;
+	/** The site's own host name, without "www.": tools load only there. Absent when the site's address is not set. */
+	h?: string;
 	ga?: string;
 	gtm?: string;
 	aw?: string;

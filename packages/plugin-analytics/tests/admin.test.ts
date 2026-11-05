@@ -465,6 +465,31 @@ describe('"Ask everyone again"', () => {
 	});
 });
 
+describe("the site's own address", () => {
+	const TITLE = "Tools load only on bakery.test";
+	const at = async (siteUrl: string | undefined, tools: Record<string, string>) => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools } });
+		(fake.ctx as { site?: { url: string } }).site = siteUrl ? { url: siteUrl } : undefined;
+		return JSON.stringify(await load(fake));
+	};
+
+	it("warns when the admin is open on another address than the site's", async () => {
+		const page = await at("https://www.bakery.test", { ga4: "G-AB12CD34EF" });
+		expect(page).toContain(TITLE);
+		expect(page).toContain("You are on acme.test");
+		expect(page).toContain("Settings > General");
+	});
+
+	it("says nothing on the site's own address, with no tools, or with no address set", async () => {
+		expect(await at("https://acme.test", { ga4: "G-AB12CD34EF" })).not.toContain("Tools load only");
+		expect(await at("https://www.acme.test", { ga4: "G-AB12CD34EF" })).not.toContain(
+			"Tools load only",
+		);
+		expect(await at("https://bakery.test", {})).not.toContain(TITLE);
+		expect(await at(undefined, { ga4: "G-AB12CD34EF" })).not.toContain("Tools load only");
+	});
+});
+
 describe("status wording", () => {
 	const config = (raw: unknown) => normalizeConfig(raw);
 
