@@ -138,6 +138,29 @@ export function boot(c: ClientConfig): void {
 	// Consent Mode v2: everything denied until the visitor's answer is known.
 	if (c.who) signal("default", false, false);
 
+	const gpc =
+		(w.navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
+	const day = today(Date.now());
+	let saved = readChoice(d.cookie);
+	let country: string | undefined;
+	let state: Decision = { a: false, m: false, ask: false };
+	let known = 0;
+
+	// Other scripts can read what is allowed, but not change it: window.cookieConsent is
+	// { analytics, marketing } once this visitor's rule is known (undefined before), and
+	// "cookie-consent:change" says so each time it is known or changes, with the same detail.
+	const now = () => Object.freeze({ analytics: state.a, marketing: state.m });
+	Object.defineProperty(w, "cookieConsent", {
+		configurable: true,
+		get: () => (known ? now() : undefined),
+	});
+	const tell = (name: string) => d.dispatchEvent(new CustomEvent(name, { detail: now() }));
+	const change = (next: Decision) => {
+		state = next;
+		known = 1;
+		tell("cookie-consent:change");
+	};
+
 	// Other scripts (popups) can tell whether the banner is still waiting: "pending" until this visitor's
 	// rule is known, "asking" while the banner waits, "settled" once answered or not asked. Only on sites
 	// where the banner can appear; with no attribute there is no banner to wait for.
@@ -145,16 +168,9 @@ export function boot(c: ClientConfig): void {
 	const mark = (phase: "pending" | "asking" | "settled") => {
 		if (html.getAttribute("data-cookie-consent") === phase) return;
 		html.setAttribute("data-cookie-consent", phase);
-		if (phase === "settled") d.dispatchEvent(new Event("cookie-consent:settled"));
+		if (phase === "settled") tell("cookie-consent:settled");
 	};
 	if (c.who) mark("pending");
-
-	const gpc =
-		(w.navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
-	const day = today(Date.now());
-	let saved = readChoice(d.cookie);
-	let country: string | undefined;
-	let state: Decision = { a: false, m: false, ask: false };
 	// A browser that has been signed in to the admin is staff, not a visitor. A copy of the site on
 	// another address (staging, workers.dev, a laptop) is treated the same: banner yes, tools no.
 	const away = !!c.h && here.hostname.replace(/^www\./, "") != c.h;
@@ -331,7 +347,7 @@ export function boot(c: ClientConfig): void {
 
 	const choose = (a: boolean, m: boolean) => {
 		if (preview) {
-			state = { a, m, ask: false };
+			change({ a, m, ask: false });
 			part<HTMLDialogElement>("dialog").close();
 			show();
 			part(".v").textContent = c.t.saved;
@@ -365,7 +381,7 @@ export function boot(c: ClientConfig): void {
 		// Taking consent back: the tools are told, their cookies are deleted, and because a
 		// running tool cannot be stopped the page starts again without them.
 		const restart = (before.a && !a) || (before.m && !m);
-		state = { a, m, ask: false };
+		change({ a, m, ask: false });
 		apply(a, m);
 		if (restart) {
 			wipe(a, m);
@@ -478,9 +494,11 @@ export function boot(c: ClientConfig): void {
 		} catch {
 			// Unknown time zone: the visitor is asked.
 		}
-		state = preview
-			? { a: false, m: false, ask: true }
-			: decide(c, saved, mustAsk(country, zone, c.who === 3), gpc, day);
+		change(
+			preview
+				? { a: false, m: false, ask: true }
+				: decide(c, saved, mustAsk(country, zone, c.who === 3), gpc, day),
+		);
 		if (c.who || preview) {
 			build();
 			show();

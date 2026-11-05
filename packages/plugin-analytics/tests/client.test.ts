@@ -404,6 +404,62 @@ describe("telling other scripts whether the banner waits", () => {
 	});
 });
 
+describe("the consent state other scripts can read", () => {
+	const state = () => (window as unknown as { cookieConsent?: unknown }).cookieConsent;
+
+	it("is unknown until the visitor's rule is known, then says what is allowed", async () => {
+		boot(settings());
+		expect(state()).toBeUndefined();
+		await ready();
+		expect(state()).toEqual({ analytics: false, marketing: false });
+		press("c");
+		shadow().querySelector<HTMLInputElement>("[name=a]")!.click();
+		press("s", shadow().querySelector("dialog")!);
+		expect(state()).toEqual({ analytics: true, marketing: false });
+	});
+
+	it("follows a saved answer, and the rule for visitors who are not asked", async () => {
+		country("US");
+		boot(settings());
+		await ready();
+		expect(state()).toEqual({ analytics: true, marketing: true });
+	});
+
+	it("cannot be changed by other scripts", async () => {
+		boot(settings());
+		await ready();
+		const w = window as unknown as { cookieConsent: { marketing: boolean } };
+		expect(() => {
+			w.cookieConsent.marketing = true;
+		}).toThrow();
+		try {
+			(w as { cookieConsent: unknown }).cookieConsent = { analytics: true, marketing: true };
+		} catch {
+			// Strict mode throws; either way nothing changes.
+		}
+		expect(state()).toEqual({ analytics: false, marketing: false });
+	});
+
+	it("is announced with each change, and once settled, with the answer", async () => {
+		const changes: unknown[] = [];
+		const settled: unknown[] = [];
+		const onChange = (event: Event) => changes.push((event as CustomEvent).detail);
+		const onSettled = (event: Event) => settled.push((event as CustomEvent).detail);
+		document.addEventListener("cookie-consent:change", onChange);
+		document.addEventListener("cookie-consent:settled", onSettled);
+		boot(settings());
+		await ready();
+		press("a");
+		expect(changes).toEqual([
+			{ analytics: false, marketing: false },
+			{ analytics: true, marketing: true },
+		]);
+		expect(settled).toEqual([{ analytics: true, marketing: true }]);
+		document.removeEventListener("cookie-consent:change", onChange);
+		document.removeEventListener("cookie-consent:settled", onSettled);
+	});
+});
+
 describe("links to #cookie-settings", () => {
 	/** A stand-in for the browser's IntersectionObserver, so a test can say when a link is on screen. */
 	class Watcher {
