@@ -1560,6 +1560,24 @@ test.describe("added in 0.4", () => {
 		await expect(page.locator(".cc-held")).toHaveCount(0);
 	});
 
+	test("on a page excluded from tracking there is no banner, and videos and maps still wait", async ({
+		page,
+		context,
+	}) => {
+		await configure({ ga4: IDS.ga4 }, {}, { exclude: "/embeds-test" });
+		const hits = await stubVendors(context);
+		const embeds = await stubEmbeds(context);
+		await inCountry(page, "DE");
+		await page.goto("/embeds-test");
+		await expect(held(page)).toHaveCount(3);
+		await expect(page.getByRole("button", { name: "Load the video" }).first()).toBeVisible();
+		await expect(banner(page)).toHaveCount(0);
+		await settle(page);
+		expect(embeds.some((url) => /youtube|vimeo|google/.test(url))).toBe(false);
+		expect(hits).toEqual([]);
+		await configure({ ga4: IDS.ga4 });
+	});
+
 	test("a visitor who is not asked gets the videos straight away", async ({ page, context }) => {
 		await configure({ ga4: IDS.ga4 });
 		await stubVendors(context);
