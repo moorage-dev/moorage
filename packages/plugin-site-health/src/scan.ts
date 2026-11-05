@@ -15,6 +15,7 @@ import {
 import { runChecklist } from "./checklist.js";
 import { entryPath, linksInData, scanHtml, type Found } from "./extract.js";
 import { groupOf, MAX_SOURCES, NEVER, type LinkRow, type PageRow, type Source } from "./model.js";
+import { homeNoindex } from "./search.js";
 import {
 	applyChange,
 	KEY,
@@ -234,6 +235,7 @@ async function walkStep(ctx: PluginContext, scan: ScanState, now: number): Promi
 					id: entry.id,
 					pass: scan.pass,
 					links: ids.slice(0, 200),
+					at: iso(now),
 				},
 			});
 		}
@@ -482,6 +484,7 @@ async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): P
 	const control = (outcome.headers?.get("cache-control") ?? "").toLowerCase();
 	scan.caching =
 		/no-store|private/.test(control) || outcome.headers?.has("set-cookie") ? "no" : "ok";
+	scan.home = homeNoindex(outcome.headers, outcome.body ?? "") ?? "index";
 	const html = scanHtml(outcome.body ?? "", ctx.site.url);
 	await mergeLive(
 		ctx,
@@ -569,7 +572,7 @@ async function livePathsStep(ctx: PluginContext, scan: ScanState, now: number): 
 			const outcome = await request(ctx, `${origin}${item.data.url}`);
 			return {
 				id: item.id,
-				data: afterOwnPath(item.data, verdict(item.data.url, outcome, "GET"), now),
+				data: afterOwnPath(item.data, verdict(item.data.url, outcome, "GET"), now, outcome.status),
 			};
 		}),
 	);
@@ -665,6 +668,7 @@ async function freezeStep(
 		lookRows: scan.lists?.lookRows ?? [],
 		unknownRows: scan.lists?.unknownRows ?? [],
 		live: scan.live ?? "failed",
+		...(scan.live === "ok" && scan.home ? { home: scan.home } : {}),
 	};
 	scan.status = "done";
 	scan.finishedAt = iso(now);
@@ -712,7 +716,7 @@ export async function passStep(
 			await livePathsStep(ctx, scan, now);
 			break;
 		case "checklist":
-			await runChecklist(ctx, scan, data, now);
+			await runChecklist(ctx, scan, data, counter, now);
 			scan.phase = "sweep";
 			break;
 		case "sweep":
@@ -803,12 +807,11 @@ export async function dueStep(
 	for (const item of results) {
 		if (item.after || !("result" in item) || !item.result) continue;
 		let result = item.result;
+		let code = item.outcome.status;
 		if (result.kind === "retry" && fits(counter, 1 + DUE_WRITES)) {
-			result = verdict(
-				item.before.url,
-				await request(ctx, item.before.url, { method: "GET" }),
-				"GET",
-			);
+			const again = await request(ctx, item.before.url, { method: "GET" });
+			result = verdict(item.before.url, again, "GET");
+			code = again.status;
 		}
 		if (result.kind === "retry") {
 			item.after = { ...item.before, due: iso(now + HOST_GAP), get: true };
@@ -818,7 +821,7 @@ export async function dueStep(
 			const host = hosts[item.before.host] ?? { at: now };
 			hosts[item.before.host] = { ...host, slow: (host.slow ?? 0) + 1 };
 		}
-		item.after = afterExternal(item.before, result, now);
+		item.after = afterExternal(item.before, result, now, code);
 		if (item.result.kind === "retry") item.after.get = true;
 	}
 	// Forget hosts not asked for a day, so the record stays small.
@@ -957,6 +960,7 @@ export async function refreshEntry(
 					id: entry.id,
 					pass: before?.pass ?? data.scan.pass,
 					links: [...items.keys()].slice(0, 200),
+					at: iso(now),
 				})
 			: undefined,
 	]);

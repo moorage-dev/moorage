@@ -2,7 +2,9 @@
 
 import type { PluginContext } from "emdash";
 
-import { request } from "./check.js";
+import { fits, type Counter } from "./budget.js";
+import { isTooBig, request } from "./check.js";
+import { isSitemap, readRobots, type Robots } from "./search.js";
 import {
 	KEY,
 	type CheckStatus,
@@ -18,11 +20,89 @@ export const MISSING_PATH = "/site-health-check-a-page-that-does-not-exist";
 
 type Row = { status: CheckStatus; text: string };
 
-/** The Checklist rows that need the site to be opened. Once a week, up to five requests. */
+/** Enough of a list of pages to see what it is; a big one is never read whole. */
+const SITEMAP_PEEK = 2048;
+/** The writes that close the Checklist's run: its rows, then the check's state. */
+const CHECKLIST_WRITES = 2;
+
+const ok = (status: number | undefined) => status !== undefined && status >= 200 && status < 300;
+
+/**
+ * Does the list of pages answer? Only its start is asked for (a partial or a
+ * whole answer both do). A gzipped list is never read: being there is enough.
+ * One too big for the sandbox to pass on is asked about with a HEAD, or, with
+ * no call to spare, taken as there: it answered, with more than 8 MiB.
+ */
+export async function sitemapAnswers(
+	ctx: PluginContext,
+	url: string,
+	counter: Counter,
+): Promise<boolean> {
+	if (/\.gz$/i.test(parseUrl(url)?.pathname ?? url)) {
+		return ok((await request(ctx, url, { method: "HEAD" })).status);
+	}
+	const sitemap = await request(ctx, url, { peek: SITEMAP_PEEK });
+	if (isTooBig(sitemap)) {
+		if (!fits(counter, 1 + CHECKLIST_WRITES)) return true;
+		return ok((await request(ctx, url, { method: "HEAD" })).status);
+	}
+	if (!ok(sitemap.status)) return false;
+	if (/gzip/i.test(sitemap.headers?.get("content-type") ?? "")) return true;
+	return isSitemap(sitemap.body);
+}
+
+/** The "Search engines" row: who robots.txt keeps out, and whether the list of pages answers. */
+export function searchRow(rules: Robots, named: boolean, answers: boolean): Row {
+	// Kept out of everything but a few addresses (`Allow: /blog`) is not "stay away".
+	const most = "out of most of its pages, the home page included";
+	if (rules.google && rules.all) {
+		return {
+			status: "attention",
+			text:
+				rules.googleSome || rules.allSome
+					? `Your site keeps search engines ${most}; only some addresses are allowed.`
+					: "Your site tells search engines to stay away, so it will not appear in search results.",
+		};
+	}
+	if (rules.google) {
+		return {
+			status: "attention",
+			text: rules.googleSome
+				? `Your site keeps Google ${most}; only some addresses are allowed. Other search engines are allowed in.`
+				: "Your site tells Google to stay away, so it will not appear in Google's results. Other search engines are allowed in.",
+		};
+	}
+	if (rules.all) {
+		return {
+			status: "attention",
+			text: rules.allSome
+				? `Your site lets Google in but keeps most other search engines ${most}.`
+				: "Your site lets Google in but tells most other search engines to stay away.",
+		};
+	}
+	if (answers) {
+		return {
+			status: "working",
+			text: "They are allowed in, and the list of your pages for them answers.",
+		};
+	}
+	return {
+		status: "working",
+		text: named
+			? "They are allowed in. The list of your pages your site points them to could not be read; your web person can look at it."
+			: "They are allowed in. There is no list of your pages for them yet.",
+	};
+}
+
+/**
+ * The Checklist rows that need the site to be opened. Once a week, up to five
+ * requests (six for a list of pages too big to read, when the run has one to spare).
+ */
 export async function runChecklist(
 	ctx: PluginContext,
 	scan: ScanState,
 	data: Loaded,
+	counter: Counter,
 	now: number,
 ): Promise<void> {
 	const last = data.checklist.checkedAt ? Date.parse(data.checklist.checkedAt) : 0;
@@ -54,14 +134,26 @@ export async function runChecklist(
 	} else {
 		const host = site.hostname;
 		const other = host.startsWith("www.") ? host.slice(4) : `www.${host}`;
-		const [insecure, alias, missing, robots, list] = await Promise.all([
+		// Still five requests: the list of pages is asked for once robots.txt has
+		// said where it is (EmDash names its own there).
+		const [insecure, alias, missing, search] = await Promise.all([
 			site.protocol === "https:"
 				? request(ctx, `http://${host}/`, { follow: false })
 				: Promise.resolve(null),
 			request(ctx, `${site.protocol}//${other}/`, { follow: false }),
 			request(ctx, `${origin}${MISSING_PATH}`),
-			request(ctx, `${origin}/robots.txt`, { body: true }),
-			request(ctx, `${origin}/sitemap.xml`, { method: "HEAD" }),
+			(async () => {
+				const robots = await request(ctx, `${origin}/robots.txt`, { body: true });
+				const status = robots.status ?? 0;
+				// No robots.txt (or an error) keeps nobody out.
+				const rules: Robots =
+					status >= 200 && status < 300
+						? readRobots(robots.body ?? "", origin)
+						: { google: false, all: false, googleSome: false, allSome: false, sitemaps: [] };
+				const where = rules.sitemaps[0];
+				const answers = await sitemapAnswers(ctx, where ?? `${origin}/sitemap.xml`, counter);
+				return { rules, named: where !== undefined, answers };
+			})(),
 		]);
 		if (!insecure) {
 			rows.secure = {
@@ -116,22 +208,7 @@ export async function runChecklist(
 			};
 		} else rows.missing = couldNot;
 
-		const blocked =
-			/user-agent:\s*\*\s*(?:\r?\n(?!user-agent)[^\n]*)*?\r?\ndisallow:\s*\/\s*(\r?\n|$)/i.test(
-				robots.status === 200 ? (robots.body ?? "") : "",
-			);
-		const listed = list.status !== undefined && list.status < 300;
-		rows.search = blocked
-			? {
-					status: "attention",
-					text: "Your site tells search engines to stay away, so it will not appear in search results.",
-				}
-			: {
-					status: "working",
-					text: listed
-						? "They are allowed in, and the list of your pages for them answers."
-						: "They are allowed in. There is no list of your pages for them yet.",
-				};
+		rows.search = searchRow(search.rules, search.named, search.answers);
 	}
 	const checklist: ChecklistState = {
 		...(scan.live === "ok" ? { checkedAt: new Date(now).toISOString() } : {}),

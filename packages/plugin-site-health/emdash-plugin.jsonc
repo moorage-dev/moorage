@@ -56,6 +56,8 @@
 	"admin": {
 		"pages": [{ "path": "/health", "label": "Site Health", "icon": "heartbeat", "group": "Tools" }],
 		"widgets": [{ "id": "site-health", "title": "Site health", "size": "half" }],
+		// Beside each entry: what the checks found in its links. Read-only.
+		"editorPanels": [{ "id": "links", "title": "Links on this page", "route": "editor/links" }],
 	},
 	"storage": {
 		// One row per address found: a link, an embedded item, or a page of this site.
@@ -70,7 +72,8 @@
 				["state", "count"],
 			],
 		},
-		// One row per entry (by its address) and per redirect source.
-		"pages": { "indexes": ["status", "pass"] },
+		// One row per entry (by its address) and per redirect source. The entry's
+		// collection and id find its row for the editor panel.
+		"pages": { "indexes": ["status", "pass", ["collection", "id"]] },
 	},
 }

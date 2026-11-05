@@ -26,6 +26,26 @@ function userAgent(siteUrl: string): string {
 	return `EmDash-SiteHealth/0.1 (+${siteUrl || "unknown site"})`;
 }
 
+/** The first `bytes` or so of a body, without reading the rest. */
+async function peek(response: Response, bytes: number): Promise<string> {
+	const reader = response.body?.getReader();
+	if (!reader) return "";
+	const decoder = new TextDecoder();
+	let text = "";
+	let read = 0;
+	try {
+		while (read < bytes) {
+			const { done, value } = await reader.read();
+			if (done || !value) break;
+			read += value.byteLength;
+			text += decoder.decode(value, { stream: true });
+		}
+	} finally {
+		void reader.cancel().catch(() => {});
+	}
+	return text.slice(0, bytes);
+}
+
 /**
  * One request with our own time limit. The sandbox drops `signal`, so the
  * race only stops waiting; the request itself ends with the run.
@@ -33,7 +53,13 @@ function userAgent(siteUrl: string): string {
 export async function request(
 	ctx: PluginContext,
 	url: string,
-	options: { method?: "GET" | "HEAD"; body?: boolean; follow?: boolean } = {},
+	options: {
+		method?: "GET" | "HEAD";
+		body?: boolean;
+		follow?: boolean;
+		/** Read only about this many bytes of the body (the start of a file that may be big). */
+		peek?: number;
+	} = {},
 ): Promise<Outcome> {
 	const http = ctx.http;
 	if (!http) return { error: "no network" };
@@ -43,10 +69,17 @@ export async function request(
 	});
 	const attempt = (async (): Promise<Outcome> => {
 		try {
+			const headers: Record<string, string> = {
+				"User-Agent": userAgent(ctx.site.url),
+				Accept: "text/html,*/*;q=0.5",
+			};
+			// The sandbox's host reads a whole body before handing it over, and
+			// refuses one over 8 MiB: ask the server for the start only.
+			if (options.peek) headers.Range = `bytes=0-${options.peek - 1}`;
 			const response = await http.fetch(url, {
 				method: options.method ?? "GET",
 				redirect: options.follow === false ? "manual" : "follow",
-				headers: { "User-Agent": userAgent(ctx.site.url), Accept: "text/html,*/*;q=0.5" },
+				headers,
 			});
 			const location = response.headers.get("location");
 			const outcome: Outcome = {
@@ -55,7 +88,8 @@ export async function request(
 				...(location ? { location: parseUrl(location, url)?.href ?? location } : {}),
 				...(response.redirected && response.url ? { finalUrl: response.url } : {}),
 			};
-			if (options.body) {
+			if (options.peek) outcome.body = await peek(response, options.peek);
+			else if (options.body) {
 				const text = await response.text();
 				outcome.body = text.length > HTML_LIMIT ? text.slice(0, HTML_LIMIT) : text;
 			}
@@ -69,6 +103,14 @@ export async function request(
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/**
+ * The sandbox's host refused an answer for its size (EmDash plugins/http-wire.ts:
+ * "Plugin HTTP response body exceeds the 8388608 byte limit"): it came, but too big to pass on.
+ */
+export function isTooBig(outcome: Outcome): boolean {
+	return /body exceeds the \d+ byte limit/i.test(outcome.error ?? "");
 }
 
 /** EmDash refuses plugin requests to localhost and private addresses. */
@@ -142,6 +184,12 @@ function becomeBroken(row: LinkRow, reason: Reason, now: number): LinkRow {
 	return next;
 }
 
+/** The row with this request's time and answer number; a request with no answer leaves none. */
+function answered(row: LinkRow, checkedAt: string, code: number | undefined): LinkRow {
+	const { code: _old, ...rest } = row;
+	return { ...rest, checkedAt, ...(code !== undefined ? { code } : {}) };
+}
+
 function clear(row: LinkRow): LinkRow {
 	const {
 		fails: _f,
@@ -161,9 +209,9 @@ function clear(row: LinkRow): LinkRow {
  * turns checkers away is "could not check" and never counted. A single good
  * answer clears it.
  */
-export function afterExternal(row: LinkRow, result: Verdict, now: number): LinkRow {
+export function afterExternal(row: LinkRow, result: Verdict, now: number, code?: number): LinkRow {
 	const checkedAt = new Date(now).toISOString();
-	const base = { ...row, checkedAt };
+	const base = answered(row, checkedAt, code);
 	switch (result.kind) {
 		case "ok":
 			return { ...clear(base), state: "ok", due: later(now, 7 * DAY) };
@@ -231,9 +279,9 @@ export function afterExternal(row: LinkRow, result: Verdict, now: number): LinkR
  * The next state of an address on this site that matched no page, after the
  * site was asked for it. Missing is broken at once; it is this site's own answer.
  */
-export function afterOwnPath(row: LinkRow, result: Verdict, now: number): LinkRow {
+export function afterOwnPath(row: LinkRow, result: Verdict, now: number, code?: number): LinkRow {
 	const checkedAt = new Date(now).toISOString();
-	const base = { ...row, checkedAt, due: "9999" };
+	const base = { ...answered(row, checkedAt, code), due: "9999" };
 	switch (result.kind) {
 		case "ok":
 			return { ...clear(base), state: "ok" };
@@ -255,8 +303,9 @@ export function afterOwnPath(row: LinkRow, result: Verdict, now: number): LinkRo
 }
 
 /** A page of this site that answered with an error: broken on the second error a minute later. */
-export function afterOwnPage(row: LinkRow, outcome: Outcome, now: number): LinkRow {
+export function afterOwnPage(stale: LinkRow, outcome: Outcome, now: number): LinkRow {
 	const checkedAt = new Date(now).toISOString();
+	const row = answered(stale, checkedAt, outcome.status);
 	const status = outcome.status ?? 0;
 	if (status >= 500) {
 		const first = row.firstFailAt ? Date.parse(row.firstFailAt) : NaN;

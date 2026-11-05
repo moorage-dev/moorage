@@ -39,7 +39,7 @@ async function createPage(
 	title: string,
 	links: string[],
 	publish: boolean,
-) {
+): Promise<string> {
 	const created = await page.request.post(`${API}/content/pages`, {
 		headers: HEADERS,
 		data: {
@@ -64,6 +64,7 @@ async function createPage(
 		});
 		expect(published.ok()).toBe(true);
 	}
+	return body.data.item.id;
 }
 
 test("on a site that is not public yet, content links are checked and a dead address is fixed with a picked page", async ({
@@ -71,7 +72,13 @@ test("on a site that is not public yet, content links are checked and a dead add
 }) => {
 	await open(page);
 	await createPage(page, "christmas-orders", "Christmas orders", [], false);
-	await createPage(page, "spring-menu", "Spring menu", ["/christmas-orders", "/menu-2024"], true);
+	const spring = await createPage(
+		page,
+		"spring-menu",
+		"Spring menu",
+		["/christmas-orders", "/menu-2024"],
+		true,
+	);
 	// Start a full check that sees the new pages, then move it along.
 	await page.reload();
 	await waitForResults(page);
@@ -116,6 +123,19 @@ test("on a site that is not public yet, content links are checked and a dead add
 	const response = await page.request.get("/menu-2024", { maxRedirects: 0 });
 	expect(response.status()).toBe(301);
 	expect(response.headers().location).toBe("/pricing");
+
+	// The technical answer is folded away for the web person.
+	await page.getByRole("button", { name: "Details for your web person" }).first().click();
+	await expect(
+		page.getByText("/christmas-orders: not requested, the page is not published."),
+	).toBeVisible();
+
+	// Beside the entry, the Links on this page panel names the same problem, read-only.
+	await page.goto(`/_emdash/admin/content/pages/${spring}`);
+	await page.getByRole("button", { name: "Links on this page", exact: true }).click();
+	await expect(
+		page.getByText("/christmas-orders goes to a page that is not published yet."),
+	).toBeVisible({ timeout: 30_000 });
 });
 
 test("on a phone, every row keeps its status and its Fix menu on screen", async ({ page }) => {
