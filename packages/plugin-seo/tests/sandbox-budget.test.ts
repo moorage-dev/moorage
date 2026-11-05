@@ -541,6 +541,50 @@ describe("SEO admin page", () => {
 		});
 	}
 
+	describe("copying settings to another site", () => {
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: { type: "Organization", name: "Acme Two", sameAs: ["https://x.com/acme"] },
+			collections: { pages: { type: "AboutPage", noindex: true } },
+		});
+
+		it("check_settings reads only what every visit reads, and writes nothing", async () => {
+			const runtime = await start();
+			await configured(runtime);
+			const m = await cold(runtime, "check_settings", () =>
+				runtime.admin.submit(PAGE, "check_settings", { settings: paste }),
+			);
+			expect(m.calls.length).toBe(3);
+			expect(writes(m)).toEqual([]);
+		});
+
+		it("check_settings with a paste that is not settings", async () => {
+			const runtime = await start();
+			await configured(runtime);
+			const m = await cold(runtime, "check_settings refused", () =>
+				runtime.admin.submit(PAGE, "check_settings", { settings: "source,target\n/a,/b" }),
+			);
+			expect(m.calls.length).toBe(3);
+			expect(writes(m)).toEqual([]);
+		});
+
+		for (const [label, setup] of [
+			["configured site", configured],
+			["site updated from an earlier release", migrated],
+		] as const) {
+			it(`apply_settings on a ${label}`, async () => {
+				const runtime = await start();
+				await setup(runtime);
+				const m = await cold(runtime, `apply_settings ${label}`, () =>
+					runtime.admin.act(PAGE, "apply_settings", { value: JSON.parse(paste) }),
+				);
+				expect(m.error).toBeUndefined();
+				expect(m.calls.length).toBe(5);
+			});
+		}
+	});
+
 	it("check_pages restarts the check", async () => {
 		const runtime = await start();
 		for (let index = 0; index < 3; index += 1) await addPage(runtime, `p${index}`, `Page ${index}`);

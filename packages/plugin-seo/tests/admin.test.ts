@@ -599,3 +599,166 @@ describe("Content types", () => {
 		});
 	});
 });
+
+describe("copying settings to another site", () => {
+	const SOURCE = {
+		site: {
+			type: "FoodEstablishment",
+			name: "Acme Bakery",
+			sameAs: ["https://www.instagram.com/acmebakery"],
+			telephone: "+44 20 7946 0000",
+			address: { streetAddress: "1 Main St", addressLocality: "Springfield" },
+			openingHours: [{ days: ["Monday"], opens: "08:00", closes: "17:00" }],
+			areaServed: [],
+		},
+		collections: { services: { type: "Service", noindex: true, hiddenOk: true } },
+		steps: { identity: true, types: true },
+		hideHelpLine: true,
+	};
+
+	/** The code block an admin copies from the Settings tab. */
+	function exported(response: BlockResponse): string {
+		const code = flatten(response.blocks).find(
+			(block) => block.type === "code" && block.block_id === "settings_export",
+		);
+		return code?.type === "code" ? code.code : "";
+	}
+
+	function applyButton(response: BlockResponse) {
+		const actions = flatten(response.blocks).find(
+			(block) => block.type === "actions" && block.block_id === "settings_import_confirm",
+		);
+		const button =
+			actions?.type === "actions"
+				? actions.elements.find(
+						(element) => element.type === "button" && element.action_id === "apply_settings",
+					)
+				: undefined;
+		return button?.type === "button" ? button : undefined;
+	}
+
+	it("shows the settings as code to copy, without the per-site switches", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", SOURCE);
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		const parsed = JSON.parse(text) as Record<string, unknown>;
+		expect(parsed.format).toBe("emdash-seo-settings");
+		expect(parsed).toMatchObject({ site: { name: "Acme Bakery", type: "FoodEstablishment" } });
+		expect(parsed).toMatchObject({ collections: { services: { type: "Service", noindex: true } } });
+		// Per-site choices stay on the site: the help line switch, setup steps, confirmations.
+		expect(text).not.toContain("hideHelpLine");
+		expect(text).not.toContain("steps");
+		expect(text).not.toContain("hiddenOk");
+	});
+
+	it("checks a paste, shows what will change, saves nothing until applied, then saves it", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", SOURCE);
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		await runtime.fixtures.plugin.setting("config", null);
+
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: text });
+		expect(checked.toast?.type).toBe("success");
+		const shown = texts(checked);
+		expect(shown).toContain("What will change");
+		expect(shown).toContain("Acme Bakery");
+		expect(shown).toContain("Restaurant, cafe or bakery");
+		// Hiding content from Google is the change that can do damage, so it is called out.
+		expect(shown).toContain("These settings hide every page in Services from Google");
+		expect(validateBlockResponse(checked, { pluginPagePaths: [PAGE] })).toEqual({
+			valid: true,
+			errors: [],
+		});
+		expect(await config(runtime)).toBeNull();
+
+		const button = applyButton(checked);
+		expect(button).toBeDefined();
+		const applied = await runtime.admin.act(PAGE, "apply_settings", { value: button?.value });
+		expect(applied.toast?.type).toBe("success");
+		const saved = await config(runtime);
+		expect(saved?.site).toMatchObject({
+			type: "FoodEstablishment",
+			name: "Acme Bakery",
+			telephone: "+44 20 7946 0000",
+			openingHours: [{ days: ["Monday"], opens: "08:00", closes: "17:00" }],
+		});
+		// Hidden again needs this site's own confirmation; the help line stays as it was here.
+		expect(saved?.collections.services).toEqual({ type: "Service", noindex: true });
+		expect(saved?.hideHelpLine).toBe(false);
+		expect(saved?.steps.identity).toBe(true);
+		expect(texts(applied)).toContain("Some pages are hidden from Google");
+	});
+
+	it("says when nothing would change", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", SOURCE);
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: text });
+		expect(texts(checked)).toContain("Nothing would change");
+		expect(applyButton(checked)).toBeUndefined();
+	});
+
+	it("leaves out content types this site does not have, and says so", async () => {
+		const runtime = await start();
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: { type: "Organization", name: "Acme" },
+			collections: { recipes: { type: "Article" }, pages: { type: "AboutPage" } },
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(texts(checked)).toContain("Left out, as this site has no such content: recipes");
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		const saved = await config(runtime);
+		expect(saved?.collections.pages?.type).toBe("AboutPage");
+		expect(saved?.collections.recipes).toBeUndefined();
+	});
+
+	it("refuses what is not settings from this plugin, or settings the forms would refuse", async () => {
+		const runtime = await start();
+		const settings = (site: Record<string, unknown>) =>
+			JSON.stringify({ format: "emdash-seo-settings", version: 1, site });
+		for (const [paste, message] of [
+			["", "Paste the settings first."],
+			["source,target,code\n/a,/b,301", "This is not a copy of SEO settings"],
+			['{"site":{"name":"Acme"}}', "This is not a copy of SEO settings"],
+			[settings({ type: "Spaceport" }), "kind of site"],
+			[
+				settings({
+					type: "Store",
+					openingHours: [{ days: ["Monday"], opens: "8am", closes: "5pm" }],
+				}),
+				"opening hours",
+			],
+			[settings({ type: "Organization", logo: "javascript:alert(1)" }), "logo"],
+			[settings({ type: "Organization", sameAs: ["not a link"] }), "profile"],
+		] as const) {
+			const response = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+			expect(response.toast?.type, paste).toBe("error");
+			expect(response.toast?.message, paste).toContain(message);
+			expect(applyButton(response), paste).toBeUndefined();
+		}
+		// A changed button value is checked again before anything is saved.
+		const refused = await runtime.admin.act(PAGE, "apply_settings", {
+			value: { format: "emdash-seo-settings", version: 1, site: { type: "Spaceport" } },
+		});
+		expect(refused.toast?.type).toBe("error");
+		expect(await config(runtime)).toBeNull();
+	});
+
+	it("lets only an admin see and apply settings", async () => {
+		const runtime = await start();
+		const editor = await runtime.fixtures.user({ email: "editor@acme.test", role: "editor" });
+		const page = await runtime.admin.loadPage(PAGE, { user: editor });
+		expect(texts(page)).not.toContain("emdash-seo-settings");
+		await runtime.admin.act(PAGE, "apply_settings", {
+			value: {
+				format: "emdash-seo-settings",
+				version: 1,
+				site: { type: "Person", name: "Hacked" },
+			},
+			user: editor,
+		});
+		expect(await config(runtime)).toBeNull();
+	});
+});

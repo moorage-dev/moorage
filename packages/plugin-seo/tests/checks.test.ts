@@ -374,7 +374,9 @@ describe("checks on a real site", () => {
 		const response = await checkAll(runtime);
 
 		expect((await record(runtime, entry.id))?.status).toBe("hidden");
-		expect(text(response)).toContain("1 page is hidden from Google and not counted: Thank you.");
+		expect(text(response)).toContain(
+			"1 page is hidden from Google and not counted above: Thank you.",
+		);
 	});
 
 	it("leaves out content that has no page of its own", async () => {
@@ -806,6 +808,11 @@ describe("Google preview panel", () => {
 		expect(text(panel)).toContain(
 			"https://search.google.com/test/rich-results?url=https%3A%2F%2Facme.test%2Fservices%2Fwedding-cakes",
 		);
+		// Beside it, the schema.org Validator, which reads every type, Organization and
+		// LocalBusiness included, where Google's test reads only the types it shows.
+		expect(text(panel)).toContain(
+			'{"type":"link","label":"Check all markup","target":{"kind":"external","url":"https://validator.schema.org/#url=https%3A%2F%2Facme.test%2Fservices%2Fwedding-cakes"}}',
+		);
 		expect(text(panel)).toContain("View the markup");
 	});
 
@@ -893,6 +900,8 @@ describe("Google preview panel", () => {
 		expect(text(panel)).toContain("Wedding cakes");
 		expect(text(panel)).not.toContain("View the markup");
 		expect(text(panel)).not.toContain("Change page type");
+		expect(text(panel)).not.toContain("search.google.com/test/rich-results");
+		expect(text(panel)).not.toContain("validator.schema.org");
 
 		await runtime.admin.actEditorPanel("preview", "services", entry.id, "set_type", {
 			value: "ContactPage",

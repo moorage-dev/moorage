@@ -4,7 +4,7 @@ SEO & Schema Markup for [EmDash](https://emdashcms.com): one linked structured d
 
 ## What it does today
 
-- Replaces EmDash's single JSON-LD object with one linked graph per page: Organization (or Person, or a LocalBusiness type), WebSite, WebPage, BreadcrumbList, the primary image (with its width and height when it is one of the entry's own images), and BlogPosting with byline authors and dates on article pages.
+- Replaces EmDash's single JSON-LD object with one linked graph per page: Organization (or Person, or a LocalBusiness type), WebSite, WebPage, BreadcrumbList, the primary image (with its width and height when it is one of the entry's own images), and BlogPosting with its authors (the bylines without a role label such as "Photos by") and dates on article pages.
 - Writes the robots tag: `noindex` per collection, and `max-snippet`, `max-image-preview` and `max-video-preview` limits on indexable pages. A noindex set in an entry's SEO panel is always kept.
 - Uses the theme's breadcrumb trail when it passes one, otherwise derives Home and one crumb per URL segment.
 - Adds your own schema from an entry to the same graph: add a JSON field named `json_ld` to a collection and paste any schema.org object (for example an Event or a Product). Give it an `@id` and the page names it as its main entity. An object whose `@id` is already used in the graph is left out.
@@ -21,16 +21,22 @@ pnpm add @moorage/plugin-seo
 ```
 
 ```js
-// astro.config.mjs
+// astro.config.mjs (on Cloudflare)
+import { sandbox } from "@emdash-cms/cloudflare";
 import seo from "@moorage/plugin-seo";
 import emdash from "emdash/astro";
 
 export default defineConfig({
-	integrations: [emdash({ sandboxed: [seo] })],
+	integrations: [emdash({ sandboxed: [seo], sandboxRunner: sandbox() })],
 });
 ```
 
-`sandboxed` needs a sandbox runner: on Cloudflare it takes two things: the `LOADER` Worker Loader binding in `wrangler.jsonc` (`"worker_loaders": [{ "binding": "LOADER" }]`, Workers Paid only) and `sandboxRunner: sandbox()` in `astro.config.mjs`, with `sandbox` imported from `@emdash-cms/cloudflare` (answering Yes to sandboxed plugins in `create-emdash` adds only the binding); on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the SEO page once, then move it.
+```jsonc
+// wrangler.jsonc: the Worker Loader binding sandbox() runs plugins in (Workers Paid only)
+"worker_loaders": [{ "binding": "LOADER" }]
+```
+
+`sandboxed` needs a sandbox runner: on Cloudflare it takes both lines above, `sandboxRunner: sandbox()` and the `LOADER` Worker Loader binding (answering Yes to sandboxed plugins in `create-emdash` adds only the binding); on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the SEO page once, then move it.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
@@ -40,17 +46,17 @@ It asks for four permissions: read content, read bylines, read the content schem
 
 One page, **SEO**, in the admin sidebar, with three tabs. It works before you touch it: the site is described as an organisation named after the site, each content type is guessed from its name (posts and blog become blog posts, services become services, team becomes people), and your pages are checked by themselves.
 
-- **Overview**: how many pages were checked, how many have nothing to fix and how many do; a warning whenever a content type is hidden from Google; one question if you have not said who the site is for; then **Your details**, the few things Google still needs for your kind of site (an address, opening hours and a phone number for a local business; a logo and profiles for a company); then the pages to fix, each with what is missing and a link to the page; and, folded, pages that are fine but could be better.
+- **Overview**: how many pages were checked, how many have nothing to fix and how many do (the last two add up to the first; pages hidden from search are listed below them, not counted); a warning whenever a content type is hidden from Google; one question if you have not said who the site is for; then **Your details**, the few things Google still needs for your kind of site (an address, opening hours and a phone number for a local business; a logo and profiles for a company); then the pages to fix, each with what is missing and a link to the page; and, folded, pages that are fine but could be better.
 - **Redirects**: your redirects, with Change and Remove on each, and three buttons above the list. **Add a redirect**: the old address, where to send visitors, and the kind (permanent unless you choose otherwise). **Import from WordPress**: paste a CSV export from Redirection, Yoast SEO Premium or Rank Math (CSV only: Rank Math's CSV export is in its paid version, and Redirection's JSON, .htaccess and Nginx exports are not read); it is checked before anything is added and can be removed again as a batch. **Export**: a copyable list. EmDash already redirects a page's old address when you change it.
-- **Settings**: who the site is for (a local business, a company or a person) and what you do, then folded sections ordered by how much they matter for that kind of site. Each title says whether the section is needed, worth adding or optional, and what is already filled in: address and phone, opening hours (two ranges a day for split shifts), logo, profiles elsewhere, more about you, and content types (what each kind of content is, and whether it is hidden from Google, which asks before it saves). One location for now. A local business is described as an organisation until it has an address, because Google requires one.
+- **Settings**: who the site is for (a local business, a company or a person) and what you do, then folded sections ordered by how much they matter for that kind of site. Each title says whether the section is needed, worth adding or optional, and what is already filled in: address and phone, opening hours (two ranges a day for split shifts), logo, profiles elsewhere, more about you, and content types (what each kind of content is, and whether it is hidden from Google, which asks before it saves). One location for now. A local business is described as an organisation until it has an address, because Google requires one. At the end, folded, **Copy settings to another site**: the settings as text to copy, and a box to paste another site's. Pasted settings are checked first, with a table of what would change, and saved only when you press Apply these settings. They hold who the site is for, its details, opening hours, profiles and content types; no passwords or keys (the plugin keeps none). Hiding a content type from Google still asks this site's admin to confirm it on the Overview. Redirects are copied separately, with Export and Import from WordPress on the Redirects tab (the import reads the export).
 
 Admins can change settings. Editors see a read-only page with the pages to fix.
 
-In the entry editor, the **Google preview** panel shows how the published page may look on Google (address, title, description), what kind of page it is, whether it is in search results, and up to three things to fix. Admins can also change one page's type, open Google's Rich Results Test for the page, and view the markup. A dashboard widget shows the number of pages to fix.
+In the entry editor, the **Google preview** panel shows how the published page may look on Google (address, title, description), what kind of page it is, whether it is in search results, and up to three things to fix. Admins can also change one page's type, open Google's Rich Results Test for the page or the schema.org Validator (**Check all markup**, which also reads the Organization and LocalBusiness details Google's test skips), and view the markup. A dashboard widget shows the number of pages to fix.
 
 ### The checks
 
-To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off (measured with your site's name after it, as most sites show it); no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author; pictures without alt text; a page with almost no text. Hidden pages are counted separately, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
+To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash); the same title as another page; a canonical address that points at a different page. Worth a look: a title that may be cut off (measured with your site's name after it, as most sites show it); no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author (credits with a role, such as "Photos by", are not authors); pictures without alt text; a page with almost no text. Hidden pages are listed separately and kept out of the counts, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
 
@@ -61,6 +67,9 @@ Not yet: Product and Event types (they need price and date fields on the collect
 - How do I add my own structured data to one page? Add a JSON field named `json_ld` to the collection and paste the schema.org object into the entry. It joins the page's one graph; the page still has a single JSON-LD script.
 - Is there a Yoast alternative for EmDash? EmDash core covers titles, descriptions, sitemaps and canonicals; this plugin adds the schema graph, robots rules, previews and checks.
 - Does it check my page while I type? No. EmDash does not let a general-purpose plugin read unsaved text. The panel and the checks describe the published page, as Google sees it: changes to the page show up once you publish, and changes in the SEO panel show up as soon as they are saved.
+- Can I use it next to another schema plugin? Use one schema plugin at a time. Both send the page's main JSON-LD script, and EmDash keeps only the first one it receives, so the other plugin's markup, or this one's, silently goes missing. Remove the other one, or this one.
+- Does it tell Bing about new pages (IndexNow)? Not yet. Search the EmDash registry for "IndexNow": plugins there notify Bing and the other IndexNow engines when a page is published. Google does not use IndexNow.
+- How do I set up several sites the same way? On the first site, open SEO > Settings > Copy settings to another site and copy the text. On the next site, paste it in the same place, press Check, read what will change, and press Apply these settings. Content types the other site does not have are left out.
 - Is there an SEO score or a traffic light? No, on purpose. You get a list of things to fix that can reach zero.
 - Does it add FAQ rich results? No. Google stopped showing FAQ rich results in May 2026.
 - How do I import redirects from WordPress? Export them as CSV from Redirection, Yoast SEO Premium or Rank Math (Rank Math's CSV export is in its paid version; Redirection's JSON, .htaccess and Nginx exports are not read), open SEO > Redirects > Import from WordPress, paste the list and press Check list. Nothing is added until you confirm.

@@ -13,7 +13,7 @@ import {
 } from "./config.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import { DAYS, formatDayHours, parseDayHours } from "./hours.js";
-import { PAGE_TYPES, typeLabel } from "./page-types.js";
+import { BUSINESS_GROUPS, PAGE_TYPES, PRICE_RANGES, typeLabel } from "./page-types.js";
 import {
 	addMore,
 	checkList,
@@ -45,32 +45,14 @@ import {
 } from "./scan.js";
 import { forgetSettings } from "./settings-memo.js";
 import { copyForward, needsCopy, pickSettings, writeSettings } from "./settings-store.js";
-import { parseUrl } from "./url.js";
+import { exportSettings, readTransfer, type ReadTransfer } from "./settings-transfer.js";
+import { parseUrl, readLogo } from "./url.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
 const ADMIN_ROLE = 50;
 
 // Three tabs: what needs attention, the redirects task, and everything set once.
 const TAB = { overview: 0, redirects: 1, identity: 2, types: 2 } as const;
-
-/** Plain business groups mapped to the schema.org type each one emits. */
-const BUSINESS_GROUPS: Array<{ value: string; label: string }> = [
-	{ value: "FoodEstablishment", label: "Restaurant, cafe or bakery" },
-	{ value: "Store", label: "Shop" },
-	{ value: "MedicalBusiness", label: "Health and medical" },
-	{ value: "Dentist", label: "Dentist" },
-	{ value: "LegalService", label: "Legal" },
-	{ value: "FinancialService", label: "Financial" },
-	{ value: "HomeAndConstructionBusiness", label: "Home services (plumber, electrician, builder)" },
-	{ value: "HealthAndBeautyBusiness", label: "Beauty and hair" },
-	{ value: "SportsActivityLocation", label: "Fitness" },
-	{ value: "LodgingBusiness", label: "Hotel or lodging" },
-	{ value: "AutomotiveBusiness", label: "Automotive" },
-	{ value: "ProfessionalService", label: "Professional service" },
-	{ value: "LocalBusiness", label: "Other" },
-];
-
-const PRICE_RANGES = ["", "$", "$$", "$$$", "$$$$"];
 
 type SiteKind = "organization" | "person" | "local";
 
@@ -210,6 +192,8 @@ interface PageState {
 	problem?: string;
 	/** The site's redirects as text, when the admin asked to see them. */
 	exported?: string;
+	/** Settings pasted from another site: what was pasted, and once checked, what it changes. */
+	transfer?: { pasted?: string; read?: ReadTransfer };
 	toast?: BlockResponse["toast"];
 }
 
@@ -1010,6 +994,101 @@ function typesTab(data: AdminData, pendingHide: string | undefined): Block[] {
 	];
 }
 
+/**
+ * "Copy settings to another site", for admins setting up several sites the same way: the
+ * settings as code to copy, a box to paste another site's, and once checked, what would change.
+ */
+function transferSection(data: AdminData, transfer: PageState["transfer"]): Block[] {
+	const blocks: Block[] = [
+		{
+			type: "context",
+			text: "To set up another site the same way, copy this text, then on that site open SEO > Settings > Copy settings to another site, paste it and press Check. It holds who the site is for, its details, opening hours, profiles and content types; no passwords or keys. Redirects are copied on their own, with Export and Import from WordPress on the Redirects tab.",
+		},
+		{
+			type: "code",
+			block_id: "settings_export",
+			language: "jsonc",
+			code: exportSettings(data.config),
+		},
+		{
+			type: "form",
+			// A new id after each check, so the box shows what was pasted.
+			block_id: `settings_import_${transfer?.read ? "checked" : transfer?.pasted ? "retry" : "paste"}`,
+			fields: [
+				{
+					type: "text_input",
+					action_id: "settings",
+					label: "Paste settings copied from another site",
+					multiline: true,
+					initial_value: transfer?.pasted ?? "",
+				},
+			],
+			submit: { label: "Check", action_id: "check_settings" },
+		},
+	];
+	const read = transfer?.read;
+	if (read) {
+		if (read.hides.length > 0) {
+			blocks.push({
+				type: "banner",
+				variant: "alert",
+				title: `These settings hide every page in ${read.hides.join(", ")} from Google`,
+				description:
+					"People will no longer find these pages through search engines. If that is not what you want, change it on the Content types menu after applying.",
+			});
+		}
+		if (read.leftOut.length > 0) {
+			blocks.push({
+				type: "context",
+				text: `Left out, as this site has no such content: ${read.leftOut.join(", ")}.`,
+			});
+		}
+		if (read.changes.length === 0) {
+			blocks.push({
+				type: "empty",
+				title: "Nothing would change: this site already has these settings.",
+				size: "sm",
+			});
+		} else {
+			blocks.push(
+				{ type: "header", text: "What will change" },
+				{
+					type: "table",
+					page_action_id: "transfer_table",
+					columns: [
+						{ key: "what", label: "Setting" },
+						{ key: "now", label: "Now" },
+						{ key: "after", label: "After" },
+					],
+					rows: read.changes.map((change) => ({ ...change })),
+				},
+				{
+					type: "actions",
+					block_id: "settings_import_confirm",
+					elements: [
+						{
+							type: "button",
+							action_id: "apply_settings",
+							label: "Apply these settings",
+							style: "primary",
+							value: read.transfer,
+						},
+						{ type: "button", action_id: "cancel_settings", label: "Cancel" },
+					],
+				},
+			);
+		}
+	}
+	return [
+		{
+			type: "accordion",
+			label: "Copy settings to another site (optional)",
+			default_open: transfer !== undefined,
+			blocks,
+		},
+	];
+}
+
 function render(
 	data: AdminData,
 	ctx: PluginContext,
@@ -1062,6 +1141,7 @@ function render(
 						blocks: [
 							...identityTab(data, ctx.site.name),
 							...typesTab(data, state.pendingHide),
+							...transferSection(data, state.transfer),
 							hideForm(data.config.hideHelpLine),
 						],
 					},
@@ -1075,23 +1155,6 @@ function render(
 }
 
 type Outcome = { config: SeoConfig; state: PageState } | { error: string; state: PageState };
-
-/** Check a pasted logo link. Returns the absolute link, undefined for none, or an error. */
-function readLogo(pasted: string, siteUrl: string): { logo?: string } | { error: string } {
-	if (pasted === "") return {};
-	// The media library only gives plugins sign-in-protected image links, which
-	// Google could not fetch, so the logo is a public address the admin pastes.
-	const url = parseUrl(pasted, `${siteUrl.replace(/\/+$/, "")}/`);
-	if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
-		return { error: "Couldn't save. The logo link must be a web address starting with https://" };
-	}
-	if (url.pathname.includes("/_emdash/api/media/asset/")) {
-		return {
-			error: "That link only works when signed in. In Media, use Copy URL on the image instead.",
-		};
-	}
-	return { logo: url.href };
-}
 
 function saveIdentity(data: AdminData, values: Record<string, unknown>): Outcome {
 	const state: PageState = { tab: TAB.identity };
@@ -1412,6 +1475,22 @@ export async function handleAdmin(
 				"Noted. These pages stay hidden from search.",
 			);
 		}
+		if (action === "apply_settings") {
+			// The button sends back what was checked; it is checked again, as anything sent may be.
+			const read = readTransfer(interaction.value, data.config, data.collections, ctx.site.url);
+			if ("error" in read) {
+				return render(data, ctx, admin, {
+					tab: TAB.identity,
+					transfer: {},
+					toast: { type: "error", message: read.error },
+				});
+			}
+			return save(
+				{ config: read.config, state: { tab: TAB.identity } },
+				"Settings copied. To see what they change in the pages to fix, press Check all pages again on the Overview.",
+			);
+		}
+		if (action === "cancel_settings") return render(data, ctx, admin, { tab: TAB.identity });
 		if (action === "edit_redirect") {
 			const editing = data.redirectRows.find((row) => row.id === interaction.value);
 			return render(data, ctx, admin, { tab: TAB.redirects, editing });
@@ -1520,6 +1599,22 @@ export async function handleAdmin(
 		return render({ ...data, redirects }, ctx, admin, {
 			tab: TAB.redirects,
 			toast: { type: "success", message: "Checked. Nothing has been added yet." },
+		});
+	}
+	if (action === "check_settings") {
+		const pasted = str(values, "settings");
+		const read = readTransfer(pasted, data.config, data.collections, ctx.site.url);
+		if ("error" in read) {
+			return render(data, ctx, admin, {
+				tab: TAB.identity,
+				transfer: { pasted },
+				toast: { type: "error", message: read.error },
+			});
+		}
+		return render(data, ctx, admin, {
+			tab: TAB.identity,
+			transfer: { pasted, read },
+			toast: { type: "success", message: "Checked. Nothing has been saved yet." },
 		});
 	}
 	if (action === "add_redirect") {
