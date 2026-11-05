@@ -62,6 +62,34 @@ export function tagLink(
 	}
 }
 
+/**
+ * A short fingerprint of what a popup says, its link and its dates: the words,
+ * the picture, the button (its link as typed, before campaign tags), the form
+ * and the start and end. Where, on what and how often it shows, its name and
+ * its look are left out, so changing those does not bring it back to people
+ * who closed it. FNV-1a, 32 bits, in base 36: it goes into every page.
+ */
+export function contentPrint(popup: Popup): string {
+	const parts = [
+		popup.heading,
+		popup.text,
+		popup.picture?.url ?? "",
+		popup.contains,
+		popup.buttonLabel,
+		popup.buttonUrl,
+		popup.form,
+		popup.thanks,
+		popup.start ?? "",
+		popup.end ?? "",
+	].join("\u0000");
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < parts.length; i++) {
+		hash ^= parts.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0).toString(36);
+}
+
 /** What the browser needs to know about one popup, and nothing else. Boxes in a page are drawn by the server. */
 export function clientItem(popup: Popup, siteOrigin: string): ClientItem | null {
 	return popup.kind === "inline" ? null : previewItem(popup, siteOrigin);
@@ -99,6 +127,7 @@ export function previewItem(popup: Popup, siteOrigin: string): ClientItem {
 		// A box in a page shows on every device: it has no "On" choice.
 		d: inline ? 0 : popup.devices === "desktop" ? 1 : popup.devices === "phone" ? 2 : 0,
 		a: AGAIN_DAYS[popup.again],
+		v: contentPrint(popup),
 		c,
 	};
 	if (popup.firstPage && popup.kind === "modal") item.f = 1;

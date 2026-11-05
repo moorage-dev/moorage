@@ -23,9 +23,12 @@ import type { ClientConfig, ClientItem, PreviewAnswer } from "./types.js";
  *    most one popup or slide-in that opens by itself.
  */
 
-/** This browser's record: per popup, when it was closed (c) or that it is done (d); forms signed up to (f). */
+/**
+ * This browser's record: per popup, when it was closed (c) or that it is done
+ * (d), and the fingerprint of what it said then (v); forms signed up to (f).
+ */
 interface Memory {
-	p: Record<string, { c?: number; d?: 1 }>;
+	p: Record<string, { c?: number; d?: 1; v?: string }>;
 	f: Record<string, 1>;
 }
 /** This visit: pages seen so far, and the popup or slide-in that already opened. */
@@ -91,12 +94,28 @@ export function boot(c: ClientConfig): void {
 	const firstPage = visit.n === 0;
 	// A preview changes nothing: it is not a page of a visit.
 	if (!previewId) store("sessionStorage", VISIT_KEY, { ...visit, n: visit.n + 1 });
-	const remember = (id: string, what: { c?: number; d?: 1 }, form?: string) => {
+	const remember = (item: ClientItem, what: { c?: number; d?: 1 }, form?: string) => {
 		if (previewId) return;
-		memory.p[id] = { ...memory.p[id], ...what };
+		const before = memory.p[item.i];
+		// A close or click of what it said before no longer counts.
+		memory.p[item.i] = {
+			...(before && (!before.v || before.v === item.v) ? before : {}),
+			...what,
+			v: item.v,
+		};
 		if (form) memory.f[form] = 1;
 		store("localStorage", MEMORY_KEY, memory);
 	};
+	// A close or click from before fingerprints were kept stands for what the popup says now.
+	let stamped = false;
+	for (const item of c.items) {
+		const mine = memory.p[item.i];
+		if (mine && !mine.v) {
+			mine.v = item.v;
+			stamped = true;
+		}
+	}
+	if (stamped && !previewId) store("localStorage", MEMORY_KEY, memory);
 
 	const now = Date.now();
 	const phone = () => w.innerWidth < 768;
@@ -111,7 +130,9 @@ export function boot(c: ClientConfig): void {
 		if (item.e && now >= item.e) return "it has ended";
 		if (item.d === 1 && phone()) return "it is set for computers only";
 		if (item.d === 2 && !phone()) return "it is set for phones only";
-		const mine = memory.p[item.i] || {};
+		const kept = memory.p[item.i];
+		// What this browser closed or clicked said something else: it shows again.
+		const mine = kept && (!kept.v || kept.v === item.v) ? kept : {};
 		if (mine.d || (item.c.form && memory.f[item.c.form])) {
 			return "this browser already " + (item.c.form ? "signed up" : "clicked its button");
 		}
@@ -539,7 +560,7 @@ export function boot(c: ClientConfig): void {
 			if (gone) return;
 			gone = true;
 			if (reasonClosed === "closed") {
-				remember(item.i, { c: Date.now() });
+				remember(item, { c: Date.now() });
 				count(item, "closed");
 			}
 			if (modal) (box as HTMLDialogElement).close();
@@ -553,7 +574,7 @@ export function boot(c: ClientConfig): void {
 			const target = event.target as Element;
 			if (target.closest("[data-pp-close]")) close(finished ? "done" : "closed");
 			else if (target.closest("[data-pp-go]")) {
-				remember(item.i, { d: 1 });
+				remember(item, { d: 1 });
 				count(item, "clicked");
 				if (previewId) event.preventDefault();
 			}
@@ -649,7 +670,7 @@ export function boot(c: ClientConfig): void {
 					message.textContent = (error as Error).message || c.t.failed;
 					return;
 				}
-				remember(item.i, { d: 1 }, content.form);
+				remember(item, { d: 1 }, content.form);
 				count(item, "sent");
 				// Tell the page: the analytics plugin counts a lead when a forms status line turns to success.
 				const marker = d.createElement("div");
@@ -912,12 +933,12 @@ export function boot(c: ClientConfig): void {
 			host.shadowRoot.addEventListener("click", (event) => {
 				const target = event.target as Element;
 				if (target.closest("[data-pp-close]")) {
-					remember(item.i, { c: Date.now() });
+					remember(item, { c: Date.now() });
 					count(item, "closed");
 					// The visitor asked for this, so the page may move up.
 					host.style.setProperty("display", "none", "important");
 				} else if (target.closest("[data-pp-go]")) {
-					remember(item.i, { d: 1 });
+					remember(item, { d: 1 });
 					count(item, "clicked");
 				}
 			});
