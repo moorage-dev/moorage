@@ -1760,11 +1760,7 @@ function matchingFromForm(
 	return missing ? { missing: missing[0] } : { mapping, others };
 }
 
-function sameDestination(
-	data: Data,
-	a: Delivery,
-	b: Partial<Delivery> & { kind: DeliveryKind },
-): boolean {
+function sameDestination(a: Delivery, b: Partial<Delivery> & { kind: DeliveryKind }): boolean {
 	if (a.kind !== b.kind) return false;
 	if (a.kind === "email") return (a.to ?? []).some((x) => (b.to ?? []).includes(x));
 	if (a.kind === "hubspot") return a.portalId === b.portalId && a.formGuid === b.formGuid;
@@ -2095,9 +2091,7 @@ async function adminScreen(
 		const draftDelivery = { kind, ...parsed.details };
 		const duplicate = data.config.deliveries.find(
 			(d) =>
-				servesForm(d, form.slug) &&
-				Array.isArray(d.forms) &&
-				sameDestination(data, d, draftDelivery),
+				servesForm(d, form.slug) && Array.isArray(d.forms) && sameDestination(d, draftDelivery),
 		);
 		if (duplicate) {
 			const where =

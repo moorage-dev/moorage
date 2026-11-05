@@ -203,7 +203,10 @@ describe("enquiries from the forms plugin", () => {
 			"Your name: Tom\nSend me news and offers: true\n\nSubmitted at: 2026-10-16T09:00:00.000Z",
 			{ [CAKES.slug]: CAKES },
 		);
-		expect(ticked!.enquiry.fields.find((f) => f.key === "news")?.value).toBe("yes");
+		expect(ticked!.enquiry.fields.find((f) => f.key === "news")?.value).toBe("true");
+		expect(enquiryEmail("Crumb", ticked!.enquiry, false).text).toContain(
+			"Send me news and offers: yes",
+		);
 		const unticked = await fromEmail(
 			"New submission: Wedding cakes",
 			"Your name: Tom\n\nSubmitted at: 2026-10-16T09:00:00.000Z",
@@ -369,6 +372,48 @@ describe("another app", () => {
 			labels: { cake_date: "When do you need it?" },
 			test: false,
 		});
+	});
+
+	it("sends apps exactly what 0.4.4 sent for ticked and unticked boxes", async () => {
+		// Two boxes, one ticked: apps get no key for the unticked one, and the ticked one's value
+		// as Forms gave it ("yes" from the webhook, "true" from the email), so a Zap filtering on
+		// "field exists" still passes only for people who ticked.
+		const BOXES: KnownForm = {
+			...CAKES,
+			fields: [
+				{ key: "email", label: "Email", type: "email" },
+				{ key: "news", label: "Send me news", type: "checkbox" },
+				{ key: "terms", label: "I agree", type: "checkbox" },
+			],
+		};
+		const at = "2026-10-16T09:00:00.000Z";
+		const web = fromWebhook(
+			{ ...PAYLOAD, data: { email: "tom@example.com", news: true } },
+			BOXES,
+		)!.enquiry;
+		expect(JSON.stringify(appPayload("01JABCDEF", { ...web, receivedAt: at }, false))).toBe(
+			'{"id":"01JABCDEF","event":"enquiry","form":"wedding-cakes","formName":"Wedding cakes","receivedAt":"2026-10-16T09:00:00.000Z","name":null,"email":"tom@example.com","fields":{"email":"tom@example.com","news":"yes"},"labels":{"email":"Email","news":"Send me news"},"pageUrl":null,"utm":{},"marks":[],"throwaway":false,"test":false}',
+		);
+		const mail = (await fromEmail(
+			"New submission: Wedding cakes",
+			`Email: tom@example.com\nSend me news: true\n\nSubmitted at: ${at}`,
+			{ [BOXES.slug]: BOXES },
+		))!.enquiry;
+		expect(JSON.stringify(appPayload("m1", { ...mail, receivedAt: at }, false))).toBe(
+			'{"id":"m1","event":"enquiry","form":"wedding-cakes","formName":"Wedding cakes","receivedAt":"2026-10-16T09:00:00.000Z","name":null,"email":"tom@example.com","fields":{"email":"tom@example.com","news":"true"},"labels":{"email":"Email","news":"Send me news"},"pageUrl":null,"utm":{},"marks":[],"throwaway":false,"test":false}',
+		);
+		// People reading it see both boxes, in words.
+		const text = enquiryEmail("Crumb", mail, false).text;
+		expect(text).toContain("Send me news: yes");
+		expect(text).toContain("I agree: no");
+		const slack = chatBody(
+			{ ...hubspot(), kind: "chat", chat: "slack", url: "https://hooks.slack.com/services/T/B/x" },
+			mail,
+			false,
+			"",
+		) as { text: string };
+		expect(slack.text).toContain("*Send me news:* yes");
+		expect(slack.text).toContain("*I agree:* no");
 	});
 
 	it("treats a deleted Zap and a sign-in redirect as needing a fix", () => {
@@ -674,6 +719,9 @@ describe("an address on a private network", () => {
 			"https://224.0.0.1/hook",
 			"https://240.0.0.1/hook",
 			"https://255.255.255.255/hook",
+			"https://192.88.99.1/hook",
+			"https://files.localdomain/hook",
+			"https://crm.corp/hook",
 		]) {
 			expect(isPrivateHost(host(address)), address).toBe(true);
 		}
@@ -700,6 +748,14 @@ describe("an address on a private network", () => {
 			"https://[::ffff:10.0.0.1]/hook",
 			"https://[::ffff:7f00:1]/hook",
 			"https://[64:ff9b::a00:1]/hook",
+			"https://[64:ff9b:1::808:808]/hook",
+			"https://[2002:a00:1::1]/hook",
+			"https://[2002:7f00:1::]/hook",
+			"https://[::ffff:0:10.0.0.1]/hook",
+			"https://[::ffff:0:7f00:1]/hook",
+			"https://[100::1]/hook",
+			"https://[2001:db8::1]/hook",
+			"https://[2001:db8:ffff::1]/hook",
 		]) {
 			expect(isPrivateHost(host(address)), address).toBe(true);
 		}
@@ -717,6 +773,12 @@ describe("an address on a private network", () => {
 			"https://100.128.0.1/hook",
 			"https://8.8.8.8/hook",
 			"https://[2606:4700:4700::1111]/hook",
+			"https://[2002:808:808::1]/hook",
+			"https://[::ffff:0:8.8.8.8]/hook",
+			"https://[100:0:0:1::1]/hook",
+			"https://[2001:db9::1]/hook",
+			"https://192.88.100.1/hook",
+			"https://corp.example.com/hook",
 			"https://localhost.example.com/hook",
 		]) {
 			expect(isPrivateHost(host(address)), address).toBe(false);
@@ -804,6 +866,26 @@ describe("a Slack or Discord channel's message", () => {
 			(chatBody(chat(DISCORD, { chat: "discord" }), long, false, "") as { content: string }).content
 				.length,
 		).toBeLessThanOrEqual(2000);
+		// No link previews for addresses people typed; a long message keeps its link to Forms.
+		expect(discord).toHaveProperty("flags", 4);
+		const many = {
+			...enquiry,
+			fields: Array.from({ length: 8 }, (_, i) => ({
+				key: `f${i}`,
+				label: `Field ${i}`,
+				value: `https://example.com/${"y".repeat(590)}`,
+			})),
+		};
+		const cutDown = (
+			chatBody(chat(DISCORD, { chat: "discord" }), many, false, "https://crumb.test") as {
+				content: string;
+			}
+		).content;
+		expect(cutDown.length).toBeLessThanOrEqual(2000);
+		expect(cutDown).toMatch(
+			/\[Open in Forms\]\(<https:\/\/crumb\.test\/_emdash\/admin\/plugins\/emdash-forms\/submissions\?formId=wedding-cakes>\)$/,
+		);
+		expect(cutDown).toContain("Field 7");
 		const quiet = chatBody(chat(SLACK, { chat: "slack", leaveOut: true }), enquiry, false, "") as {
 			text: string;
 		};

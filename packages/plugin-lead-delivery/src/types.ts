@@ -116,7 +116,8 @@ export interface Enquiry {
 	formId: string;
 	formName: string;
 	receivedAt: string;
-	fields: Array<FieldInfo & { value: string }>;
+	/** `unticked`: a box Forms left out, listed as "no" for people only (email, channel); apps never get it. */
+	fields: Array<FieldInfo & { value: string; unticked?: true }>;
 	email?: string;
 	name?: string;
 	pageUrl?: string;

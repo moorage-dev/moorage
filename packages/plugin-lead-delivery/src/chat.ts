@@ -1,6 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { privateAddressError } from "./address.js";
+import { readableFields } from "./enquiry.js";
 import type { Outcome } from "./hubspot.js";
 import { chatLabel } from "./names.js";
 import type { ChatKind, Delivery, Enquiry } from "./types.js";
@@ -124,29 +125,40 @@ export function chatBody(
 	const discord = d.chat === "discord";
 	const esc = discord ? discordText : slackText;
 	const bold = (text: string) => (discord ? `**${text}**` : `*${text}*`);
-	const lines: string[] = [
-		bold(esc(`${test ? "Test enquiry" : "New enquiry"}: ${enquiry.formName}`)),
-	];
-	const marks = marksOf(enquiry).map((m) => MARK_WORDS[m] ?? m);
-	if (marks.length) lines.push(esc(marks.join(" · ")));
-	if (d.leaveOut) {
-		lines.push(esc("What they wrote is in Forms → Submissions."));
-	} else {
-		for (const field of enquiry.fields) {
-			const value = cut(field.value.replace(/\s*\n\s*/g, " / "), VALUE_MAX);
-			lines.push(`${bold(esc(`${field.label}:`))} ${esc(value)}`);
-		}
-		if (enquiry.hasFiles) lines.push(esc("Files are in Forms → Submissions."));
-		if (enquiry.pageUrl) lines.push(`${bold(esc("Page:"))} ${esc(enquiry.pageUrl)}`);
-	}
 	const link = submissionsUrl(origin, enquiry.formId);
-	if (link) lines.push(discord ? `[Open in Forms](<${link}>)` : `<${link}|Open in Forms>`);
+	const linkLine = link ? (discord ? `[Open in Forms](<${link}>)` : `<${link}|Open in Forms>`) : "";
+	const message = (valueMax: number) => {
+		const lines: string[] = [
+			bold(esc(`${test ? "Test enquiry" : "New enquiry"}: ${enquiry.formName}`)),
+		];
+		const marks = marksOf(enquiry).map((m) => MARK_WORDS[m] ?? m);
+		if (marks.length) lines.push(esc(marks.join(" · ")));
+		if (d.leaveOut) {
+			lines.push(esc("What they wrote is in Forms → Submissions."));
+		} else {
+			for (const field of readableFields(enquiry)) {
+				const value = cut(field.value.replace(/\s*\n\s*/g, " / "), valueMax);
+				lines.push(`${bold(esc(`${field.label}:`))} ${esc(value)}`);
+			}
+			if (enquiry.hasFiles) lines.push(esc("Files are in Forms → Submissions."));
+			if (enquiry.pageUrl) lines.push(`${bold(esc("Page:"))} ${esc(enquiry.pageUrl)}`);
+		}
+		return lines.join("\n");
+	};
 	if (discord) {
-		let content = lines.join("\n");
-		if (content.length > DISCORD_MAX) content = cut(content, DISCORD_MAX);
-		return { content, allowed_mentions: { parse: [] } };
+		// Over Discord's limit: shorten the values first, so the link to Forms always stays.
+		const room = DISCORD_MAX - (linkLine ? linkLine.length + 1 : 0);
+		let body = message(VALUE_MAX);
+		for (let max = VALUE_MAX; body.length > room && max > 20;) {
+			max = Math.max(20, Math.floor(max / 2));
+			body = message(max);
+		}
+		const content = [cut(body, room), linkLine].filter(Boolean).join("\n");
+		// flags 4 (SUPPRESS_EMBEDS): no previews of addresses people typed.
+		return { content, allowed_mentions: { parse: [] }, flags: 4 };
 	}
-	return { text: lines.join("\n"), unfurl_links: false, unfurl_media: false };
+	const text = [message(VALUE_MAX), linkLine].filter(Boolean).join("\n");
+	return { text, unfurl_links: false, unfurl_media: false };
 }
 
 /** The request for one enquiry; `url` is the channel's address, read from where it is kept. */

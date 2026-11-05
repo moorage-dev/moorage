@@ -1,6 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import { UTM_KEYS } from "./enquiry.js";
+import { sentFields, UTM_KEYS } from "./enquiry.js";
 import type { Delivery, Enquiry, FieldInfo } from "./types.js";
 
 /** The HubSpot fields offered in each dropdown, in the order shown. */
@@ -138,11 +138,9 @@ export function hubspotBody(place: Delivery, enquiry: Enquiry): Record<string, u
 		if (name && value) fields.push({ objectTypeId: "0-1", name, value });
 	};
 	let consent: { ticked: boolean; text: string } | null = null;
-	for (const field of enquiry.fields) {
+	for (const field of sentFields(enquiry)) {
 		const choice = choiceFor(place, enquiry.formId, field);
 		if (choice === UNMATCHED || choice === "skip") continue;
-		// An unticked box (listed as "no") is sent as before: not at all, so HubSpot keeps its default.
-		if (field.type === "checkbox" && !ticked(field.value) && choice !== "consent") continue;
 		if (choice === "fullname") {
 			const [first, ...rest] = field.value.trim().split(/\s+/);
 			add("firstname", first ?? "");

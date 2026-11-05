@@ -6,11 +6,14 @@
  * address is refused when it is saved and again before every send, so a delivery saved by an
  * earlier version is never sent there either.
  *
- * Checked: names that only resolve locally (localhost and *.localhost, *.local, *.internal,
- * *.home.arpa, one-word names), IPv4 in any form the address parser accepts (one number such as
- * 2130706433, hex such as 0x7f.1, octal such as 0177.0.0.1, short forms such as 127.1), and IPv6
- * (loopback, unspecified, unique-local fc00::/7, link-local fe80::/10, multicast, and IPv4 inside
- * IPv6: mapped ::ffff:0:0/96, compatible ::/96, NAT64 64:ff9b::/96).
+ * Checked: names that only resolve locally (localhost and *.localhost, *.local, *.localdomain,
+ * *.internal, *.home.arpa, *.lan, *.intranet, *.corp, one-word names), IPv4 in any form the address
+ * parser accepts (one number such as 2130706433, hex such as 0x7f.1, octal such as 0177.0.0.1,
+ * short forms such as 127.1), and IPv6
+ * (loopback, unspecified, unique-local fc00::/7, link-local fe80::/10, multicast, discard-only
+ * 100::/64, documentation 2001:db8::/32, local-use NAT64 64:ff9b:1::/48, and IPv4 inside IPv6:
+ * mapped ::ffff:0:0/96, translated ::ffff:0:0:0/96, compatible ::/96, NAT64 64:ff9b::/96 and
+ * 6to4 2002::/16, each refused when the IPv4 inside is).
  *
  * Not checked, and cannot be from here: a public name whose DNS answer is a private address
  * (`intranet.example.com` -> 10.0.0.5), or one that changes its answer between this check and
@@ -29,6 +32,7 @@ const PRIVATE_V4: Array<[number, number]> = [
 	[0xac100000, 12], // 172.16.0.0/12
 	[0xc0000000, 24], // 192.0.0.0/24: protocol assignments
 	[0xc0000200, 24], // 192.0.2.0/24: documentation
+	[0xc0586300, 24], // 192.88.99.0/24: old 6to4 relay
 	[0xc0a80000, 16], // 192.168.0.0/16
 	[0xc6120000, 15], // 198.18.0.0/15: benchmarking
 	[0xc6336400, 24], // 198.51.100.0/24: documentation
@@ -37,7 +41,16 @@ const PRIVATE_V4: Array<[number, number]> = [
 	[0xf0000000, 4], // 240.0.0.0/4: reserved, and 255.255.255.255
 ];
 
-const LOCAL_SUFFIXES = [".localhost", ".local", ".internal", ".home.arpa", ".lan", ".intranet"];
+const LOCAL_SUFFIXES = [
+	".localhost",
+	".local",
+	".localdomain",
+	".internal",
+	".home.arpa",
+	".lan",
+	".intranet",
+	".corp",
+];
 
 function inRange(ip: number, [base, bits]: [number, number]): boolean {
 	const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
@@ -107,9 +120,14 @@ function privateV6(g: number[]): boolean {
 	if ((g[0]! & 0xffc0) === 0xfec0) return true; // fec0::/10 old site-local
 	if ((g[0]! & 0xff00) === 0xff00) return true; // ff00::/8 multicast
 	if (zeros(5) && g[5] === 0xffff) return privateV4(v4()); // ::ffff:a.b.c.d mapped
+	if (zeros(4) && g[4] === 0xffff && g[5] === 0) return privateV4(v4()); // ::ffff:0:a.b.c.d translated
 	if (zeros(6)) return privateV4(v4()); // ::a.b.c.d compatible
 	if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0))
 		return privateV4(v4()); // 64:ff9b::/96 NAT64
+	if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1) return true; // 64:ff9b:1::/48 local NAT64
+	if (g[0] === 0x2002) return privateV4(((g[1]! << 16) >>> 0) + g[2]!); // 2002::/16 6to4
+	if (g[0] === 0x100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true; // 100::/64 discard
+	if (g[0] === 0x2001 && g[1] === 0xdb8) return true; // 2001:db8::/32 documentation
 	return false;
 }
 

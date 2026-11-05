@@ -45,19 +45,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The fields with each unticked checkbox of a known form listed as "no". The forms plugin leaves
- * an unticked box out of both its webhook and its email, so without this an enquiry cannot say
- * the box was left unticked. Each goes where the form has it. A box shown only on a condition is
- * left out: its absence may mean it was not shown. A ticked box the email wrote as "true" reads "yes".
+ * The fields with each unticked checkbox of a known form listed as "no", marked `unticked`. The
+ * forms plugin leaves an unticked box out of both its webhook and its email, so without this an
+ * email or channel message cannot say the box was left unticked. Each goes where the form has it.
+ * A box shown only on a condition is left out: its absence may mean it was not shown. Only people
+ * see these rows (readableFields); apps and HubSpot get the fields exactly as Forms sent them.
  */
 export function withUnticked(
 	fields: Enquiry["fields"],
 	known: KnownForm | undefined,
 ): Enquiry["fields"] {
 	if (!known) return fields;
-	const out = fields.map((f) =>
-		f.type === "checkbox" && /^(true|on|1)$/i.test(f.value) ? { ...f, value: "yes" } : f,
-	);
+	const out = [...fields];
 	const have = new Set(out.map((f) => f.key));
 	const order = known.fields.map((f) => f.key);
 	for (const [index, field] of known.fields.entries()) {
@@ -66,10 +65,31 @@ export function withUnticked(
 		const earlier = new Set(order.slice(0, index));
 		let at = 0;
 		for (const [i, f] of out.entries()) if (earlier.has(f.key)) at = i + 1;
-		out.splice(at, 0, { key: field.key, label: field.label, type: "checkbox", value: "no" });
+		out.splice(at, 0, {
+			key: field.key,
+			label: field.label,
+			type: "checkbox",
+			value: "no",
+			unticked: true,
+		});
 		have.add(field.key);
 	}
 	return out;
+}
+
+/** The fields as Forms sent them, without the unticked rows: what apps receive. */
+export function sentFields(enquiry: Enquiry): Enquiry["fields"] {
+	return enquiry.fields.filter((f) => !f.unticked);
+}
+
+/**
+ * The fields as a person reads them (an email delivery, a channel message): unticked boxes as
+ * "no", and a ticked box the email way wrote as "true" as "yes".
+ */
+export function readableFields(enquiry: Enquiry): Enquiry["fields"] {
+	return enquiry.fields.map((f) =>
+		f.type === "checkbox" && /^(true|on|1)$/i.test(f.value) ? { ...f, value: "yes" } : f,
+	);
 }
 
 export interface Received {
@@ -83,7 +103,8 @@ export function finish(
 		pageUrl?: string;
 	},
 ): Enquiry {
-	const fields = base.fields;
+	// Unticked rows say nothing about who wrote or whether it is spam.
+	const fields = base.fields.filter((f) => !f.unticked);
 	const byKey = (test: (f: Enquiry["fields"][number]) => boolean) =>
 		fields.find((f) => test(f) && f.value);
 	const emailField =
