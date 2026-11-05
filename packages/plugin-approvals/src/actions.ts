@@ -305,8 +305,9 @@ export async function sendBack(
 	meter?: Meter,
 ): Promise<Decision> {
 	const store = requests(ctx);
-	const request = await store.get(key);
-	if (!request || request.status !== "waiting")
+	const stored = await store.getVersioned(key);
+	const request = stored?.value ?? null;
+	if (!stored || !request || request.status !== "waiting")
 		return fail("This request has already been decided.", request ? { request } : {});
 	if (!mayApprove(config, request, user) || !user)
 		return fail("You can't decide on this request.", { request });
@@ -320,7 +321,8 @@ export async function sendBack(
 		sentBack: { by, at: now, note: text.slice(0, 2000) },
 	};
 	addHistory(sent, now, `${by.name} sent it back: "${text.slice(0, 120)}"`);
-	await store.put(key, sent);
+	if (!(await store.compareAndSet(key, stored.revision, sent)).applied)
+		return fail(CHANGED_MEANWHILE);
 	await queueOrLog(ctx, meter, [writerJob(ctx, sent, "sent_back")]);
 	const writer = sent.requestedBy?.name;
 	return {
@@ -340,8 +342,9 @@ export async function saveNote(
 	note: unknown,
 ): Promise<Decision> {
 	const store = requests(ctx);
-	const request = await store.get(key);
-	if (!request || request.status !== "waiting")
+	const stored = await store.getVersioned(key);
+	const request = stored?.value ?? null;
+	if (!stored || !request || request.status !== "waiting")
 		return fail("There is no request waiting on this page.", request ? { request } : {});
 	if (!user || request.requestedBy?.id !== user.id)
 		return fail("Only the person who asked can add a note.", { request });
@@ -353,7 +356,8 @@ export async function saveNote(
 		new Date().toISOString(),
 		text ? `${personName(user)} added a note` : `${personName(user)} removed the note`,
 	);
-	await store.put(key, updated);
+	if (!(await store.compareAndSet(key, stored.revision, updated)).applied)
+		return fail(CHANGED_MEANWHILE);
 	return {
 		ok: true,
 		message: text ? "Note saved. The approvers will see it." : "Note removed.",

@@ -960,7 +960,7 @@ describe("the Approvals page (route admin)", () => {
 				{ user: admin(s), blockId: `sb:pages:${id}` },
 			),
 		);
-		// kvList storageGet storagePut cronSchedule, then the list (4).
+		// kvList storageGetVersioned storageCompareAndSet cronSchedule, then the list (4).
 		pin("page send back, 1 other waiting", m, 7);
 		expect(m.result?.toast?.message).toBe("Sent back to Sam with your note.");
 		expect(text(m.result)).toContain(`"label":"Waiting for you","value":1`);
@@ -1418,6 +1418,70 @@ describe("Two people at once (compare-and-set)", () => {
 			expect((await request(s, id))?.status, action).toBe("waiting");
 		}
 		expect((await s.host.inspect.content.get("pages", id))?.status).not.toBe("published");
+	});
+
+	it("does not send back a request withdrawn between reading and writing it", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const send = (surface: "page" | "panel") =>
+			surface === "page"
+				? s.host.admin.submit(
+						"/overview",
+						"send_back",
+						{ note: "Iced coffee is £3.40" },
+						{ user: admin(s), blockId: `sb:pages:${id}` },
+					)
+				: s.host.admin.submitEditorPanel(
+						"approval",
+						"pages",
+						id,
+						"send_back",
+						{ note: "Iced coffee is £3.40" },
+						{ user: admin(s), blockId: `sb:pages:${id}` },
+					);
+		// kvList storageGetVersioned storageCompareAndSet (lost), then the list (3).
+		conflicts = 1;
+		const page = await measure(() => send("page"));
+		pin("page send back, lost to a withdraw", page, 6);
+		// kvList schemaGetCollection storageGetVersioned storageCompareAndSet (lost), then the
+		// panel as it is now: storageGet contentGet contentGetRevision.
+		conflicts = 1;
+		const panel = await measure(() => send("panel"));
+		pin("panel send back, lost to a withdraw", panel, 7);
+		for (const m of [page, panel]) {
+			expect(m.result?.toast).toEqual({
+				type: "error",
+				message: "This request changed just now, so nothing was changed. Look again.",
+			});
+			expect(m.calls).not.toContain("cronSchedule");
+		}
+		expect((await request(s, id))?.status).toBe("waiting");
+	});
+
+	it("does not save a note on a request decided between reading and writing it", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		conflicts = 1;
+		const m = await measure(() =>
+			s.host.admin.submitEditorPanel(
+				"approval",
+				"pages",
+				id,
+				"save_note",
+				{ note: "New prices from Monday" },
+				{ user: s.editor, blockId: `note:pages:${id}` },
+			),
+		);
+		// kvList schemaGetCollection storageGetVersioned storageCompareAndSet (lost), then the
+		// panel as it is now: storageGet contentGet contentGetRevision userList.
+		pin("panel save note, lost to a decision", m, 8);
+		expect(m.result?.toast).toEqual({
+			type: "error",
+			message: "This request changed just now, so nothing was changed. Look again.",
+		});
+		expect((await request(s, id))?.note).toBeUndefined();
 	});
 
 	// kvList schemaGetCollection storageGetVersioned, the page (2, + contentGet for the
