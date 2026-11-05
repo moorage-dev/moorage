@@ -137,7 +137,14 @@ async function ownSite(runtime: PluginRuntimeTestHost): Promise<void> {
 	await runtime.http.respond("https://www.acme.test/", redirect(`${SITE}/`));
 	await runtime.http.respond(`${SITE}${MISSING_PATH}`, html("Not found", 404));
 	await runtime.http.respond(`${SITE}/robots.txt`, new Response("User-agent: *\nAllow: /\n"));
-	await runtime.http.respond(`${SITE}/sitemap.xml`, new Response("", { status: 200 }));
+	// What EmDash serves: a list of lists, named in its robots.txt.
+	await runtime.http.respond(
+		`${SITE}/sitemap.xml`,
+		new Response(
+			`<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>${SITE}/sitemap-pages.xml</loc></sitemap></sitemapindex>`,
+			{ headers: { "content-type": "application/xml" } },
+		),
+	);
 }
 
 const cronEvent = () => ({ name: TASK, scheduledAt: new Date().toISOString() });
@@ -1025,5 +1032,47 @@ describe("routes: actions on a finished check", () => {
 		// The same one settings write as saving the options.
 		expect(m.calls.length).toBe(4);
 		expect(await runtime.inspect.setting("options")).toMatchObject({ hideHelpLine: true });
+	});
+});
+
+describe("routes: the Links on this page panel (editor/links)", () => {
+	async function idOf(runtime: PluginRuntimeTestHost, path: string): Promise<string> {
+		const row = await runtime.inspect.storage.get<PageRow>("pages", path);
+		if (!row?.id) throw new Error(`no page ${path}`);
+		return row.id;
+	}
+
+	it("a published page with problems: its row, then its links", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const home = await idOf(runtime, "/home");
+		const m = await cold(runtime, "panel load, page with problems", () =>
+			runtime.admin.loadEditorPanel("links", "pages", home),
+		);
+		expect(m.calls).toEqual(["storageQuery", "storageGetMany"]);
+		expect(JSON.stringify(m.result)).toContain("/old-page goes to a page that does not exist.");
+	});
+
+	it("a draft: its row only", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const draft = await idOf(runtime, "/christmas");
+		const m = await cold(runtime, "panel load, draft", () =>
+			runtime.admin.loadEditorPanel("links", "pages", draft),
+		);
+		expect(m.calls).toEqual(["storageQuery"]);
+	});
+
+	it("before the first check: no row, then the check's state", async () => {
+		const runtime = await start();
+		const entry = (await runtime.fixtures.content("pages", {
+			slug: "spring",
+			status: "published",
+			data: { title: "Spring", body: [] },
+		})) as { id: string };
+		const m = await cold(runtime, "panel load, no check yet", () =>
+			runtime.admin.loadEditorPanel("links", "pages", entry.id),
+		);
+		expect(m.calls).toEqual(["storageQuery", "kvGet"]);
 	});
 });

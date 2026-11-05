@@ -3,6 +3,7 @@
 import type { PluginContext } from "emdash";
 
 import type { Group, LinkRow, Reason, Source } from "./model.js";
+import type { Noindex } from "./search.js";
 import { pickSettings, type SettingsKeys } from "./settings-store.js";
 
 /**
@@ -69,6 +70,8 @@ export interface ScanState {
 	live?: LiveMode;
 	/** Pages are kept ready for visitors (home page caching headers). */
 	caching?: "ok" | "no";
+	/** What the home page told search engines, read from the same request. */
+	home?: HomeIndex;
 	counts?: Omit<Summary, "rows" | "lookRows" | "unknownRows" | "pass" | "finishedAt" | "live">;
 	/**
 	 * Rows to look at and rows that could not be checked, kept by the first half
@@ -99,6 +102,9 @@ export interface RowView {
 	menu: boolean;
 	editor: boolean;
 	since?: string;
+	/** For the folded details: the last answer's HTTP status and when it came. */
+	code?: number;
+	checkedAt?: string;
 }
 
 /**
@@ -120,7 +126,12 @@ export interface Summary {
 	lookRows: RowView[];
 	unknownRows: RowView[];
 	live: LiveMode;
+	/** What the home page told search engines ("index": they may list it). Unset before 0.2.0. */
+	home?: HomeIndex;
 }
+
+/** May search engines list the home page, or where does it say they may not. */
+export type HomeIndex = "index" | Noindex;
 
 export interface Queue {
 	/** When each host was last asked, and how often it asked us to slow down. */
@@ -222,6 +233,8 @@ export function view(id: string, row: LinkRow): RowView {
 		menu: row.menu,
 		editor: row.editor,
 		...(row.since ? { since: row.since } : {}),
+		...(row.code !== undefined ? { code: row.code } : {}),
+		...(row.checkedAt ? { checkedAt: row.checkedAt } : {}),
 	};
 }
 

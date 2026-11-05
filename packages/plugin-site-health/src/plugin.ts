@@ -6,6 +6,7 @@ import type { SandboxedPlugin } from "emdash/plugin";
 import { handleAdmin } from "./admin.js";
 import { mailDue, mailStep } from "./alerts.js";
 import { counted } from "./budget.js";
+import { handleLinksPanel } from "./panel.js";
 import { dueStep, ensureTask, passStep, refreshEntry, startPass, TASK } from "./scan.js";
 import { KEY, load } from "./state.js";
 
@@ -111,6 +112,13 @@ const plugin: SandboxedPlugin = {
 				const counter = { ops: 0 };
 				return handleAdmin(routeCtx.input, routeCtx.user, counted(ctx, counter), counter);
 			},
+		},
+		// The "Links on this page" panel beside an entry, for anyone who can open the editor.
+		// Read-only: it shows what is stored and makes no request.
+		"editor/links": {
+			permission: "content:read_drafts",
+			handler: async (routeCtx, ctx) =>
+				handleLinksPanel(routeCtx.ui?.entry, counted(ctx, { ops: 0 })),
 		},
 	},
 };

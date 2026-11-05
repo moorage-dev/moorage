@@ -2,7 +2,8 @@
 
 import type { PluginContext } from "emdash";
 
-import { request } from "./check.js";
+import { request, type Outcome } from "./check.js";
+import { isSitemap, readRobots, type Robots } from "./search.js";
 import {
 	KEY,
 	type CheckStatus,
@@ -17,6 +18,44 @@ const WEEK = 7 * 86_400_000;
 export const MISSING_PATH = "/site-health-check-a-page-that-does-not-exist";
 
 type Row = { status: CheckStatus; text: string };
+
+/** Enough of a list of pages to see what it is; a big one is never read whole. */
+const SITEMAP_PEEK = 2000;
+
+/** The "Search engines" row: who robots.txt keeps out, and the list of pages. */
+export function searchRow(rules: Robots, named: boolean, sitemap: Outcome): Row {
+	if (rules.google && rules.all) {
+		return {
+			status: "attention",
+			text: "Your site tells search engines to stay away, so it will not appear in search results.",
+		};
+	}
+	if (rules.google) {
+		return {
+			status: "attention",
+			text: "Your site tells Google to stay away, so it will not appear in Google's results. Other search engines are allowed in.",
+		};
+	}
+	if (rules.all) {
+		return {
+			status: "attention",
+			text: "Your site lets Google in but tells most other search engines to stay away.",
+		};
+	}
+	const status = sitemap.status ?? 0;
+	if (status >= 200 && status < 300 && isSitemap(sitemap.body)) {
+		return {
+			status: "working",
+			text: "They are allowed in, and the list of your pages for them answers.",
+		};
+	}
+	return {
+		status: "working",
+		text: named
+			? "They are allowed in. The list of your pages your site points them to could not be read; your web person can look at it."
+			: "They are allowed in. There is no list of your pages for them yet.",
+	};
+}
 
 /** The Checklist rows that need the site to be opened. Once a week, up to five requests. */
 export async function runChecklist(
@@ -54,14 +93,28 @@ export async function runChecklist(
 	} else {
 		const host = site.hostname;
 		const other = host.startsWith("www.") ? host.slice(4) : `www.${host}`;
-		const [insecure, alias, missing, robots, list] = await Promise.all([
+		// Still five requests: the list of pages is asked for once robots.txt has
+		// said where it is (EmDash names its own there).
+		const [insecure, alias, missing, search] = await Promise.all([
 			site.protocol === "https:"
 				? request(ctx, `http://${host}/`, { follow: false })
 				: Promise.resolve(null),
 			request(ctx, `${site.protocol}//${other}/`, { follow: false }),
 			request(ctx, `${origin}${MISSING_PATH}`),
-			request(ctx, `${origin}/robots.txt`, { body: true }),
-			request(ctx, `${origin}/sitemap.xml`, { method: "HEAD" }),
+			(async () => {
+				const robots = await request(ctx, `${origin}/robots.txt`, { body: true });
+				const status = robots.status ?? 0;
+				// No robots.txt (or an error) keeps nobody out.
+				const rules: Robots =
+					status >= 200 && status < 300
+						? readRobots(robots.body ?? "", origin)
+						: { google: false, all: false, sitemaps: [] };
+				const where = rules.sitemaps[0];
+				const sitemap = await request(ctx, where ?? `${origin}/sitemap.xml`, {
+					peek: SITEMAP_PEEK,
+				});
+				return { rules, named: where !== undefined, sitemap };
+			})(),
 		]);
 		if (!insecure) {
 			rows.secure = {
@@ -116,22 +169,7 @@ export async function runChecklist(
 			};
 		} else rows.missing = couldNot;
 
-		const blocked =
-			/user-agent:\s*\*\s*(?:\r?\n(?!user-agent)[^\n]*)*?\r?\ndisallow:\s*\/\s*(\r?\n|$)/i.test(
-				robots.status === 200 ? (robots.body ?? "") : "",
-			);
-		const listed = list.status !== undefined && list.status < 300;
-		rows.search = blocked
-			? {
-					status: "attention",
-					text: "Your site tells search engines to stay away, so it will not appear in search results.",
-				}
-			: {
-					status: "working",
-					text: listed
-						? "They are allowed in, and the list of your pages for them answers."
-						: "They are allowed in. There is no list of your pages for them yet.",
-				};
+		rows.search = searchRow(search.rules, search.named, search.sitemap);
 	}
 	const checklist: ChecklistState = {
 		...(scan.live === "ok" ? { checkedAt: new Date(now).toISOString() } : {}),

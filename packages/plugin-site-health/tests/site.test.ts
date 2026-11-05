@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { MISSING_PATH } from "../src/checklist.js";
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
-import type { LinkRow } from "../src/model.js";
+import type { LinkRow, PageRow } from "../src/model.js";
 import type { Alerts, Queue, ScanState, Summary } from "../src/state.js";
 import { idFor } from "../src/url.js";
 
@@ -84,7 +84,12 @@ function redirect(to: string): Response {
 }
 
 /** The site's own pages, as the site would answer them. */
-async function ownSite(runtime: PluginRuntimeTestHost, aboutGone = false): Promise<void> {
+async function ownSite(
+	runtime: PluginRuntimeTestHost,
+	aboutGone = false,
+	robots = "User-agent: *\nAllow: /\n",
+	sitemap: Response = sitemapIndex(),
+): Promise<void> {
 	await runtime.http.respond(
 		`${SITE}/`,
 		html(HOME_HTML, 200, { "cache-control": "public, max-age=60" }),
@@ -99,8 +104,16 @@ async function ownSite(runtime: PluginRuntimeTestHost, aboutGone = false): Promi
 	await runtime.http.respond("http://acme.test/", redirect(`${SITE}/`));
 	await runtime.http.respond("https://www.acme.test/", redirect(`${SITE}/`));
 	await runtime.http.respond(`${SITE}${MISSING_PATH}`, html("Not found", 404));
-	await runtime.http.respond(`${SITE}/robots.txt`, new Response("User-agent: *\nAllow: /\n"));
-	await runtime.http.respond(`${SITE}/sitemap.xml`, new Response("", { status: 200 }));
+	await runtime.http.respond(`${SITE}/robots.txt`, new Response(robots));
+	await runtime.http.respond(`${SITE}/sitemap.xml`, sitemap);
+}
+
+/** What EmDash serves at /sitemap.xml: a list of lists, one per collection. */
+function sitemapIndex(): Response {
+	return new Response(
+		`<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<sitemap><loc>${SITE}/sitemap-pages.xml</loc></sitemap>\n</sitemapindex>`,
+		{ headers: { "content-type": "application/xml" } },
+	);
 }
 
 /**
@@ -144,6 +157,32 @@ function text(response: BlockResponse): string {
 	return JSON.stringify(response.blocks);
 }
 
+const DETAILS = "Details for your web person";
+
+/** The screen's words without the folded details for the owner's web person. */
+function withoutDetails(response: BlockResponse): string {
+	return JSON.stringify(response.blocks, (_key, value: unknown) =>
+		(value as { type?: string; label?: string } | null)?.type === "accordion" &&
+		(value as { label?: string }).label === DETAILS
+			? undefined
+			: value,
+	);
+}
+
+/** The Checklist row of one name, as the Admin's page shows it. */
+async function checklistRow(runtime: PluginRuntimeTestHost, name: string): Promise<string> {
+	const page = await runtime.admin.loadPage(PAGE);
+	const match = text(page).match(new RegExp(`"check":"${name}\\. ([^"]*)","status":"([^"]*)"`));
+	if (!match) throw new Error(`no Checklist row "${name}"`);
+	return `${match[2]}: ${match[1]}`;
+}
+
+async function entryId(runtime: PluginRuntimeTestHost, path: string): Promise<string> {
+	const row = await runtime.inspect.storage.get<PageRow>("pages", path);
+	if (!row?.id) throw new Error(`no page ${path}`);
+	return row.id;
+}
+
 async function summary(runtime: PluginRuntimeTestHost): Promise<Summary> {
 	const value = await runtime.inspect.kv.get<Summary>("summary");
 	if (!value) throw new Error("no summary");
@@ -185,7 +224,10 @@ describe("a full check of a public site", () => {
 			"/menu-2024 goes to a page that does not exist. Found on: Site menu (every page).",
 		);
 		expect(words).toContain("/christmas goes to a page that is not published yet. Found on: Home.");
-		expect(words).not.toMatch(/\b(404|500|cron|robots\.txt)\b/);
+		// Error numbers stay folded away, in the details for the owner's web person.
+		expect(withoutDetails(page)).not.toMatch(/\b(404|500|cron|robots\.txt)\b/);
+		expect(words).toContain("/old-page: HTTP 404, checked just now (");
+		expect(words).toContain("/christmas: not requested, the page is not published.");
 
 		// The Checklist read the site's own answers.
 		expect(words).toContain(
@@ -639,6 +681,199 @@ describe("a site in the middle of an update", () => {
 		const page = text(await runtime.admin.loadPage(PAGE));
 		expect(page).toContain("We cannot open your pages to check them");
 		expect(page).not.toContain("middle of an update");
+	});
+});
+
+describe("search engines", () => {
+	const HOME = "Home page in search results";
+
+	it("says when the home page tells search engines not to list it, and clears on the next check", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect(await checklistRow(runtime, HOME)).toBe(
+			"Working: Search engines may list your home page.",
+		);
+
+		await runtime.http.respond(
+			`${SITE}/`,
+			html(HOME_HTML.replace("<head>", '<head><meta name="robots" content="noindex">'), 200),
+		);
+		await runtime.admin.act(PAGE, "check_all");
+		await finish(runtime);
+		const row = await checklistRow(runtime, HOME);
+		expect(row).toMatch(/^Needs attention: Your home page tells search engines not to list it/);
+		expect(row).toContain("(a noindex tag in the page)");
+		// The banner counts it.
+		expect(text(await runtime.admin.loadPage(PAGE))).toContain("thing needs attention");
+
+		await runtime.http.respond(
+			`${SITE}/`,
+			html(HOME_HTML, 200, { "x-robots-tag": "googlebot: noindex" }),
+		);
+		await runtime.admin.act(PAGE, "check_all");
+		await finish(runtime);
+		expect(await checklistRow(runtime, HOME)).toContain(
+			"(an X-Robots-Tag header the server sends)",
+		);
+
+		// Fixed: the next full check says so, without waiting for the weekly Checklist.
+		await runtime.http.respond(`${SITE}/`, html(HOME_HTML, 200));
+		await runtime.admin.act(PAGE, "check_all");
+		await finish(runtime);
+		expect(await checklistRow(runtime, HOME)).toBe(
+			"Working: Search engines may list your home page.",
+		);
+	});
+
+	it("reads robots.txt per crawler: Google kept out is a problem", async () => {
+		const runtime = await start();
+		await ownSite(
+			runtime,
+			false,
+			"User-agent: Googlebot\nDisallow: /\n\nUser-agent: *\nAllow: /\n",
+		);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect(await checklistRow(runtime, "Search engines")).toBe(
+			"Needs attention: Your site tells Google to stay away, so it will not appear in Google's results. Other search engines are allowed in.",
+		);
+	});
+
+	it("keeping only AI crawlers out is a choice, not a problem", async () => {
+		const other = await start();
+		await ownSite(
+			other,
+			false,
+			"User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nDisallow: /_emdash/\n",
+		);
+		await other.transport.invokeHook("plugin:activate", {});
+		await finish(other);
+		expect(await checklistRow(other, "Search engines")).toBe(
+			"Working: They are allowed in, and the list of your pages for them answers.",
+		);
+	});
+
+	it("follows robots.txt to the list of pages it names, and accepts a list of lists", async () => {
+		const runtime = await start();
+		await ownSite(
+			runtime,
+			false,
+			`User-agent: *\nAllow: /\n\nSitemap: ${SITE}/sitemap-index.xml\n`,
+			html("Not found", 404),
+		);
+		await runtime.http.respond(`${SITE}/sitemap-index.xml`, sitemapIndex());
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect(await checklistRow(runtime, "Search engines")).toBe(
+			"Working: They are allowed in, and the list of your pages for them answers.",
+		);
+		const asked = runtime.http.requests().map((r) => r.url);
+		expect(asked).toContain(`${SITE}/sitemap-index.xml`);
+		expect(asked).not.toContain(`${SITE}/sitemap.xml`);
+	});
+
+	it("does not count a page that is not a list of pages", async () => {
+		const runtime = await start();
+		// A site that answers every address with a normal page.
+		await ownSite(runtime, false, undefined, html("<html><body>Home</body></html>"));
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect(await checklistRow(runtime, "Search engines")).toBe(
+			"Working: They are allowed in. There is no list of your pages for them yet.",
+		);
+	});
+});
+
+describe("the Links on this page panel", () => {
+	it("shows an Editor the problems on the page they are editing, in plain words", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const editor = await runtime.fixtures.user({ email: "sam@acme.test", role: "editor" });
+		const home = await entryId(runtime, "/home");
+		const panel = await runtime.admin.loadEditorPanel("links", "pages", home, { user: editor });
+		const words = text(panel);
+		expect(words).toContain("/old-page goes to a page that does not exist.");
+		expect(words).toContain("/christmas goes to a page that is not published yet.");
+		expect(words).toContain("maps.example/embed is loaded over an insecure connection.");
+		// Links to other sites are checked a day later.
+		expect(words).toContain("2 links to other sites are not checked yet.");
+		expect(words).toContain("1 link works.");
+		// Read-only: no buttons, no menus, and no maker's name.
+		expect(words).not.toMatch(/"type":"(button|menu)"/);
+		expect(words).not.toMatch(/moorage/i);
+		expect(validateBlockResponse(panel, { pluginPagePaths: [PAGE] })).toEqual({
+			valid: true,
+			errors: [],
+		});
+		const admin = text(await runtime.admin.loadEditorPanel("links", "pages", home));
+		expect(admin).not.toMatch(/moorage/i);
+
+		// The editor fixes a link and publishes: the panel follows at once.
+		const fixed = await runtime.actions.content.update("pages", home, {
+			data: { body: [link("About", "/about", "k1")] },
+			actor: { id: editor.id, role: editor.role },
+		});
+		expect(fixed.success).toBe(true);
+		const published = await runtime.actions.content.publish("pages", home, {
+			actor: { id: editor.id, role: editor.role },
+		});
+		expect(published.success).toBe(true);
+		// The test host does not run hooks for its actions; EmDash does.
+		await runtime.transport.invokeHook("content:afterPublish", {
+			collection: "pages",
+			content: { id: home },
+		});
+		const after = text(
+			await runtime.admin.loadEditorPanel("links", "pages", home, { user: editor }),
+		);
+		expect(after).not.toContain("/old-page");
+		expect(after).toContain("The 1 link on this page works.");
+	});
+
+	it("follows a page to its new address when its slug changes", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const home = await entryId(runtime, "/home");
+		const moved = await runtime.actions.content.update("pages", home, {
+			slug: "welcome",
+			data: { body: [link("About", "/about", "k1")] },
+		});
+		expect(moved.success).toBe(true);
+		expect((await runtime.actions.content.publish("pages", home)).success).toBe(true);
+		await runtime.transport.invokeHook("content:afterPublish", {
+			collection: "pages",
+			content: { id: home },
+		});
+		// The row at the old address stays until the next full check sweeps it away.
+		expect(await runtime.inspect.storage.get("pages", "/home")).not.toBeNull();
+		const panel = text(await runtime.admin.loadEditorPanel("links", "pages", home));
+		expect(panel).toContain("The 1 link on this page works.");
+		expect(panel).not.toContain("/old-page");
+	});
+
+	it("says when a page's links are not checked yet", async () => {
+		const runtime = await start();
+		const draft = (await runtime.fixtures.content("pages", {
+			slug: "spring",
+			status: "draft",
+			data: { title: "Spring", body: [link("Gone", "/gone", "k9")] },
+		})) as { id: string };
+		// Before the first check.
+		expect(text(await runtime.admin.loadEditorPanel("links", "pages", draft.id))).toContain(
+			"Links on this page are checked with the first full check of your site.",
+		);
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect(text(await runtime.admin.loadEditorPanel("links", "pages", draft.id))).toContain(
+			"Links on this page are checked once it is published.",
+		);
 	});
 });
 

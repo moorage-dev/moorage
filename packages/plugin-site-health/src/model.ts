@@ -76,6 +76,8 @@ export interface LinkRow {
 	fails?: number;
 	firstFailAt?: string;
 	checkedAt?: string;
+	/** The HTTP status of the last request for it; none when it got no answer or was not asked. */
+	code?: number;
 	/** When it is next checked from outside ("9999" = only with the next full check). */
 	due: string;
 	fine?: { by: string; at: string };
@@ -95,6 +97,11 @@ export interface PageRow {
 	pass: number;
 	/** Rows found in this entry's content. */
 	links?: string[];
+	/**
+	 * When the entry was last read. After a slug change the row at the old
+	 * address stays until the next sweep; the newest row is the entry's.
+	 */
+	at?: string;
 }
 
 export const MAX_SOURCES = 10;
