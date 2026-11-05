@@ -404,6 +404,51 @@ describe("telling other scripts whether the banner waits", () => {
 	});
 });
 
+describe("Astro's <ClientRouter />", () => {
+	/** What the router does on a page change: a new body, the new page's attributes on <html>. */
+	function swap(body: string): void {
+		const next = document.createElement("body");
+		next.innerHTML = body;
+		document.body.replaceWith(next);
+		for (const { name } of [...document.documentElement.attributes]) {
+			document.documentElement.removeAttribute(name);
+		}
+		document.documentElement.setAttribute("lang", "en");
+		document.dispatchEvent(new Event("astro:after-swap"));
+	}
+	const panelOpen = () => shadow().querySelector("dialog")!.open;
+	const pill = () => shadow().querySelector<HTMLElement>(".s")!;
+	const click = (element: Element) =>
+		!element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+	const link = (selector: string) => document.querySelector(selector)!;
+
+	it("keeps the banner, its state and the Cookies button on the next page", async () => {
+		boot(settings());
+		await ready();
+		swap("<p>Second page</p>");
+		expect(document.querySelector("#cookie-consent")).not.toBeNull();
+		expect(bannerShown()).toBe(true);
+		expect(document.documentElement.getAttribute("data-cookie-consent")).toBe("asking");
+		press("a");
+		swap("<p>Third page</p>");
+		expect(document.querySelector("#cookie-consent")).not.toBeNull();
+		expect(bannerShown()).toBe(false);
+		expect(pill().hidden).toBe(false);
+		expect(document.documentElement.getAttribute("data-cookie-consent")).toBe("settled");
+		// The tools were loaded once, on the first page, and stay loaded.
+		expect(requested()).toHaveLength(3);
+	});
+
+	it("a link to #cookie-settings on the new page opens the choices", async () => {
+		boot(settings());
+		await ready();
+		press("r");
+		swap('<a id=m href="/#cookie-settings">Cookie settings</a>');
+		expect(click(link("#m"))).toBe(true);
+		expect(panelOpen()).toBe(true);
+	});
+});
+
 describe("the consent state other scripts can read", () => {
 	const state = () => (window as unknown as { cookieConsent?: unknown }).cookieConsent;
 

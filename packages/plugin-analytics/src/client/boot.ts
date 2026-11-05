@@ -144,7 +144,7 @@ export function boot(c: ClientConfig): void {
 	let saved = readChoice(d.cookie);
 	let country: string | undefined;
 	let state: Decision = { a: false, m: false, ask: false };
-	let known = 0;
+	let told = 0;
 
 	// Other scripts can read what is allowed, but not change it: window.cookieConsent is
 	// { analytics, marketing } once this visitor's rule is known (undefined before), and
@@ -152,12 +152,12 @@ export function boot(c: ClientConfig): void {
 	const now = () => Object.freeze({ analytics: state.a, marketing: state.m });
 	Object.defineProperty(w, "cookieConsent", {
 		configurable: true,
-		get: () => (known ? now() : undefined),
+		get: () => (told ? now() : undefined),
 	});
 	const tell = (name: string) => d.dispatchEvent(new CustomEvent(name, { detail: now() }));
 	const change = (next: Decision) => {
 		state = next;
-		known = 1;
+		told = 1;
 		tell("cookie-consent:change");
 	};
 
@@ -165,10 +165,11 @@ export function boot(c: ClientConfig): void {
 	// rule is known, "asking" while the banner waits, "settled" once answered or not asked. Only on sites
 	// where the banner can appear; with no attribute there is no banner to wait for.
 	const html = d.documentElement;
-	const mark = (phase: "pending" | "asking" | "settled") => {
-		if (html.getAttribute("data-cookie-consent") === phase) return;
-		html.setAttribute("data-cookie-consent", phase);
-		if (phase === "settled") tell("cookie-consent:settled");
+	let phase: string | undefined;
+	const mark = (next: "pending" | "asking" | "settled") => {
+		if (phase === next) return;
+		html.setAttribute("data-cookie-consent", (phase = next));
+		if (next === "settled") tell("cookie-consent:settled");
 	};
 	if (c.who) mark("pending");
 	// A browser that has been signed in to the admin is staff, not a visitor. A copy of the site on
@@ -521,7 +522,20 @@ export function boot(c: ClientConfig): void {
 			// The links in the page as it loaded (menus are drawn by the server). One added later still
 			// opens the choices (the click listener below is for the whole page); it just does not move
 			// the button aside, which keeps this script from watching every change to every page.
-			d.querySelectorAll(OPENERS).forEach((link) => opener(link) && watch.observe(link));
+			const look = () =>
+				d.querySelectorAll(OPENERS).forEach((link) => opener(link) && watch.observe(link));
+			look();
+			// Astro's <ClientRouter /> swaps in the next page's body and <html> attributes, and does not
+			// run this script again: put the banner back, say again where it stands, watch the new links.
+			d.addEventListener("astro:after-swap", () => {
+				d.body.prepend(root!.host);
+				if (phase) html.setAttribute("data-cookie-consent", phase);
+				watch.disconnect();
+				seen.clear();
+				linkOnScreen = false;
+				look();
+				show();
+			});
 		}
 		const go = () => apply(state.a, state.m);
 		// Visitors who are not asked get their tags when the browser is idle.
