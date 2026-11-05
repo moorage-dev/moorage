@@ -15,7 +15,14 @@ import {
 	writerJob,
 	type MailJob,
 } from "./notify.js";
-import { holdRequest, MAIL_TASK, REMIND_TASK, scheduleAsked, taskName } from "./policy.js";
+import {
+	holdRequest,
+	MAIL_TASK,
+	REMIND_TASK,
+	scheduleAsked,
+	scheduleRemindOnly,
+	taskName,
+} from "./policy.js";
 import type { CollectionInfo, UserInfo } from "./requests.js";
 import {
 	addHistory,
@@ -66,6 +73,12 @@ export interface Decision extends Outcome {
 	info?: CollectionInfo;
 }
 
+/**
+ * Two people at once: the request was withdrawn or decided between reading and writing it
+ * (a compare-and-set lost), so nothing was changed.
+ */
+const CHANGED_MEANWHILE = "This request changed just now, so nothing was changed. Look again.";
+
 const fail = (message: string, read: Omit<Decision, "ok" | "message"> = {}): Decision => ({
 	ok: false,
 	message,
@@ -114,8 +127,9 @@ export async function approve(
 	known: { info?: CollectionInfo; meter?: Meter } = {},
 ): Promise<Decision> {
 	const store = requests(ctx);
-	const request = await store.get(key);
-	if (!request || request.status !== "waiting")
+	const stored = await store.getVersioned(key);
+	const request = stored?.value ?? null;
+	if (!stored || !request || request.status !== "waiting")
 		return fail("This request has already been decided.", request ? { request } : {});
 	if (!user) return fail("Sign in again to approve.", { request });
 	if (options.override !== undefined) {
@@ -167,13 +181,16 @@ export async function approve(
 	const now = new Date().toISOString();
 	const by = personFromUser(user);
 	const versionId = `${key}#${now}`;
-	await versions(ctx).put(versionId, {
-		requestKey: key,
-		at: now,
-		by: by.name,
-		title: titleOf(info, draft.data, request.title),
-		fields: copyOf(info, draft.data),
-	});
+	// The text copy is written after the request, so a request withdrawn or decided meanwhile
+	// leaves no copy of an approval that did not happen.
+	const copy = () =>
+		versions(ctx).put(versionId, {
+			requestKey: key,
+			at: now,
+			by: by.name,
+			title: titleOf(info, draft.data, request.title),
+			fields: copyOf(info, draft.data),
+		});
 	const approved: ApprovalRequest = {
 		...request,
 		title: titleOf(info, draft.data, request.title),
@@ -201,7 +218,9 @@ export async function approve(
 	const writer = approved.requestedBy?.name;
 
 	if (!publishing) {
-		await store.put(key, approved);
+		if (!(await store.compareAndSet(key, stored.revision, approved)).applied)
+			return fail(CHANGED_MEANWHILE, { draft, info });
+		await copy();
 		await queueOrLog(ctx, known.meter, [
 			override ? overrideJob(ctx, config, approved, false) : null,
 			ownRequest ? null : writerJob(ctx, approved, "approved"),
@@ -231,7 +250,10 @@ export async function approve(
 				ownRequest ? null : writerJob(ctx, approved, "published"),
 			].filter((job): job is MailJob => job !== null)
 		: [];
-	await store.put(key, { ...approved, publishing: { by, at: now, jobs } });
+	const marked = { ...approved, publishing: { by, at: now, jobs } };
+	if (!(await store.compareAndSet(key, stored.revision, marked)).applied)
+		return fail(CHANGED_MEANWHILE, { draft, info });
+	await copy();
 	try {
 		if (!draft.rev || !ctx.content?.publish) throw new Error("publishing is not available");
 		await ctx.content.publish(request.collection, request.entryId, { _rev: draft.rev });
@@ -283,8 +305,9 @@ export async function sendBack(
 	meter?: Meter,
 ): Promise<Decision> {
 	const store = requests(ctx);
-	const request = await store.get(key);
-	if (!request || request.status !== "waiting")
+	const stored = await store.getVersioned(key);
+	const request = stored?.value ?? null;
+	if (!stored || !request || request.status !== "waiting")
 		return fail("This request has already been decided.", request ? { request } : {});
 	if (!mayApprove(config, request, user) || !user)
 		return fail("You can't decide on this request.", { request });
@@ -298,7 +321,8 @@ export async function sendBack(
 		sentBack: { by, at: now, note: text.slice(0, 2000) },
 	};
 	addHistory(sent, now, `${by.name} sent it back: "${text.slice(0, 120)}"`);
-	await store.put(key, sent);
+	if (!(await store.compareAndSet(key, stored.revision, sent)).applied)
+		return fail(CHANGED_MEANWHILE);
 	await queueOrLog(ctx, meter, [writerJob(ctx, sent, "sent_back")]);
 	const writer = sent.requestedBy?.name;
 	return {
@@ -318,8 +342,9 @@ export async function saveNote(
 	note: unknown,
 ): Promise<Decision> {
 	const store = requests(ctx);
-	const request = await store.get(key);
-	if (!request || request.status !== "waiting")
+	const stored = await store.getVersioned(key);
+	const request = stored?.value ?? null;
+	if (!stored || !request || request.status !== "waiting")
 		return fail("There is no request waiting on this page.", request ? { request } : {});
 	if (!user || request.requestedBy?.id !== user.id)
 		return fail("Only the person who asked can add a note.", { request });
@@ -331,10 +356,42 @@ export async function saveNote(
 		new Date().toISOString(),
 		text ? `${personName(user)} added a note` : `${personName(user)} removed the note`,
 	);
-	await store.put(key, updated);
+	if (!(await store.compareAndSet(key, stored.revision, updated)).applied)
+		return fail(CHANGED_MEANWHILE);
 	return {
 		ok: true,
 		message: text ? "Note saved. The approvers will see it." : "Note removed.",
+		request: updated,
+	};
+}
+
+/**
+ * The person who asked takes a waiting request back. 2 calls: the request, and the request
+ * again, written only if nobody decided it meanwhile. The approvers' email task and reminder
+ * read the request when they run and find nothing waiting, so nothing more is sent.
+ */
+export async function withdraw(
+	ctx: PluginContext,
+	user: UserInfo | undefined,
+	key: string,
+): Promise<Decision> {
+	const store = requests(ctx);
+	const stored = await store.getVersioned(key);
+	const request = stored?.value ?? null;
+	if (!stored || !request || request.status !== "waiting")
+		return fail("This request is no longer waiting.", request ? { request } : {});
+	// Work from an AI tool is decided by a person (its key's owner may approve or send it back).
+	if (!user || request.ai || request.requestedBy?.id !== user.id)
+		return fail("Only the person who asked can withdraw it.", { request });
+	const now = new Date().toISOString();
+	const by = personFromUser(user);
+	const updated: ApprovalRequest = { ...request, status: "closed", withdrawn: { by, at: now } };
+	addHistory(updated, now, `${by.name} withdrew the request`);
+	if (!(await store.compareAndSet(key, stored.revision, updated)).applied)
+		return fail(CHANGED_MEANWHILE);
+	return {
+		ok: true,
+		message: "Withdrawn. The approvers no longer see it; ask again when it is ready.",
 		request: updated,
 	};
 }
@@ -399,9 +456,10 @@ export async function ask(
 		now,
 	);
 	result.request.checks = missingChecks(draft, info.hasSeo);
-	if (result.notify && ctx.email) result.request.emailedAt = now;
+	if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
 	await store.put(key, result.request);
 	if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);
+	else if (result.quiet) await scheduleRemindOnly(ctx, config, key, now);
 	const people = await approvers(ctx, config, user.id);
 	const names = nameList(people.slice(0, 4).map((p) => personName(p)));
 	if (people.length === 0)
@@ -423,6 +481,8 @@ export async function ask(
 /**
  * The cron task that emails approvers after a request: the request is read when it runs, so
  * a request decided meanwhile is not sent. Sets the two-day reminder first when asked to.
+ * A request withdrawn before this ran was never emailed: its `emailedAt` is cleared (one call
+ * more on that path), so asking again emails the approvers instead of waiting for the reminder.
  */
 export async function runMailTask(
 	m: Meter,
@@ -432,7 +492,25 @@ export async function runMailTask(
 ): Promise<void> {
 	if (!config) return;
 	const ctx = m.ctx;
-	const request = await requests(ctx).get(key);
+	const store = requests(ctx);
+	let stored = await store.getVersioned(key);
+	const at = typeof data.at === "string" ? data.at : null;
+	const unsent = stored?.value;
+	if (
+		stored &&
+		unsent &&
+		unsent.status === "closed" &&
+		unsent.withdrawn &&
+		at !== null &&
+		unsent.emailedAt === at
+	) {
+		const cleared: ApprovalRequest = { ...unsent };
+		delete cleared.emailedAt;
+		// Lost: asked again meanwhile, without an email of its own (this one was due); send it.
+		if (!(await store.compareAndSet(key, stored.revision, cleared)).applied)
+			stored = await store.getVersioned(key);
+	}
+	const request = stored?.value;
 	if (request?.status !== "waiting") return;
 	const remind = typeof data.remind === "string" ? data.remind : null;
 	if (remind && config.remind && ctx.cron) {

@@ -226,6 +226,14 @@ test.describe.serial("Content Approval", () => {
 	});
 
 	test("the Settings tab states the gaps in plain words, and turns approval on", async () => {
+		// Scheduled before approval is on: Settings names it, as approval will hold it.
+		const later = await createPage(ellen, "Autumn menu", "Pumpkin bread from October");
+		created.push(later);
+		const scheduled = await ellen.page.request.post(`${API}/content/pages/${later}/schedule`, {
+			headers: HEADERS,
+			data: { scheduledAt: new Date(Date.now() + 7 * 86_400_000).toISOString() },
+		});
+		expect(scheduled.ok(), await scheduled.text()).toBe(true);
 		const page = await front(ellen);
 		await page.goto(APPROVALS);
 		// Before anything is saved an admin lands on Settings.
@@ -243,6 +251,10 @@ test.describe.serial("Content Approval", () => {
 		await expect(
 			page.getByText(/The SEO panel, categories, tags and bylines of a page that is already live/),
 		).toBeVisible();
+		await expect(
+			page.getByText(/Taking a page off the site \(Unpublish\) is not held, by choice/),
+		).toBeVisible();
+		await expect(page.getByText(/Autumn menu \(Pages, \d+ \w+, \d\d:\d\d UTC\)/)).toBeVisible();
 		// No developer words on the owner's page.
 		await expect(page.getByText(/MCP|slug|webhook|fingerprint/)).toHaveCount(0);
 
@@ -254,6 +266,13 @@ test.describe.serial("Content Approval", () => {
 			page.getByText("Saved. Publishing now asks for approval where you chose."),
 		).toBeVisible();
 		await expect(page.getByText("Approval is off until you save these settings")).toHaveCount(0);
+		await expect(
+			page.getByText(/Already scheduled, and will need approval before they go live: Autumn menu/),
+		).toBeVisible();
+		const unscheduled = await ellen.page.request.delete(`${API}/content/pages/${later}/schedule`, {
+			headers: HEADERS,
+		});
+		expect(unscheduled.ok(), await unscheduled.text()).toBe(true);
 	});
 
 	test("alone under 'I need someone else's OK', Ellen's own page waits, and she publishes it without review", async () => {
@@ -548,6 +567,31 @@ test.describe.serial("Content Approval", () => {
 		await setHidden(page, false);
 		await expect(helpLinks(page)).toHaveCount(3);
 		await expectHelpLine(page, guide);
+	});
+
+	test("Jo withdraws her request from 'Yours, waiting'; Ellen no longer sees it", async () => {
+		const page = await front(jo);
+		await page.goto(APPROVALS);
+		await expect(page.getByRole("heading", { name: "Yours, waiting" })).toBeVisible({
+			timeout: 60_000,
+		});
+		await page.getByRole("button", { name: "Withdraw", exact: true }).click();
+		const dialog = page.getByRole("alertdialog").or(page.getByRole("dialog"));
+		await expect(dialog.getByText("Withdraw this request?")).toBeVisible();
+		await dialog.getByRole("button", { name: "Withdraw", exact: true }).click();
+		await expect(
+			page.getByText("Withdrawn. The approvers no longer see it; ask again when it is ready."),
+		).toBeVisible();
+		await page.getByRole("button", { name: "‹ Back to the list" }).click();
+		await expect(page.getByText("Nothing of yours waiting")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Ask for approval" })).toBeVisible();
+
+		await front(ellen);
+		await ellen.page.goto(APPROVALS);
+		await expect(ellen.page.getByRole("heading", { name: "For you to approve" })).toBeVisible({
+			timeout: 60_000,
+		});
+		await expect(ellen.page.getByText(/Pages · asked by Jo Park/)).toHaveCount(0);
 	});
 
 	// EmDash 1.3.1 shows plugin editor buttons and panels to a Contributor on their own draft but
