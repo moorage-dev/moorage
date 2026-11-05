@@ -680,8 +680,39 @@ function bannerBlocks(state: PageState): Block[] {
 				},
 			],
 		},
+		...askAgainBlocks(config),
 		coloursBlock(state),
 		...previewBlocks(state),
+	];
+}
+
+export const ASK_AGAIN_ACTION = "ask_again";
+
+/** "Ask everyone again": shown only while the banner asks someone. */
+function askAgainBlocks(config: AnalyticsConfig): Block[] {
+	if (!needsConsent(config) || config.banner.audience === "none") return [];
+	return [
+		{
+			type: "context",
+			text: "Visitors are asked again by themselves after the months above, or when you add or remove a tool. After a change to your privacy policy or to what a tool does, you can ask everyone now.",
+		},
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: ASK_AGAIN_ACTION,
+					label: "Ask everyone again",
+					style: "secondary",
+					confirm: {
+						title: "Ask every visitor again?",
+						text: "Every visitor sees the banner again on their next visit, including those who already answered. Their earlier answers stay in the consent log.",
+						confirm: "Ask everyone again",
+						deny: "Cancel",
+					},
+				},
+			],
+		},
 	];
 }
 
@@ -987,6 +1018,13 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 			{ ...config, banner: { ...config.banner, title: DEFAULT_TITLE, message: DEFAULT_MESSAGE } },
 			TAB.banner,
 			"The original heading and text are back.",
+		);
+	}
+	if (input?.type === "block_action" && action === ASK_AGAIN_ACTION) {
+		return done(
+			{ ...config, askAgain: config.askAgain + 1 },
+			TAB.banner,
+			"Every visitor will be asked again.",
 		);
 	}
 	if (input?.type !== "form_submit") return { response: renderPage(state) };

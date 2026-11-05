@@ -62,6 +62,8 @@ export interface AnalyticsConfig {
 	gtmLoading: GtmLoading;
 	/** The admin's choice to hide the help line at the foot of the page (shown by default). */
 	hideHelpLine: boolean;
+	/** How many times "Ask everyone again" was pressed. Part of the banner version once above 0. */
+	askAgain: number;
 }
 
 export const DEFAULT_TITLE = "Can we use cookies?";
@@ -112,9 +114,12 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 	exclude: [],
 	gtmLoading: "choice",
 	hideHelpLine: false,
+	askAgain: 0,
 };
 
 const MAX_EXCLUDES = 50;
+/** More presses than anyone makes; a larger stored number is treated as never pressed. */
+const MAX_ASK_AGAIN = 100_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -322,6 +327,12 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 		exclude: parseExcludes(source.exclude),
 		gtmLoading: oneOf(source.gtmLoading, ["choice", "immediate"], defaults.gtmLoading),
 		hideHelpLine: source.hideHelpLine === true,
+		askAgain:
+			Number.isInteger(source.askAgain) &&
+			(source.askAgain as number) > 0 &&
+			(source.askAgain as number) <= MAX_ASK_AGAIN
+				? (source.askAgain as number)
+				: 0,
 	};
 }
 
@@ -370,11 +381,11 @@ export function needsConsent(config: AnalyticsConfig): boolean {
  * because they agreed to a different list.
  */
 export function bannerVersion(config: AnalyticsConfig): string {
-	return shortHash(
-		enabledTools(config)
-			.map((tool) => `${tool}:${toolCategories(config, tool).join("+")}`)
-			.join(","),
-	);
+	const tools = enabledTools(config)
+		.map((tool) => `${tool}:${toolCategories(config, tool).join("+")}`)
+		.join(",");
+	// "Ask everyone again" adds its count; before the first press the code is what it always was.
+	return shortHash(config.askAgain > 0 ? `${tools};again:${config.askAgain}` : tools);
 }
 
 /** A short, stable code for a piece of text (djb2, base 36). Not for secrets. */

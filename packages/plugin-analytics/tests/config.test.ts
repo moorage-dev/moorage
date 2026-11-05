@@ -105,6 +105,20 @@ describe("config", () => {
 		expect(bannerVersion(newText)).toBe(bannerVersion(one));
 		expect(bannerVersion(two)).not.toBe(bannerVersion(one));
 	});
+
+	it('changes with each "Ask everyone again", and only then', () => {
+		const tools = { tools: { ga4: "G-ABC123DEF4" } };
+		const before = bannerVersion(normalizeConfig(tools));
+		const once = normalizeConfig({ ...tools, askAgain: 1 });
+		const twice = normalizeConfig({ ...tools, askAgain: 2 });
+		expect(once.askAgain).toBe(1);
+		expect(bannerVersion(once)).not.toBe(before);
+		expect(bannerVersion(twice)).not.toBe(bannerVersion(once));
+		expect(bannerVersion(normalizeConfig({ ...tools, askAgain: 0 }))).toBe(before);
+		for (const bad of [-1, 1.5, "3", null, 1e9]) {
+			expect(normalizeConfig({ ...tools, askAgain: bad }).askAgain, String(bad)).toBe(0);
+		}
+	});
 });
 
 describe("banner text", () => {

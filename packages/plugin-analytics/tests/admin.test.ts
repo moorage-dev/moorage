@@ -7,7 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { toolStatus, warnings } from "../src/admin.js";
 import { COLOUR_OPTIONS } from "../src/colour-sets.js";
-import { CONFIG_KEY, DEFAULT_MESSAGE, DEFAULT_TITLE, normalizeConfig } from "../src/config.js";
+import {
+	bannerVersion,
+	CONFIG_KEY,
+	DEFAULT_MESSAGE,
+	DEFAULT_TITLE,
+	normalizeConfig,
+} from "../src/config.js";
 import type { AnalyticsConfig } from "../src/config.js";
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import { createPlugin } from "../src/index.js";
@@ -406,6 +412,56 @@ describe("what a save says about visitors", () => {
 			message:
 				"The original heading and text are back. It can take a few minutes to reach visitors.",
 		});
+	});
+});
+
+describe('"Ask everyone again"', () => {
+	const asking = { [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } };
+	const button = (response: BlockResponse) =>
+		flatten(response.blocks)
+			.flatMap((block) => (block.type === "actions" ? block.elements : []))
+			.find((element) => element.type === "button" && element.action_id === "ask_again");
+
+	it("is a button on the Banner tab that asks to be sure first", async () => {
+		const response = await load(fakeContext(asking));
+		expectValid(response);
+		expect(button(response)).toMatchObject({
+			type: "button",
+			label: "Ask everyone again",
+			confirm: { title: "Ask every visitor again?", confirm: "Ask everyone again" },
+		});
+	});
+
+	it("is not offered while no banner is shown, or to editors", async () => {
+		expect(button(await load(fakeContext()))).toBeUndefined();
+		const other = {
+			[CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" }, banner: { audience: "none" } },
+		};
+		expect(button(await load(fakeContext(other)))).toBeUndefined();
+		expect(button(await load(fakeContext(asking), EDITOR))).toBeUndefined();
+	});
+
+	it("asks every visitor again, each time it is pressed", async () => {
+		const fake = fakeContext(asking);
+		const before = bannerVersion(normalizeConfig(asking[CONFIG_KEY]));
+		const response = await call(fake, { type: "block_action", action_id: "ask_again" });
+		expect(response.toast).toEqual({
+			type: "success",
+			message: "Every visitor will be asked again. It can take a few minutes to reach visitors.",
+		});
+		expect(saved(fake).askAgain).toBe(1);
+		const after = bannerVersion(saved(fake));
+		expect(after).not.toBe(before);
+		await call(fake, { type: "block_action", action_id: "ask_again" });
+		expect(saved(fake).askAgain).toBe(2);
+		expect(bannerVersion(saved(fake))).not.toBe(after);
+	});
+
+	it("changes nothing when an editor presses it", async () => {
+		const fake = fakeContext(asking);
+		const response = await call(fake, { type: "block_action", action_id: "ask_again" }, EDITOR);
+		expect(response.toast?.type).toBe("error");
+		expect(fake.kv.get(CONFIG_KEY)).toEqual(asking[CONFIG_KEY]);
 	});
 });
 
