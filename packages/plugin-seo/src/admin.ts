@@ -36,6 +36,7 @@ import {
 	readStats,
 	SANDBOX_CALLS,
 	SCAN_KEY,
+	SCAN_REV,
 	scanStep,
 	startScan,
 	STATS_KEY,
@@ -292,7 +293,8 @@ function pageStats(data: AdminData): Block[] {
 		];
 	}
 	if (!stats) return [];
-	const ready = stats.checked - stats.fix - stats.hidden;
+	// Hidden pages are in none of the three: the note under the list names them.
+	const ready = stats.checked - stats.fix;
 	return [
 		{
 			type: "stats",
@@ -310,8 +312,10 @@ function pagesToFix(data: AdminData): Block[] {
 	const stats = currentStats(data);
 	if (!stats || !scan || scan.status === "running") return [];
 	const blocks: Block[] = [];
-	if (stats.checked === 0) {
+	if (stats.checked === 0 && stats.hidden === 0) {
 		blocks.push({ type: "empty", title: "No published pages yet", size: "sm" });
+	} else if (stats.checked === 0) {
+		blocks.push({ type: "empty", title: "No pages that can appear on Google", size: "sm" });
 	} else if (stats.fix === 0) {
 		blocks.push({ type: "empty", title: "No pages to fix. Nice work.", size: "sm" });
 	} else {
@@ -378,7 +382,7 @@ function pagesToFix(data: AdminData): Block[] {
 		const names = (stats.hiddenTitles ?? []).join(", ");
 		blocks.push({
 			type: "context",
-			text: `${stats.hidden > FIX_ROWS ? "More than 10" : stats.hidden} ${stats.hidden === 1 ? "page is" : "pages are"} hidden from Google and not counted${names ? `: ${names}` : ""}. To show one again, open it and switch off "Hide from search engines" in its SEO panel.`,
+			text: `${stats.hidden > FIX_ROWS ? "More than 10" : stats.hidden} ${stats.hidden === 1 ? "page is" : "pages are"} hidden from Google and not counted above${names ? `: ${names}` : ""}. To show one again, open it and switch off "Hide from search engines" in its SEO panel.`,
 		});
 	}
 	if (scan.finishedAt) {
@@ -582,7 +586,7 @@ function widget(data: AdminData): BlockResponse {
 			{ type: "link", label: "Open SEO", target: { kind: "plugin-page", path: "/overview" } },
 		],
 	};
-	if (!stats || stats.checked === 0) {
+	if (!stats || (stats.checked === 0 && stats.hidden === 0)) {
 		const { steps } = data.config;
 		return {
 			blocks: [
@@ -1271,10 +1275,13 @@ function setCollection(data: AdminData, value: unknown, change: "type" | "visibl
  * finished the stored results are simply recounted.
  */
 async function freshCounts(ctx: PluginContext, data: AdminData): Promise<AdminData> {
-	if (data.scan?.status === "done") return refreshStats(ctx, data);
+	// A check an earlier release ran wrote records this one would write differently, so it is
+	// run again once (see SCAN_REV).
+	const current = data.scan && (data.scan.rev ?? 1) >= SCAN_REV ? data.scan : null;
+	if (current?.status === "done") return refreshStats(ctx, data);
 	const calls = SANDBOX_CALLS - LOAD_CALLS;
-	const scan = data.scan
-		? await scanStep(ctx, data.scan, data.config, calls)
+	const scan = current
+		? await scanStep(ctx, current, data.config, calls)
 		: await startScan(
 				ctx,
 				data.collections.map((collection) => collection.slug),

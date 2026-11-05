@@ -103,6 +103,68 @@ describe("SEO page", () => {
 	});
 });
 
+describe("the page counts", () => {
+	async function checked(runtime: PluginRuntimeTestHost): Promise<BlockResponse> {
+		await runtime.admin.loadPage(PAGE);
+		for (let step = 0; step < 20; step += 1) {
+			const scan = await runtime.inspect.kv.get<{ status: string; sweep?: unknown }>("scan");
+			if (scan?.status === "done" && !scan.sweep) break;
+			await runtime.transport.invokeHook("cron", { name: "seo-scan" });
+		}
+		return runtime.admin.loadPage(PAGE);
+	}
+
+	function counts(response: BlockResponse): Record<string, unknown> {
+		const stats = flatten(response.blocks).find((block) => block.type === "stats");
+		return Object.fromEntries(
+			(stats?.type === "stats" ? stats.items : []).map((item) => [item.label, item.value]),
+		);
+	}
+
+	it("add up: hidden pages are in none of the three cards", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			collections: { services: { noindex: true, hiddenOk: true } },
+		});
+		for (const slug of ["one", "two", "three"]) {
+			await runtime.fixtures.content("pages", { slug, data: { title: slug }, status: "published" });
+		}
+		for (const slug of ["cakes", "bread"]) {
+			await runtime.fixtures.content("services", {
+				slug,
+				data: { title: slug },
+				status: "published",
+			});
+		}
+		const response = await checked(runtime);
+		const shown = counts(response);
+		expect(shown["Pages checked"]).toBe(3);
+		expect(Number(shown["Nothing to fix"]) + Number(shown["To fix"])).toBe(3);
+		expect(texts(response)).toContain("2 pages are hidden from Google and not counted above");
+	});
+
+	it("a site whose pages are all hidden says so, not that it has no pages", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			collections: {
+				pages: { noindex: true, hiddenOk: true },
+				services: { noindex: true, hiddenOk: true },
+			},
+		});
+		await runtime.fixtures.content("pages", {
+			slug: "one",
+			data: { title: "One" },
+			status: "published",
+		});
+		const response = await checked(runtime);
+		expect(counts(response)["Pages checked"]).toBe(0);
+		expect(texts(response)).not.toContain("No published pages yet");
+		expect(texts(response)).toContain("1 page is hidden from Google");
+		const widget = await runtime.admin.loadWidget("seo");
+		expect(texts(widget)).not.toContain("Your pages are being checked.");
+	});
+});
+
 describe("the help line", () => {
 	const line = (response: BlockResponse) =>
 		response.blocks.find((block) => block.type === "actions" && block.block_id === HELP_LINE);

@@ -319,6 +319,134 @@ describe("page:metadata", () => {
 		);
 	});
 
+	it('credits as author only bylines without a role label, such as "Photos by"', async () => {
+		const runtime = await runtimeHost();
+		await collection(runtime, "posts");
+		const ada = await runtime.fixtures.byline({ slug: "ada", displayName: "Ada Lovelace" });
+		const photos = await runtime.fixtures.byline({ slug: "cam", displayName: "Cam Era" });
+		const reviewer = await runtime.fixtures.byline({ slug: "rev", displayName: "Rev Iewer" });
+		const entry = await runtime.fixtures.content("posts", {
+			slug: "hello",
+			data: { title: "Hello" },
+			status: "published",
+		});
+		await runtime.actions.content.update("posts", entry.id, {
+			bylines: [
+				{ bylineId: photos.id, roleLabel: "Photos by" },
+				{ bylineId: ada.id },
+				// A blank label is no label.
+				{ bylineId: reviewer.id, roleLabel: " " },
+			],
+		});
+		const stored = await savedRecord(runtime, `posts:${entry.id}`);
+		expect(stored?.authors).toEqual([{ name: "Ada Lovelace" }, { name: "Rev Iewer" }]);
+	});
+
+	it("publishes no byline as author when every credit has a role label, as for no byline", async () => {
+		const runtime = await runtimeHost();
+		await collection(runtime, "posts");
+		const photos = await runtime.fixtures.byline({ slug: "cam", displayName: "Cam Era" });
+		const entry = await runtime.fixtures.content("posts", {
+			slug: "hello",
+			data: { title: "Hello" },
+			status: "published",
+		});
+		await runtime.actions.content.update("posts", entry.id, {
+			bylines: [{ bylineId: photos.id, roleLabel: "Photos by" }],
+		});
+		const key = `posts:${entry.id}`;
+		// The save hook runs in the background; wait for the record it writes.
+		let stored: EntryRecord | null = null;
+		for (let attempt = 0; attempt < 40 && !stored?.checkedAt; attempt += 1) {
+			stored = await runtime.inspect.storage.get<EntryRecord>("entries", key);
+			if (!stored?.checkedAt) await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		expect(stored?.authors).toEqual([]);
+		expect(stored?.issues?.map((issue) => issue.id)).toContain("no-author");
+		const nodes = graphNodes(
+			jsonLd(
+				await metadata(
+					runtime,
+					page({
+						url: "https://acme.test/blog/hello",
+						path: "/blog/hello",
+						pageType: "article",
+						pageTitle: "Hello",
+						kind: "content",
+						content: { collection: "posts", id: entry.id, slug: "hello" },
+					}),
+				),
+				"primary",
+			),
+		);
+		const article = nodes.find((node) => node["@type"] === "BlogPosting");
+		expect(JSON.stringify(article?.author)).not.toContain("Cam Era");
+		// The site itself, as on an article with no byline.
+		expect(article?.author).toEqual([{ "@id": "https://acme.test/#organization" }]);
+	});
+
+	it("the site-wide check credits only unlabelled bylines too", async () => {
+		const runtime = await runtimeHost();
+		await collection(runtime, "posts");
+		const ada = await runtime.fixtures.byline({ slug: "ada", displayName: "Ada Lovelace" });
+		const photos = await runtime.fixtures.byline({ slug: "cam", displayName: "Cam Era" });
+		const entry = await runtime.fixtures.content("posts", {
+			slug: "hello",
+			data: { title: "Hello" },
+			status: "published",
+		});
+		await runtime.actions.content.update("posts", entry.id, {
+			bylines: [{ bylineId: ada.id }, { bylineId: photos.id, roleLabel: "Photos by" }],
+		});
+		const key = `posts:${entry.id}`;
+		await savedRecord(runtime, key);
+		// As on a site that had the entry before the plugin was installed: the check writes it.
+		await runtime.fixtures.plugin.storage("entries", key, null);
+		await runtime.admin.loadPage("/overview");
+		const checked = await runtime.inspect.storage.get<EntryRecord>("entries", key);
+		expect(checked?.authors).toEqual([{ name: "Ada Lovelace" }]);
+	});
+
+	it("after an update, the first visit to the SEO page checks every page again", async () => {
+		const runtime = await runtimeHost();
+		await collection(runtime, "posts");
+		const photos = await runtime.fixtures.byline({ slug: "cam", displayName: "Cam Era" });
+		const entry = await runtime.fixtures.content("posts", {
+			slug: "hello",
+			data: { title: "Hello" },
+			status: "published",
+		});
+		await runtime.actions.content.update("posts", entry.id, {
+			bylines: [{ bylineId: photos.id, roleLabel: "Photos by" }],
+		});
+		const key = `posts:${entry.id}`;
+		for (let attempt = 0; attempt < 40; attempt += 1) {
+			if ((await runtime.inspect.storage.get<EntryRecord>("entries", key))?.checkedAt) break;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		const before = await runtime.inspect.storage.get<EntryRecord>("entries", key);
+		const old = "2026-11-01T00:00:00.000Z";
+		// What 0.1.13 left behind: the photographer as author, and a finished check.
+		await runtime.fixtures.plugin.storage("entries", key, {
+			...before,
+			authors: [{ name: "Cam Era" }],
+			checkedAt: old,
+		});
+		await runtime.fixtures.plugin.kv("scan", {
+			status: "done",
+			collections: [],
+			scope: ["posts"],
+			phase: "titles",
+			checked: 1,
+			tally: { checked: 1, fix: 1, hidden: 0, rows: [], more: false },
+			startedAt: old,
+			finishedAt: old,
+		});
+		await runtime.admin.loadPage("/overview");
+		const after = await runtime.inspect.storage.get<EntryRecord>("entries", key);
+		expect(after?.authors).toEqual([]);
+	});
+
 	it("adds an entry's JSON-LD field to the one graph and links it from the page", async () => {
 		const runtime = await runtimeHost();
 		await runtime.fixtures.collection({
