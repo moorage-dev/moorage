@@ -30,7 +30,8 @@ export async function scheduleAsked(
 	if (!ctx.email || !ctx.cron) return;
 	await ctx.cron.schedule(taskName(MAIL_TASK, key, now), {
 		schedule: now,
-		data: { key, kind: "asked", ...(isNew && config.remind ? { remind: now } : {}) },
+		// `at`: the request's emailedAt, so the task knows its email is the one counted.
+		data: { key, kind: "asked", at: now, ...(isNew && config.remind ? { remind: now } : {}) },
 	});
 }
 
@@ -347,7 +348,7 @@ export async function gate(
 			result.request.checks?.description !== checks.description ||
 			result.request.checks?.picture !== checks.picture;
 		result.request.checks = checks;
-		if (result.notify && ctx.email) result.request.emailedAt = now;
+		if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
 		if (!result.again || result.notify || checksChanged) await store.put(key, result.request);
 		// Email is sent by a one-shot task, so a slow email never delays the publish; that task
 		// also sets the two-day reminder.

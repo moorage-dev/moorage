@@ -49,6 +49,23 @@ const failTimes = new Map<string, number>();
 		};
 	}
 }
+// A compare-and-set that loses to a write landing between the read and the write (another
+// person's withdraw or decision), this many more times. Counted as the call it replaces.
+let conflicts = 0;
+{
+	const proto = PluginBridge.prototype as unknown as Record<
+		string,
+		(...args: unknown[]) => unknown
+	>;
+	const original = proto.storageCompareAndSet!;
+	proto.storageCompareAndSet = function (this: unknown, ...args: unknown[]) {
+		if (conflicts > 0) {
+			conflicts--;
+			return Promise.resolve({ applied: false });
+		}
+		return original.apply(this, args);
+	};
+}
 // EmDash 1.4.0 sends content actions (publish) through PluginRuntimeBridge instead: the same
 // failures for those calls, applied by bridge-budget after it counts the call.
 setRuntimeFault((name) => {
@@ -62,6 +79,7 @@ let host: PluginRuntimeTestHost | undefined;
 afterEach(async () => {
 	failing.clear();
 	failTimes.clear();
+	conflicts = 0;
 	await drain();
 	await host?.dispose();
 	host = undefined;
@@ -863,8 +881,8 @@ describe("the Approvals page (route admin)", () => {
 		const m = await measure(() =>
 			s.host.admin.act("/overview", "approve", { user: admin(s), value: { key: `pages:${id}` } }),
 		);
-		// kvList storageGet contentGet contentGetRevision schemaGetCollection storagePut (text
-		// copy) storagePut cronSchedule (the writer's email).
+		// kvList storageGetVersioned contentGet contentGetRevision schemaGetCollection
+		// storageCompareAndSet storagePut (text copy) cronSchedule (the writer's email).
 		pin("page approve", m, 8);
 		expect(m.result?.toast).toEqual({ type: "success", message: "Approved. Sam has been told." });
 		expect(text(m.result)).toContain("Back to the list");
@@ -895,8 +913,8 @@ describe("the Approvals page (route admin)", () => {
 				value: { key: `pages:${id}` },
 			}),
 		);
-		// kvList storageGet contentGetVersioned contentGetRevision schemaGetCollection
-		// storagePut storagePut contentPublish; the emails and "Published by" follow in
+		// kvList storageGetVersioned contentGetVersioned contentGetRevision schemaGetCollection
+		// storageCompareAndSet storagePut contentPublish; the emails and "Published by" follow in
 		// content:afterPublish.
 		pin("page approve and publish", m.route, 8);
 		expectDeferredAfterPublish(m);
@@ -1237,7 +1255,7 @@ describe("Withdraw (the person who asked)", () => {
 				value: { key: `pages:${id}` },
 			}),
 		);
-		// kvList storageGet storagePut.
+		// kvList storageGetVersioned storageCompareAndSet.
 		pin("page withdraw, contributor", m, 3);
 		expect(m.result?.toast).toEqual({
 			type: "success",
@@ -1292,7 +1310,7 @@ describe("Withdraw (the person who asked)", () => {
 				value: { key: `pages:${id}` },
 			}),
 		);
-		// kvList schemaGetCollection storageGet storagePut.
+		// kvList schemaGetCollection storageGetVersioned storageCompareAndSet.
 		pin("panel withdraw, writer", m, 4);
 		expect(m.result?.toast?.type).toBe("success");
 		expect(text(m.result)).toContain("You withdrew the request");
@@ -1322,6 +1340,123 @@ describe("Withdraw (the person who asked)", () => {
 		const safe = again!.requestedAt.replace(/[^a-zA-Z0-9_-]/g, "_");
 		expect(remind.map((t) => t.name).some((name) => name.endsWith(safe))).toBe(true);
 	});
+});
+
+describe("Withdraw before the approvers' email went out", () => {
+	const asked = (mail: Array<{ to: string; subject: string }>) =>
+		mail.filter((e) => e.subject.includes("asked you to approve")).map((e) => e.to);
+
+	it("emails the approvers when the writer withdraws before the email went out and asks again", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		const before = await emails(s);
+		await s.host.admin.actEditorPanel("approval", "pages", id, "withdraw", {
+			user: s.editor,
+			value: { key: `pages:${id}` },
+		});
+		// The email task finds the request withdrawn: nothing is sent, and no email is counted
+		// for the day. kvList storageGetVersioned storageCompareAndSet.
+		expect(await runMail(s)).toEqual([3]);
+		expect(await newMail(s, before)).toEqual([]);
+		expect((await request(s, id))?.emailedAt).toBeUndefined();
+		const held = await s.host.actions.content.publish("pages", id, actor(s.editor));
+		expect(held.success).toBe(false);
+		await runMail(s);
+		expect(asked(await newMail(s, before)).sort()).toEqual(s.admins.map((a) => a.email).sort());
+	});
+
+	it("emails the approvers once when the writer withdraws and asks again before the email went out", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		const before = await emails(s);
+		await s.host.admin.actEditorPanel("approval", "pages", id, "withdraw", {
+			user: s.editor,
+			value: { key: `pages:${id}` },
+		});
+		const held = await s.host.actions.content.publish("pages", id, actor(s.editor));
+		expect(held.success).toBe(false);
+		await runMail(s);
+		expect(asked(await newMail(s, before)).sort()).toEqual(s.admins.map((a) => a.email).sort());
+	});
+});
+
+describe("Two people at once (compare-and-set)", () => {
+	it("does not withdraw a request decided between reading and writing it", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		conflicts = 1;
+		const m = await measure(() =>
+			s.host.admin.actEditorPanel("approval", "pages", id, "withdraw", {
+				user: s.editor,
+				value: { key: `pages:${id}` },
+			}),
+		);
+		// kvList schemaGetCollection storageGetVersioned storageCompareAndSet (lost), then the
+		// panel as it is now: storageGet contentGet contentGetRevision userList.
+		pin("panel withdraw, lost to a decision", m, 8);
+		expect(m.result?.toast?.type).toBe("error");
+		expect(m.calls).toContain("storageCompareAndSet");
+		expect((await request(s, id))?.status).toBe("waiting");
+	});
+
+	it("does not approve or publish a request withdrawn between reading and writing it", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		for (const action of ["approve", "approve_publish"]) {
+			conflicts = 1;
+			const m = await measure(() =>
+				s.host.admin.act("/overview", action, { user: admin(s), value: { key: `pages:${id}` } }),
+			);
+			expect(m.result?.toast?.type, action).toBe("error");
+			expect(m.calls, action).toContain("storageCompareAndSet");
+			expect(m.calls, action).not.toContain("contentPublish");
+			// No text copy is left for an approval that did not happen.
+			expect(m.calls, action).not.toContain("storagePut");
+			expect(m.calls.length, action).toBeLessThanOrEqual(BUDGET);
+			expect((await request(s, id))?.status, action).toBe("waiting");
+		}
+		expect((await s.host.inspect.content.get("pages", id))?.status).not.toBe("published");
+	});
+
+	// kvList schemaGetCollection storageGetVersioned, the page (2, + contentGet for the
+	// "require" checks), storageCompareAndSet (lost), then the panel shows the request as it
+	// is now (storageGet), reusing the page it already read.
+	for (const [label, config, act, count] of [
+		["approve", HELD, "approve", 7],
+		["approve and publish", HELD, "approve_publish", 7],
+		["approve and publish, require checks", { ...HELD, checks: "require" }, "approve_publish", 8],
+		["publish without review", HELD, "override_publish", 7],
+	] as const) {
+		it(`panel ${label}: lost to a withdraw, nothing published, within the limit`, async () => {
+			const s = await site({ config, admins: 3 });
+			const id = await waiting(s);
+			await cold(s);
+			conflicts = 1;
+			const m = await measure(() =>
+				act === "override_publish"
+					? s.host.admin.submitEditorPanel(
+							"approval",
+							"pages",
+							id,
+							act,
+							{ reason: "Price list must go out today" },
+							{ user: admin(s), blockId: `ov:pages:${id}` },
+						)
+					: s.host.admin.actEditorPanel("approval", "pages", id, act, {
+							user: admin(s),
+							value: { key: `pages:${id}` },
+						}),
+			);
+			pin(`panel ${label}, lost to a withdraw`, m, count);
+			expect(m.result?.toast?.type).toBe("error");
+			expect(m.calls).toContain("storageCompareAndSet");
+			expect(m.calls).not.toContain("contentPublish");
+			expect(m.calls).not.toContain("storagePut");
+			expect((await request(s, id))?.status).toBe("waiting");
+		});
+	}
 });
 
 describe("Settings: pages already scheduled", () => {

@@ -59,7 +59,10 @@ export interface ApprovalRequest {
 	publishedAt?: string;
 	/** The person who asked took the request back (status "closed"). */
 	withdrawn?: { by: Person; at: string };
-	/** When the approvers were last emailed about this request (at most once a day). */
+	/**
+	 * When the approvers were last emailed about this request (at most once a day): set when
+	 * the email task is queued, cleared by that task if the request was withdrawn before it ran.
+	 */
 	emailedAt?: string;
 	/**
 	 * What the waiting version lacks in the SEO panel, noted when it was saved or held, so the
