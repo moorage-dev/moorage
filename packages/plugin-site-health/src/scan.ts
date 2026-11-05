@@ -716,7 +716,7 @@ export async function passStep(
 			await livePathsStep(ctx, scan, now);
 			break;
 		case "checklist":
-			await runChecklist(ctx, scan, data, now);
+			await runChecklist(ctx, scan, data, counter, now);
 			scan.phase = "sweep";
 			break;
 		case "sweep":

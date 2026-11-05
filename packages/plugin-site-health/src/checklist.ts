@@ -2,7 +2,8 @@
 
 import type { PluginContext } from "emdash";
 
-import { request, type Outcome } from "./check.js";
+import { fits, type Counter } from "./budget.js";
+import { isTooBig, request } from "./check.js";
 import { isSitemap, readRobots, type Robots } from "./search.js";
 import {
 	KEY,
@@ -20,10 +21,38 @@ export const MISSING_PATH = "/site-health-check-a-page-that-does-not-exist";
 type Row = { status: CheckStatus; text: string };
 
 /** Enough of a list of pages to see what it is; a big one is never read whole. */
-const SITEMAP_PEEK = 2000;
+const SITEMAP_PEEK = 2048;
+/** The writes that close the Checklist's run: its rows, then the check's state. */
+const CHECKLIST_WRITES = 2;
 
-/** The "Search engines" row: who robots.txt keeps out, and the list of pages. */
-export function searchRow(rules: Robots, named: boolean, sitemap: Outcome): Row {
+const ok = (status: number | undefined) => status !== undefined && status >= 200 && status < 300;
+
+/**
+ * Does the list of pages answer? Only its start is asked for (a partial or a
+ * whole answer both do). A gzipped list is never read: being there is enough.
+ * One too big for the sandbox to pass on is asked about with a HEAD, or, with
+ * no call to spare, taken as there: it answered, with more than 8 MiB.
+ */
+export async function sitemapAnswers(
+	ctx: PluginContext,
+	url: string,
+	counter: Counter,
+): Promise<boolean> {
+	if (/\.gz$/i.test(parseUrl(url)?.pathname ?? url)) {
+		return ok((await request(ctx, url, { method: "HEAD" })).status);
+	}
+	const sitemap = await request(ctx, url, { peek: SITEMAP_PEEK });
+	if (isTooBig(sitemap)) {
+		if (!fits(counter, 1 + CHECKLIST_WRITES)) return true;
+		return ok((await request(ctx, url, { method: "HEAD" })).status);
+	}
+	if (!ok(sitemap.status)) return false;
+	if (/gzip/i.test(sitemap.headers?.get("content-type") ?? "")) return true;
+	return isSitemap(sitemap.body);
+}
+
+/** The "Search engines" row: who robots.txt keeps out, and whether the list of pages answers. */
+export function searchRow(rules: Robots, named: boolean, answers: boolean): Row {
 	if (rules.google && rules.all) {
 		return {
 			status: "attention",
@@ -42,8 +71,7 @@ export function searchRow(rules: Robots, named: boolean, sitemap: Outcome): Row 
 			text: "Your site lets Google in but tells most other search engines to stay away.",
 		};
 	}
-	const status = sitemap.status ?? 0;
-	if (status >= 200 && status < 300 && isSitemap(sitemap.body)) {
+	if (answers) {
 		return {
 			status: "working",
 			text: "They are allowed in, and the list of your pages for them answers.",
@@ -57,11 +85,15 @@ export function searchRow(rules: Robots, named: boolean, sitemap: Outcome): Row 
 	};
 }
 
-/** The Checklist rows that need the site to be opened. Once a week, up to five requests. */
+/**
+ * The Checklist rows that need the site to be opened. Once a week, up to five
+ * requests (six for a list of pages too big to read, when the run has one to spare).
+ */
 export async function runChecklist(
 	ctx: PluginContext,
 	scan: ScanState,
 	data: Loaded,
+	counter: Counter,
 	now: number,
 ): Promise<void> {
 	const last = data.checklist.checkedAt ? Date.parse(data.checklist.checkedAt) : 0;
@@ -110,10 +142,8 @@ export async function runChecklist(
 						? readRobots(robots.body ?? "", origin)
 						: { google: false, all: false, sitemaps: [] };
 				const where = rules.sitemaps[0];
-				const sitemap = await request(ctx, where ?? `${origin}/sitemap.xml`, {
-					peek: SITEMAP_PEEK,
-				});
-				return { rules, named: where !== undefined, sitemap };
+				const answers = await sitemapAnswers(ctx, where ?? `${origin}/sitemap.xml`, counter);
+				return { rules, named: where !== undefined, answers };
 			})(),
 		]);
 		if (!insecure) {
@@ -169,7 +199,7 @@ export async function runChecklist(
 			};
 		} else rows.missing = couldNot;
 
-		rows.search = searchRow(search.rules, search.named, search.sitemap);
+		rows.search = searchRow(search.rules, search.named, search.answers);
 	}
 	const checklist: ChecklistState = {
 		...(scan.live === "ok" ? { checkedAt: new Date(now).toISOString() } : {}),

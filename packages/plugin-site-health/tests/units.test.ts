@@ -1,10 +1,12 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import type { PluginContext } from "emdash";
 import { describe, expect, it } from "vitest";
 
 import { details, emailStatus, rowText, when } from "../src/admin.js";
 import { parseRecipients } from "../src/alerts.js";
 import { afterExternal, afterOwnPage, afterOwnPath, verdict, type Outcome } from "../src/check.js";
+import { sitemapAnswers } from "../src/checklist.js";
 import { entryPath, linksInData, scanHtml } from "../src/extract.js";
 import { describe as words, foundOn, type LinkRow } from "../src/model.js";
 import { isMidUpdate } from "../src/scan.js";
@@ -564,8 +566,29 @@ describe("search engines and the home page", () => {
 		expect(
 			readRobots("User-agent: GPTBot\nDisallow: /\n\nUser-agent: CCBot\nDisallow: /\n"),
 		).toMatchObject({ google: false, all: false });
-		// An Allow for part of the site opens it again.
-		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /blog\n")).toMatchObject({ all: false });
+		// Only an Allow of the whole site opens it again; one file or folder does not.
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /\n")).toMatchObject({ all: false });
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /*\n")).toMatchObject({ all: false });
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /$\n")).toMatchObject({ all: false });
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /favicon.ico\n")).toMatchObject({
+			google: true,
+			all: true,
+		});
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /blog\n")).toMatchObject({ all: true });
+		// An Allow in another crawler's group does not open this one.
+		expect(
+			readRobots("User-agent: Bingbot\nAllow: /\n\nUser-agent: *\nDisallow: /\n"),
+		).toMatchObject({ google: true, all: true });
+	});
+
+	it("reads a robots.txt that starts with a byte-order mark", () => {
+		expect(readRobots("﻿User-agent: *\nDisallow: /\n")).toMatchObject({
+			google: true,
+			all: true,
+		});
+		expect(
+			readRobots("﻿Sitemap: https://acme.test/sitemap.xml\nUser-agent: *\nAllow: /\n").sitemaps,
+		).toEqual(["https://acme.test/sitemap.xml"]);
 	});
 
 	it("reads the sitemap lines of robots.txt, made absolute", () => {
@@ -594,6 +617,88 @@ describe("search engines and the home page", () => {
 		expect(isSitemap("<!doctype html><html><body>Page not found</body></html>")).toBe(false);
 		expect(isSitemap("")).toBe(false);
 		expect(isSitemap(undefined)).toBe(false);
+	});
+});
+
+describe("the list of pages for search engines", () => {
+	const SITEMAP = "https://acme.test/sitemap.xml";
+	const XML =
+		'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://acme.test/</loc></url></urlset>';
+	/** What the sandbox bridge throws for a body over 8 MiB (EmDash plugins/http-wire.ts). */
+	const TOO_BIG = "Plugin HTTP response body exceeds the 8388608 byte limit";
+
+	function host(answers: Record<string, Array<Response | Error>>, ops = 0) {
+		const asked: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
+		const counter = { ops };
+		const ctx = {
+			site: { url: "https://acme.test" },
+			http: {
+				fetch: async (url: string, init: RequestInit = {}) => {
+					counter.ops += 1;
+					const method = init.method ?? "GET";
+					asked.push({ url, method, headers: { ...(init.headers as Record<string, string>) } });
+					const next = answers[`${method} ${url}`]?.shift();
+					if (!next) return new Response("Not found", { status: 404 });
+					if (next instanceof Error) throw next;
+					return next;
+				},
+			},
+		} as unknown as PluginContext;
+		return { ctx, asked, counter };
+	}
+
+	it("asks for the first 2 KiB only, and takes a partial or a whole answer", async () => {
+		const partial = host({ [`GET ${SITEMAP}`]: [new Response(XML, { status: 206 })] });
+		expect(await sitemapAnswers(partial.ctx, SITEMAP, partial.counter)).toBe(true);
+		expect(partial.asked).toHaveLength(1);
+		expect(partial.asked[0]?.headers.Range).toBe("bytes=0-2047");
+		const whole = host({ [`GET ${SITEMAP}`]: [new Response(XML, { status: 200 })] });
+		expect(await sitemapAnswers(whole.ctx, SITEMAP, whole.counter)).toBe(true);
+		const page = host({ [`GET ${SITEMAP}`]: [new Response("<html><body>Hi</body></html>")] });
+		expect(await sitemapAnswers(page.ctx, SITEMAP, page.counter)).toBe(false);
+	});
+
+	it("asks only whether a list too big for the sandbox is there", async () => {
+		const big = host({
+			[`GET ${SITEMAP}`]: [new Error(TOO_BIG)],
+			[`HEAD ${SITEMAP}`]: [new Response(null, { status: 200 })],
+		});
+		expect(await sitemapAnswers(big.ctx, SITEMAP, big.counter)).toBe(true);
+		expect(big.asked.map((r) => r.method)).toEqual(["GET", "HEAD"]);
+		const gone = host({
+			[`GET ${SITEMAP}`]: [new Error(TOO_BIG)],
+			[`HEAD ${SITEMAP}`]: [new Response(null, { status: 404 })],
+		});
+		expect(await sitemapAnswers(gone.ctx, SITEMAP, gone.counter)).toBe(false);
+		// Another error is still one we could not read through.
+		const broken = host({ [`GET ${SITEMAP}`]: [new Error("connection reset")] });
+		expect(await sitemapAnswers(broken.ctx, SITEMAP, broken.counter)).toBe(false);
+		expect(broken.asked).toHaveLength(1);
+	});
+
+	it("takes a too-big answer as there when the run has no call to spare for a HEAD", async () => {
+		// 6 calls before, the GET makes 7; a HEAD and the two writes after it would make 10.
+		const tight = host({ [`GET ${SITEMAP}`]: [new Error(TOO_BIG)] }, 6);
+		expect(await sitemapAnswers(tight.ctx, SITEMAP, tight.counter)).toBe(true);
+		expect(tight.asked.map((r) => r.method)).toEqual(["GET"]);
+		expect(tight.counter.ops).toBe(7);
+	});
+
+	it("counts a gzipped list as there without reading it", async () => {
+		const gz = "https://acme.test/sitemap.xml.gz";
+		const named = host({ [`HEAD ${gz}`]: [new Response(null, { status: 200 })] });
+		expect(await sitemapAnswers(named.ctx, gz, named.counter)).toBe(true);
+		expect(named.asked.map((r) => r.method)).toEqual(["HEAD"]);
+		const typed = host({
+			[`GET ${SITEMAP}`]: [
+				new Response(new Uint8Array([0x1f, 0x8b, 8, 0, 0, 0]), {
+					headers: { "content-type": "application/x-gzip" },
+				}),
+			],
+		});
+		expect(await sitemapAnswers(typed.ctx, SITEMAP, typed.counter)).toBe(true);
+		const missing = host({});
+		expect(await sitemapAnswers(missing.ctx, gz, missing.counter)).toBe(false);
 	});
 });
 

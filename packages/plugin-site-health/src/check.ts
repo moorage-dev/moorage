@@ -69,10 +69,17 @@ export async function request(
 	});
 	const attempt = (async (): Promise<Outcome> => {
 		try {
+			const headers: Record<string, string> = {
+				"User-Agent": userAgent(ctx.site.url),
+				Accept: "text/html,*/*;q=0.5",
+			};
+			// The sandbox's host reads a whole body before handing it over, and
+			// refuses one over 8 MiB: ask the server for the start only.
+			if (options.peek) headers.Range = `bytes=0-${options.peek - 1}`;
 			const response = await http.fetch(url, {
 				method: options.method ?? "GET",
 				redirect: options.follow === false ? "manual" : "follow",
-				headers: { "User-Agent": userAgent(ctx.site.url), Accept: "text/html,*/*;q=0.5" },
+				headers,
 			});
 			const location = response.headers.get("location");
 			const outcome: Outcome = {
@@ -96,6 +103,14 @@ export async function request(
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/**
+ * The sandbox's host refused an answer for its size (EmDash plugins/http-wire.ts:
+ * "Plugin HTTP response body exceeds the 8388608 byte limit"): it came, but too big to pass on.
+ */
+export function isTooBig(outcome: Outcome): boolean {
+	return /body exceeds the \d+ byte limit/i.test(outcome.error ?? "");
 }
 
 /** EmDash refuses plugin requests to localhost and private addresses. */

@@ -58,24 +58,30 @@ export interface Robots {
 interface Group {
 	agents: string[];
 	disallowAll: boolean;
-	allows: boolean;
+	/** An `Allow` of the whole site (`/`, `/*` or `/$`); one file or folder is not. */
+	allowsAll: boolean;
 }
 
+/** The `Allow` values that cancel a `Disallow: /` in the same group. */
+const ALLOWS_ALL = new Set(["/", "/*", "/$"]);
+
 function blocksAll(groups: Group[]): boolean {
-	return groups.some((g) => g.disallowAll) && !groups.some((g) => g.allows);
+	return groups.some((g) => g.disallowAll) && !groups.some((g) => g.allowsAll);
 }
 
 /**
  * robots.txt, one group of crawlers at a time. Stacked `User-agent` lines share a
  * group; a crawler with a group of its own ignores the one for everyone. A group
- * keeps everything out when it disallows `/` (or `/*`) and allows nothing back.
+ * keeps everything out when it disallows `/` (or `/*`) and does not allow the
+ * whole site back (`Allow: /favicon.ico` lets one file in, not the site).
  */
 export function readRobots(text: string, origin = ""): Robots {
 	const groups: Group[] = [];
 	const sitemaps: string[] = [];
 	let current: Group | null = null;
 	let rules = false;
-	for (const raw of text.split(/\r?\n|\r/)) {
+	// A file saved with a byte-order mark starts with one.
+	for (const raw of text.replace(/^﻿/, "").split(/\r?\n|\r/)) {
 		const line = raw.replace(/#.*/, "").trim();
 		const colon = line.indexOf(":");
 		if (colon <= 0) continue;
@@ -88,7 +94,7 @@ export function readRobots(text: string, origin = ""): Robots {
 		}
 		if (field === "user-agent") {
 			if (!current || rules) {
-				current = { agents: [], disallowAll: false, allows: false };
+				current = { agents: [], disallowAll: false, allowsAll: false };
 				groups.push(current);
 				rules = false;
 			}
@@ -101,7 +107,7 @@ export function readRobots(text: string, origin = ""): Robots {
 			if (value === "/" || value === "/*") current.disallowAll = true;
 		} else if (field === "allow") {
 			rules = true;
-			if (value !== "") current.allows = true;
+			if (ALLOWS_ALL.has(value)) current.allowsAll = true;
 		}
 	}
 	const named = (agent: string) => groups.filter((g) => g.agents.includes(agent));

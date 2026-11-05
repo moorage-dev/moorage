@@ -769,9 +769,35 @@ describe("search engines", () => {
 		expect(await checklistRow(runtime, "Search engines")).toBe(
 			"Working: They are allowed in, and the list of your pages for them answers.",
 		);
-		const asked = runtime.http.requests().map((r) => r.url);
+		const requests = runtime.http.requests();
+		const asked = requests.map((r) => r.url);
 		expect(asked).toContain(`${SITE}/sitemap-index.xml`);
 		expect(asked).not.toContain(`${SITE}/sitemap.xml`);
+		// Only the start of the list is asked for: the sandbox refuses a body over 8 MiB.
+		const sitemap = requests.find((r) => r.url === `${SITE}/sitemap-index.xml`);
+		const range = Object.entries(sitemap?.headers ?? {}).find(([k]) => k.toLowerCase() === "range");
+		expect(range?.[1]).toBe("bytes=0-2047");
+	});
+
+	it("counts a gzipped list of pages as there without reading it", async () => {
+		const runtime = await start();
+		await ownSite(
+			runtime,
+			false,
+			`﻿User-agent: *\nAllow: /\n\nSitemap: ${SITE}/sitemap.xml.gz\n`,
+			html("Not found", 404),
+		);
+		await runtime.http.respond(
+			`${SITE}/sitemap.xml.gz`,
+			new Response(null, { headers: { "content-type": "application/gzip" } }),
+		);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect(await checklistRow(runtime, "Search engines")).toBe(
+			"Working: They are allowed in, and the list of your pages for them answers.",
+		);
+		const gz = runtime.http.requests().filter((r) => r.url === `${SITE}/sitemap.xml.gz`);
+		expect(gz.map((r) => r.method)).toEqual(["HEAD"]);
 	});
 
 	it("does not count a page that is not a list of pages", async () => {
