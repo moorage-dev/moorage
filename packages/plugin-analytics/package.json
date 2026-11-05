@@ -1,6 +1,6 @@
 {
 	"name": "@moorage/plugin-analytics",
-	"version": "0.3.3",
+	"version": "0.4.0",
 	"description": "Google Analytics, Tag Manager, Meta Pixel, Clarity, LinkedIn, TikTok, Plausible and Umami for EmDash, with a cookie consent banner in seven languages that holds them, and YouTube and Maps embeds, back until the visitor agrees.",
 	"keywords": [
 		"emdash",

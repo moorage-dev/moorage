@@ -1,5 +1,15 @@
 # @moorage/plugin-site-health
 
+## 0.2.0
+
+### Minor Changes
+
+- b349166: New "Links on this page" panel beside each entry in the editor: Editors see what the checks found in that page's links while they work on it, in the same plain words as the Site Health page. It is read-only, opens no website and needs no setup. A new Checklist row, "Home page in search results", warns when your home page tells search engines not to list it (a noindex tag in the page, or an X-Robots-Tag header from the server); it is read from the home page every full check already opens, so a change shows the next day. The "Search engines" row now reads robots.txt one group of crawlers at a time: keeping out Google, or every search engine, needs attention, while keeping out only AI crawlers or one folder does not. It also follows robots.txt to the list of your pages it names and accepts a list of lists (a sitemap index, which EmDash serves). These two show at the next weekly Checklist run. Under each group of problems, a folded "Details for your web person" gives each row's HTTP status and when it was checked; rows found before this update show it after their next check.
+
+### Patch Changes
+
+- 71348af: New screenshots of the screens this release changes and adds.
+
 ## 0.1.8
 
 ### Patch Changes

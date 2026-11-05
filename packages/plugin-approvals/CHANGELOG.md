@@ -1,5 +1,21 @@
 # @moorage/plugin-approvals
 
+## 0.3.0
+
+### Minor Changes
+
+- af41977: **Withdraw**: the person who asked can now take a waiting request back, from the page's Approval panel or from **Yours, waiting** on the Approvals page (Contributors use the Approvals page). Nothing is published; the approvers no longer see it, and their email is not sent if it has not gone yet. Asking again the same day does not email the approvers a second time; if their email had not gone yet, asking again does email them. When an approval and a withdraw land at the same moment, only the first counts and the other person is told the request changed.
+  
+  The Settings tab now names the pages already scheduled that approval will hold when their time comes, with their time, instead of a general warning (it reads the first three content types that need approval).
+  
+  What you will notice: every time the plugin shows, on screen and in emails, now ends in "UTC" ("16 Oct, 10:42 UTC"). They were always in UTC; EmDash does not tell plugins the site's time zone.
+  
+  The Settings tab, the README and the listing now say plainly that taking a page off the site (Unpublish) is not held by choice, so a wrong page can always come down at once; before, they said it could not be held.
+
+### Patch Changes
+
+- 71348af: New screenshots of the screens this release changes and adds.
+
 ## 0.2.4
 
 ### Patch Changes
