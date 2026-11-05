@@ -23,13 +23,14 @@ export function fieldsFromPages(pages: unknown): FieldInfo[] {
 		const list = (page as { fields?: unknown }).fields;
 		if (!Array.isArray(list)) continue;
 		for (const field of list) {
-			const f = field as { name?: unknown; label?: unknown; type?: unknown };
+			const f = field as { name?: unknown; label?: unknown; type?: unknown; condition?: unknown };
 			if (typeof f.name !== "string" || typeof f.label !== "string") continue;
 			if (f.type === "hidden" && !/^(utm_|page_url)/.test(f.name)) continue;
 			fields.push({
 				key: f.name,
 				label: f.label,
 				...(typeof f.type === "string" ? { type: f.type } : {}),
+				...(f.condition ? { conditional: true } : {}),
 			});
 		}
 	}
@@ -121,14 +122,28 @@ export function withForm(
  */
 export function withListed(
 	forms: Forms,
-	items: Array<{ slug: string; name: string; pages?: unknown }>,
+	items: Array<{ slug: string; name: string; pages?: unknown; settings?: Record<string, unknown> }>,
 ): Forms {
 	const out = { ...forms };
 	for (const item of items) {
 		const fields = fieldsFromPages(item.pages);
 		const have = out[item.slug];
+		// Forms' own auto-reply, when the list says (its settings are in the admin-only list).
+		const settings = item.settings;
+		const on = Boolean(settings?.autoresponder && typeof settings.autoresponder === "object");
+		// Kept as it was when unchanged, so listing the same forms again changes nothing.
+		const autoReply = !settings
+			? {}
+			: have?.autoReply?.on === on
+				? { autoReply: have.autoReply }
+				: { autoReply: { on, at: new Date().toISOString() } };
 		out[item.slug] = have
-			? { ...have, name: item.name, ...(fields.length ? { fields, source: "definition" } : {}) }
+			? {
+					...have,
+					name: item.name,
+					...(fields.length ? { fields, source: "definition" } : {}),
+					...autoReply,
+				}
 			: {
 					slug: item.slug,
 					name: item.name,
@@ -136,6 +151,7 @@ export function withListed(
 					source: fields.length ? "definition" : "enquiry",
 					addedAt: new Date().toISOString(),
 					days: [],
+					...autoReply,
 				};
 	}
 	return out;

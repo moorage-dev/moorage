@@ -2,9 +2,12 @@
 
 import { describe, expect, it } from "vitest";
 
+import { isPrivateHost, privateAddressError } from "../src/address.js";
+import { chatBody, classifyChat, maskChatUrl, parseChatUrl } from "../src/chat.js";
 import { ago, parseAddresses, privateEmail, since } from "../src/config.js";
 import { emailFailure, isQuiet } from "../src/deliver.js";
 import { fromEmail, fromWebhook, humanize } from "../src/enquiry.js";
+import { withListed } from "../src/forms.js";
 import {
 	autoChoice,
 	classifyHubSpot,
@@ -152,11 +155,77 @@ describe("enquiries from the forms plugin", () => {
 			["name", "Tom Reyes"],
 			["email", "tom@example.com"],
 			["message", "Three tiers.\nLemon and elderflower."],
+			// The form has a news box; Forms left it out, so it was not ticked.
+			["news", "no"],
 		]);
 		// The same email gives the same ID, so a repeat is a no-op.
 		const again = await fromEmail("New submission: Wedding cakes", text, {});
 		expect(again?.id).toBe(received?.id);
 		expect(again?.enquiry.formId).toBe("wedding-cakes");
+	});
+
+	it("lists an unticked checkbox as no, where the form says it has one", async () => {
+		const { news: _news, ...data } = PAYLOAD.data;
+		const enquiry = fromWebhook({ ...PAYLOAD, data }, CAKES)!.enquiry;
+		expect(enquiry.fields.at(-1)).toMatchObject({ key: "news", value: "no" });
+		// Not for a form that is not known, nor for a box shown only on a condition.
+		expect(
+			fromWebhook({ ...PAYLOAD, data }, undefined)!.enquiry.fields.map((f) => f.key),
+		).not.toContain("news");
+		const conditional: KnownForm = {
+			...CAKES,
+			fields: CAKES.fields.map((f) => (f.key === "news" ? { ...f, conditional: true } : f)),
+		};
+		expect(
+			fromWebhook({ ...PAYLOAD, data }, conditional)!.enquiry.fields.map((f) => f.key),
+		).not.toContain("news");
+		// Placed where the form has it, not at the end.
+		const release: KnownForm = {
+			...CAKES,
+			fields: [
+				{ key: "email", label: "Email", type: "email" },
+				{ key: "release", label: "Tell me about releases", type: "checkbox" },
+				{ key: "message", label: "Message", type: "textarea" },
+			],
+		};
+		const both = fromWebhook(
+			{ ...PAYLOAD, data: { email: "tom@example.com", message: "Hi" } },
+			release,
+		)!.enquiry;
+		expect(both.fields.map((f) => [f.key, f.value])).toEqual([
+			["email", "tom@example.com"],
+			["release", "no"],
+			["message", "Hi"],
+		]);
+		// The email way: Forms leaves an unticked box out and writes a ticked one as true.
+		const ticked = await fromEmail(
+			"New submission: Wedding cakes",
+			"Your name: Tom\nSend me news and offers: true\n\nSubmitted at: 2026-10-16T09:00:00.000Z",
+			{ [CAKES.slug]: CAKES },
+		);
+		expect(ticked!.enquiry.fields.find((f) => f.key === "news")?.value).toBe("true");
+		expect(enquiryEmail("Crumb", ticked!.enquiry, false).text).toContain(
+			"Send me news and offers: yes",
+		);
+		const unticked = await fromEmail(
+			"New submission: Wedding cakes",
+			"Your name: Tom\n\nSubmitted at: 2026-10-16T09:00:00.000Z",
+			{ [CAKES.slug]: CAKES },
+		);
+		expect(unticked!.enquiry.fields.find((f) => f.key === "news")?.value).toBe("no");
+		// HubSpot still receives nothing for an unticked box, as before.
+		const body = hubspotBody(
+			hubspot({
+				mapping: { "wedding-cakes": { news: "other" } },
+				otherNames: { "wedding-cakes": { news: "newsletter" } },
+			}),
+			enquiry,
+		) as {
+			fields: Array<{ name: string }>;
+			legalConsentOptions?: unknown;
+		};
+		expect(body.fields.map((f) => f.name)).not.toContain("newsletter");
+		expect(body).not.toHaveProperty("legalConsentOptions");
 	});
 
 	it("ignores other emails", async () => {
@@ -303,6 +372,48 @@ describe("another app", () => {
 			labels: { cake_date: "When do you need it?" },
 			test: false,
 		});
+	});
+
+	it("sends apps exactly what 0.4.4 sent for ticked and unticked boxes", async () => {
+		// Two boxes, one ticked: apps get no key for the unticked one, and the ticked one's value
+		// as Forms gave it ("yes" from the webhook, "true" from the email), so a Zap filtering on
+		// "field exists" still passes only for people who ticked.
+		const BOXES: KnownForm = {
+			...CAKES,
+			fields: [
+				{ key: "email", label: "Email", type: "email" },
+				{ key: "news", label: "Send me news", type: "checkbox" },
+				{ key: "terms", label: "I agree", type: "checkbox" },
+			],
+		};
+		const at = "2026-10-16T09:00:00.000Z";
+		const web = fromWebhook(
+			{ ...PAYLOAD, data: { email: "tom@example.com", news: true } },
+			BOXES,
+		)!.enquiry;
+		expect(JSON.stringify(appPayload("01JABCDEF", { ...web, receivedAt: at }, false))).toBe(
+			'{"id":"01JABCDEF","event":"enquiry","form":"wedding-cakes","formName":"Wedding cakes","receivedAt":"2026-10-16T09:00:00.000Z","name":null,"email":"tom@example.com","fields":{"email":"tom@example.com","news":"yes"},"labels":{"email":"Email","news":"Send me news"},"pageUrl":null,"utm":{},"marks":[],"throwaway":false,"test":false}',
+		);
+		const mail = (await fromEmail(
+			"New submission: Wedding cakes",
+			`Email: tom@example.com\nSend me news: true\n\nSubmitted at: ${at}`,
+			{ [BOXES.slug]: BOXES },
+		))!.enquiry;
+		expect(JSON.stringify(appPayload("m1", { ...mail, receivedAt: at }, false))).toBe(
+			'{"id":"m1","event":"enquiry","form":"wedding-cakes","formName":"Wedding cakes","receivedAt":"2026-10-16T09:00:00.000Z","name":null,"email":"tom@example.com","fields":{"email":"tom@example.com","news":"true"},"labels":{"email":"Email","news":"Send me news"},"pageUrl":null,"utm":{},"marks":[],"throwaway":false,"test":false}',
+		);
+		// People reading it see both boxes, in words.
+		const text = enquiryEmail("Crumb", mail, false).text;
+		expect(text).toContain("Send me news: yes");
+		expect(text).toContain("I agree: no");
+		const slack = chatBody(
+			{ ...hubspot(), kind: "chat", chat: "slack", url: "https://hooks.slack.com/services/T/B/x" },
+			mail,
+			false,
+			"",
+		) as { text: string };
+		expect(slack.text).toContain("*Send me news:* yes");
+		expect(slack.text).toContain("*I agree:* no");
 	});
 
 	it("treats a deleted Zap and a sign-in redirect as needing a fix", () => {
@@ -578,5 +689,239 @@ describe("a quiet form", () => {
 		expect(
 			isQuiet(form("2026-10-15T09:00:00Z", ["2026-10-02", "2026-10-07", "2026-10-15"]), now),
 		).toBe(false);
+	});
+});
+
+describe("an address on a private network", () => {
+	const host = (address: string) => new URL(address).hostname;
+
+	it("is refused for every private, local and reserved IPv4 range", () => {
+		for (const address of [
+			"https://localhost/hook",
+			"https://LOCALHOST./hook",
+			"https://app.localhost/hook",
+			"https://printer.local/hook",
+			"https://router.internal/hook",
+			"https://nas.home.arpa/hook",
+			"https://127.0.0.1/hook",
+			"https://127.8.9.1/hook",
+			"https://10.1.2.3/hook",
+			"https://172.16.0.1/hook",
+			"https://172.31.255.255/hook",
+			"https://192.168.1.1/hook",
+			"https://169.254.169.254/latest/meta-data",
+			"https://0.0.0.0/hook",
+			"https://0.1.2.3/hook",
+			"https://100.64.0.1/hook",
+			"https://100.127.255.254/hook",
+			"https://192.0.0.8/hook",
+			"https://198.18.0.1/hook",
+			"https://224.0.0.1/hook",
+			"https://240.0.0.1/hook",
+			"https://255.255.255.255/hook",
+			"https://192.88.99.1/hook",
+			"https://files.localdomain/hook",
+			"https://crm.corp/hook",
+		]) {
+			expect(isPrivateHost(host(address)), address).toBe(true);
+		}
+	});
+
+	it("is refused when IPv4 is written as one number, in hex or in octal", () => {
+		// The address parser turns each of these into 127.0.0.1 or 10.0.0.1; raw text is checked too.
+		for (const raw of ["2130706433", "0x7f.1", "0x7f000001", "0177.0.0.1", "127.1", "012.0.0.1"]) {
+			expect(isPrivateHost(raw), raw).toBe(true);
+			expect(isPrivateHost(host(`https://${raw}/hook`)), raw).toBe(true);
+		}
+	});
+
+	it("is refused for IPv6 loopback, unique-local, link-local and mapped private IPv4", () => {
+		for (const address of [
+			"https://[::1]/hook",
+			"https://[::]/hook",
+			"https://[fc00::1]/hook",
+			"https://[fd12:3456:789a::1]/hook",
+			"https://[fe80::1]/hook",
+			"https://[febf::1]/hook",
+			"https://[ff02::1]/hook",
+			"https://[::ffff:127.0.0.1]/hook",
+			"https://[::ffff:10.0.0.1]/hook",
+			"https://[::ffff:7f00:1]/hook",
+			"https://[64:ff9b::a00:1]/hook",
+			"https://[64:ff9b:1::808:808]/hook",
+			"https://[2002:a00:1::1]/hook",
+			"https://[2002:7f00:1::]/hook",
+			"https://[::ffff:0:10.0.0.1]/hook",
+			"https://[::ffff:0:7f00:1]/hook",
+			"https://[100::1]/hook",
+			"https://[2001:db8::1]/hook",
+			"https://[2001:db8:ffff::1]/hook",
+		]) {
+			expect(isPrivateHost(host(address)), address).toBe(true);
+		}
+	});
+
+	it("lets public names and public addresses through", () => {
+		for (const address of [
+			"https://hooks.zapier.com/hooks/catch/1/a/",
+			"https://hook.eu1.make.com/abc",
+			"https://n8n.crumbandco.uk/webhook/1",
+			"https://hooks.slack.com/services/T0/B0/x",
+			"https://discord.com/api/webhooks/1/abc",
+			"https://172.32.0.1/hook",
+			"https://172.15.255.255/hook",
+			"https://100.128.0.1/hook",
+			"https://8.8.8.8/hook",
+			"https://[2606:4700:4700::1111]/hook",
+			"https://[2002:808:808::1]/hook",
+			"https://[::ffff:0:8.8.8.8]/hook",
+			"https://[100:0:0:1::1]/hook",
+			"https://[2001:db9::1]/hook",
+			"https://192.88.100.1/hook",
+			"https://corp.example.com/hook",
+			"https://localhost.example.com/hook",
+		]) {
+			expect(isPrivateHost(host(address)), address).toBe(false);
+		}
+	});
+
+	it("says so in plain words, and only for a private address", () => {
+		expect(privateAddressError("https://172.20.0.5/hook")).toBe(
+			"That address is on a private network, so this site cannot send to it.",
+		);
+		expect(privateAddressError("https://hooks.zapier.com/hooks/catch/1/a/")).toBeUndefined();
+	});
+});
+
+describe("a Slack or Discord channel's message", () => {
+	const SLACK = "https://hooks.slack.com/services/T0ABC/B0DEF/slackSECRETtoken1234";
+	const DISCORD = "https://discord.com/api/webhooks/123456789/discordSECRETtokenABCD";
+	const chat = (url: string, extra: Partial<Delivery> = {}): Delivery => ({
+		id: "chat1",
+		kind: "chat",
+		name: "Contact us → Slack",
+		forms: "all",
+		on: true,
+		repeat: "off",
+		holdSpam: false,
+		createdAt: "2026-10-01T00:00:00.000Z",
+		url,
+		...extra,
+	});
+
+	it("knows Slack and Discord webhook addresses, and nothing else", () => {
+		expect(parseChatUrl(SLACK)).toEqual({ platform: "slack", url: SLACK });
+		expect(parseChatUrl(DISCORD)).toEqual({ platform: "discord", url: DISCORD });
+		expect(parseChatUrl("https://discordapp.com/api/webhooks/1/x")).toMatchObject({
+			platform: "discord",
+		});
+		expect(parseChatUrl("https://hooks.zapier.com/hooks/catch/1/a/")).toHaveProperty("error");
+		expect(parseChatUrl("http://hooks.slack.com/services/T/B/x")).toHaveProperty("error");
+		expect(parseChatUrl("https://hooks.slack.com/")).toHaveProperty("error");
+		expect(parseChatUrl("not an address")).toHaveProperty("error");
+	});
+
+	it("shows an address without its secret part", () => {
+		expect(maskChatUrl(SLACK)).not.toContain("slackSECRET");
+		expect(maskChatUrl(SLACK)).toContain("hooks.slack.com");
+		expect(maskChatUrl(DISCORD)).not.toContain("discordSECRET");
+	});
+
+	it("lists the fields with the marks, and escapes what people wrote", () => {
+		const enquiry: Enquiry = {
+			...fromWebhook(PAYLOAD, CAKES)!.enquiry,
+			spam: true,
+			fields: [
+				{ key: "name", label: "Your name", value: "Tom <@U123> Reyes" },
+				{ key: "message", label: "Message", value: "*bold* & <!here>" },
+			],
+		};
+		const slack = chatBody(
+			chat(SLACK, { chat: "slack" }),
+			enquiry,
+			false,
+			"https://crumb.test",
+		) as {
+			text: string;
+		};
+		expect(slack.text).toContain("New enquiry: Wedding cakes");
+		expect(slack.text).toContain("Possibly spam");
+		expect(slack.text).toContain("Tom &lt;@U123&gt; Reyes");
+		expect(slack.text).toContain("&amp; &lt;!here&gt;");
+		expect(slack.text).toContain(
+			"<https://crumb.test/_emdash/admin/plugins/emdash-forms/submissions?formId=wedding-cakes|",
+		);
+		const discord = chatBody(chat(DISCORD, { chat: "discord" }), enquiry, true, "") as {
+			content: string;
+			allowed_mentions: unknown;
+		};
+		expect(discord.allowed_mentions).toEqual({ parse: [] });
+		expect(discord.content).toContain("Test enquiry: Wedding cakes");
+		expect(discord.content).toContain("\\*bold\\*");
+		const long = {
+			...enquiry,
+			fields: [{ key: "message", label: "Message", value: "x".repeat(5000) }],
+		};
+		expect(
+			(chatBody(chat(DISCORD, { chat: "discord" }), long, false, "") as { content: string }).content
+				.length,
+		).toBeLessThanOrEqual(2000);
+		// No link previews for addresses people typed; a long message keeps its link to Forms.
+		expect(discord).toHaveProperty("flags", 4);
+		const many = {
+			...enquiry,
+			fields: Array.from({ length: 8 }, (_, i) => ({
+				key: `f${i}`,
+				label: `Field ${i}`,
+				value: `https://example.com/${"y".repeat(590)}`,
+			})),
+		};
+		const cutDown = (
+			chatBody(chat(DISCORD, { chat: "discord" }), many, false, "https://crumb.test") as {
+				content: string;
+			}
+		).content;
+		expect(cutDown.length).toBeLessThanOrEqual(2000);
+		expect(cutDown).toMatch(
+			/\[Open in Forms\]\(<https:\/\/crumb\.test\/_emdash\/admin\/plugins\/emdash-forms\/submissions\?formId=wedding-cakes>\)$/,
+		);
+		expect(cutDown).toContain("Field 7");
+		const quiet = chatBody(chat(SLACK, { chat: "slack", leaveOut: true }), enquiry, false, "") as {
+			text: string;
+		};
+		expect(quiet.text).not.toContain("Tom");
+		expect(quiet.text).not.toContain("bold");
+		expect(quiet.text).not.toContain(enquiry.email!);
+	});
+
+	it("reads Slack's and Discord's answers in plain words", () => {
+		const slack = chat(SLACK, { chat: "slack" });
+		expect(classifyChat(slack, 200, SLACK, "ok")).toEqual({ kind: "delivered" });
+		expect(classifyChat(slack, 429, SLACK, "")).toMatchObject({ kind: "retry" });
+		expect(classifyChat(slack, 503, SLACK, "")).toMatchObject({ kind: "retry" });
+		const gone = classifyChat(slack, 404, SLACK, "no_service");
+		expect(gone).toMatchObject({ kind: "fixing", raw: "Slack answered 404: no_service" });
+		expect(gone.plain).toContain("no longer exists");
+		expect(classifyChat(slack, 403, SLACK, "action_prohibited")).toMatchObject({ kind: "fixing" });
+		expect(JSON.stringify(classifyChat(slack, 200, "https://slack.com/signin", ""))).not.toContain(
+			"SECRET",
+		);
+	});
+});
+
+describe("Forms' own auto-reply", () => {
+	it("is noted for each form one-click connect lists", () => {
+		const forms = withListed({}, [
+			{
+				slug: "contact",
+				name: "Contact",
+				settings: { autoresponder: { subject: "Thanks", body: "Hi" } },
+			},
+			{ slug: "quote", name: "Quote", settings: {} },
+			{ slug: "old", name: "Old" },
+		]);
+		expect(forms.contact?.autoReply?.on).toBe(true);
+		expect(forms.quote?.autoReply?.on).toBe(false);
+		expect(forms.old?.autoReply).toBeUndefined();
 	});
 });

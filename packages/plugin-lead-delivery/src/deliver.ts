@@ -2,16 +2,20 @@
 
 import type { PluginContext, StorageCollection } from "emdash";
 
+import { privateAddressError } from "./address.js";
 import { APPROVAL_PREFIX, isLiveApproval } from "./approval.js";
+import { chatAddressError, chatRequest, classifyChat, redactUrl } from "./chat.js";
 import {
 	ALERTS_KEY,
 	DAILY_KEY,
 	day,
 	kvOf,
+	ORIGIN_KEY,
 	saveFormsQuietly,
 	SCHEDULE_KEY,
 	since,
 	siteLabel,
+	siteOrigin,
 	type State,
 	type Stats,
 	STATS_KEY,
@@ -367,31 +371,56 @@ export async function sendTo(
 		}
 	}
 	if (!ctx.http) return done({ kind: "retry", raw: "Web requests are not available." });
+	const d = delivery;
+	// Checked again before every send: a delivery saved by an earlier version, with a laxer check.
+	const blocked =
+		d.kind === "hubspot"
+			? undefined
+			: d.kind === "chat"
+				? chatAddressError(d.url ?? "")
+				: privateAddressError(d.url ?? "");
+	if (blocked) {
+		return done({
+			kind: "fixing",
+			plain: `${blocked} Change the address in Lead delivery → ${d.name} → Edit.`,
+		});
+	}
 	const request =
-		delivery.kind === "hubspot"
-			? {
-					url: submitUrl(delivery),
-					init: {
-						method: "POST",
-						headers: { "content-type": "application/json" },
-						body: JSON.stringify(hubspotBody(delivery, enquiry)),
-					},
-				}
-			: await appRequest(delivery, id, enquiry, test);
+		d.kind === "chat"
+			? chatRequest(
+					d,
+					d.url ?? "",
+					enquiry,
+					test,
+					kvOf<string>(state, ORIGIN_KEY) ?? siteOrigin(ctx),
+				)
+			: d.kind === "hubspot"
+				? {
+						url: submitUrl(delivery),
+						init: {
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify(hubspotBody(delivery, enquiry)),
+						},
+					}
+				: await appRequest(d, id, enquiry, test);
 	try {
 		const response = await ctx.http.fetch(request.url, request.init);
 		const text = await response.text().catch(() => "");
 		const outcome =
-			delivery.kind === "hubspot"
-				? classifyHubSpot(response.status, text, delivery.name)
-				: classifyApp(delivery, response.status, response.url, text);
+			d.kind === "hubspot"
+				? classifyHubSpot(response.status, text, d.name)
+				: d.kind === "chat"
+					? classifyChat(d, response.status, response.url, text)
+					: classifyApp(d, response.status, response.url, text);
 		const retryAfter = Number(response.headers.get("retry-after"));
 		if (outcome.kind === "retry" && Number.isFinite(retryAfter) && retryAfter > 0) {
 			outcome.retryAfter = Math.min(retryAfter, 86_400);
 		}
 		return done(outcome);
 	} catch (error) {
-		return done({ kind: "retry", raw: `No answer: ${String(error).slice(0, 200)}` });
+		const words = d.kind === "chat" ? redactUrl(String(error), d.url) : String(error);
+		return done({ kind: "retry", raw: `No answer: ${words.slice(0, 200)}` });
 	}
 }
 

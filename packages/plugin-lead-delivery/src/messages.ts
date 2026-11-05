@@ -1,6 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { inboundUrl, plural, privateEmail } from "./config.js";
+import { readableFields } from "./enquiry.js";
 import { formWords } from "./names.js";
 import type { Enquiry, KnownForm, ReachResult, Send } from "./types.js";
 
@@ -26,7 +27,7 @@ export function enquiryEmail(site: string, enquiry: Enquiry, test: boolean) {
 			: []),
 		`${who}${enquiry.name && enquiry.email ? ` (${enquiry.email})` : ""} sent the ${formWords(enquiry.formName)} on your website.${test ? " This is a test from Lead delivery." : ""}`,
 		"",
-		...enquiry.fields
+		...readableFields(enquiry)
 			.filter((f) => !(f.key in UTM_LABELS) && f.key !== "page_url")
 			.map((f) => `${f.label}: ${f.value}`),
 	];

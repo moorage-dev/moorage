@@ -51,7 +51,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const KINDS: DeliveryKind[] = ["email", "hubspot", "app"];
+const KINDS: DeliveryKind[] = ["email", "hubspot", "app", "chat"];
 const REPEATS: Repeat[] = ["off", "24h", "7d"];
 
 function strings(value: unknown): string[] {
@@ -94,6 +94,8 @@ function copied(value: Record<string, unknown>): Partial<Delivery> {
 		"testedAt",
 		"testResult",
 		"oldName",
+		"chat",
+		"leaveOut",
 	]) {
 		if (value[key] !== undefined) out[key] = value[key];
 	}
