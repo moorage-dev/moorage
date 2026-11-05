@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { details, emailStatus, rowText, when } from "../src/admin.js";
 import { parseRecipients } from "../src/alerts.js";
 import { afterExternal, afterOwnPage, afterOwnPath, verdict, type Outcome } from "../src/check.js";
-import { sitemapAnswers } from "../src/checklist.js";
+import { searchRow, sitemapAnswers } from "../src/checklist.js";
 import { entryPath, linksInData, scanHtml } from "../src/extract.js";
 import { describe as words, foundOn, type LinkRow } from "../src/model.js";
 import { isMidUpdate } from "../src/scan.js";
@@ -579,6 +579,46 @@ describe("search engines and the home page", () => {
 		expect(
 			readRobots("User-agent: Bingbot\nAllow: /\n\nUser-agent: *\nDisallow: /\n"),
 		).toMatchObject({ google: true, all: true });
+	});
+
+	it("tells a site kept out except for a few addresses from one kept out entirely", () => {
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /blog\n")).toMatchObject({
+			google: true,
+			all: true,
+			googleSome: true,
+			allSome: true,
+		});
+		expect(readRobots("User-agent: *\nDisallow: /\n")).toMatchObject({
+			googleSome: false,
+			allSome: false,
+		});
+		// An empty Allow lets nothing in.
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow:\n")).toMatchObject({ allSome: false });
+		expect(
+			readRobots(
+				"User-agent: Googlebot\nDisallow: /\nAllow: /shop/\n\nUser-agent: *\nDisallow: /\n",
+			),
+		).toMatchObject({ googleSome: true, allSome: false });
+
+		const row = (text: string) => searchRow(readRobots(text), false, true);
+		expect(row("User-agent: *\nDisallow: /\nAllow: /blog\n")).toEqual({
+			status: "attention",
+			text: "Your site keeps search engines out of most of its pages, the home page included; only some addresses are allowed.",
+		});
+		expect(row("User-agent: Googlebot\nDisallow: /\nAllow: /blog\n")).toEqual({
+			status: "attention",
+			text: "Your site keeps Google out of most of its pages, the home page included; only some addresses are allowed. Other search engines are allowed in.",
+		});
+		expect(
+			row("User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nDisallow: /\nAllow: /blog\n"),
+		).toEqual({
+			status: "attention",
+			text: "Your site lets Google in but keeps most other search engines out of most of its pages, the home page included.",
+		});
+		// Kept out entirely: the stronger words stay.
+		expect(row("User-agent: *\nDisallow: /\n").text).toBe(
+			"Your site tells search engines to stay away, so it will not appear in search results.",
+		);
 	});
 
 	it("reads a robots.txt that starts with a byte-order mark", () => {

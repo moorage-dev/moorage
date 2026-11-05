@@ -51,6 +51,10 @@ export interface Robots {
 	google: boolean;
 	/** The group for every crawler (`*`) lets none in. */
 	all: boolean;
+	/** Googlebot is kept out, but a narrower `Allow` (`/blog`) lets a few addresses in. */
+	googleSome: boolean;
+	/** The same for every crawler. */
+	allSome: boolean;
 	/** The lists of pages it names, as full addresses. */
 	sitemaps: string[];
 }
@@ -60,6 +64,13 @@ interface Group {
 	disallowAll: boolean;
 	/** An `Allow` of the whole site (`/`, `/*` or `/$`); one file or folder is not. */
 	allowsAll: boolean;
+	/** An `Allow` of one file or folder. */
+	allowsSome: boolean;
+}
+
+/** Kept out of everything, a few addresses allowed back. */
+function blocksMost(groups: Group[]): boolean {
+	return blocksAll(groups) && groups.some((g) => g.allowsSome);
 }
 
 /** The `Allow` values that cancel a `Disallow: /` in the same group. */
@@ -94,7 +105,7 @@ export function readRobots(text: string, origin = ""): Robots {
 		}
 		if (field === "user-agent") {
 			if (!current || rules) {
-				current = { agents: [], disallowAll: false, allowsAll: false };
+				current = { agents: [], disallowAll: false, allowsAll: false, allowsSome: false };
 				groups.push(current);
 				rules = false;
 			}
@@ -108,14 +119,18 @@ export function readRobots(text: string, origin = ""): Robots {
 		} else if (field === "allow") {
 			rules = true;
 			if (ALLOWS_ALL.has(value)) current.allowsAll = true;
+			else if (value !== "") current.allowsSome = true;
 		}
 	}
 	const named = (agent: string) => groups.filter((g) => g.agents.includes(agent));
 	const everyone = named("*");
 	const googlebot = named("googlebot");
+	const google = googlebot.length > 0 ? googlebot : everyone;
 	return {
-		google: blocksAll(googlebot.length > 0 ? googlebot : everyone),
+		google: blocksAll(google),
 		all: blocksAll(everyone),
+		googleSome: blocksMost(google),
+		allSome: blocksMost(everyone),
 		sitemaps,
 	};
 }

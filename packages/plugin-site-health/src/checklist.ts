@@ -53,22 +53,31 @@ export async function sitemapAnswers(
 
 /** The "Search engines" row: who robots.txt keeps out, and whether the list of pages answers. */
 export function searchRow(rules: Robots, named: boolean, answers: boolean): Row {
+	// Kept out of everything but a few addresses (`Allow: /blog`) is not "stay away".
+	const most = "out of most of its pages, the home page included";
 	if (rules.google && rules.all) {
 		return {
 			status: "attention",
-			text: "Your site tells search engines to stay away, so it will not appear in search results.",
+			text:
+				rules.googleSome || rules.allSome
+					? `Your site keeps search engines ${most}; only some addresses are allowed.`
+					: "Your site tells search engines to stay away, so it will not appear in search results.",
 		};
 	}
 	if (rules.google) {
 		return {
 			status: "attention",
-			text: "Your site tells Google to stay away, so it will not appear in Google's results. Other search engines are allowed in.",
+			text: rules.googleSome
+				? `Your site keeps Google ${most}; only some addresses are allowed. Other search engines are allowed in.`
+				: "Your site tells Google to stay away, so it will not appear in Google's results. Other search engines are allowed in.",
 		};
 	}
 	if (rules.all) {
 		return {
 			status: "attention",
-			text: "Your site lets Google in but tells most other search engines to stay away.",
+			text: rules.allSome
+				? `Your site lets Google in but keeps most other search engines ${most}.`
+				: "Your site lets Google in but tells most other search engines to stay away.",
 		};
 	}
 	if (answers) {
@@ -140,7 +149,7 @@ export async function runChecklist(
 				const rules: Robots =
 					status >= 200 && status < 300
 						? readRobots(robots.body ?? "", origin)
-						: { google: false, all: false, sitemaps: [] };
+						: { google: false, all: false, googleSome: false, allSome: false, sitemaps: [] };
 				const where = rules.sitemaps[0];
 				const answers = await sitemapAnswers(ctx, where ?? `${origin}/sitemap.xml`, counter);
 				return { rules, named: where !== undefined, answers };
