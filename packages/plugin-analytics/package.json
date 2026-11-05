@@ -60,10 +60,12 @@
 		"test": "vitest run"
 	},
 	"peerDependencies": {
+		"astro": ">=6.0.0",
 		"emdash": ">=1.2.0"
 	},
 	"devDependencies": {
 		"@emdash-cms/blocks": "catalog:",
+		"astro": "catalog:",
 		"@moorage/typescript-config": "workspace:*",
 		"emdash": "catalog:",
 		"happy-dom": "catalog:",
