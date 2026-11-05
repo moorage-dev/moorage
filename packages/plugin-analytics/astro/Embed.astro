@@ -19,7 +19,7 @@ const player =
 	/vimeo\.com\/\d+/.test(url);
 const found = local || !player ? undefined : heldKind(url);
 const held = found?.kind === "video" ? found : undefined;
-const hold = held ? await holding(Astro.locals, Astro.url) : false;
+const hold = held ? await holding(Astro.locals, Astro.url, held.name) : false;
 ---
 
 {

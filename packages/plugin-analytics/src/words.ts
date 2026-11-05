@@ -5,6 +5,7 @@ import {
 	DEFAULT_MESSAGE,
 	DEFAULT_TITLE,
 	defaultMessage,
+	needsConsent,
 	shortHash,
 	vendorNames,
 	type AnalyticsConfig,
@@ -55,7 +56,20 @@ interface Language extends Fixed {
 	ess: string;
 	/** What the small "Cookies" button is called for screen readers. */
 	sl: string;
+	/** Held videos and maps: under Marketing ({list}), or a purpose of their own, with its name and description. */
+	hm: string;
+	hv: string;
+	vm: string;
+	vmText: string;
 }
+
+/** The held-video words in English; the same keys as each language below. */
+const ENGLISH_HELD = {
+	hm: "Marketing also covers videos and maps from {list}.",
+	hv: "Videos and maps from {list} set their own cookies, so they wait for your choice.",
+	vm: "Videos and maps",
+	vmText: "Shows videos and maps from other sites, which set their own cookies.",
+};
 
 /** A space that does not break, before French ? and :. */
 const NB = " ";
@@ -85,6 +99,10 @@ export const LANGUAGES: Record<string, Language> = {
 		mm: "Wir möchten Marketing-Cookies verwenden, um unsere Werbung zu messen.",
 		mb: "Wir möchten Statistik-Cookies verwenden, um zu sehen, wie diese Website genutzt wird, und Marketing-Cookies, um unsere Werbung zu messen.",
 		ess: "Notwendige Cookies sind immer aktiv.",
+		hm: "Zu Marketing gehören auch Videos und Karten von {list}.",
+		hv: "Videos und Karten von {list} setzen eigene Cookies und warten deshalb auf Ihre Wahl.",
+		vm: "Videos und Karten",
+		vmText: "Zeigt Videos und Karten anderer Websites, die eigene Cookies setzen.",
 	},
 	fr: {
 		title: `Pouvons-nous utiliser des cookies${NB}?`,
@@ -111,6 +129,10 @@ export const LANGUAGES: Record<string, Language> = {
 		mm: "Nous aimerions utiliser des cookies marketing pour mesurer notre publicité.",
 		mb: "Nous aimerions utiliser des cookies de mesure d’audience pour voir comment ce site est utilisé, et des cookies marketing pour mesurer notre publicité.",
 		ess: "Les cookies essentiels sont toujours actifs.",
+		hm: "Le marketing couvre aussi les vidéos et cartes de {list}.",
+		hv: "Les vidéos et cartes de {list} déposent leurs propres cookies et attendent donc votre choix.",
+		vm: "Vidéos et cartes",
+		vmText: "Affiche des vidéos et des cartes d’autres sites, qui déposent leurs propres cookies.",
 	},
 	es: {
 		title: "¿Podemos usar cookies?",
@@ -136,6 +158,10 @@ export const LANGUAGES: Record<string, Language> = {
 		mm: "Nos gustaría usar cookies de marketing para medir nuestra publicidad.",
 		mb: "Nos gustaría usar cookies de analítica para ver cómo se usa este sitio, y cookies de marketing para medir nuestra publicidad.",
 		ess: "Las cookies esenciales están siempre activas.",
+		hm: "Marketing incluye también los vídeos y mapas de {list}.",
+		hv: "Los vídeos y mapas de {list} usan sus propias cookies, así que esperan a tu elección.",
+		vm: "Vídeos y mapas",
+		vmText: "Muestra vídeos y mapas de otros sitios, que usan sus propias cookies.",
 	},
 	it: {
 		title: "Possiamo usare i cookie?",
@@ -162,6 +188,10 @@ export const LANGUAGES: Record<string, Language> = {
 		mm: "Vorremmo usare cookie di marketing per misurare la nostra pubblicità.",
 		mb: "Vorremmo usare cookie statistici per vedere come viene usato questo sito, e cookie di marketing per misurare la nostra pubblicità.",
 		ess: "I cookie essenziali sono sempre attivi.",
+		hm: "Il marketing comprende anche video e mappe di {list}.",
+		hv: "Video e mappe di {list} usano cookie propri, quindi attendono la tua scelta.",
+		vm: "Video e mappe",
+		vmText: "Mostra video e mappe di altri siti, che usano cookie propri.",
 	},
 	nl: {
 		title: "Mogen we cookies gebruiken?",
@@ -187,6 +217,10 @@ export const LANGUAGES: Record<string, Language> = {
 		mm: "We willen graag marketingcookies gebruiken om onze advertenties te meten.",
 		mb: "We willen graag statistische cookies gebruiken om te zien hoe deze site wordt gebruikt, en marketingcookies om onze advertenties te meten.",
 		ess: "Noodzakelijke cookies staan altijd aan.",
+		hm: "Marketing omvat ook video’s en kaarten van {list}.",
+		hv: "Video’s en kaarten van {list} plaatsen eigen cookies en wachten daarom op je keuze.",
+		vm: "Video’s en kaarten",
+		vmText: "Toont video’s en kaarten van andere sites, die eigen cookies plaatsen.",
 	},
 	pt: {
 		title: "Podemos usar cookies?",
@@ -213,6 +247,10 @@ export const LANGUAGES: Record<string, Language> = {
 		mm: "Gostaríamos de usar cookies de marketing para medir a nossa publicidade.",
 		mb: "Gostaríamos de usar cookies de estatísticas para ver como este site é usado, e cookies de marketing para medir a nossa publicidade.",
 		ess: "Os cookies essenciais estão sempre ativos.",
+		hm: "O Marketing inclui também vídeos e mapas de {list}.",
+		hv: "Os vídeos e mapas de {list} usam os seus próprios cookies, por isso esperam pela sua escolha.",
+		vm: "Vídeos e mapas",
+		vmText: "Mostra vídeos e mapas de outros sites, que usam os seus próprios cookies.",
 	},
 };
 
@@ -222,7 +260,7 @@ export type LabelKey = (typeof LABEL_KEYS)[number];
 export type Labels = Record<LabelKey, string>;
 
 /** A code that changes when any word a visitor could read changes, in any language. */
-const TABLE_CODE = shortHash(JSON.stringify([ENGLISH, LANGUAGES]));
+const TABLE_CODE = shortHash(JSON.stringify([ENGLISH, ENGLISH_HELD, LANGUAGES]));
 
 /** The owner's button words that are set, ready to lay over the built-in ones. */
 function ownLabels(config: AnalyticsConfig): Partial<Labels> {
@@ -245,23 +283,37 @@ export function knownLanguage(lang: unknown): string | undefined {
 export function wordsFor(config: AnalyticsConfig, lang?: string): Words {
 	const { title, message } = config.banner;
 	const code = knownLanguage(lang);
+	const marketing = vendorNames(config, "marketing").length > 0;
+	const words = code ? LANGUAGES[code]! : ENGLISH_HELD;
+	// Videos and maps held back are named: in the standard text, and in Choose, under
+	// Marketing or, on a site with no Marketing tools, as a purpose of their own.
+	const list = new Intl.ListFormat(code ?? "en-GB", { type: "conjunction" }).format(
+		needsConsent(config) && config.banner.audience !== "none" ? config.heldEmbeds : [],
+	);
+	const held = list ? (marketing ? words.hm : words.hv).replace("{list}", list) : "";
+	const own = !list || marketing ? {} : { mk: words.vm, mkText: words.vmText };
 	if (!code) {
+		const standard = defaultMessage(config);
 		return {
 			...ENGLISH,
+			...own,
 			...ownLabels(config),
 			title,
-			text: message || defaultMessage(config),
+			text:
+				message ||
+				(held ? standard.replace(/Essential cookies are always on\.$/, `${held} $&`) : standard),
 		};
 	}
-	const { ma, mm, mb, ess, title: theirTitle, ...fixed } = LANGUAGES[code]!;
+	const { ma, mm, mb, ess, hm, hv, vm, vmText, title: theirTitle, ...fixed } = LANGUAGES[code]!;
 	const analytics = vendorNames(config, "analytics").length > 0;
-	const marketing = vendorNames(config, "marketing").length > 0;
 	const want = analytics && marketing ? mb : analytics ? ma : marketing ? mm : "";
+	const text = [want, held, ess].filter(Boolean).join(" ");
 	return {
 		...fixed,
+		...own,
 		...ownLabels(config),
 		title: title === DEFAULT_TITLE ? theirTitle : title,
-		text: message === DEFAULT_MESSAGE ? (want ? `${want} ${ess}` : ess) : message,
+		text: message === DEFAULT_MESSAGE ? text : message,
 	};
 }
 
@@ -271,7 +323,13 @@ export function wordsFor(config: AnalyticsConfig, lang?: string): Words {
  */
 export function wordsCode(config: AnalyticsConfig): string {
 	return shortHash(
-		JSON.stringify([TABLE_CODE, config.banner.title, config.banner.message, config.banner.labels]) +
+		JSON.stringify([
+			TABLE_CODE,
+			config.banner.title,
+			config.banner.message,
+			config.banner.labels,
+			config.heldEmbeds,
+		]) +
 			vendorNames(config, "analytics").length +
 			vendorNames(config, "marketing").length,
 	);

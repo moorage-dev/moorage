@@ -349,6 +349,12 @@ function consentBlocks(state: PageState): Block[] {
 		type: "section",
 		text: `✓ Asks ${whoWaits(banner.audience)} first. They are asked again after ${banner.months} months, or when you add or remove a tool.`,
 	});
+	if (config.heldEmbeds.length) {
+		blocks.push({
+			type: "section",
+			text: `✓ Videos and maps from ${new Intl.ListFormat("en-GB").format(config.heldEmbeds)} wait until visitors allow them, and the banner names them.`,
+		});
+	}
 	if (banner.policyUrl) {
 		const url = banner.policyUrl.startsWith("/")
 			? state.origin

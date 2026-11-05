@@ -1444,6 +1444,42 @@ test.describe("added in 0.4", () => {
 	}
 	const held = (page: Page) => page.locator("[data-cc-held]");
 
+	test("the banner names the held videos and maps, and Choose has a switch that releases them", async ({
+		page,
+		context,
+	}) => {
+		// Google Analytics only: no Marketing tools, so the videos get a purpose of their own.
+		await configure({ ga4: IDS.ga4 });
+		const hits = await stubVendors(context);
+		const embeds = await stubEmbeds(context);
+		await inCountry(page, "DE");
+		// The first view of a page with them tells the plugin which providers the site has.
+		await page.goto("/embeds-test");
+		await expect(held(page)).toHaveCount(3);
+		await page.reload();
+		await expect(banner(page)).toContainText(
+			"We would like to use analytics cookies to see how this site is used. Videos and maps from YouTube, Vimeo and Google Maps set their own cookies, so they wait for your choice. Essential cookies are always on.",
+		);
+		await banner(page).getByRole("button", { name: "Choose" }).click();
+		await expect(panel(page)).toContainText(
+			"Shows videos and maps from other sites, which set their own cookies. Used by: YouTube, Vimeo, Google Maps.",
+		);
+		await panel(page).getByRole("switch", { name: "Videos and maps" }).check();
+		await panel(page).getByRole("button", { name: "Save my choices" }).click();
+		await expect(held(page)).toHaveCount(0);
+		await expect.poll(() => embeds.some((url) => url.includes("youtube.com/embed"))).toBe(true);
+		await settle(page);
+		expect(hits).toEqual([]);
+		// The Status tab says so.
+		const status = await admin.post(`${API}/admin`, {
+			headers: { "X-EmDash-Request": "1" },
+			data: { type: "page_load", page: "/settings" },
+		});
+		expect(JSON.stringify(await status.json())).toContain(
+			"Videos and maps from YouTube, Vimeo and Google Maps wait until visitors allow them",
+		);
+	});
+
 	test("videos and maps wait for Marketing, with a Load button for each; other embeds do not", async ({
 		page,
 		context,
@@ -1532,7 +1568,7 @@ test.describe("added in 0.4", () => {
 		const german = page.getByRole("region", { name: "Dürfen wir Cookies verwenden?" });
 		await expect(german).toBeVisible();
 		await expect(german).toContainText(
-			"Wir möchten Statistik-Cookies verwenden, um zu sehen, wie diese Website genutzt wird, und Marketing-Cookies, um unsere Werbung zu messen. Notwendige Cookies sind immer aktiv.",
+			"Wir möchten Statistik-Cookies verwenden, um zu sehen, wie diese Website genutzt wird, und Marketing-Cookies, um unsere Werbung zu messen. Zu Marketing gehören auch Videos und Karten von YouTube, Vimeo und Google Maps. Notwendige Cookies sind immer aktiv.",
 		);
 		await expect(german.getByRole("button", { name: "Alle akzeptieren" })).toBeVisible();
 		await expect(german.getByRole("button", { name: "Alle ablehnen" })).toBeVisible();

@@ -8,9 +8,10 @@ import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
  * that goes wrong means no: the embed renders as it did before this plugin.
  * @param {unknown} locals  Astro.locals
  * @param {URL} url  Astro.url
+ * @param {string} name  who shows it (YouTube, Vimeo, Google Maps), so the banner can name it
  * @returns {Promise<boolean>}
  */
-export async function holding(locals, url) {
+export async function holding(locals, url, name) {
 	const handle = getPublicPluginApiRouteHandler(
 		/** @type {Parameters<typeof getPublicPluginApiRouteHandler>[0]} */ (locals),
 	);
@@ -21,7 +22,12 @@ export async function holding(locals, url) {
 				"analytics-consent",
 				"GET",
 				"/embeds",
-				new Request(new URL("/_emdash/api/plugins/analytics-consent/embeds", url)),
+				new Request(
+					new URL(
+						`/_emdash/api/plugins/analytics-consent/embeds?p=${encodeURIComponent(name)}`,
+						url,
+					),
+				),
 			)
 		);
 		return answer?.success === true && answer.data?.hold === true;

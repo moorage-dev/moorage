@@ -12,7 +12,7 @@ import Held from "./Held.astro";
 
 const { node } = Astro.props as { node?: { src?: unknown } };
 const held = heldKind(node?.src);
-const hold = held ? await holding(Astro.locals, Astro.url) : false;
+const hold = held ? await holding(Astro.locals, Astro.url, held.name) : false;
 ---
 
 {

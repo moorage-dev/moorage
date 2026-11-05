@@ -70,6 +70,22 @@ export interface AnalyticsConfig {
 	hideHelpLine: boolean;
 	/** How many times "Ask everyone again" was pressed. Part of the banner version once above 0. */
 	askAgain: number;
+	/**
+	 * The providers of videos and maps this site holds back, as its pages were shown
+	 * (the block components tell the `embeds` route). Named in the banner; part of the
+	 * banner version once there is one.
+	 */
+	heldEmbeds: HeldName[];
+}
+
+/** Who shows the videos and maps that are held back, in the order the banner names them. */
+export const HELD_NAMES = ["YouTube", "Vimeo", "Google Maps"] as const;
+export type HeldName = (typeof HELD_NAMES)[number];
+
+/** The known providers in `value`, once each, in the fixed order. */
+export function cleanHeld(value: unknown): HeldName[] {
+	const list = Array.isArray(value) ? value : [];
+	return HELD_NAMES.filter((name) => list.includes(name));
 }
 
 export const DEFAULT_TITLE = "Can we use cookies?";
@@ -147,6 +163,7 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 	gtmLoading: "choice",
 	hideHelpLine: false,
 	askAgain: 0,
+	heldEmbeds: [],
 };
 
 const MAX_EXCLUDES = 50;
@@ -366,6 +383,7 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 			(source.askAgain as number) <= MAX_ASK_AGAIN
 				? (source.askAgain as number)
 				: 0,
+		heldEmbeds: cleanHeld(source.heldEmbeds),
 	};
 }
 
@@ -423,8 +441,11 @@ export function bannerVersion(config: AnalyticsConfig): string {
 	const tools = enabledTools(config)
 		.map((tool) => `${tool}:${toolCategories(config, tool).join("+")}`)
 		.join(",");
-	// "Ask everyone again" adds its count; before the first press the code is what it always was.
-	return shortHash(config.askAgain > 0 ? `${tools};again:${config.askAgain}` : tools);
+	// "Ask everyone again" adds its count, held videos and maps their providers; without
+	// either the code is what it always was.
+	const again = config.askAgain > 0 ? `;again:${config.askAgain}` : "";
+	const held = config.heldEmbeds.length ? `;held:${config.heldEmbeds.join("+")}` : "";
+	return shortHash(tools + again + held);
 }
 
 /** A short, stable code for a piece of text (djb2, base 36). Not for secrets. */

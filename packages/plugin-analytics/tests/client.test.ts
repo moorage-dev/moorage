@@ -404,6 +404,35 @@ describe("telling other scripts whether the banner waits", () => {
 	});
 });
 
+describe("held videos and maps on a site with no Marketing tools", () => {
+	it("Choose offers a Videos and maps switch, which releases them and is withdrawn like the others", async () => {
+		const reload = vi.fn();
+		vi.spyOn(window.location, "reload").mockImplementation(reload);
+		boot(settings({ tools: { ga4: "G-AB12CD34EF" }, heldEmbeds: ["YouTube"] }));
+		await ready();
+		expect(shadow().querySelector(".b")!.textContent).toContain(
+			"Videos and maps from YouTube set their own cookies, so they wait for your choice.",
+		);
+		press("c");
+		const dialog = shadow().querySelector("dialog")!;
+		expect(dialog.textContent).toContain(
+			"Videos and mapsShows videos and maps from other sites, which set their own cookies. Used by: YouTube.",
+		);
+		shadow().querySelector<HTMLInputElement>("[name=m]")!.click();
+		press("s", dialog);
+		expect((window as unknown as { cookieConsent: unknown }).cookieConsent).toEqual({
+			analytics: false,
+			marketing: true,
+		});
+		expect(document.cookie).toMatch(/\.01\./);
+		// No tracking tool came with it.
+		expect(requested()).toEqual([]);
+		press("c");
+		press("r", dialog);
+		expect(reload).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("the site's language", () => {
 	afterEach(() => document.documentElement.removeAttribute("lang"));
 

@@ -7,6 +7,7 @@ import pkg from "../package.json" with { type: "json" };
 import { ADMIN_ROLE, CHECK_ACTION, handleInteraction, type Interaction } from "./admin.js";
 import {
 	bannerVersion,
+	cleanHeld,
 	CONFIG_KEY,
 	needsConsent,
 	normalizeConfig,
@@ -251,7 +252,26 @@ export function createPlugin() {
 				methods: ["GET"],
 				handler: async (ctx) => {
 					const config = await memoSettings(ctx, () => readConfig(ctx));
-					return { hold: needsConsent(config) && config.banner.audience !== "none" };
+					const hold = needsConsent(config) && config.banner.audience !== "none";
+					// Which provider the asking block shows, so the banner can name it. Only the three
+					// known names count, and only a new one is written, so a page view costs no write.
+					const name = ctx.request ? new URL(ctx.request.url).searchParams.get("p") : null;
+					if (hold && name && !config.heldEmbeds.includes(name as never)) {
+						// Several blocks on one page ask at once: each adds its name to the newest copy.
+						for (let attempt = 0; attempt < 5; attempt++) {
+							const stored = await ctx.kv.getVersioned<unknown>(CONFIG_KEY);
+							const fresh = normalizeConfig(stored?.value);
+							const heldEmbeds = cleanHeld([...fresh.heldEmbeds, name]);
+							if (heldEmbeds.length === fresh.heldEmbeds.length) break;
+							const done = await ctx.kv.compareAndSet(CONFIG_KEY, stored?.revision ?? null, {
+								...fresh,
+								heldEmbeds,
+							});
+							if (done.applied) break;
+						}
+						forgetSettings(PLUGIN_ID);
+					}
+					return { hold };
 				},
 			},
 			// Public, never cached: tells the browser which country the visitor is in.

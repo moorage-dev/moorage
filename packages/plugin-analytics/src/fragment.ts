@@ -46,7 +46,8 @@ export function clientConfig(
 		pos: banner.position,
 		scheme: banner.scheme,
 		an: vendorNames(config, "analytics"),
-		mk: vendorNames(config, "marketing"),
+		// Held videos and maps wait for Marketing too, so Choose names them there.
+		mk: [...vendorNames(config, "marketing"), ...(asks ? config.heldEmbeds : [])],
 		t: wordsFor(config),
 	};
 	// The browser fetches the words in the page's language only when someone can be asked.
