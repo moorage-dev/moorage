@@ -82,6 +82,19 @@ export interface AnalyticsConfig {
 export const HELD_NAMES = ["YouTube", "Vimeo", "Google Maps"] as const;
 export type HeldName = (typeof HELD_NAMES)[number];
 
+/**
+ * Where the public `embeds` route notes the providers it has seen held on the
+ * site's pages, kept apart from the settings: a visitor's request must never
+ * change the banner or its version. An Admin names them in the banner
+ * (`heldEmbeds`) from the Status tab.
+ */
+export const HELD_SEEN_KEY = "heldSeen";
+
+/** True for one of the known provider names. */
+export function isHeldName(value: unknown): value is HeldName {
+	return (HELD_NAMES as readonly unknown[]).includes(value);
+}
+
 /** The known providers in `value`, once each, in the fixed order. */
 export function cleanHeld(value: unknown): HeldName[] {
 	const list = Array.isArray(value) ? value : [];

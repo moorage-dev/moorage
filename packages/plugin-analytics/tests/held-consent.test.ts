@@ -1,13 +1,27 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import { validateBlockResponse } from "@emdash-cms/blocks/server";
 import type { RouteContext } from "emdash";
 import { describe, expect, it } from "vitest";
 
-import { bannerVersion, CONFIG_KEY, normalizeConfig } from "../src/config.js";
+import { FORGET_HELD_ACTION, NAME_HELD_ACTION } from "../src/admin.js";
+import { bannerVersion, CONFIG_KEY, HELD_SEEN_KEY, normalizeConfig } from "../src/config.js";
 import { clientConfig } from "../src/fragment.js";
 import { createPlugin } from "../src/index.js";
 import { wordsFor } from "../src/words.js";
 import { fakeContext } from "./helpers.js";
+
+const ADMIN = 50;
+const EDITOR = 40;
+
+/** The admin route, as the admin calls it. */
+const admin = (fake: ReturnType<typeof fakeContext>, input: unknown, role = ADMIN) =>
+	createPlugin().routes.admin!.handler({
+		...fake.ctx,
+		request: new Request("https://acme.test/_emdash/api/plugins/analytics-consent/admin"),
+		input,
+		user: { id: "u1", email: "a@acme.test", name: null, role, createdAt: "" },
+	} as unknown as RouteContext);
 
 /**
  * Consent for held videos and maps must be informed: once the site is known to
@@ -26,31 +40,94 @@ describe("learning which videos and maps a site holds back", () => {
 				`https://acme.test/_emdash/api/plugins/analytics-consent/embeds${p ? `?p=${encodeURIComponent(p)}` : ""}`,
 			),
 		} as unknown as RouteContext);
-	const stored = (fake: ReturnType<typeof fakeContext>) =>
+	const seen = (fake: ReturnType<typeof fakeContext>) => fake.kv.get(HELD_SEEN_KEY) ?? [];
+	const named = (fake: ReturnType<typeof fakeContext>) =>
 		normalizeConfig(fake.kv.get(CONFIG_KEY)).heldEmbeds;
 
-	it("notes each provider a held block names, once, in a fixed order", async () => {
+	it("notes each provider a held block names, once, in a fixed order, apart from the settings", async () => {
 		const fake = fakeContext({ [CONFIG_KEY]: GA });
+		const version = bannerVersion(normalizeConfig(GA));
 		expect(await ask(fake, "Google Maps")).toEqual({ hold: true });
 		expect(await ask(fake, "YouTube")).toEqual({ hold: true });
 		await ask(fake, "YouTube");
-		expect(stored(fake)).toEqual(["YouTube", "Google Maps"]);
+		expect(seen(fake)).toEqual(["YouTube", "Google Maps"]);
+		// This route is public: what it is told never changes the banner or its version.
+		expect(fake.kv.get(CONFIG_KEY)).toEqual(GA);
+		expect(named(fake)).toEqual([]);
+		expect(bannerVersion(normalizeConfig(fake.kv.get(CONFIG_KEY)))).toBe(version);
 	});
 
 	it("keeps every name when several blocks on one page ask at once", async () => {
 		const fake = fakeContext({ [CONFIG_KEY]: GA });
 		await Promise.all(["Vimeo", "YouTube", "Google Maps"].map((name) => ask(fake, name)));
-		expect(stored(fake)).toEqual(["YouTube", "Vimeo", "Google Maps"]);
+		expect(seen(fake)).toEqual(["YouTube", "Vimeo", "Google Maps"]);
 	});
 
 	it("notes nothing unknown, and nothing where nobody is asked", async () => {
 		const fake = fakeContext({ [CONFIG_KEY]: GA });
-		await ask(fake, "<script>");
 		await ask(fake);
-		expect(stored(fake)).toEqual([]);
+		const reads = fake.reads();
+		await ask(fake, "<script>");
+		await ask(fake, "Dailymotion");
+		// An unknown name is turned away before anything is read for it.
+		expect(fake.reads()).toBe(reads);
+		expect(seen(fake)).toEqual([]);
 		const quiet = fakeContext({ [CONFIG_KEY]: { ...GA, banner: { audience: "none" } } });
 		expect(await ask(quiet, "YouTube")).toEqual({ hold: false });
-		expect(stored(quiet)).toEqual([]);
+		expect(seen(quiet)).toEqual([]);
+	});
+
+	it("names them in the banner only when an admin says so, and lets an admin take a name back", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: GA });
+		await ask(fake, "YouTube");
+		await ask(fake, "Vimeo");
+		const page = await admin(fake, { type: "page_load", page: "/settings" });
+		expect(validateBlockResponse(page as never, { pluginPagePaths: ["/settings"] })).toEqual({
+			valid: true,
+			errors: [],
+		});
+		const status = JSON.stringify(page);
+		expect(status).toContain("Your pages show videos or maps from YouTube and Vimeo");
+		expect(status).toContain(NAME_HELD_ACTION);
+		// An editor cannot.
+		const refused = JSON.stringify(
+			await admin(fake, { type: "block_action", action_id: NAME_HELD_ACTION }, EDITOR),
+		);
+		expect(refused).toContain("Only an administrator");
+		expect(named(fake)).toEqual([]);
+		const before = bannerVersion(normalizeConfig(fake.kv.get(CONFIG_KEY)));
+		await admin(fake, { type: "block_action", action_id: NAME_HELD_ACTION });
+		expect(named(fake)).toEqual(["YouTube", "Vimeo"]);
+		expect(bannerVersion(normalizeConfig(fake.kv.get(CONFIG_KEY)))).not.toBe(before);
+		const afterPage = await admin(fake, { type: "page_load", page: "/settings" });
+		expect(
+			validateBlockResponse(afterPage as never, { pluginPagePaths: ["/settings"] }).errors,
+		).toEqual([]);
+		const after = JSON.stringify(afterPage);
+		expect(after).toContain(
+			"Videos and maps from YouTube and Vimeo wait until visitors allow them",
+		);
+		expect(after).not.toContain(NAME_HELD_ACTION);
+		// Taken back: no longer named, and no longer offered until a page shows it again.
+		await admin(fake, { type: "block_action", action_id: `${FORGET_HELD_ACTION}Vimeo` });
+		expect(named(fake)).toEqual(["YouTube"]);
+		expect(seen(fake)).toEqual(["YouTube"]);
+	});
+
+	it("two admin saves at the same moment both stick", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: GA });
+		await ask(fake, "Google Maps");
+		await Promise.all([
+			admin(fake, { type: "block_action", action_id: NAME_HELD_ACTION }),
+			admin(fake, {
+				type: "form_submit",
+				action_id: "save_tools",
+				values: { meta: "123456789012345" },
+			}),
+		]);
+		const config = normalizeConfig(fake.kv.get(CONFIG_KEY));
+		expect(config.heldEmbeds).toEqual(["Google Maps"]);
+		expect(config.tools.meta).toBe("123456789012345");
 	});
 
 	it("keeps only known providers from storage", () => {

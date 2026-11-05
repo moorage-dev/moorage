@@ -20,8 +20,11 @@ import {
 	shortHash,
 	TOOL_IDS,
 	toolCategories,
+	isHeldName,
+	cleanHeld,
 	type AnalyticsConfig,
 	type Audience,
+	type HeldName,
 } from "./config.js";
 import { clientConfig } from "./fragment.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
@@ -77,6 +80,8 @@ export interface PageState {
 	exportUrl?: string;
 	/** The last "Check what loads", if it ever ran. */
 	siteCheck?: SiteCheck | null;
+	/** The providers of held videos and maps seen on the site's pages (see HELD_SEEN_KEY). */
+	heldSeen?: HeldName[];
 	/** What was typed, kept on screen when a save was refused. */
 	draft?: Record<string, unknown>;
 	errors?: string[];
@@ -319,6 +324,62 @@ function trackingBlocks(state: PageState): Block[] {
 	return blocks;
 }
 
+export const NAME_HELD_ACTION = "name_held";
+/** Followed by the provider's name: "forget_held:YouTube". */
+export const FORGET_HELD_ACTION = "forget_held:";
+
+const list = (names: readonly string[]) => new Intl.ListFormat("en-GB").format(names);
+
+/**
+ * Held videos and maps. Their providers are noted by a public route, so they are
+ * named in the banner (which asks visitors again) only once an Admin says so here.
+ */
+function heldBlocks(config: AnalyticsConfig, seen: readonly HeldName[]): Block[] {
+	const blocks: Block[] = [];
+	const named = config.heldEmbeds;
+	const fresh = seen.filter((name) => !named.includes(name));
+	if (named.length) {
+		blocks.push(
+			{
+				type: "section",
+				text: `✓ Videos and maps from ${list(named)} wait until visitors allow them, and the banner names them.`,
+			},
+			{
+				type: "actions",
+				elements: named.map((name) => ({
+					type: "button" as const,
+					action_id: `${FORGET_HELD_ACTION}${name}`,
+					label: `Stop naming ${name}`,
+					style: "secondary" as const,
+				})),
+			},
+		);
+	}
+	if (fresh.length) {
+		blocks.push(
+			{
+				type: "banner",
+				variant: "alert",
+				title: `Your pages show videos or maps from ${list(fresh)}`,
+				description:
+					"They wait until visitors allow them, but the banner does not name them yet, so visitors do not know what they agree to. Name them in the banner: visitors who answered before are asked again once.",
+			},
+			{
+				type: "actions",
+				elements: [
+					{
+						type: "button",
+						action_id: NAME_HELD_ACTION,
+						label: "Name these in the banner",
+						style: "primary",
+					},
+				],
+			},
+		);
+	}
+	return blocks;
+}
+
 function consentBlocks(state: PageState): Block[] {
 	const { config, answers } = state;
 	const { banner } = config;
@@ -352,12 +413,7 @@ function consentBlocks(state: PageState): Block[] {
 		type: "section",
 		text: `✓ Asks ${whoWaits(banner.audience)} first. They are asked again after ${banner.months} months, or when you add or remove a tool.`,
 	});
-	if (config.heldEmbeds.length) {
-		blocks.push({
-			type: "section",
-			text: `✓ Videos and maps from ${new Intl.ListFormat("en-GB").format(config.heldEmbeds)} wait until visitors allow them, and the banner names them.`,
-		});
-	}
+	blocks.push(...heldBlocks(config, state.heldSeen ?? []));
 	if (banner.policyUrl) {
 		const url = banner.policyUrl.startsWith("/")
 			? state.origin
@@ -1003,6 +1059,8 @@ export interface Interaction {
 export interface Outcome {
 	/** The settings to store, when something changed. */
 	save?: AnalyticsConfig;
+	/** A provider to take off the list of those seen on the site's pages. */
+	unseen?: HeldName;
 	response: BlockResponse;
 }
 
@@ -1051,15 +1109,22 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		typeof input?.values === "object" && input.values !== null
 			? (input.values as Record<string, unknown>)
 			: {};
-	const done = (next: AnalyticsConfig, tab: number, message = "Saved."): Outcome => {
+	const done = (
+		next: AnalyticsConfig,
+		tab: number,
+		message = "Saved.",
+		unseen?: HeldName,
+	): Outcome => {
 		const save = normalizeConfig(next);
 		const seen = visitorView(normalizeConfig(config)) !== visitorView(save);
 		const said = !seen ? message : message === "Saved." ? SAVED : `${message} ${LATER}`;
 		return {
 			save,
+			...(unseen ? { unseen } : {}),
 			response: renderPage(
 				{
 					...state,
+					...(unseen ? { heldSeen: state.heldSeen?.filter((name) => name !== unseen) } : {}),
 					config: save,
 					openColours,
 					openWording,
@@ -1113,6 +1178,23 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 			{ ...config, askAgain: config.askAgain + 1 },
 			TAB.banner,
 			"Every visitor will be asked again.",
+		);
+	}
+	if (input?.type === "block_action" && action === NAME_HELD_ACTION) {
+		const heldEmbeds = cleanHeld([...config.heldEmbeds, ...(state.heldSeen ?? [])]);
+		if (heldEmbeds.length === config.heldEmbeds.length) {
+			return { response: renderPage(state, TAB.status) };
+		}
+		return done({ ...config, heldEmbeds }, TAB.status, `The banner now names ${list(heldEmbeds)}.`);
+	}
+	if (input?.type === "block_action" && action.startsWith(FORGET_HELD_ACTION)) {
+		const name = action.slice(FORGET_HELD_ACTION.length);
+		if (!isHeldName(name)) return { response: renderPage(state, TAB.status) };
+		return done(
+			{ ...config, heldEmbeds: config.heldEmbeds.filter((held) => held !== name) },
+			TAB.status,
+			`The banner no longer names ${name}.`,
+			name,
 		);
 	}
 	if (input?.type !== "form_submit") return { response: renderPage(state) };

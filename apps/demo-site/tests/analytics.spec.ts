@@ -1450,12 +1450,34 @@ test.describe("added in 0.4", () => {
 	}) => {
 		// Google Analytics only: no Marketing tools, so the videos get a purpose of their own.
 		await configure({ ga4: IDS.ga4 });
+		// None named yet, also on a retry.
+		for (const name of ["YouTube", "Vimeo", "Google Maps"]) {
+			await admin.post(`${API}/admin`, {
+				headers: { "X-EmDash-Request": "1" },
+				data: { type: "block_action", action_id: `forget_held:${name}` },
+			});
+		}
 		const hits = await stubVendors(context);
 		const embeds = await stubEmbeds(context);
 		await inCountry(page, "DE");
-		// The first view of a page with them tells the plugin which providers the site has.
+		// The first view of a page with them tells the plugin which providers the site has; the
+		// banner names them once an Admin says so on the Status tab.
 		await page.goto("/embeds-test");
 		await expect(held(page)).toHaveCount(3);
+		const pending = await admin.post(`${API}/admin`, {
+			headers: { "X-EmDash-Request": "1" },
+			data: { type: "page_load", page: "/settings" },
+		});
+		expect(JSON.stringify(await pending.json())).toContain(
+			"Your pages show videos or maps from YouTube, Vimeo and Google Maps",
+		);
+		await page.reload();
+		await expect(banner(page)).not.toContainText("YouTube");
+		const naming = await admin.post(`${API}/admin`, {
+			headers: { "X-EmDash-Request": "1" },
+			data: { type: "block_action", action_id: "name_held" },
+		});
+		expect(naming.ok()).toBe(true);
 		await page.reload();
 		await expect(banner(page)).toContainText(
 			"We would like to use analytics cookies to see how this site is used. Videos and maps from YouTube, Vimeo and Google Maps set their own cookies, so they wait for your choice. Essential cookies are always on.",

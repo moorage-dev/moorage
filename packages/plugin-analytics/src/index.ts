@@ -4,14 +4,23 @@ import { definePlugin, getRequestContext, pluginResponse, PluginRouteError } fro
 import type { PluginContext, PluginDescriptor, RouteContext } from "emdash";
 
 import pkg from "../package.json" with { type: "json" };
-import { ADMIN_ROLE, CHECK_ACTION, handleInteraction, type Interaction } from "./admin.js";
+import {
+	ADMIN_ROLE,
+	CHECK_ACTION,
+	handleInteraction,
+	renderPage,
+	type Interaction,
+} from "./admin.js";
 import {
 	bannerVersion,
 	cleanHeld,
+	HELD_SEEN_KEY,
+	isHeldName,
 	CONFIG_KEY,
 	needsConsent,
 	normalizeConfig,
 	type AnalyticsConfig,
+	type HeldName,
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
 import { pageFragments, siteHostOf } from "./fragment.js";
@@ -56,6 +65,33 @@ export function analyticsPlugin(): PluginDescriptor {
 /** Always a fresh read. Page views use `memoSettings` around it. */
 async function readConfig(ctx: PluginContext): Promise<AnalyticsConfig> {
 	return normalizeConfig(await ctx.kv.get(CONFIG_KEY));
+}
+
+/** The memo of the providers seen on the site's pages, kept apart from the settings' own. */
+const SEEN_MEMO = `${PLUGIN_ID}:seen`;
+
+/** The providers of held videos and maps seen on the site's pages, kept 30 s like the settings. */
+export function seenHeld(ctx: PluginContext, fresh = false): Promise<HeldName[]> {
+	return memoSettings(
+		{ plugin: { id: SEEN_MEMO }, site: ctx.site },
+		async () => cleanHeld(await ctx.kv.get(HELD_SEEN_KEY)),
+		{ fresh },
+	);
+}
+
+/** Change the list of seen providers on its newest copy, so writes at the same moment all count. */
+async function changeSeen(ctx: PluginContext, change: (list: HeldName[]) => HeldName[]) {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const stored = await ctx.kv.getVersioned<unknown>(HELD_SEEN_KEY);
+		const list = cleanHeld(stored?.value);
+		const next = cleanHeld(change(list));
+		if (next.join() === list.join()) return;
+		const done = await ctx.kv.compareAndSet(HELD_SEEN_KEY, stored?.revision ?? null, next);
+		if (done.applied) {
+			forgetSettings(SEEN_MEMO);
+			return;
+		}
+	}
 }
 
 /**
@@ -159,7 +195,9 @@ export function createPlugin() {
 			admin: {
 				permission: "plugins:read",
 				handler: async (ctx) => {
-					const config = await readConfig(ctx);
+					// Read with its revision: a save is written only over what it was made from.
+					let stored = await ctx.kv.getVersioned<unknown>(CONFIG_KEY);
+					const config = normalizeConfig(stored?.value);
 					const admin = (ctx.user?.role ?? 0) >= ADMIN_ROLE;
 					// Sites that had the plugin before this task existed never ran the activate hook for it.
 					if (admin) await ensurePruneScheduled(ctx).catch(() => {});
@@ -168,14 +206,15 @@ export function createPlugin() {
 					const input = ctx.input as Interaction | undefined;
 					const checking =
 						admin && input?.type === "block_action" && input.action_id === CHECK_ACTION;
-					const [answers, exportQuery, siteCheck] = await Promise.all([
+					const [answers, exportQuery, siteCheck, heldSeen] = await Promise.all([
 						consentSummary(ctx, new Date(now)).catch(() => null),
 						// A plain link cannot send EmDash's request header, so the download is signed.
 						// Only for an Admin: the first one stores the signing secret.
 						admin && origin ? signExport(ctx.kv, now).catch(() => undefined) : undefined,
 						checking ? runSiteCheck(ctx, config, origin) : readStoredCheck(ctx),
+						seenHeld(ctx, true).catch(() => []),
 					]);
-					const outcome = handleInteraction(input, {
+					const state = {
 						config,
 						admin,
 						answers,
@@ -186,11 +225,41 @@ export function createPlugin() {
 							? `${origin}/_emdash/api/plugins/${PLUGIN_ID}/export?${exportQuery}`
 							: undefined,
 						siteCheck,
-					});
+						heldSeen,
+					};
+					let outcome = handleInteraction(input, state);
+					// Written only over the settings it was made from. When another save came first, the
+					// same change is made again on that one, so neither is lost.
+					for (let attempt = 0; outcome.save && attempt < 3; attempt++) {
+						const done = await ctx.kv.compareAndSet(
+							CONFIG_KEY,
+							stored?.revision ?? null,
+							outcome.save,
+						);
+						if (done.applied) {
+							// After the write, so a page view in between cannot keep the old settings.
+							forgetSettings(PLUGIN_ID);
+							if (outcome.unseen) {
+								const gone = outcome.unseen;
+								await changeSeen(ctx, (list) => list.filter((name) => name !== gone));
+							}
+							return outcome.response;
+						}
+						stored = await ctx.kv.getVersioned<unknown>(CONFIG_KEY);
+						outcome = handleInteraction(input, {
+							...state,
+							config: normalizeConfig(stored?.value),
+						});
+					}
 					if (outcome.save) {
-						await ctx.kv.set(CONFIG_KEY, outcome.save);
-						// After the write, so a page view in between cannot keep the old settings.
-						forgetSettings(PLUGIN_ID);
+						return renderPage({
+							...state,
+							toast: {
+								type: "error",
+								message:
+									"Not saved: the settings were changed at the same moment. Please try again.",
+							},
+						});
 					}
 					return outcome.response;
 				},
@@ -257,25 +326,18 @@ export function createPlugin() {
 				public: true,
 				methods: ["GET"],
 				handler: async (ctx) => {
+					// Which provider the asking block shows, so the Admin can have the banner name it. Only
+					// the three known names count, checked before anything is read.
+					const asked = ctx.request ? new URL(ctx.request.url).searchParams.get("p") : null;
+					const name = isHeldName(asked) ? asked : undefined;
 					const config = await memoSettings(ctx, () => readConfig(ctx));
 					const hold = needsConsent(config) && config.banner.audience !== "none";
-					// Which provider the asking block shows, so the banner can name it. Only the three
-					// known names count, and only a new one is written, so a page view costs no write.
-					const name = ctx.request ? new URL(ctx.request.url).searchParams.get("p") : null;
-					if (hold && name && !config.heldEmbeds.includes(name as never)) {
-						// Several blocks on one page ask at once: each adds its name to the newest copy.
-						for (let attempt = 0; attempt < 5; attempt++) {
-							const stored = await ctx.kv.getVersioned<unknown>(CONFIG_KEY);
-							const fresh = normalizeConfig(stored?.value);
-							const heldEmbeds = cleanHeld([...fresh.heldEmbeds, name]);
-							if (heldEmbeds.length === fresh.heldEmbeds.length) break;
-							const done = await ctx.kv.compareAndSet(CONFIG_KEY, stored?.revision ?? null, {
-								...fresh,
-								heldEmbeds,
-							});
-							if (done.applied) break;
+					// Anyone can call this route, so it never changes the settings or the banner's
+					// version: it only notes the name apart (HELD_SEEN_KEY), and only a new one is written.
+					if (hold && name && !config.heldEmbeds.includes(name)) {
+						if (!(await seenHeld(ctx)).includes(name)) {
+							await changeSeen(ctx, (list) => [...list, name]);
 						}
-						forgetSettings(PLUGIN_ID);
 					}
 					return { hold };
 				},
