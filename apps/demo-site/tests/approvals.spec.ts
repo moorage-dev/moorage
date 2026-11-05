@@ -18,7 +18,7 @@ const ROLE = { contributor: 20, editor: 40 };
 const SCREENSHOTS = process.env.APPROVALS_SCREENSHOTS === "1";
 const SITE_TITLE = "Harbour Street Bakery";
 // The version the pictures ship in, in their file names.
-const VERSION = "0-2-3";
+const VERSION = "0-3-0";
 const IMAGES = new URL("../../../packages/plugin-approvals/images/", import.meta.url);
 
 async function shot(
@@ -368,6 +368,24 @@ test.describe.serial("Content Approval", () => {
 		await expect(
 			page.getByRole("textbox", { name: "Add a note for the approver (optional)" }),
 		).toBeVisible();
+		// The person who asked can take it back from the panel.
+		await expect(page.getByRole("button", { name: "Withdraw", exact: true })).toBeVisible();
+		if (SCREENSHOTS) {
+			// The held publish's toast covers the panel: wait for it to go.
+			const failed = page.getByText("Failed to publish");
+			await expect(failed).toHaveCount(0, { timeout: 30_000 });
+			const panelTop = page.getByRole("button", { name: "Approval", exact: true });
+			await shot(page, `withdraw-panel-${VERSION}`, 1280, panelTop);
+			// On a phone the editor's settings, plugin panels included, open as a sheet.
+			await page.setViewportSize({ width: 390, height: 844 });
+			await page.getByRole("button", { name: "Settings", exact: true }).click();
+			const waiting = page.getByText("Waiting for approval", { exact: true });
+			if (!(await waiting.isVisible())) await panelTop.click();
+			await expect(waiting).toBeVisible();
+			await shot(page, `withdraw-panel-${VERSION}-phone`, 390, panelTop);
+			await page.keyboard.press("Escape");
+			await page.setViewportSize({ width: 1280, height: 900 });
+		}
 
 		// The approver was emailed; the subject starts with the site's name.
 		// Sam leaves the editor, which frees the page for others to open.
@@ -575,6 +593,8 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByRole("heading", { name: "Yours, waiting" })).toBeVisible({
 			timeout: 60_000,
 		});
+		await shot(page, `yours-waiting-${VERSION}`);
+		await shot(page, `yours-waiting-${VERSION}-phone`, 390);
 		await page.getByRole("button", { name: "Withdraw", exact: true }).click();
 		const dialog = page.getByRole("alertdialog").or(page.getByRole("dialog"));
 		await expect(dialog.getByText("Withdraw this request?")).toBeVisible();

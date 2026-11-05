@@ -2,7 +2,7 @@
 
 Content Approval for [EmDash](https://emdashcms.com): a second person OKs a page before it goes live. Writers keep pressing Publish; when a page needs approval, the publish is held and becomes a request, and the writer reads "Sent for approval. Not live yet." The approver approves and publishes in one step, approves for later, or sends it back with a note, and sees what changed in words. Runs on any EmDash site with no account and no key.
 
-![The Approval panel in the entry editor](images/review-panel-0-2-3.png)
+![The Approval panel in the entry editor](images/review-panel-0-3-0.png)
 
 ## What it does
 
@@ -10,13 +10,17 @@ Content Approval for [EmDash](https://emdashcms.com): a second person OKs a page
 - **Ask for approval**: a button in the editor's toolbar for Authors (on their own pages), Editors and Admins. Contributors ask from **Approvals > Your drafts**, which has an "Ask for approval" button on each of their drafts (from the first three content types that need approval). EmDash 1.3.1 and 1.4.0 still show Contributors the editor's button and the Approval panel but refuse them before the plugin runs, so the button says "Plugin action failed" and the panel "Plugin panel unavailable." (see the FAQ).
 - **Decide** in the page's Approval panel or on the Approvals page: **Approve and publish**, **Approve** (publish later), or **Send back** with a note. Admins can also **Approve without review**, with a reason that is recorded and emailed to the other approvers. On the Approvals page a decision ends on a short confirmation with **Back to the list**. Nobody approves their own request: the Approvals page lists yours apart, under **Yours, waiting**, with what it waits for, and an admin can open their own and **Publish without review**, with a reason.
 - **Withdraw**: the person who asked can take a waiting request back, from the page's Approval panel or from **Yours, waiting** on the Approvals page (Contributors use the Approvals page). Nothing is published and the page stays as it is; approvers no longer see it, and the email about it is not sent if it has not gone yet. Asking again the same day does not email the approvers a second time.
-- **What changed, in words**: `Content: "£3.20" becomes "£3.40"; adds "pavlova"`, against the live page; after an approval, against the version that was approved. Pictures say "changed". The page's own Revisions panel compares every version.
+  - **What changed, in words**: `Content: "£3.20" becomes "£3.40"; adds "pavlova"`, against the live page; after an approval, against the version that was approved. Pictures say "changed". The page's own Revisions panel compares every version.
 - **A text copy of what was approved**: the History tab shows, for each page decided recently, the text of its latest approval, so nobody can say they never saw it. Earlier approved texts are not shown; the page's own Revisions panel keeps every version. Dates read "19 Oct 2026", or "19 Oct 2026, 14:05 UTC" with a time.
 - **Times are in UTC, and say so**, on every screen and in emails ("16 Oct, 10:42 UTC"): EmDash does not tell plugins the site's time zone.
 - **Approvers can fix a typo**: they edit and save the page as usual, then approve. The history says "Edited by Ellen Marsh before approving: Content".
 - **An approval belongs to one version.** Any saved change afterwards asks again, and says what changed since.
 - **Checks**: no search description, no sharing picture (from EmDash's SEO panel), shown as a reminder, required before approval, or off.
 - **Email**, when your site can send it: to approvers when someone asks (at most once a day per page), to the writer when they decide, one reminder after two days. Subjects start with the site's name. Emails go out from a background task, usually within a minute; on a site with many approvers a few go out each run until everyone has theirs, and an email that fails is tried twice more, five minutes apart. Without email, requests show on the dashboard widget and the Approvals page.
+
+| Withdraw, in the Approval panel      | Withdraw, under Yours, waiting      |
+| ------------------------------------ | ----------------------------------- |
+| ![](images/withdraw-panel-0-3-0.png) | ![](images/yours-waiting-0-3-0.png) |
 
 ## What it does not do
 

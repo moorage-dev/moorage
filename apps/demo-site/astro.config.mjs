@@ -13,6 +13,7 @@ import { defineConfig, fontProviders } from "astro/config";
 import emdash, { local } from "emdash/astro";
 import { sqlite } from "emdash/db";
 
+import { fakeChat } from "./fake-chat.mjs";
 import { parseSelfAlias, selfAlias } from "./self-alias.mjs";
 import { simulateCloudflare } from "./simulated-cloudflare.mjs";
 
@@ -39,6 +40,8 @@ simulateCloudflare(databaseUrl);
 // name, for Lead Delivery's one-click connect (see self-alias.mjs).
 const alias = parseSelfAlias(process.env.DEMO_SITE_SELF_ALIAS);
 selfAlias(process.env.DEMO_SITE_SELF_ALIAS);
+// Test fixture, off by default: Slack and Discord webhooks answered here (see fake-chat.mjs).
+fakeChat(process.env.DEMO_SITE_FAKE_CHAT);
 // The same for Content Approval (DEMO_SITE_APPROVALS=in-process).
 const approvalsInProcess = inProcess("DEMO_SITE_APPROVALS");
 // The same for Lead Delivery (DEMO_SITE_LEAD_DELIVERY=in-process).

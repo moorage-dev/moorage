@@ -19,7 +19,11 @@ Analytics & Cookies for [EmDash](https://emdashcms.com): add Google Analytics, G
 
 | Tools                                              | Banner, with its colour sets                      | Status, dark mode                         | Status, phone                            |
 | -------------------------------------------------- | ------------------------------------------------- | ----------------------------------------- | ---------------------------------------- |
-| ![](images/tracking-tools-0-3-2-desktop-light.png) | ![](images/cookie-banner-0-3-2-desktop-light.png) | ![](images/status-0-3-2-desktop-dark.png) | ![](images/status-0-3-2-phone-light.png) |
+| ![](images/tracking-tools-0-4-0-desktop-light.png) | ![](images/cookie-banner-0-4-0-desktop-light.png) | ![](images/status-0-3-2-desktop-dark.png) | ![](images/status-0-3-2-phone-light.png) |
+
+| A video waiting for consent                    | The banner on a German page                       | Name these in the banner (Admins)                  |
+| ---------------------------------------------- | ------------------------------------------------- | -------------------------------------------------- |
+| ![](images/held-video-0-4-0-desktop-light.png) | ![](images/banner-german-0-4-0-desktop-light.png) | ![](images/name-in-banner-0-4-0-desktop-light.png) |
 
 ## What it does not do
 

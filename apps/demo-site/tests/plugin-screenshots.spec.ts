@@ -19,7 +19,10 @@ import { helpLinks } from "./help-line.js";
 // README and registry pictures of SEO, Site Health, Popups and Analytics & Cookie Consent, and the full-size captures the
 // website crops from Popups' list and Content Approval's Settings, on a site set up as a bakery's:
 //   DEMO_SITE_PORT=4501 DEMO_SITE_PUBLIC_URL=https://www.harbourstreetbakery.example \
-//     PLUGIN_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/plugin-screenshots.spec.ts
+//     PLUGIN_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/plugin-screenshots.spec.ts --grep-invert Analytics
+// Analytics & Cookie Consent runs on its own, without DEMO_SITE_PUBLIC_URL (its Status tab warns when the admin is
+// opened away from the Site URL, and no address shows in its pictures):
+//   DEMO_SITE_PORT=4502 PLUGIN_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/plugin-screenshots.spec.ts -g Analytics
 // Skipped otherwise. Run it on its own, on a fresh database (Playwright makes one): it names the site
 // and the admin, and changes the demo pages. DEMO_SITE_PUBLIC_URL is the address the plugins print
 // (SEO's Google preview), so no "localhost" shows. Content Approval's and Lead Delivery's README
@@ -31,12 +34,12 @@ import { helpLinks } from "./help-line.js";
 // Checklist are replaced with what a public bakery site would get; the rest of the page is its own.
 
 const SHOTS = process.env.PLUGIN_SCREENSHOTS === "1";
-// Popups is still 0.2.1 but was retaken on EmDash 1.4.0, so its pictures carry "-emdash-1-4" to get new names.
+// Screens that did not change in a release keep their pictures, and their names, from the one before.
 const VERSION = {
-	seo: "0-1-12",
-	siteHealth: "0-1-7",
-	popups: "0-2-1-emdash-1-4",
-	analytics: "0-3-2",
+	seo: "0-2-0",
+	siteHealth: "0-2-0",
+	popups: "0-2-3",
+	analytics: "0-4-0",
 };
 const API = "/_emdash/api";
 const H = { "X-EmDash-Request": "1" };
@@ -45,7 +48,8 @@ const RETAKES = resolve(process.env.SHOTS_RETAKES_DIR ?? "/tmp/moorage-retakes")
 const DB = resolve(import.meta.dirname, `../e2e-${process.env.DEMO_SITE_PORT ?? 4399}.db`);
 const BUSINESS = "Harbour Street Bakery";
 // Nothing from the stock demo site, the dev sign-in or the test machine may show.
-const FORBIDDEN = ["Acme", "Dev Admin", "localhost"];
+// Analytics & Cookies warns when the admin is not on the Site URL: run its test without DEMO_SITE_PUBLIC_URL.
+const FORBIDDEN = ["Acme", "Dev Admin", "localhost", "Tools do not load on this address"];
 
 test.describe.configure({ mode: "serial" });
 test.skip(!SHOTS, "screenshots only on request");
@@ -197,9 +201,9 @@ const PAGES: Record<string, { slug: string; title: string; content: unknown[] }>
 	},
 };
 
-test("SEO", async ({ browser }) => {
-	test.setTimeout(400_000);
-	// The stock demo pages become the bakery's, through the same API the admin screens use.
+/** The stock demo pages become the bakery's, through the same API the admin screens use. */
+async function bakery(): Promise<void> {
+	if (ids.home) return;
 	const list = await ok(admin.get(`${API}/content/pages`, { headers: H }));
 	for (const item of list.data.items as Array<{ id: string; slug: string }>) {
 		const next = PAGES[item.slug];
@@ -229,9 +233,14 @@ test("SEO", async ({ browser }) => {
 	const redirects = await ok(admin.get(`${API}/redirects`, { headers: H }));
 	for (const redirect of redirects.data.items as Array<{ id: string }>)
 		await ok(admin.delete(`${API}/redirects/${redirect.id}`, { headers: H }));
+}
 
-	// Content Approval adds its own panel and button to the editor; SEO's pictures show SEO alone.
+test("SEO", async ({ browser }) => {
+	test.setTimeout(400_000);
+	await bakery();
+	// Content Approval and Site Health add their own panels to the editor; SEO's pictures show SEO alone.
 	await plugin("approvals", "disable");
+	await plugin("site-health", "disable");
 	const out = `${PACKAGES}/plugin-seo/images`;
 	const { context, page } = await open(
 		browser,
@@ -289,6 +298,32 @@ test("SEO", async ({ browser }) => {
 	await page.waitForTimeout(800);
 	await shot(page, `${out}/settings-${VERSION.seo}.png`);
 
+	// Copy settings to another site: the settings as text, then another site's pasted and checked.
+	await page.getByRole("button", { name: "Copy settings to another site (optional)" }).click();
+	const exported = page.locator("pre").filter({ hasText: "12 Harbour Street" }).first();
+	await expect(exported).toBeVisible();
+	const copied = await exported.innerText();
+	const accordion = page.getByRole("button", { name: "Copy settings to another site (optional)" });
+	await accordion.evaluate((el) => el.scrollIntoView({ block: "start" }));
+	await page.mouse.move(0, 0);
+	await page.waitForTimeout(800);
+	await shot(page, `${out}/settings-copy-${VERSION.seo}.png`);
+	// The bakery's second shop, set up the same way: its address differs.
+	const other = copied
+		.replace("12 Harbour Street", "3 Quay Road")
+		.replaceAll("Whitby", "Scarborough");
+	expect(other).not.toBe(copied);
+	await page.getByRole("textbox", { name: "Paste settings copied from another site" }).fill(other);
+	await page.getByRole("button", { name: "Check", exact: true }).click();
+	await expect(page.getByRole("heading", { name: "What will change" })).toBeVisible();
+	await page.waitForTimeout(4500); // the "Checked" toast has gone
+	await page
+		.getByRole("heading", { name: "What will change" })
+		.evaluate((el) => el.scrollIntoView({ block: "center" }));
+	await page.waitForTimeout(600);
+	await shot(page, `${out}/settings-copy-check-${VERSION.seo}.png`);
+	await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
 	// The Menu page in the editor, with the Google preview panel open. Nothing is typed: the
 	// panel shows the same missing description the Overview lists.
 	await page.goto(`/_emdash/admin/content/pages/${ids.menu}`);
@@ -300,10 +335,12 @@ test("SEO", async ({ browser }) => {
 	await page.mouse.wheel(0, 3000);
 	await page.waitForTimeout(800);
 	await page.mouse.wheel(0, 3000);
+	await page.mouse.move(1000, 1075);
 	await page.waitForTimeout(1200);
 	await shot(page, `${out}/google-preview-${VERSION.seo}.png`);
 	await context.close();
 	await plugin("approvals", "enable");
+	await plugin("site-health", "enable");
 });
 
 // ---------- Site Health: Problems, a Fix and the Checklist ----------
@@ -357,6 +394,7 @@ test("Site Health", async ({ browser }) => {
 		prevFinishedAt: ago(41 + 24 * 60),
 		pages: 42,
 		links: 318,
+		home: "index",
 		fix: { site: 1, page: 2, link: 2 },
 		editorFix: 3,
 		look: 3,
@@ -515,8 +553,131 @@ test("Site Health", async ({ browser }) => {
 		await page.goto(HEALTH);
 		await page.getByRole("tab", { name: "Checklist" }).click();
 		await expect(page.getByText("1 thing needs attention")).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByText("Home page in search results")).toBeVisible();
 		await fullShot(page, `${out}/checklist-${VERSION.siteHealth}${suffix}.png`, width, min);
 		await context.close();
+	}
+
+	// The editor's "Links on this page" panel on the Home page: what a public site's check finds in its
+	// links (see the plugin's src/model.ts, LinkRow), in place of what the local check stored.
+	const pageRow = (where: string) =>
+		`${where} and collection = 'pages' and json_extract(data, '$.collection') = 'pages' and json_extract(data, '$.id') = '${ids.home}'`;
+	const PS = "plugin_id = 'site-health'";
+	expect(sql(`select count(*) from _plugin_storage where ${pageRow(PS)}`)).not.toBe("0");
+	const link = (id: string, fields: Record<string, unknown>) => ({
+		host: "",
+		sources: [home],
+		count: 1,
+		menu: false,
+		content: true,
+		editor: true,
+		pass: summary.pass,
+		checkedAt: ago(41),
+		...fields,
+	});
+	const homeLinks: Record<string, ReturnType<typeof link>> = {
+		"shot-panel-1": link("shot-panel-1", {
+			kind: "internal",
+			url: "/christmas-orders",
+			state: "broken",
+			reason: "draft",
+			group: "link",
+			since: ago(3 * 24 * 60),
+		}),
+		"shot-panel-2": link("shot-panel-2", {
+			kind: "internal",
+			url: "/about-us",
+			state: "look",
+			reason: "redirect",
+			detail: "/contact",
+		}),
+		"shot-panel-3": link("shot-panel-3", {
+			kind: "insecure",
+			url: "http://images.example/harbour.jpg",
+			host: "images.example",
+			state: "look",
+			reason: "insecure-image",
+		}),
+		"shot-panel-4": link("shot-panel-4", {
+			kind: "external",
+			url: "https://www.instagram.com/harbourstreetbakery",
+			host: "www.instagram.com",
+			state: "unknown",
+			reason: "refuses",
+		}),
+		"shot-panel-5": link("shot-panel-5", {
+			kind: "internal",
+			url: "/menu",
+			state: "ok",
+			code: 200,
+		}),
+		"shot-panel-6": link("shot-panel-6", {
+			kind: "internal",
+			url: "/contact",
+			state: "ok",
+			code: 200,
+		}),
+		"shot-panel-7": link("shot-panel-7", {
+			kind: "external",
+			url: "https://whitby-tourism.example/harbour",
+			host: "whitby-tourism.example",
+			state: "ok",
+			code: 200,
+		}),
+	};
+	const quote = (value: unknown) => `'${JSON.stringify(value).replace(/'/g, "''")}'`;
+	sql(
+		`insert or replace into _plugin_storage (plugin_id, collection, id, data) values ${Object.entries(
+			homeLinks,
+		)
+			.map(([id, row]) => `('site-health', 'links', '${id}', ${quote(row)})`)
+			.join(",")}`,
+	);
+	sql(
+		`update _plugin_storage set data = json_set(data, '$.status', 'published', '$.links', json(${quote(Object.keys(homeLinks))})) where ${pageRow(PS)}`,
+	);
+	// SEO's and Content Approval's panels are their own pictures.
+	await plugin("seo", "disable");
+	await plugin("approvals", "disable");
+	try {
+		for (const [width, suffix, height] of [
+			[1280, "", 900],
+			[390, "-phone", 844],
+		] as const) {
+			const { context, page } = await open(
+				browser,
+				`/_emdash/admin/content/pages/${ids.home}`,
+				{ width, height },
+				2,
+			);
+			const tab = page.getByRole("button", { name: "Links on this page" }).first();
+			if (width < 400) {
+				await page
+					.getByRole("button", { name: "Settings", exact: true })
+					.click({ timeout: 120_000 });
+				if (!(await page.getByText("To fix (1)").isVisible())) await tab.click();
+			} else {
+				await tab.click({ timeout: 120_000 });
+			}
+			await expect(page.getByText("To fix (1)")).toBeVisible();
+			await expect(page.getByText("Worth a look (2)")).toBeVisible();
+			// The editor's side column scrolls on its own: wheel it until the panel is at the top.
+			for (let i = 0; i < 12; i++) {
+				const box = await tab.boundingBox();
+				const top = width < 400 ? 130 : 200;
+				if (!box || box.y < top + 20) break;
+				await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+				await page.mouse.wheel(0, Math.min(box.y - top, 400));
+				await page.waitForTimeout(300);
+			}
+			await page.mouse.move(0, height - 1);
+			await page.waitForTimeout(1000);
+			await shot(page, `${out}/links-panel-${VERSION.siteHealth}${suffix}.png`);
+			await context.close();
+		}
+	} finally {
+		await plugin("seo", "enable");
+		await plugin("approvals", "enable");
 	}
 });
 
@@ -863,6 +1024,8 @@ const ANALYTICS = `${API}/plugins/analytics-consent/admin`;
 
 test("Analytics & Cookie Consent", async ({ browser }) => {
 	test.setTimeout(400_000);
+	// Its pictures of the public site show the bakery's pages.
+	await bakery();
 	const save = async (action: string, values: Record<string, unknown>) => {
 		const res = await ok(
 			admin.post(ANALYTICS, {
@@ -964,6 +1127,91 @@ test("Analytics & Cookie Consent", async ({ browser }) => {
 		}
 	mkdirSync(RETAKES, { recursive: true });
 	writeFileSync(`${RETAKES}/analytics-stops.json`, `${JSON.stringify(stops, null, "\t")}\n`);
+
+	// What a visitor in Germany sees, signed out. Nothing leaves the test machine: every request to
+	// another site is answered empty here, so no tool, video or map loads from its company.
+	const visitor = async (viewport: { width: number; height: number }) => {
+		const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+		const site = new URL(test.info().project.use.baseURL!).host;
+		await context.route(
+			(url) => url.host !== site,
+			(route) => route.fulfill({ status: 200, body: "" }),
+		);
+		const page = await context.newPage();
+		await page.route(`**${ANALYTICS.replace("/admin", "")}/geo`, (route) =>
+			route.fulfill({ json: { success: true, data: { country: "DE" } } }),
+		);
+		return { context, page };
+	};
+	// The bakery's home page, marked as German, as a German site's theme marks it: the banner in German.
+	for (const [device, viewport] of [
+		["desktop", { width: 1280, height: 800 }],
+		["phone", { width: 390, height: 844 }],
+	] as const) {
+		const { context, page } = await visitor(viewport);
+		await page.route(
+			(url) => url.pathname === "/",
+			async (route) => {
+				const response = await route.fetch();
+				const html = (await response.text()).replace('<html lang="en"', '<html lang="de"');
+				await route.fulfill({ response, body: html });
+			},
+		);
+		await page.goto("/");
+		const german = page.getByRole("region", { name: "Dürfen wir Cookies verwenden?" });
+		await expect(german).toBeVisible({ timeout: 60_000 });
+		await expect(german.getByRole("button", { name: "Alle akzeptieren" })).toBeVisible();
+		await page.waitForTimeout(1000);
+		await shot(page, `${out}/banner-german-${VERSION.analytics}-${device}-light.png`);
+		await context.close();
+	}
+	// A page with a YouTube video and a Google map (the demo site's embeds page, as a post shows
+	// them), before the visitor answers: each waits behind a placeholder that names its company.
+	for (const [device, viewport] of [
+		["desktop", { width: 1280, height: 800 }],
+		["phone", { width: 390, height: 844 }],
+	] as const) {
+		const { context, page } = await visitor(viewport);
+		await page.goto("/embeds-test");
+		await expect(page.locator("[data-cc-held]")).toHaveCount(3, { timeout: 60_000 });
+		await expect(
+			page.getByText("This video is shown by YouTube, which may set cookies."),
+		).toBeVisible();
+		// The fixture's test links, title, map and Vimeo video are not part of the picture.
+		await page.evaluate(() => {
+			document.querySelector("main > p")?.remove();
+			const title = document.querySelector("h1");
+			if (title) title.textContent = "A morning at the bakery";
+			const held = [...document.querySelectorAll("[data-cc-held]")];
+			for (const el of held) if (!el.textContent?.includes("YouTube")) el.remove();
+			const words = document.createElement("p");
+			words.textContent =
+				"Our sourdough is shaped by hand at five every morning. Here is how, in four minutes.";
+			title?.after(words);
+			document.querySelector('iframe[src*="example.com"]')?.remove();
+			const style = document.createElement("style");
+			style.textContent =
+				"body{margin:0;font-family:system-ui,sans-serif;background:#fffaf3;color:#3b2a1a}main{max-width:720px;margin:0 auto;padding:32px 20px 160px}main>*+*{margin-top:24px}";
+			document.head.append(style);
+		});
+		await page.waitForTimeout(1000);
+		await shot(page, `${out}/held-video-${VERSION.analytics}-${device}-light.png`);
+		await context.close();
+	}
+	// Once such a page has been shown, the Status tab names the providers for an Admin.
+	for (const [device, width, min, schemes] of [
+		["desktop", 1280, 900, ["light", "dark"]],
+		["phone", 390, 844, ["light"]],
+	] as const)
+		for (const scheme of schemes) {
+			const { context, page } = await open(browser, PAGE, { width, height: min }, 1, scheme);
+			const notice = page.getByText(/Your pages show videos or maps from YouTube/);
+			await expect(notice).toBeVisible({ timeout: 120_000 });
+			await expect(page.getByRole("button", { name: "Name these in the banner" })).toBeVisible();
+			await page.waitForTimeout(1200);
+			await shot(page, `${out}/name-in-banner-${VERSION.analytics}-${device}-${scheme}.png`);
+			await context.close();
+		}
 });
 
 // ---------- Content Approval: Settings before the first save, for the website's crop ----------

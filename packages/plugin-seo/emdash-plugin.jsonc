@@ -30,9 +30,10 @@
 			"banner": { "file": "./images/banner.png" },
 			"screenshots": [
 				{ "file": "./images/overview-0-1-12.png", "lang": "en" },
-				{ "file": "./images/google-preview-0-1-12.png", "lang": "en" },
+				{ "file": "./images/google-preview-0-2-0.png", "lang": "en" },
 				{ "file": "./images/redirects-0-1-12.png", "lang": "en" },
 				{ "file": "./images/settings-0-1-12.png", "lang": "en" },
+				{ "file": "./images/settings-copy-check-0-2-0.png", "lang": "en" },
 			],
 		},
 	},

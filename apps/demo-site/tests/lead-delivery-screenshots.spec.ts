@@ -13,20 +13,23 @@ import { growToContent } from "./full-shot.js";
 import { helpLinks } from "./help-line.js";
 
 // Lead Delivery's README and registry pictures, on a site set up as a bakery's (no test names):
-//   DEMO_SITE_PORT=4499 DEMO_SITE_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-screenshots.spec.ts
+//   DEMO_SITE_PORT=4499 DEMO_SITE_SCREENSHOTS=1 DEMO_SITE_FAKE_CHAT=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-screenshots.spec.ts
 // Skipped otherwise. Run it on its own: it names the site and the admin, and makes its own deliveries.
 // DEMO_SITE_SHOTS_DIR=<folder> writes elsewhere (for the comparison with the mockup). The pictures get new
 // names when the plugin changes (the website reuses a picture by its file name): <name>-<version>.png.
 // No real service is called: HubSpot is turned off before any enquiry, Zapier points at a `.invalid`
-// host, and email goes to the dev console provider (`/_emdash/api/dev/emails`).
+// host, email goes to the dev console provider (`/_emdash/api/dev/emails`), and Slack is answered by
+// the demo site itself (DEMO_SITE_FAKE_CHAT=1, see fake-chat.mjs; the spec stops without it).
 
 const SHOTS = process.env.DEMO_SITE_SCREENSHOTS === "1";
-const VERSION = "0-4-3";
+const VERSION = "0-5-0";
 const API = "/_emdash/api/plugins/lead-delivery";
 const PAGE = "/_emdash/admin/plugins/lead-delivery/enquiries";
 const FORM = "cake-order";
 const FORM_NAME = "Cake order";
 const INBOX = `${FORM_NAME} → Shop inbox`;
+const CHANNEL = `${FORM_NAME} → #orders on Slack`;
+const SLACK = "https://hooks.slack.com/services/T0SHOTS00/B0SHOTS00/harbourstreetbakery7Qx2";
 const H = { "X-EmDash-Request": "1" };
 
 let adminContext: BrowserContext;
@@ -34,6 +37,12 @@ let admin: APIRequestContext;
 
 test.describe.configure({ mode: "serial" });
 test.skip(!SHOTS, "screenshots only on request");
+test.beforeAll(() => {
+	expect(
+		process.env.DEMO_SITE_FAKE_CHAT,
+		"run with DEMO_SITE_FAKE_CHAT=1: nothing may reach Slack",
+	).toBe("1");
+});
 
 async function post(path: string, data: unknown) {
 	return admin.post(path, { headers: H, data });
@@ -170,6 +179,18 @@ test("a bakery's deliveries and enquiries", async ({ request }) => {
 		},
 	});
 
+	// The shop's Slack channel (answered by the demo site itself: see fake-chat.mjs).
+	await open(page);
+	await page.getByRole("button", { name: "+ New delivery" }).click();
+	await expect(page.getByRole("combobox", { name: "Which form?" })).toContainText(FORM_NAME);
+	await page.getByRole("radio", { name: /^Slack or Discord channel/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
+	await page.getByRole("textbox", { name: /The channel's webhook address/ }).fill(SLACK);
+	await page.getByRole("textbox", { name: /Name \(only admins see it\)/ }).fill(CHANNEL);
+	await page.getByRole("button", { name: "Save and send a test" }).click();
+	await expect(page.getByRole("heading", { name: CHANNEL })).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByText(/Slack accepted it/)).toBeVisible();
+
 	// HubSpot, read from its embed code, then turned off so nothing is ever sent there.
 	await open(page);
 	await page.getByRole("button", { name: "+ New delivery" }).click();
@@ -273,6 +294,25 @@ test("screenshots", async ({ browser }) => {
 		await page.getByRole("button", { name: "Edit", exact: true }).click();
 		await expect(page.getByRole("heading", { name: `Edit ${INBOX}` })).toBeVisible();
 		await shot("edit");
+		// A Slack channel's page, and the second step of a new one.
+		await open(page);
+		await page
+			.getByRole("table")
+			.first()
+			.getByRole("row", { name: new RegExp(`^${CHANNEL}`) })
+			.getByRole("button", { name: "Open" })
+			.click();
+		await expect(page.getByRole("heading", { name: CHANNEL })).toBeVisible();
+		await shot("channel-delivery");
+		await open(page);
+		await page.getByRole("button", { name: "+ New delivery" }).first().click();
+		await page.getByRole("radio", { name: /^Slack or Discord channel/ }).click();
+		await page.getByRole("button", { name: "Continue" }).click();
+		await expect(
+			page.getByRole("textbox", { name: /The channel's webhook address/ }),
+		).toBeVisible();
+		await page.mouse.move(0, 0);
+		await shot("new-channel");
 		// The delivered email, as a mail program shows plain text.
 		const escape = (s: string) =>
 			s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

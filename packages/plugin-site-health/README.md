@@ -2,7 +2,7 @@
 
 Tells you what is broken on your [EmDash](https://emdashcms.com) site before a customer does: a dead link in the menu, a page that shows an error, a map that will not load. It is a broken link checker for your pages, your menu and the links to other sites, with an email when something breaks and a short setup checklist. It runs on any EmDash site, with no account and no key.
 
-![The Problems tab](images/problems-0-1-7.png)
+![The Problems tab](images/problems-0-2-0.png)
 
 ## What it does
 
@@ -39,6 +39,10 @@ Tells you what is broken on your [EmDash](https://emdashcms.com) site before a c
   - email works: who gets it, whether an email service is chosen, and when it last worked, with the test button beside it.
 - **Dashboard widget** with the count.
 - **"Links on this page" beside each entry** in the editor: what the checks found in that page's links, in the same plain words. Read-only; it shows what is already stored and opens no website, so it is instant. Nothing to set up.
+
+| Links on this page, in the editor | The Checklist                   |
+| --------------------------------- | ------------------------------- |
+| ![](images/links-panel-0-2-0.png) | ![](images/checklist-0-2-0.png) |
 
 Editors see the links they can fix. Page errors, the Checklist and Options are for Admins.
 
