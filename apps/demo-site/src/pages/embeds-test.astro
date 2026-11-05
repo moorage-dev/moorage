@@ -1,0 +1,51 @@
+---
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
+//
+// Test fixture, not a template page. EmDash's own iframe and embed blocks
+// (a YouTube video, a Google map, a Vimeo video, and a page that is not held
+// back) rendered through EmDash's PortableText, as a post would render them,
+// with only EmDash's head; with ?router=1 the page also uses Astro's
+// <ClientRouter />, and links to its own second page. Its own <head>, because
+// the site's layout has no place to add the router. Used by tests/analytics.spec.ts.
+import { ClientRouter } from "astro:transitions";
+import { createPublicPageContext } from "emdash/page";
+import { EmDashHead, PortableText } from "emdash/ui";
+
+const router = Astro.url.searchParams.get("router") === "1";
+const second = Astro.url.searchParams.get("page") === "2";
+const title = second ? "Embeds test, page two" : "Embeds test";
+const page = createPublicPageContext({ Astro, kind: "custom", pageType: "website", title });
+const value = [
+	{
+		_type: "iframe",
+		_key: "yt",
+		src: "https://www.youtube.com/embed/dQw4w9WgXcQ",
+		title: "Our bakery",
+	},
+	{ _type: "iframe", _key: "map", src: "https://www.google.com/maps/embed?pb=!1m18!1m12" },
+	{ _type: "embed", _key: "vimeo", url: "https://vimeo.com/76979871" },
+	{ _type: "iframe", _key: "other", src: "https://example.com/widget", title: "Other" },
+];
+const query = router ? "?router=1&" : "?";
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>{title}</title>
+		<meta name="robots" content="noindex, nofollow" />
+		<EmDashHead page={page} />
+		{router && <ClientRouter />}
+	</head>
+	<body>
+		<main>
+			<h1>{title}</h1>
+			<p>
+				<a id="next" href={`/embeds-test${query}page=2`}>Next page</a>
+				<a id="first" href={`/embeds-test${router ? "?router=1" : ""}`}>First page</a>
+				<a id="menu-cookies" href="/#cookie-settings">Cookie settings</a>
+			</p>
+			<PortableText value={value} />
+		</main>
+	</body>
+</html>

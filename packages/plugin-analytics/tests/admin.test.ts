@@ -7,7 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { toolStatus, warnings } from "../src/admin.js";
 import { COLOUR_OPTIONS } from "../src/colour-sets.js";
-import { CONFIG_KEY, DEFAULT_MESSAGE, DEFAULT_TITLE, normalizeConfig } from "../src/config.js";
+import {
+	bannerVersion,
+	CONFIG_KEY,
+	DEFAULT_MESSAGE,
+	DEFAULT_TITLE,
+	normalizeConfig,
+} from "../src/config.js";
 import type { AnalyticsConfig } from "../src/config.js";
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import { createPlugin } from "../src/index.js";
@@ -18,11 +24,16 @@ const ADMIN = 50;
 const EDITOR = 40;
 
 /** Call the real admin route the way the admin does. */
-async function call(fake: FakeContext, input: unknown, role = ADMIN): Promise<BlockResponse> {
+async function call(
+	fake: FakeContext,
+	input: unknown,
+	role = ADMIN,
+	origin = "https://acme.test",
+): Promise<BlockResponse> {
 	const handler = createPlugin().routes.admin!.handler;
 	const response = await handler({
 		...fake.ctx,
-		request: new Request("https://acme.test/_emdash/api/plugins/analytics-consent/admin"),
+		request: new Request(`${origin}/_emdash/api/plugins/analytics-consent/admin`),
 		input,
 		user: { id: "u1", email: "a@acme.test", name: null, role, createdAt: "" },
 	} as unknown as RouteContext);
@@ -300,6 +311,7 @@ describe("saving the banner and advanced settings", () => {
 			darkOn: false,
 			darkColors: { background: "", text: "", accent: "" },
 			months: 12,
+			labels: { accept: "", reject: "", choose: "", save: "", settings: "" },
 		});
 	});
 
@@ -406,6 +418,169 @@ describe("what a save says about visitors", () => {
 			message:
 				"The original heading and text are back. It can take a few minutes to reach visitors.",
 		});
+	});
+});
+
+describe('"Ask everyone again"', () => {
+	const asking = { [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } };
+	const button = (response: BlockResponse) =>
+		flatten(response.blocks)
+			.flatMap((block) => (block.type === "actions" ? block.elements : []))
+			.find((element) => element.type === "button" && element.action_id === "ask_again");
+
+	it("is a button on the Banner tab that asks to be sure first", async () => {
+		const response = await load(fakeContext(asking));
+		expectValid(response);
+		expect(button(response)).toMatchObject({
+			type: "button",
+			label: "Ask everyone again",
+			confirm: { title: "Ask every visitor again?", confirm: "Ask everyone again" },
+		});
+	});
+
+	it("is not offered while no banner is shown, or to editors", async () => {
+		expect(button(await load(fakeContext()))).toBeUndefined();
+		const other = {
+			[CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" }, banner: { audience: "none" } },
+		};
+		expect(button(await load(fakeContext(other)))).toBeUndefined();
+		expect(button(await load(fakeContext(asking), EDITOR))).toBeUndefined();
+	});
+
+	it("asks every visitor again, each time it is pressed", async () => {
+		const fake = fakeContext(asking);
+		const before = bannerVersion(normalizeConfig(asking[CONFIG_KEY]));
+		const response = await call(fake, { type: "block_action", action_id: "ask_again" });
+		expect(response.toast).toEqual({
+			type: "success",
+			message: "Every visitor will be asked again. It can take a few minutes to reach visitors.",
+		});
+		expect(saved(fake).askAgain).toBe(1);
+		const after = bannerVersion(saved(fake));
+		expect(after).not.toBe(before);
+		await call(fake, { type: "block_action", action_id: "ask_again" });
+		expect(saved(fake).askAgain).toBe(2);
+		expect(bannerVersion(saved(fake))).not.toBe(after);
+	});
+
+	it("changes nothing when an editor presses it", async () => {
+		const fake = fakeContext(asking);
+		const response = await call(fake, { type: "block_action", action_id: "ask_again" }, EDITOR);
+		expect(response.toast?.type).toBe("error");
+		expect(fake.kv.get(CONFIG_KEY)).toEqual(asking[CONFIG_KEY]);
+	});
+});
+
+describe("the banner's words", () => {
+	const wording = (response: BlockResponse) => {
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		const blocks =
+			tabs?.type === "tab" ? (tabs.panels.find((p) => p.label === "Banner")?.blocks ?? []) : [];
+		const fold = blocks.find(
+			(block) => block.type === "accordion" && block.label === "Button words",
+		);
+		const form = (fold?.type === "accordion" ? fold.blocks : []).find((b) => b.type === "form");
+		return { fold, form: form?.type === "form" ? form : undefined };
+	};
+
+	it("folds the button words away on the Banner tab, empty for the built-in ones", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		const { fold, form } = wording(response);
+		expect(JSON.stringify(fold)).toContain("Deutsch");
+		expect(form?.submit).toEqual({ label: "Save button words", action_id: "save_wording" });
+		expect(form?.fields.map((field) => field.action_id)).toEqual([
+			"label_accept",
+			"label_reject",
+			"label_choose",
+			"label_save",
+			"label_settings",
+		]);
+		expect(
+			form?.fields.every((field) => field.type === "text_input" && field.initial_value === ""),
+		).toBe(true);
+	});
+
+	it("saves the owner's words, tidied, and empties put the built-in ones back", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const response = await call(fake, {
+			type: "form_submit",
+			action_id: "save_wording",
+			values: {
+				label_accept: "  Gern  ",
+				label_reject: "Nein\ndanke",
+				label_settings: "x".repeat(60),
+			},
+		});
+		expect(response.toast).toEqual({
+			type: "success",
+			message: "Saved. It can take a few minutes to reach visitors.",
+		});
+		expect(saved(fake).banner.labels).toEqual({
+			accept: "Gern",
+			reject: "Nein danke",
+			choose: "",
+			save: "",
+			settings: "x".repeat(40),
+		});
+		await submit(fake, "save_wording", { label_accept: "", label_reject: "" });
+		expect(saved(fake).banner.labels.accept).toBe("");
+		expect(saved(fake).banner.labels.settings).toBe("x".repeat(40));
+	});
+
+	it("keeps what is typed in the banner form when the words are saved", async () => {
+		const fake = fakeContext();
+		const before = JSON.stringify(await load(fake)).match(/"block_id":"banner-[a-z0-9]+"/)?.[0];
+		await submit(fake, "save_wording", { label_accept: "OK" });
+		const after = JSON.stringify(await load(fake)).match(/"block_id":"banner-[a-z0-9]+"/)?.[0];
+		expect(after).toBe(before);
+	});
+});
+
+describe("the site's own address", () => {
+	const TITLE = "Tools do not load on this address";
+	const at = async (
+		siteUrl: string | undefined,
+		tools: Record<string, string>,
+		origin = "https://acme.test",
+	) => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools } });
+		(fake.ctx as { site?: { url: string } }).site = siteUrl ? { url: siteUrl } : undefined;
+		return JSON.stringify(
+			await call(fake, { type: "page_load", page: "/settings" }, ADMIN, origin),
+		);
+	};
+
+	it("warns when the admin is open on a workers.dev, pages.dev or local address other than the site's", async () => {
+		for (const origin of [
+			"https://bakery.acme.workers.dev",
+			"https://abc.bakery.pages.dev",
+			"http://localhost:4321",
+		]) {
+			const page = await at("https://www.bakery.test", { ga4: "G-AB12CD34EF" }, origin);
+			expect(page, origin).toContain(TITLE);
+			expect(page).toContain(`You are on ${new URL(origin).hostname}`);
+			expect(page).toContain("bakery.test");
+			expect(page).toContain("Settings > General");
+		}
+	});
+
+	it("says nothing on any other domain, where tools load, nor on the site's own address, with no tools, or with no address set", async () => {
+		// A Site URL left on its setup address must not make the live domain look untracked.
+		expect(await at("https://www.bakery.test", { ga4: "G-AB12CD34EF" })).not.toContain(
+			"You are on",
+		);
+		expect(await at("https://bakery.acme.workers.dev", { ga4: "G-AB12CD34EF" })).not.toContain(
+			"You are on",
+		);
+		expect(await at("https://acme.test", { ga4: "G-AB12CD34EF" })).not.toContain("You are on");
+		expect(await at("https://www.acme.test", { ga4: "G-AB12CD34EF" })).not.toContain("You are on");
+		expect(await at("https://bakery.test", {}, "https://x.workers.dev")).not.toContain(
+			"You are on",
+		);
+		expect(await at(undefined, { ga4: "G-AB12CD34EF" }, "https://x.workers.dev")).not.toContain(
+			"You are on",
+		);
 	});
 });
 

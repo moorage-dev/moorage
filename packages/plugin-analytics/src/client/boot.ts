@@ -3,6 +3,7 @@
 import {
 	COOKIE,
 	decide,
+	devHost,
 	encodeChoice,
 	mustAsk,
 	readChoice,
@@ -36,6 +37,9 @@ interface Globals {
 	fbq?: Queue;
 	_fbq?: Queue;
 	_hsp?: unknown[];
+	_linkedin_data_partner_ids?: string[];
+	TiktokAnalyticsObject?: string;
+	ttq?: unknown[] & Record<string, unknown>;
 	disableHubSpotCookieBanner?: boolean;
 	requestIdleCallback?: (run: () => void) => void;
 }
@@ -135,25 +139,50 @@ export function boot(c: ClientConfig): void {
 	// Consent Mode v2: everything denied until the visitor's answer is known.
 	if (c.who) signal("default", false, false);
 
-	// Other scripts (popups) can tell whether the banner is still waiting: "pending" until this visitor's
-	// rule is known, "asking" while the banner waits, "settled" once answered or not asked. Only on sites
-	// where the banner can appear; with no attribute there is no banner to wait for.
-	const html = d.documentElement;
-	const mark = (phase: "pending" | "asking" | "settled") => {
-		if (html.getAttribute("data-cookie-consent") === phase) return;
-		html.setAttribute("data-cookie-consent", phase);
-		if (phase === "settled") d.dispatchEvent(new Event("cookie-consent:settled"));
-	};
-	if (c.who) mark("pending");
-
 	const gpc =
 		(w.navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
 	const day = today(Date.now());
 	let saved = readChoice(d.cookie);
 	let country: string | undefined;
 	let state: Decision = { a: false, m: false, ask: false };
-	// A browser that has been signed in to the admin is staff, not a visitor.
-	let staff = !!local("emdash-editor");
+	let told = 0;
+
+	// Other scripts can read what is allowed, but not change it: window.cookieConsent is
+	// { analytics, marketing } once this visitor's rule is known (undefined before), and
+	// "cookie-consent:change" says so each time it is known or changes, with the same detail.
+	const now = () => Object.freeze({ analytics: state.a, marketing: state.m });
+	try {
+		Object.defineProperty(w, "cookieConsent", {
+			configurable: true,
+			get: () => (told ? now() : undefined),
+		});
+	} catch {
+		// Another script took the name and locked it: everything else still works.
+	}
+	const tell = (name: string) => d.dispatchEvent(new CustomEvent(name, { detail: now() }));
+	const change = (next: Decision) => {
+		state = next;
+		told = 1;
+		tell("cookie-consent:change");
+	};
+
+	// Other scripts (popups) can tell whether the banner is still waiting: "pending" until this visitor's
+	// rule is known, "asking" while the banner waits, "settled" once answered or not asked. Only on sites
+	// where the banner can appear; with no attribute there is no banner to wait for.
+	const html = d.documentElement;
+	let phase: string | undefined;
+	const mark = (next: "pending" | "asking" | "settled") => {
+		if (phase === next) return;
+		html.setAttribute("data-cookie-consent", (phase = next));
+		if (next === "settled") tell("cookie-consent:settled");
+	};
+	if (c.who) mark("pending");
+	// A browser that has been signed in to the admin is staff, not a visitor. A copy of the site on
+	// a workers.dev or pages.dev address or a laptop, other than the Site URL, is treated the same:
+	// banner yes, tools no. Any other domain loads as usual: it may be the live site.
+	const onHost = here.hostname.replace(/^www\./, "");
+	const away = !!c.h && onHost != c.h && devHost(onHost);
+	let staff = !!local("emdash-editor") || away;
 
 	const done: Record<string, 1> = {};
 	const once = (key: string): boolean => !done[key] && !!(done[key] = 1);
@@ -237,6 +266,27 @@ export function boot(c: ClientConfig): void {
 				"data-cf-beacon": JSON.stringify({ token: c.cf }),
 			});
 		}
+		// Cookie-free visitor counts: they start whatever the answer.
+		if (c.pl && once("pl")) load("https://plausible.io/js/script.js", { "data-domain": c.pl });
+		if (c.um && once("um")) load("https://cloud.umami.is/script.js", { "data-website-id": c.um });
+		if (c.li && m && once("li")) {
+			(w._linkedin_data_partner_ids = w._linkedin_data_partner_ids || []).push(c.li);
+			load("https://snap.licdn.com/li.lms-analytics/insight.min.js");
+		}
+		if (c.tt && m && once("tt")) {
+			// What TikTok's own base code sets up before its script arrives: a queue, and this pixel.
+			const src = "https://analytics.tiktok.com/i18n/pixel/events.js";
+			const ttq = (w.ttq = [] as unknown as unknown[] & Record<string, unknown>);
+			const one = (value: unknown) => ({ [c.tt!]: value });
+			const queue = [] as unknown as unknown[] & { _u?: string };
+			queue._u = src;
+			ttq._i = one(queue);
+			ttq._t = one(Date.now());
+			ttq._o = one({});
+			w.TiktokAnalyticsObject = "ttq";
+			ttq.push(["page"]);
+			load(src + "?sdkid=" + c.tt + "&lib=ttq");
+		}
 	};
 
 	/** An enquiry happened. Only its kind is sent, never a number, an address or a form value. */
@@ -293,7 +343,7 @@ export function boot(c: ClientConfig): void {
 			const name = pair.split("=")[0]!;
 			if (
 				(!a && /^_(ga|gid|gat|cl[cs]k)/.test(name)) ||
-				(!m && /^(_gcl|_fb[pc]|hubspotutk|__hs)/.test(name))
+				(!m && /^(_gcl|_fb[pc]|hubspotutk|__hs|li_|_tt|ttcsid)/.test(name))
 			) {
 				const gone = name + "=;path=/;max-age=0";
 				const host = here.hostname.split(".");
@@ -305,7 +355,7 @@ export function boot(c: ClientConfig): void {
 
 	const choose = (a: boolean, m: boolean) => {
 		if (preview) {
-			state = { a, m, ask: false };
+			change({ a, m, ask: false });
 			part<HTMLDialogElement>("dialog").close();
 			show();
 			part(".v").textContent = c.t.saved;
@@ -328,7 +378,7 @@ export function boot(c: ClientConfig): void {
 			c.days * 86400 +
 			(here.protocol === "https:" ? ";secure" : "");
 		// A beacon is sent in the background and survives the reload below.
-		if (c.rec && w.navigator.sendBeacon) {
+		if (c.rec && !away && w.navigator.sendBeacon) {
 			w.navigator.sendBeacon(
 				c.api + "record",
 				new Blob([JSON.stringify({ id: saved.id, a, m, v: c.v, country: country || null })], {
@@ -339,7 +389,7 @@ export function boot(c: ClientConfig): void {
 		// Taking consent back: the tools are told, their cookies are deleted, and because a
 		// running tool cannot be stopped the page starts again without them.
 		const restart = (before.a && !a) || (before.m && !m);
-		state = { a, m, ask: false };
+		change({ a, m, ask: false });
 		apply(a, m);
 		if (restart) {
 			wipe(a, m);
@@ -416,7 +466,9 @@ export function boot(c: ClientConfig): void {
 			button("c", t.choose, "q") +
 			'</div></div></div><button type=button class="s' +
 			(c.btnRight ? " sr" : "") +
-			'" data-k=c aria-label="Cookie settings" hidden>' +
+			'" data-k=c aria-label="' +
+			esc(t.sl || "Cookie settings") +
+			'" hidden>' +
 			ICON +
 			"<span>" +
 			esc(t.settings) +
@@ -445,16 +497,35 @@ export function boot(c: ClientConfig): void {
 
 	// ── Start ───────────────────────────────────────────────────
 
-	const run = () => {
+	// The banner speaks the page's language (<html lang>) when it knows it. English is in this
+	// script; the others are fetched from the site, alongside the country, before the banner shows.
+	const lang = /^(de|fr|es|it|nl|pt)\b/i.exec(html.lang)?.[1];
+	const words =
+		c.w &&
+		lang &&
+		w
+			.fetch(c.api + "words?l=" + lang.toLowerCase() + "&w=" + c.w)
+			.then((response) => response.json())
+			.then((body: { data?: { t?: ClientConfig["t"] } }) => {
+				if (body.data?.t) c.t = body.data.t;
+			})
+			// Not reached: the banner stays in English.
+			.catch(() => {});
+
+	const run = () => (words ? words.then(decideAndShow) : decideAndShow());
+
+	const decideAndShow = () => {
 		let zone: string | undefined;
 		try {
 			zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 		} catch {
 			// Unknown time zone: the visitor is asked.
 		}
-		state = preview
-			? { a: false, m: false, ask: true }
-			: decide(c, saved, mustAsk(country, zone, c.who === 3), gpc, day);
+		change(
+			preview
+				? { a: false, m: false, ask: true }
+				: decide(c, saved, mustAsk(country, zone, c.who === 3), gpc, day),
+		);
 		if (c.who || preview) {
 			build();
 			show();
@@ -477,7 +548,20 @@ export function boot(c: ClientConfig): void {
 			// The links in the page as it loaded (menus are drawn by the server). One added later still
 			// opens the choices (the click listener below is for the whole page); it just does not move
 			// the button aside, which keeps this script from watching every change to every page.
-			d.querySelectorAll(OPENERS).forEach((link) => opener(link) && watch.observe(link));
+			const look = () =>
+				d.querySelectorAll(OPENERS).forEach((link) => opener(link) && watch.observe(link));
+			look();
+			// Astro's <ClientRouter /> swaps in the next page's body and <html> attributes, and does not
+			// run this script again: put the banner back, say again where it stands, watch the new links.
+			d.addEventListener("astro:after-swap", () => {
+				d.body.prepend(root!.host);
+				if (phase) html.setAttribute("data-cookie-consent", phase);
+				watch.disconnect();
+				seen.clear();
+				linkOnScreen = false;
+				look();
+				show();
+			});
 		}
 		const go = () => apply(state.a, state.m);
 		// Visitors who are not asked get their tags when the browser is idle.

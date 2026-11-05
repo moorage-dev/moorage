@@ -552,3 +552,23 @@ test("an admin sees the help line, and the switch in the site settings hides it"
 	await expectHelpLine(page, guide);
 	await page.close();
 });
+
+test("Slack or Discord channels are offered, and only their webhook addresses are accepted", async () => {
+	const page = await adminContext.newPage();
+	await open(page);
+	await page.getByRole("button", { name: "+ New delivery" }).click();
+	await expect(
+		page.getByRole("radio", { name: /^Slack or Discord channel: a message in the channel/ }),
+	).toBeVisible();
+	await page.close();
+
+	// No real channel is called: an address that is not a Slack or Discord webhook is refused first.
+	const refused = await interact({
+		type: "form_submit",
+		action_id: "new_save",
+		block_id: `new2:chat:${FORM}`,
+		values: { url: "https://hooks.lead-delivery-test.invalid/catch/1", name: "" },
+	});
+	expect(refused.toast).toMatchObject({ type: "error" });
+	expect(refused.toast?.message).toContain("not a Slack or Discord webhook address");
+});

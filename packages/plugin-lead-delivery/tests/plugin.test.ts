@@ -161,7 +161,7 @@ const headers = (response: BlockResponse) =>
 async function saveNew(
 	runtime: PluginRuntimeTestHost,
 	user: User,
-	kind: "email" | "hubspot" | "app",
+	kind: "email" | "hubspot" | "app" | "chat",
 	form: string,
 	values: Record<string, unknown>,
 ) {
@@ -852,6 +852,7 @@ describe("New delivery", () => {
 			"Email: an inbox, or several",
 			"HubSpot: each enquiry becomes a HubSpot form submission",
 			"Another app: Zapier, Make, n8n or your own. Zapier needs a paid plan for this; Make and n8n do not",
+			"Slack or Discord channel: a message in the channel for each enquiry",
 		]);
 
 		await setForms(runtime, [known("contact", "Contact form"), known("newsletter", "Newsletter")]);
@@ -1076,6 +1077,51 @@ describe("New delivery", () => {
 		const renewed = await runtime.admin.act(PAGE, "new_secret", { user: admin, value: d.id });
 		expect((await config(runtime)).deliveries[0]!.secret).not.toBe(d.secret);
 		expect(text(renewed)).toContain((await config(runtime)).deliveries[0]!.secret!);
+	});
+});
+
+describe("addresses on a private network", () => {
+	it("refuses them in New delivery and Edit, whichever way the address is written", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [known("contact", "Contact form")]);
+		for (const url of [
+			"https://172.16.4.2/hook",
+			"https://100.64.0.1/hook",
+			"https://0.0.0.0/hook",
+			"https://2130706433/hook",
+			"https://0x7f.1/hook",
+			"https://[fd00::1]/hook",
+		]) {
+			const saved = await saveNew(runtime, admin, "app", "contact", { app: "other", url });
+			expect(saved.toast, url).toMatchObject({
+				type: "error",
+				message: "That address is on a private network, so this site cannot send to it.",
+			});
+		}
+		expect((await config(runtime)).deliveries).toEqual([]);
+		const d = delivery();
+		await setDeliveries(runtime, [d]);
+		const edited = await runtime.admin.submit(
+			PAGE,
+			"save_edit",
+			{ name: d.name, app: "other", url: "https://172.31.0.9/hook", forms: ["contact"], on: true },
+			{ user: admin, blockId: `edit:${d.id}` },
+		);
+		expect(edited.toast?.message).toBe(
+			"That address is on a private network, so this site cannot send to it.",
+		);
+		expect((await config(runtime)).deliveries[0]!.url).toBe(HOOK);
+		expect(runtime.http.requests()).toEqual([]);
+	});
+
+	it("never sends to one saved by an earlier version: it needs fixing instead", async () => {
+		const { runtime } = await start();
+		await setDeliveries(runtime, [delivery({ url: "https://172.20.0.5/hook" })]);
+		await inbound(runtime, payload("01P"));
+		const [row] = await rows(runtime);
+		expect(row).toMatchObject({ status: "fixing" });
+		expect(row!.plain).toContain("private network");
+		expect(runtime.http.requests().filter((r) => r.url.includes("172.20.0.5"))).toEqual([]);
 	});
 });
 
@@ -1563,5 +1609,149 @@ describe("what EmDash will accept", () => {
 				errors: [],
 			});
 		}
+	});
+});
+
+// ─── Slack or Discord channel, encrypted secrets, Forms' auto-reply (2026-11) ─────
+
+const SLACK = "https://hooks.slack.com/services/T0ABC/B0DEF/slackSECRETtoken1234";
+const DISCORD = "https://discord.com/api/webhooks/123456789/discordSECRETtokenABCD";
+function bodyOf(request: { body: Uint8Array }) {
+	return JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
+}
+
+describe("a Slack or Discord channel", () => {
+	it("is offered in New delivery and sends a message for each enquiry", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [known("contact", "Contact form")]);
+		const step1 = await runtime.admin.act(PAGE, "new", { user: admin });
+		expect(text(step1)).toContain("Slack or Discord channel");
+		await runtime.http.respond(SLACK, new Response("ok"));
+		const saved = await saveNew(runtime, admin, "chat", "contact", { url: SLACK, name: "" });
+		expect(saved.toast).toEqual({
+			type: "success",
+			message: 'Saved as "Contact form → Slack". Slack accepted the test.',
+		});
+		const d = (await config(runtime)).deliveries[0]!;
+		expect(d).toMatchObject({ kind: "chat", chat: "slack", name: "Contact form → Slack" });
+		// The address is a secret: never shown again, never in the page.
+		const page = await runtime.admin.act(PAGE, "open", { user: admin, value: d.id });
+		expect(text(page)).not.toContain("slackSECRETtoken");
+		expect(text(page)).toContain("Slack channel at hooks.slack.com");
+		const edit = await runtime.admin.act(PAGE, "edit", { user: admin, value: d.id });
+		expect(text(edit)).not.toContain("slackSECRETtoken");
+
+		await runtime.http.respond(SLACK, new Response("ok"));
+		await inbound(runtime, payload("01S", { message: "Two dozen <!channel> cupcakes" }));
+		const sent = runtime.http.requests().filter((r) => r.url === SLACK);
+		expect(sent).toHaveLength(2);
+		const message = bodyOf(sent[1]!).text as string;
+		expect(message).toContain("New enquiry: Contact us");
+		expect(message).toContain("Tom Reyes");
+		expect(message).toContain("tom@example.com");
+		// Nobody can ping the channel through a form.
+		expect(message).toContain("&lt;!channel&gt;");
+		expect(message).not.toContain("<!channel>");
+		expect((await rows(runtime))[0]).toMatchObject({ status: "delivered" });
+	});
+
+	it("leaves out what people wrote when asked, and never pings anyone on Discord", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [known("contact", "Contact form")]);
+		await runtime.http.respond(DISCORD, new Response(null, { status: 204 }));
+		const saved = await saveNew(runtime, admin, "chat", "contact", {
+			url: DISCORD,
+			leave_out: true,
+			name: "",
+		});
+		expect(saved.toast?.message).toBe(
+			'Saved as "Contact form → Discord". Discord accepted the test.',
+		);
+		await runtime.http.respond(DISCORD, new Response(null, { status: 204 }));
+		await inbound(runtime, payload("01D", { message: "@everyone my phone is 07700 900123" }));
+		const body = bodyOf(
+			runtime.http
+				.requests()
+				.filter((r) => r.url === DISCORD)
+				.at(-1)!,
+		);
+		expect(body.allowed_mentions).toEqual({ parse: [] });
+		const content = body.content as string;
+		expect(content).toContain("New enquiry: Contact us");
+		expect(content).not.toContain("Tom Reyes");
+		expect(content).not.toContain("tom@example.com");
+		expect(content).not.toContain("07700");
+		expect(content).toContain("Forms → Submissions");
+	});
+
+	it("refuses an address that is not a Slack or Discord webhook, or is private", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [known("contact", "Contact form")]);
+		const other = await saveNew(runtime, admin, "chat", "contact", { url: HOOK });
+		expect(other.toast?.type).toBe("error");
+		expect(other.toast?.message).toContain("Slack or Discord");
+		const plain = await saveNew(runtime, admin, "chat", "contact", {
+			url: "http://hooks.slack.com/services/T/B/x",
+		});
+		expect(plain.toast?.type).toBe("error");
+		expect((await config(runtime)).deliveries).toEqual([]);
+	});
+
+	it("keeps the channel's address when Edit leaves the box empty, and retries a busy channel", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [
+			known("contact", "Contact form", { lastAt: "2026-10-19T09:00:00.000Z" }),
+		]);
+		await runtime.http.respond(SLACK, new Response("ok"));
+		await saveNew(runtime, admin, "chat", "contact", { url: SLACK, name: "" });
+		const d = (await config(runtime)).deliveries[0]!;
+		const edited = await runtime.admin.submit(
+			PAGE,
+			"save_edit",
+			{ name: "Team channel", url: "", leave_out: true, forms: ["contact"], on: true },
+			{ user: admin, blockId: `edit:${d.id}` },
+		);
+		expect(edited.toast?.type).toBe("success");
+		expect((await config(runtime)).deliveries[0]).toMatchObject({
+			name: "Team channel",
+			leaveOut: true,
+		});
+		await runtime.http.respond(
+			SLACK,
+			new Response("rate_limited", { status: 429, headers: { "retry-after": "30" } }),
+		);
+		await inbound(runtime, payload("01R"), undefined, { queued: true });
+		await runtime.transport.invokeHook("cron", { name: "deliver", data: null });
+		const [row] = await rows(runtime);
+		expect(row).toMatchObject({ status: "retrying" });
+		expect(JSON.stringify(row)).not.toContain("slackSECRETtoken");
+		await runtime.http.respond(SLACK, new Response("no_service", { status: 404 }));
+		const again = await runtime.admin.act(PAGE, "send_again", {
+			user: admin,
+			value: { row: `01R~${d.id}` },
+		});
+		expect(again.toast?.type).toBe("error");
+		expect(again.toast?.message).toContain("no longer exists");
+		expect(JSON.stringify(await rows(runtime))).not.toContain("slackSECRETtoken");
+	});
+});
+
+describe("Forms' own auto-reply", () => {
+	it("is shown on the delivery page when one-click connect read it from Forms", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [
+			known("contact", "Contact form", { autoReply: { on: true, at: new Date().toISOString() } }),
+			known("quote", "Quote", { autoReply: { on: false, at: new Date().toISOString() } }),
+		]);
+		const contact = delivery({ name: "Contact form → Zapier" });
+		const quote = delivery({ name: "Quote → Zapier", forms: ["quote"] });
+		const unknown = delivery({ name: "Cakes → Zapier", forms: ["cakes"] });
+		await setDeliveries(runtime, [contact, quote, unknown]);
+		const on = await runtime.admin.act(PAGE, "open", { user: admin, value: contact.id });
+		expect(text(on)).toContain("Forms also sends its own auto-reply to the person who wrote");
+		const off = await runtime.admin.act(PAGE, "open", { user: admin, value: quote.id });
+		expect(text(off)).toContain("Forms sends no auto-reply for Quote");
+		const none = await runtime.admin.act(PAGE, "open", { user: admin, value: unknown.id });
+		expect(text(none)).not.toContain("auto-reply");
 	});
 });

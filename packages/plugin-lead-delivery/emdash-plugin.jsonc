@@ -5,8 +5,8 @@
 	// Listing text. Registry search matches exact phrases in name, description,
 	// keywords and sections, so the phrases people type appear verbatim.
 	"name": "Lead Delivery: HubSpot, Zapier, Webhooks & Email",
-	"description": "Send EmDash form enquiries to HubSpot, Zapier, Make, n8n or email, with a delivery log, retries and an alert when one fails.",
-	"keywords": ["hubspot", "zapier", "webhooks", "form notifications", "leads"],
+	"description": "Send EmDash form enquiries to HubSpot, Zapier, Make, n8n, Slack, Discord or email, with a delivery log, retries and an alert when one fails.",
+	"keywords": ["hubspot", "zapier", "slack", "form notifications", "leads"],
 	"repo": "https://github.com/moorage-dev/moorage",
 	"sections": {
 		"description": { "file": "listing/description.md" },
@@ -23,9 +23,10 @@
 			// Cover at the top of the listing and its share image: 3:1, from banner.svg (scripts/render-banners.mjs in apps/demo-site).
 			"banner": { "file": "./images/banner.png" },
 			"screenshots": [
-				{ "file": "./images/home-0-4-3.png", "lang": "en" },
+				{ "file": "./images/home-0-5-0.png", "lang": "en" },
 				{ "file": "./images/delivery-0-4-3.png", "lang": "en" },
-				{ "file": "./images/new-delivery-0-4-3.png", "lang": "en" },
+				{ "file": "./images/channel-delivery-0-5-0.png", "lang": "en" },
+				{ "file": "./images/new-delivery-0-5-0.png", "lang": "en" },
 			],
 		},
 	},

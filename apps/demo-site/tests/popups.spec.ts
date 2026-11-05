@@ -705,19 +705,16 @@ test.describe("admin", () => {
 });
 
 test.describe("top bar", () => {
-	test("is in the page at first paint, never moves the page, and stays closed", async ({
+	test("is in the page at first paint, never moves the page, stays closed, and shows again once changed", async ({
 		browser,
 	}) => {
-		await make({
-			name: "Boxing Day hours",
-			kind: "bar",
-			s2: {
-				heading: "Open on Boxing Day, 10:00 to 14:00.",
-				text: "",
-				button_label: "See all opening hours",
-				button_url: "/pricing",
-			},
-		});
+		const s2 = {
+			heading: "Open on Boxing Day, 10:00 to 14:00.",
+			text: "",
+			button_label: "See all opening hours",
+			button_url: "/pricing",
+		};
+		const id = await make({ name: "Boxing Day hours", kind: "bar", s2 });
 		const page = await visitor(browser);
 		await page.goto("/");
 		const bar = page.locator("[data-popups-bar]");
@@ -737,6 +734,30 @@ test.describe("top bar", () => {
 		await page.goto("/pricing");
 		await expect(bar).toBeHidden();
 		expect(await shift(page)).toBe(0);
+		// Only where and how often it shows changes: still closed.
+		const save = async (action: "save_s2" | "save_s3", values: Record<string, unknown>) => {
+			const out = await adminPost(`${API}/admin`, {
+				type: "form_submit",
+				action_id: action,
+				block_id: `${action.slice(5)}:${id}:x`,
+				values,
+			});
+			expect(out.data.toast?.type).not.toBe("error");
+		};
+		await save("save_s3", { where: "all", exclude: "/nowhere", devices: "all", again: "week" });
+		await page.goto("/");
+		await expect(bar).toBeHidden();
+		// The owner changes what it says: the visitor who closed it sees it once more, still in place.
+		await save("save_s2", { ...s2, heading: "Closed on Boxing Day. Open again on the 27th." });
+		await page.goto("/");
+		await expect(region).toContainText("Closed on Boxing Day. Open again on the 27th.");
+		await expect(bar).toBeVisible();
+		expect((await bar.boundingBox())!.y).toBe(0);
+		expect(await shift(page)).toBe(0);
+		await region.getByRole("button", { name: "Close" }).click();
+		await expect(bar).toBeHidden();
+		await page.goto("/pricing");
+		await expect(bar).toBeHidden();
 		await page.context().close();
 	});
 });

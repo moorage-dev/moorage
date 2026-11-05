@@ -28,7 +28,7 @@ Yes. Choose "A local business customers visit" on the SEO page and fill in the a
 
 ## Will my pages get rich results on Google?
 
-The markup makes pages eligible; Google decides what it shows. Admins can open Google's Rich Results Test from the Google preview panel.
+The markup makes pages eligible; Google decides what it shows. Admins can open Google's Rich Results Test and the schema.org Validator from the Google preview panel.
 
 ## Where do I write the meta description?
 

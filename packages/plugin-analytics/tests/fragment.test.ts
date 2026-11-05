@@ -8,7 +8,7 @@ import clientCode from "virtual:client-script";
 import { describe, expect, it } from "vitest";
 
 import type { ClientConfig } from "../src/client/types.js";
-import { CONFIG_KEY, normalizeConfig } from "../src/config.js";
+import { CONFIG_KEY, HELD_SEEN_KEY, normalizeConfig } from "../src/config.js";
 import {
 	clientColors,
 	clientConfig,
@@ -27,6 +27,10 @@ const ALL_TOOLS = {
 	clarity: "ab12cd34ef",
 	hubspot: "12345678",
 	cloudflare: "0123456789abcdef0123456789abcdef",
+	plausible: "acme.test",
+	umami: "94db1cb1-74f4-4a40-ad6c-962362670409",
+	linkedin: "1234567",
+	tiktok: "CABC123DEF456GHI789J",
 };
 
 type Hook = (
@@ -97,6 +101,21 @@ describe("the page hook", () => {
 		expect(renderFragments([fragment], "body:end")).toBe("");
 	});
 
+	it("tells the browser the site's own address, so tools load nowhere else", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const at = (url: string | undefined) => {
+			(fake.ctx as { site?: { url: string } }).site = url === undefined ? undefined : { url };
+			return hook()(event("/"), fake.ctx).then(
+				(result) => configIn((result as { code: string }).code).h,
+			);
+		};
+		expect(await at("https://www.Bakery.test")).toBe("bakery.test");
+		expect(await at("http://localhost:4321")).toBe("localhost");
+		// Not set: nothing to compare with, so tools load anywhere, as before.
+		expect(await at("")).toBeUndefined();
+		expect(await at(undefined)).toBeUndefined();
+	});
+
 	it("gives the same script every time it runs for a page", async () => {
 		const fake = fakeContext({ [CONFIG_KEY]: { tools: ALL_TOOLS } });
 		const runs = await Promise.all([1, 2, 3].map(() => hook()(event("/"), fake.ctx)));
@@ -121,6 +140,36 @@ describe("the page hook", () => {
 		expect(await run(event("/internal/report"), ctx)).toBeNull();
 		expect(await run(event("/thanks"), ctx)).not.toBeNull();
 		expect(await run(event("/_emdashboard"), ctx)).not.toBeNull();
+	});
+
+	it("on an excluded page of a site with held videos or maps, adds only a marker that keeps them held", async () => {
+		for (const stored of [
+			{ [CONFIG_KEY]: { tools: ALL_TOOLS, exclude: ["/thank-you"], heldEmbeds: ["YouTube"] } },
+			// Seen on the site's pages, not yet named in the banner.
+			{ [CONFIG_KEY]: { tools: ALL_TOOLS, exclude: ["/thank-you"] }, [HELD_SEEN_KEY]: ["Vimeo"] },
+		]) {
+			const { ctx } = fakeContext(stored);
+			const fragment = (await hook()(event("/thank-you"), ctx)) as { key: string; code: string };
+			expect(fragment).toMatchObject({ kind: "inline-script", placement: "head" });
+			expect(fragment.key).toBe(`${PLUGIN_ID}:bootstrap`);
+			expect(fragment.code).toContain("data-cookie-consent");
+			// Nothing of the tracking script: no tool, no banner.
+			expect(fragment.code).not.toContain("googletagmanager");
+			expect(fragment.code.length).toBeLessThan(600);
+			// Previews, the admin and the editor stay without anything.
+			expect(await hook()(event("/thank-you", "?_preview=token"), ctx)).toBeNull();
+			expect(await hook()(event("/_emdash/admin"), ctx)).toBeNull();
+		}
+		// Nobody asked, or no tools: nothing is held, so nothing is added.
+		const quiet = fakeContext({
+			[CONFIG_KEY]: {
+				tools: ALL_TOOLS,
+				exclude: ["/thank-you"],
+				heldEmbeds: ["YouTube"],
+				banner: { audience: "none" },
+			},
+		});
+		expect(await hook()(event("/thank-you"), quiet.ctx)).toBeNull();
 	});
 
 	it("adds nothing in the visual editor or on a verified preview", () => {
@@ -162,6 +211,10 @@ describe("what the browser is told", () => {
 			hs: "12345678",
 			hsEu: 1,
 			cf: "0123456789abcdef0123456789abcdef",
+			pl: "acme.test",
+			um: "94db1cb1-74f4-4a40-ad6c-962362670409",
+			li: "1234567",
+			tt: "CABC123DEF456GHI789J",
 			gtmNow: 1,
 			ev: 1,
 			rec: 1,
@@ -169,7 +222,14 @@ describe("what the browser is told", () => {
 			pos: "right",
 			policy: "/privacy",
 			an: ["Google Analytics", "Google Tag Manager", "Microsoft Clarity"],
-			mk: ["Google Tag Manager", "Google Ads", "Meta Pixel", "HubSpot"],
+			mk: [
+				"Google Tag Manager",
+				"Google Ads",
+				"Meta Pixel",
+				"HubSpot",
+				"LinkedIn Insight Tag",
+				"TikTok Pixel",
+			],
 		});
 	});
 
@@ -218,11 +278,11 @@ describe("the browser script", () => {
 		expect(clientCode.startsWith("(function(){")).toBe(true);
 	});
 
-	it("stays under 6.25 KB gzipped with every tool switched on", () => {
+	it("stays under 7 KB gzipped with every tool switched on", () => {
 		const size = gzipSync(full, { level: 9 }).length;
 		// Printed so the number is in the test log.
-		console.log(`inline script: ${full.length} bytes, ${size} bytes gzipped (budget 6400)`);
-		expect(size).toBeLessThan(6400);
+		console.log(`inline script: ${full.length} bytes, ${size} bytes gzipped (budget 7168)`);
+		expect(size).toBeLessThan(7168);
 	});
 
 	it("stays under the same budget with a colour set or the owner's light and dark colours", () => {
@@ -241,9 +301,9 @@ describe("the browser script", () => {
 			);
 			const size = gzipSync(code, { level: 9 }).length;
 			console.log(
-				`inline script with ${banner.colourSet} colours: ${size} bytes gzipped (budget 6400)`,
+				`inline script with ${banner.colourSet} colours: ${size} bytes gzipped (budget 7168)`,
 			);
-			expect(size).toBeLessThan(6400);
+			expect(size).toBeLessThan(7168);
 		}
 		// A set is turned into colours here, on the server: the browser script itself is the same.
 		expect(clientCode).not.toContain("cream");
@@ -258,8 +318,12 @@ describe("the browser script", () => {
 	it("only ever names the hosts of the tools it can load", () => {
 		const hosts = [...full.matchAll(/https:\/\/[a-z0-9.-]+/g)].map((match) => match[0]);
 		expect([...new Set(hosts)].sort()).toEqual([
+			"https://analytics.tiktok.com",
+			"https://cloud.umami.is",
 			"https://connect.facebook.net",
 			"https://js",
+			"https://plausible.io",
+			"https://snap.licdn.com",
 			"https://static.cloudflareinsights.com",
 			"https://www.clarity.ms",
 			"https://www.googletagmanager.com",

@@ -1,6 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import type { AppKind, Delivery, DeliveryKind, KnownForm } from "./types.js";
+import type { AppKind, ChatKind, Delivery, DeliveryKind, KnownForm } from "./types.js";
 
 /** The apps offered for "Another app", in the order shown. */
 export const APPS: Array<{ value: AppKind; label: string; hint: string }> = [
@@ -12,6 +12,11 @@ export const APPS: Array<{ value: AppKind; label: string; hint: string }> = [
 
 export function appLabel(app: AppKind | undefined): string {
 	return APPS.find((a) => a.value === app)?.label ?? "Another app";
+}
+
+/** "Slack", "Discord"; before the address is known, "Slack or Discord". */
+export function chatLabel(chat: ChatKind | undefined): string {
+	return chat === "discord" ? "Discord" : chat === "slack" ? "Slack" : "Slack or Discord";
 }
 
 /** "Quote form", but "Contact form" rather than "Contact form form". */
@@ -39,6 +44,7 @@ const INBOX_WORDS = ["shop", "info", "hello", "enquiries", "contact", "sales"];
 export function destinationLabel(d: Pick<Delivery, "kind"> & Partial<Delivery>): string {
 	if (d.kind === "hubspot") return "HubSpot";
 	if (d.kind === "app") return d.app === "other" || !d.app ? "your app" : appLabel(d.app);
+	if (d.kind === "chat") return chatLabel(d.chat);
 	const to = d.to ?? [];
 	if (to.length > 1) return `${to.length} inboxes`;
 	const first = to[0] ?? "";
@@ -50,7 +56,13 @@ export function destinationLabel(d: Pick<Delivery, "kind"> & Partial<Delivery>):
 
 /** The destination as step 2 first names it, before anything is typed. */
 export function kindWord(kind: DeliveryKind): string {
-	return kind === "email" ? "Email" : kind === "hubspot" ? "HubSpot" : "App";
+	return kind === "email"
+		? "Email"
+		: kind === "hubspot"
+			? "HubSpot"
+			: kind === "chat"
+				? "Slack or Discord"
+				: "App";
 }
 
 export function generatedName(
@@ -62,13 +74,14 @@ export function generatedName(
 }
 
 /** The type a row in the deliveries list shows after the name, unless the name already says it. */
-export function typeLabel(d: Pick<Delivery, "kind" | "app">): string {
+export function typeLabel(d: Pick<Delivery, "kind" | "app" | "chat">): string {
 	if (d.kind === "email") return "Email";
 	if (d.kind === "hubspot") return "HubSpot";
+	if (d.kind === "chat") return chatLabel(d.chat);
 	return appLabel(d.app);
 }
 
-export function rowLabel(d: Pick<Delivery, "kind" | "app" | "name">): string {
+export function rowLabel(d: Pick<Delivery, "kind" | "app" | "chat" | "name">): string {
 	const type = typeLabel(d);
 	return d.name.toLowerCase().includes(type.toLowerCase()) ? d.name : `${d.name} · ${type}`;
 }

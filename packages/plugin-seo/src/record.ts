@@ -303,12 +303,26 @@ interface Rebuilt {
 
 type Credits = Awaited<ReturnType<NonNullable<PluginContext["bylines"]>["getEntriesBylines"]>>;
 
+/**
+ * The authors among an entry's byline credits: only credits without a role label. A labelled
+ * credit ("Photos by", "Reviewed by") names someone who is not the author, so it is left out.
+ * When every credit has a label there are no authors, and the page is described as one with no
+ * byline is.
+ */
+export function creditedAuthors(
+	bylines: Credits[number]["bylines"] | undefined,
+): EntryRecord["authors"] {
+	return (bylines ?? [])
+		.filter(({ roleLabel }) => typeof roleLabel !== "string" || roleLabel.trim() === "")
+		.map(({ byline }) => ({
+			name: byline.displayName,
+			...(byline.websiteUrl ? { url: byline.websiteUrl } : {}),
+		}));
+}
+
 /** The authors credited on the first entry of `credits`. */
 function authorsOf(credits: Credits): EntryRecord["authors"] {
-	return (credits[0]?.bylines ?? []).map(({ byline }) => ({
-		name: byline.displayName,
-		...(byline.websiteUrl ? { url: byline.websiteUrl } : {}),
-	}));
+	return creditedAuthors(credits[0]?.bylines);
 }
 
 /**

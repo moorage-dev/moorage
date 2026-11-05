@@ -1,0 +1,30 @@
+---
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
+//
+// EmDash's embed block (links, mostly from imported posts). Whatever EmDash
+// renders as a YouTube or Vimeo player, or oEmbed code with a YouTube, Vimeo or
+// Google iframe, is held back where the cookie banner can ask (heldEmbed in
+// held.mjs); anything else, and every embed where nobody is asked, renders
+// exactly as EmDash renders it.
+import { Embed } from "emdash/ui";
+
+import { heldEmbed } from "./held.mjs";
+import { holding } from "./holding.mjs";
+import Held from "./Held.astro";
+
+const { node } = Astro.props as { node?: { url?: unknown; provider?: unknown; html?: unknown } };
+const held = heldEmbed(node);
+const { hold, named } = held
+	? await holding(Astro.locals, Astro.url, held.name)
+	: { hold: false, named: false };
+---
+
+{
+	hold && held ? (
+		<Held kind={held.kind} name={held.name} link={held.link} named={named}>
+			<Embed node={node as never} />
+		</Held>
+	) : (
+		<Embed node={node as never} />
+	)
+}

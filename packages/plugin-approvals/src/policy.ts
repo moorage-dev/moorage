@@ -3,7 +3,7 @@
 import type { ContentPolicyDecision, ContentPolicyEvent, PluginContext } from "emdash";
 
 import { isHeldRole, loadConfig, ROLE, type Config } from "./config.js";
-import { EMAIL_EVERY_MS } from "./notify.js";
+import { EMAIL_EVERY_MS, REMIND_AFTER_MS } from "./notify.js";
 import {
 	addHistory,
 	approvers,
@@ -30,7 +30,25 @@ export async function scheduleAsked(
 	if (!ctx.email || !ctx.cron) return;
 	await ctx.cron.schedule(taskName(MAIL_TASK, key, now), {
 		schedule: now,
-		data: { key, kind: "asked", ...(isNew && config.remind ? { remind: now } : {}) },
+		// `at`: the request's emailedAt, so the task knows its email is the one counted.
+		data: { key, kind: "asked", at: now, ...(isNew && config.remind ? { remind: now } : {}) },
+	});
+}
+
+/**
+ * Only the two-day reminder for a new request, when its email is skipped (the approvers were
+ * emailed about this page less than a day ago). One call, as scheduleAsked; none without email.
+ */
+export async function scheduleRemindOnly(
+	ctx: PluginContext,
+	config: Config,
+	key: string,
+	now: string,
+): Promise<void> {
+	if (!ctx.email || !ctx.cron || !config.remind) return;
+	await ctx.cron.schedule(taskName(REMIND_TASK, key, now), {
+		schedule: new Date(Date.parse(now) + REMIND_AFTER_MS).toISOString(),
+		data: { key, requestedAt: now },
 	});
 }
 
@@ -84,6 +102,8 @@ export interface HoldResult {
 	again: boolean;
 	/** The page changed after an approval. */
 	changed: boolean;
+	/** A new request whose email is skipped: the approvers were emailed less than a day ago. */
+	quiet?: boolean;
 	approvedBy?: string;
 }
 
@@ -115,6 +135,13 @@ export function holdRequest(
 	}
 	const changed =
 		existing?.status === "approved" && existing.approval?.fingerprint !== input.fingerprint;
+	// Asked again soon after withdrawing: the approvers were emailed less than a day ago, and
+	// are not emailed again before the day is out (they see it in Approvals).
+	const recentlyEmailed =
+		existing?.status === "closed" &&
+		existing.withdrawn !== undefined &&
+		existing.emailedAt !== undefined &&
+		Date.parse(now) - Date.parse(existing.emailedAt) < EMAIL_EVERY_MS;
 	const request: ApprovalRequest = {
 		collection: input.collection,
 		entryId: input.entryId,
@@ -129,6 +156,7 @@ export function holdRequest(
 		fingerprint: input.fingerprint,
 		fields: input.fields,
 		...(existing?.approval ? { approval: existing.approval } : {}),
+		...(recentlyEmailed && existing?.emailedAt ? { emailedAt: existing.emailedAt } : {}),
 		history: existing?.history ?? [],
 		updatedAt: now,
 	};
@@ -144,7 +172,8 @@ export function holdRequest(
 	);
 	return {
 		request,
-		notify: true,
+		notify: !recentlyEmailed,
+		...(recentlyEmailed ? { quiet: true } : {}),
 		again: false,
 		changed,
 		...(changed && existing?.approval ? { approvedBy: existing.approval.by.name } : {}),
@@ -319,11 +348,12 @@ export async function gate(
 			result.request.checks?.description !== checks.description ||
 			result.request.checks?.picture !== checks.picture;
 		result.request.checks = checks;
-		if (result.notify && ctx.email) result.request.emailedAt = now;
+		if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
 		if (!result.again || result.notify || checksChanged) await store.put(key, result.request);
 		// Email is sent by a one-shot task, so a slow email never delays the publish; that task
 		// also sets the two-day reminder.
 		if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);
+		else if (result.quiet) await scheduleRemindOnly(ctx, config, key, now);
 		if (event.origin.source === "scheduler") {
 			return refuse(
 				result.changed

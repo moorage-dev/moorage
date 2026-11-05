@@ -1,5 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import { sentFields } from "./enquiry.js";
 import type { Outcome } from "./hubspot.js";
 import { appLabel } from "./names.js";
 import type { Delivery, Enquiry } from "./types.js";
@@ -42,7 +43,7 @@ export async function sign(secret: string, id: string, timestamp: number, body: 
 export function appPayload(id: string, enquiry: Enquiry, test: boolean): Record<string, unknown> {
 	const fields: Record<string, string> = {};
 	const labels: Record<string, string> = {};
-	for (const field of enquiry.fields) {
+	for (const field of sentFields(enquiry)) {
 		fields[field.key] = field.value;
 		labels[field.key] = field.label;
 	}

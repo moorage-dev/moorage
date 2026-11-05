@@ -10,6 +10,10 @@ In New delivery choose "Another app" and paste the address the app gave you: in 
 
 Not where the site can call its own address (on Cloudflare: the compatibility flag `global_fetch_strictly_public`): an admin connects it in one step by typing a code on EmDash's approval page. Lead Delivery uses that access once and throws it away. Elsewhere EmDash's form editor has no box for it yet, so someone who can call the site's API sets it once per form; New delivery shows the instructions for that form and can email them.
 
+## Can enquiries go to Slack or Discord?
+
+Yes: in New delivery choose "Slack or Discord channel" and paste its webhook address.
+
 ## What if HubSpot or Zapier is down?
 
 The enquiry is tried again 8 times over about two days. If it still does not arrive, the people on the alert list get one email, and you can press Send again.

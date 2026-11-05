@@ -6,6 +6,7 @@ import type { RouteContext } from "emdash";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { normalizeStore, type Store } from "../src/config.js";
+import { contentPrint } from "../src/fragment.js";
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import { createPlugin } from "../src/index.js";
 import { fakeContext, popup, type FakeContext } from "./helpers.js";
@@ -656,6 +657,55 @@ describe("a finished popup's page: one Save", () => {
 		// Nothing about saving first beside Preview: the line under the one Save says it.
 		expect(words(page)).not.toContain("Save your changes first");
 		expect(words(page)).toContain("Preview shows what was last saved.");
+	});
+
+	it("keeps what a popup says the same when only where, on what or how often changes", async () => {
+		const start = Date.UTC(2026, 11, 20, 9);
+		const end = Date.UTC(2026, 11, 27, 18, 30);
+		const fake = fakeContext({
+			popups: {
+				popups: [
+					popup({
+						kind: "slide",
+						picture: {
+							id: "m1",
+							url: "/_emdash/api/media/file/loaves.jpg",
+							alt: "Loaves",
+							width: 1200,
+							height: 800,
+						},
+						start,
+						end,
+					}),
+				],
+			},
+		});
+		const before = contentPrint(stored(fake).popups[0]!);
+		const page = await press(fake, "row", "change:abcd1234");
+		const form = formOf(page, "save_all");
+		// Saved as the page offers it, as an owner pressing Save changes does.
+		const asShown = Object.fromEntries(
+			form.fields
+				.filter((f) => "initial_value" in f && f.initial_value !== undefined)
+				.map((f) => [f.action_id, (f as { initial_value: unknown }).initial_value]),
+		);
+		await submit(fake, "save_all", form.block_id!, asShown);
+		expect(contentPrint(stored(fake).popups[0]!)).toBe(before);
+		await submit(fake, "save_all", form.block_id!, {
+			...asShown,
+			devices: "phone",
+			again: "never",
+			trigger: "exit",
+		});
+		const saved = stored(fake).popups[0]!;
+		expect(saved).toMatchObject({ devices: "phone", again: "never", trigger: "exit", start, end });
+		expect(contentPrint(saved)).toBe(before);
+		await press(fake, "row", "toggle:abcd1234");
+		expect(stored(fake).popups[0]!.on).toBe(false);
+		expect(contentPrint(stored(fake).popups[0]!)).toBe(before);
+		// New words do change it.
+		await submit(fake, "save_all", form.block_id!, { ...asShown, heading: "Christmas cakes" });
+		expect(contentPrint(stored(fake).popups[0]!)).not.toBe(before);
 	});
 
 	it("keeps what was typed when a save is refused, and shows every problem at once", async () => {

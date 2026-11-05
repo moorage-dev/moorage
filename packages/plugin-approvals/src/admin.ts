@@ -3,7 +3,7 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { approve, ask, sendBack, type Decision, type Outcome } from "./actions.js";
+import { approve, ask, sendBack, withdraw, type Decision, type Outcome } from "./actions.js";
 import {
 	approverRole,
 	CONFIG,
@@ -40,7 +40,9 @@ import {
 	formKey,
 	historyBlock,
 	liveChanges,
+	mayWithdraw,
 	peopleList,
+	withdrawButton,
 } from "./views.js";
 
 export const WIDGET_PAGE = "widget:approvals";
@@ -206,6 +208,9 @@ function yoursRows(
 					reason,
 				].join(" · "),
 			},
+			...(mayWithdraw(request, user)
+				? [{ type: "actions" as const, elements: [withdrawButton(key(request))] }]
+				: []),
 			{ type: "divider" },
 		);
 	}
@@ -290,6 +295,86 @@ async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise
 	return blocks;
 }
 
+/** Content types read for pages already scheduled: one call each. */
+const SCHEDULED_TYPES = 3;
+const SCHEDULED_NAMED = 5;
+
+/** Pages already scheduled to go live, in the content types that were read. */
+interface Scheduled {
+	pages: Array<{ title: string; type: string; at: string }>;
+	/** Content types that approval holds (or would) but that were not read: no calls to spare. */
+	unread: string[];
+}
+
+/**
+ * Pages already scheduled in the content that needs approval (before the first save, in every
+ * type that could need it), so the Settings tab names what approval will hold when their time
+ * comes. One call per content type, at most SCHEDULED_TYPES, and only while the run has calls
+ * left. A live page's scheduled changes count too (EmDash keeps such a page "published", with
+ * a time). Pages already cleared (an admin's own schedule, an approved request) are left out.
+ *
+ * Read with the latest time first: on SQLite and D1 entries without a time sort last, so the
+ * first 50 hold every scheduled one. PostgreSQL sorts them first; there a type with more than
+ * 50 entries may show none.
+ */
+async function scheduledPages(
+	m: Meter,
+	config: Config | null,
+	everything: CollectionList,
+	all: ApprovalRequest[],
+): Promise<Scheduled | null> {
+	const ctx = m.ctx;
+	if (!ctx.content) return null;
+	const holdable = everything.filter((c) => !c.hidden && c.supports.includes("revisions"));
+	const types = config ? holdable.filter((c) => config.collections.includes(c.slug)) : holdable;
+	const cleared = new Set(all.filter((r) => r.status === "approved").map((r) => key(r)));
+	const pages: Scheduled["pages"] = [];
+	const unread: string[] = [];
+	for (const [index, type] of types.entries()) {
+		if (index >= SCHEDULED_TYPES || m.left() < 1) {
+			unread.push(type.label);
+			continue;
+		}
+		const result = await ctx.content.list(type.slug, {
+			limit: 50,
+			orderBy: { scheduledAt: "desc" },
+		});
+		for (const item of result.items) {
+			if (!item.scheduledAt || cleared.has(`${type.slug}:${item.id}`)) continue;
+			const value = item.data?.[type.titleField ?? "title"] ?? item.data?.title;
+			const title = typeof value === "string" && value.trim() ? value.trim() : "Untitled";
+			pages.push({ title, type: type.label, at: item.scheduledAt });
+		}
+	}
+	pages.sort((a, b) => a.at.localeCompare(b.at));
+	return { pages, unread };
+}
+
+/** The Settings tab's line about pages already scheduled. */
+function scheduledText(config: Config | null, scheduled: Scheduled | null): string {
+	const general = "Pages already scheduled will need approval before they go live.";
+	if (!scheduled) return general;
+	const { pages, unread } = scheduled;
+	const named = pages.slice(0, SCHEDULED_NAMED).map((p) => `${p.title} (${p.type}, ${when(p.at)})`);
+	const more = pages.length - named.length;
+	const list = more > 0 ? `${named.join(", ")} and ${more} more` : nameList(named);
+	const parts: string[] = [];
+	if (pages.length > 0) {
+		parts.push(
+			config
+				? `Already scheduled, and will need approval before they go live: ${list}.`
+				: `Already scheduled: ${list}. Once their content type needs approval, they wait for it before going live.`,
+		);
+	} else if (config && unread.length === 0) {
+		parts.push("Nothing already scheduled needs approval.");
+	}
+	if (unread.length > 0)
+		parts.push(
+			`Pages scheduled in ${nameList(unread)} weren't checked here; they too will need approval before they go live.`,
+		);
+	return parts.length > 0 ? parts.join(" ") : general;
+}
+
 function settingsBlocks(
 	ctx: PluginContext,
 	config: Config | null,
@@ -297,6 +382,7 @@ function settingsBlocks(
 	all: ApprovalRequest[],
 	everything: CollectionList,
 	people: UserInfo[],
+	scheduled: Scheduled | null,
 ): Block[] {
 	const current = config ?? DEFAULT_CONFIG;
 	const collections = everything.filter((c) => !c.hidden);
@@ -343,7 +429,7 @@ function settingsBlocks(
 				"Approvers won't get an email when someone asks. They will see requests on the dashboard and on this page.",
 		});
 	}
-	const scheduleWarning = "Pages already scheduled will need approval before they go live.";
+	const scheduleWarning = scheduledText(config, scheduled);
 	blocks.push({
 		type: "form",
 		block_id: "settings",
@@ -442,7 +528,10 @@ function settingsBlocks(
 					},
 				]
 			: []),
-		{ type: "context", text: "Taking a page off the site (Unpublish)." },
+		{
+			type: "context",
+			text: "Taking a page off the site (Unpublish) is not held, by choice: a page that is wrong can always come down at once, without waiting for anyone.",
+		},
 		{ type: "divider" },
 		{ type: "header", text: "Approvers on this site" },
 		{
@@ -540,6 +629,8 @@ async function listPage(
 	user: UserInfo | undefined,
 	tab: number,
 	toast?: BlockResponse["toast"],
+	/** Read the pages already scheduled for the Settings tab, with the calls this run has left. */
+	scheduledWith?: Meter,
 ): Promise<BlockResponse> {
 	const lists = await loadLists(ctx);
 	const collections = (await ctx.schema?.listCollections()) ?? [];
@@ -605,18 +696,22 @@ async function listPage(
 
 	// Short labels, no counts: four tabs with counts ran off a 390 px phone's screen.
 	// The numbers at the top of Waiting carry the counts.
+	const drafts = await draftRows(ctx, config, user, lists.all, names);
+	const history = await historyRows(ctx, done);
+	// Last, so it uses only the calls left over.
+	const scheduled =
+		admin && scheduledWith
+			? await scheduledPages(scheduledWith, config, collections, lists.all)
+			: null;
 	const panels = [
-		{
-			label: "Waiting",
-			blocks: [...waitingBlocks, ...(await draftRows(ctx, config, user, lists.all, names))],
-		},
+		{ label: "Waiting", blocks: [...waitingBlocks, ...drafts] },
 		{ label: "Sent back", blocks: sentBackRows(sentBack, names) },
-		{ label: "History", blocks: await historyRows(ctx, done) },
+		{ label: "History", blocks: history },
 		...(admin
 			? [
 					{
 						label: "Settings",
-						blocks: settingsBlocks(ctx, config, user, lists.all, collections, people),
+						blocks: settingsBlocks(ctx, config, user, lists.all, collections, people, scheduled),
 					},
 				]
 			: []),
@@ -860,7 +955,7 @@ async function adminScreen(
 			next.collections.length === 0 && !next.ai
 				? "Saved. Nothing needs approval."
 				: "Saved. Publishing now asks for approval where you chose.";
-		return listPage(ctx, next, user, TABS.settings, { type: "success", message });
+		return listPage(ctx, next, user, TABS.settings, { type: "success", message }, m);
 	}
 
 	if (config && interaction.type === "block_action" && action === ACTION.ask) {
@@ -872,6 +967,10 @@ async function adminScreen(
 	}
 	if (config && interaction.type === "block_action") {
 		const value = buttonValue(interaction.value);
+		if (action === ACTION.withdraw && value) {
+			// A short confirmation: the list after it would cost a Contributor more calls than are left.
+			return doneView(await withdraw(ctx, user, value.key));
+		}
 		if (action === ACTION.review && value) {
 			const detail = await detailPage(ctx, config, user, value.key);
 			if (detail) return detail;
@@ -920,7 +1019,15 @@ async function adminScreen(
 	}
 	// An admin opening the page before anything is set up lands on Settings.
 	const firstRun = !config && (user?.role ?? 0) >= ROLE.admin;
-	return listPage(ctx, config, user, firstRun ? TABS.settings : TABS.waiting);
+	const opened = interaction.type === "page_load" || action === ACTION.back;
+	return listPage(
+		ctx,
+		config,
+		user,
+		firstRun ? TABS.settings : TABS.waiting,
+		undefined,
+		opened ? m : undefined,
+	);
 }
 
 export { mayApprove };

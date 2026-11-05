@@ -1,13 +1,16 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
+import type { PluginContext } from "emdash";
 import { describe, expect, it } from "vitest";
 
-import { emailStatus, rowText, when } from "../src/admin.js";
+import { details, emailStatus, rowText, when } from "../src/admin.js";
 import { parseRecipients } from "../src/alerts.js";
-import { afterExternal, afterOwnPage, verdict, type Outcome } from "../src/check.js";
+import { afterExternal, afterOwnPage, afterOwnPath, verdict, type Outcome } from "../src/check.js";
+import { searchRow, sitemapAnswers } from "../src/checklist.js";
 import { entryPath, linksInData, scanHtml } from "../src/extract.js";
 import { describe as words, foundOn, type LinkRow } from "../src/model.js";
 import { isMidUpdate } from "../src/scan.js";
+import { homeNoindex, isSitemap, readRobots } from "../src/search.js";
 import { applyChange, type Alerts, type Loaded, type Summary } from "../src/state.js";
 import { idFor, normalizePath, publicOrigin, shorten, toTarget } from "../src/url.js";
 
@@ -503,5 +506,277 @@ describe("a site in the middle of an update", () => {
 			}),
 		).toBe(false);
 		expect(isMidUpdate({ status: 500, body: "Database migrations are required." })).toBe(false);
+	});
+});
+
+describe("search engines and the home page", () => {
+	const page = (head: string) => `<!doctype html><html><head>${head}</head><body>Hi</body></html>`;
+
+	it("finds a noindex in the home page's meta tags, whatever the order or quotes", () => {
+		expect(homeNoindex(undefined, page('<meta name="robots" content="noindex, follow">'))).toBe(
+			"meta",
+		);
+		expect(homeNoindex(undefined, page("<meta content='NONE' name='Robots'>"))).toBe("meta");
+		expect(homeNoindex(undefined, page('<meta name=googlebot content="noindex">'))).toBe("meta");
+		expect(homeNoindex(undefined, page('<meta name="robots" content="index, follow">'))).toBe(null);
+		// Another crawler's own tag is neither Google's nor everyone's.
+		expect(homeNoindex(undefined, page('<meta name="bingbot" content="noindex">'))).toBe(null);
+		// The word in the page's text is not a tag.
+		expect(homeNoindex(undefined, "<html><body><p>noindex robots</p></body></html>")).toBe(null);
+	});
+
+	it("finds a noindex the server sends in X-Robots-Tag, for everyone or for Googlebot", () => {
+		const tag = (value: string) => new Headers({ "x-robots-tag": value });
+		expect(homeNoindex(tag("noindex"), "<html></html>")).toBe("header");
+		expect(homeNoindex(tag("googlebot: noindex, nofollow"), "<html></html>")).toBe("header");
+		expect(homeNoindex(tag("none"), "<html></html>")).toBe("header");
+		expect(homeNoindex(tag("otherbot: noindex"), "<html></html>")).toBe(null);
+		expect(homeNoindex(tag("noarchive"), "<html></html>")).toBe(null);
+	});
+
+	it("reads robots.txt one group of crawlers at a time", () => {
+		expect(readRobots("User-agent: *\nDisallow: /\n")).toMatchObject({ google: true, all: true });
+		expect(readRobots("User-agent: *\nAllow: /\n")).toMatchObject({ google: false, all: false });
+		// An empty Disallow lets everything in.
+		expect(readRobots("User-agent: *\nDisallow:\n")).toMatchObject({ google: false, all: false });
+		// Googlebot follows its own group and ignores the one for everyone.
+		expect(
+			readRobots("User-agent: Googlebot\nDisallow:\n\nUser-agent: *\nDisallow: /\n"),
+		).toMatchObject({ google: false, all: true });
+		expect(
+			readRobots(
+				"# keep Google out\r\nUser-agent: googlebot\r\nDisallow: /*\r\n\r\nUser-agent: *\r\nAllow: /\r\n",
+			),
+		).toMatchObject({ google: true, all: false });
+		// Several crawlers named on stacked lines share one group.
+		expect(readRobots("User-agent: Bingbot\nUser-agent: Googlebot\nDisallow: /\n")).toMatchObject({
+			google: true,
+			all: false,
+		});
+		// Googlebot-Image is not Googlebot.
+		expect(readRobots("User-agent: Googlebot-Image\nDisallow: /\n")).toMatchObject({
+			google: false,
+			all: false,
+		});
+		// Keeping out one folder, or only AI crawlers, is a choice, not a problem.
+		expect(readRobots("User-agent: *\nDisallow: /_emdash/\n")).toMatchObject({
+			google: false,
+			all: false,
+		});
+		expect(
+			readRobots("User-agent: GPTBot\nDisallow: /\n\nUser-agent: CCBot\nDisallow: /\n"),
+		).toMatchObject({ google: false, all: false });
+		// Only an Allow of the whole site opens it again; one file or folder does not.
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /\n")).toMatchObject({ all: false });
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /*\n")).toMatchObject({ all: false });
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /$\n")).toMatchObject({ all: false });
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /favicon.ico\n")).toMatchObject({
+			google: true,
+			all: true,
+		});
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /blog\n")).toMatchObject({ all: true });
+		// An Allow in another crawler's group does not open this one.
+		expect(
+			readRobots("User-agent: Bingbot\nAllow: /\n\nUser-agent: *\nDisallow: /\n"),
+		).toMatchObject({ google: true, all: true });
+	});
+
+	it("tells a site kept out except for a few addresses from one kept out entirely", () => {
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow: /blog\n")).toMatchObject({
+			google: true,
+			all: true,
+			googleSome: true,
+			allSome: true,
+		});
+		expect(readRobots("User-agent: *\nDisallow: /\n")).toMatchObject({
+			googleSome: false,
+			allSome: false,
+		});
+		// An empty Allow lets nothing in.
+		expect(readRobots("User-agent: *\nDisallow: /\nAllow:\n")).toMatchObject({ allSome: false });
+		expect(
+			readRobots(
+				"User-agent: Googlebot\nDisallow: /\nAllow: /shop/\n\nUser-agent: *\nDisallow: /\n",
+			),
+		).toMatchObject({ googleSome: true, allSome: false });
+
+		const row = (text: string) => searchRow(readRobots(text), false, true);
+		expect(row("User-agent: *\nDisallow: /\nAllow: /blog\n")).toEqual({
+			status: "attention",
+			text: "Your site keeps search engines out of most of its pages, the home page included; only some addresses are allowed.",
+		});
+		expect(row("User-agent: Googlebot\nDisallow: /\nAllow: /blog\n")).toEqual({
+			status: "attention",
+			text: "Your site keeps Google out of most of its pages, the home page included; only some addresses are allowed. Other search engines are allowed in.",
+		});
+		expect(
+			row("User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nDisallow: /\nAllow: /blog\n"),
+		).toEqual({
+			status: "attention",
+			text: "Your site lets Google in but keeps most other search engines out of most of its pages, the home page included.",
+		});
+		// Kept out entirely: the stronger words stay.
+		expect(row("User-agent: *\nDisallow: /\n").text).toBe(
+			"Your site tells search engines to stay away, so it will not appear in search results.",
+		);
+	});
+
+	it("reads a robots.txt that starts with a byte-order mark", () => {
+		expect(readRobots("﻿User-agent: *\nDisallow: /\n")).toMatchObject({
+			google: true,
+			all: true,
+		});
+		expect(
+			readRobots("﻿Sitemap: https://acme.test/sitemap.xml\nUser-agent: *\nAllow: /\n").sitemaps,
+		).toEqual(["https://acme.test/sitemap.xml"]);
+	});
+
+	it("reads the sitemap lines of robots.txt, made absolute", () => {
+		const robots = readRobots(
+			"User-agent: *\nAllow: /\n\nSitemap: https://acme.test/sitemap-index.xml\nsitemap: /second.xml # not first\n",
+			"https://acme.test",
+		);
+		expect(robots.sitemaps).toEqual([
+			"https://acme.test/sitemap-index.xml",
+			"https://acme.test/second.xml",
+		]);
+		expect(readRobots("User-agent: *\nAllow: /\n").sitemaps).toEqual([]);
+	});
+
+	it("knows a list of pages and a list of lists when it sees one", () => {
+		expect(
+			isSitemap(
+				'﻿<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>https://acme.test/sitemap-pages.xml</loc></sitemap></sitemapindex>',
+			),
+		).toBe(true);
+		expect(
+			isSitemap(
+				'<?xml version="1.0"?><?xml-stylesheet href="/s.xsl"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://acme.test/</loc></url></urlset>',
+			),
+		).toBe(true);
+		expect(isSitemap("<!doctype html><html><body>Page not found</body></html>")).toBe(false);
+		expect(isSitemap("")).toBe(false);
+		expect(isSitemap(undefined)).toBe(false);
+	});
+});
+
+describe("the list of pages for search engines", () => {
+	const SITEMAP = "https://acme.test/sitemap.xml";
+	const XML =
+		'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://acme.test/</loc></url></urlset>';
+	/** What the sandbox bridge throws for a body over 8 MiB (EmDash plugins/http-wire.ts). */
+	const TOO_BIG = "Plugin HTTP response body exceeds the 8388608 byte limit";
+
+	function host(answers: Record<string, Array<Response | Error>>, ops = 0) {
+		const asked: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
+		const counter = { ops };
+		const ctx = {
+			site: { url: "https://acme.test" },
+			http: {
+				fetch: async (url: string, init: RequestInit = {}) => {
+					counter.ops += 1;
+					const method = init.method ?? "GET";
+					asked.push({ url, method, headers: { ...(init.headers as Record<string, string>) } });
+					const next = answers[`${method} ${url}`]?.shift();
+					if (!next) return new Response("Not found", { status: 404 });
+					if (next instanceof Error) throw next;
+					return next;
+				},
+			},
+		} as unknown as PluginContext;
+		return { ctx, asked, counter };
+	}
+
+	it("asks for the first 2 KiB only, and takes a partial or a whole answer", async () => {
+		const partial = host({ [`GET ${SITEMAP}`]: [new Response(XML, { status: 206 })] });
+		expect(await sitemapAnswers(partial.ctx, SITEMAP, partial.counter)).toBe(true);
+		expect(partial.asked).toHaveLength(1);
+		expect(partial.asked[0]?.headers.Range).toBe("bytes=0-2047");
+		const whole = host({ [`GET ${SITEMAP}`]: [new Response(XML, { status: 200 })] });
+		expect(await sitemapAnswers(whole.ctx, SITEMAP, whole.counter)).toBe(true);
+		const page = host({ [`GET ${SITEMAP}`]: [new Response("<html><body>Hi</body></html>")] });
+		expect(await sitemapAnswers(page.ctx, SITEMAP, page.counter)).toBe(false);
+	});
+
+	it("asks only whether a list too big for the sandbox is there", async () => {
+		const big = host({
+			[`GET ${SITEMAP}`]: [new Error(TOO_BIG)],
+			[`HEAD ${SITEMAP}`]: [new Response(null, { status: 200 })],
+		});
+		expect(await sitemapAnswers(big.ctx, SITEMAP, big.counter)).toBe(true);
+		expect(big.asked.map((r) => r.method)).toEqual(["GET", "HEAD"]);
+		const gone = host({
+			[`GET ${SITEMAP}`]: [new Error(TOO_BIG)],
+			[`HEAD ${SITEMAP}`]: [new Response(null, { status: 404 })],
+		});
+		expect(await sitemapAnswers(gone.ctx, SITEMAP, gone.counter)).toBe(false);
+		// Another error is still one we could not read through.
+		const broken = host({ [`GET ${SITEMAP}`]: [new Error("connection reset")] });
+		expect(await sitemapAnswers(broken.ctx, SITEMAP, broken.counter)).toBe(false);
+		expect(broken.asked).toHaveLength(1);
+	});
+
+	it("takes a too-big answer as there when the run has no call to spare for a HEAD", async () => {
+		// 6 calls before, the GET makes 7; a HEAD and the two writes after it would make 10.
+		const tight = host({ [`GET ${SITEMAP}`]: [new Error(TOO_BIG)] }, 6);
+		expect(await sitemapAnswers(tight.ctx, SITEMAP, tight.counter)).toBe(true);
+		expect(tight.asked.map((r) => r.method)).toEqual(["GET"]);
+		expect(tight.counter.ops).toBe(7);
+	});
+
+	it("counts a gzipped list as there without reading it", async () => {
+		const gz = "https://acme.test/sitemap.xml.gz";
+		const named = host({ [`HEAD ${gz}`]: [new Response(null, { status: 200 })] });
+		expect(await sitemapAnswers(named.ctx, gz, named.counter)).toBe(true);
+		expect(named.asked.map((r) => r.method)).toEqual(["HEAD"]);
+		const typed = host({
+			[`GET ${SITEMAP}`]: [
+				new Response(new Uint8Array([0x1f, 0x8b, 8, 0, 0, 0]), {
+					headers: { "content-type": "application/x-gzip" },
+				}),
+			],
+		});
+		expect(await sitemapAnswers(typed.ctx, SITEMAP, typed.counter)).toBe(true);
+		const missing = host({});
+		expect(await sitemapAnswers(missing.ctx, gz, missing.counter)).toBe(false);
+	});
+});
+
+describe("details for your web person", () => {
+	const at = "2026-10-16T08:55:00.000Z";
+
+	it("gives the answer's number and when, or says why there is none", () => {
+		const base = { kind: "external" as const, url: "https://gone.example/rye", checkedAt: at };
+		expect(details({ ...base, reason: "gone", code: 404 }, NOW)).toBe(
+			"https://gone.example/rye: HTTP 404, checked an hour ago (2026-10-16 08:55 UTC).",
+		);
+		expect(details({ ...base, reason: "no-site" }, NOW)).toBe(
+			"https://gone.example/rye: no answer, the name does not resolve (DNS), checked an hour ago (2026-10-16 08:55 UTC).",
+		);
+		expect(details({ kind: "internal", url: "/christmas", reason: "draft" }, NOW)).toBe(
+			"/christmas: not requested, the page is not published.",
+		);
+		expect(
+			details(
+				{ kind: "insecure", url: "http://maps.example/embed", reason: "insecure-active" },
+				NOW,
+			),
+		).toBe("http://maps.example/embed: not requested, loaded over http:// on an https page.");
+		// A row kept from before the number was saved.
+		expect(details({ kind: "internal", url: "/old-page", reason: "missing" }, NOW)).toBe(
+			"/old-page: no page with this address.",
+		);
+	});
+
+	it("keeps the answer's number on the row after each request", () => {
+		const first = new Date(NOW - 2 * 24 * HOUR).toISOString();
+		const gone = afterExternal(row({ fails: 1, firstFailAt: first }), { kind: "gone" }, NOW, 410);
+		expect(gone).toMatchObject({ state: "broken", code: 410 });
+		// A request with no answer leaves no old number behind.
+		expect(afterExternal(gone, { kind: "unknown", reason: "timeout" }, NOW).code).toBeUndefined();
+		expect(afterOwnPage(row({ kind: "page", url: "/x" }), { status: 500 }, NOW).code).toBe(500);
+		expect(
+			afterOwnPath(row({ kind: "internal", url: "/x" }), { kind: "gone" }, NOW, 404),
+		).toMatchObject({ state: "broken", reason: "missing", code: 404 });
 	});
 });

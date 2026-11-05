@@ -95,6 +95,19 @@ describe("config", () => {
 		expect(needsConsent(DEFAULT_CONFIG)).toBe(false);
 	});
 
+	it("files Plausible and Umami as cookie-free, LinkedIn and TikTok under Marketing", () => {
+		const cookieFree = normalizeConfig({
+			tools: { plausible: "bakery.de", umami: "94db1cb1-74f4-4a40-ad6c-962362670409" },
+		});
+		expect(needsConsent(cookieFree)).toBe(false);
+		const ads = normalizeConfig({ tools: { linkedin: "1234567", tiktok: "CABC123DEF456GHI789J" } });
+		expect(needsConsent(ads)).toBe(true);
+		expect(vendorNames(ads, "marketing")).toEqual(["LinkedIn Insight Tag", "TikTok Pixel"]);
+		expect(vendorNames(ads, "analytics")).toEqual([]);
+		// A stored value that is not a valid ID never reaches the page.
+		expect(normalizeConfig({ tools: { tiktok: "<script>" } }).tools.tiktok).toBe("");
+	});
+
 	it("changes the banner version only when the set of tools changes", () => {
 		const one = normalizeConfig({ tools: { ga4: "G-AB12CD34EF" } });
 		const sameToolNewId = normalizeConfig({ tools: { ga4: "G-ZZ99ZZ99ZZ" } });
@@ -104,6 +117,20 @@ describe("config", () => {
 		expect(bannerVersion(sameToolNewId)).toBe(bannerVersion(one));
 		expect(bannerVersion(newText)).toBe(bannerVersion(one));
 		expect(bannerVersion(two)).not.toBe(bannerVersion(one));
+	});
+
+	it('changes with each "Ask everyone again", and only then', () => {
+		const tools = { tools: { ga4: "G-ABC123DEF4" } };
+		const before = bannerVersion(normalizeConfig(tools));
+		const once = normalizeConfig({ ...tools, askAgain: 1 });
+		const twice = normalizeConfig({ ...tools, askAgain: 2 });
+		expect(once.askAgain).toBe(1);
+		expect(bannerVersion(once)).not.toBe(before);
+		expect(bannerVersion(twice)).not.toBe(bannerVersion(once));
+		expect(bannerVersion(normalizeConfig({ ...tools, askAgain: 0 }))).toBe(before);
+		for (const bad of [-1, 1.5, "3", null, 1e9]) {
+			expect(normalizeConfig({ ...tools, askAgain: bad }).askAgain, String(bad)).toBe(0);
+		}
 	});
 });
 

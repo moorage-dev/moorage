@@ -31,6 +31,11 @@ export interface ClientItem {
 	d: 0 | 1 | 2;
 	/** Days before it shows again after a close; 0 means never again. */
 	a: number;
+	/**
+	 * A fingerprint of what it says, its link and its dates. A close or a click
+	 * is remembered with it, so a popup that says something new shows again.
+	 */
+	v: string;
 	/** May open on the first page of a visit (centred popups, computers only). */
 	f?: 1;
 	/** Start and end, exact moments in milliseconds. */

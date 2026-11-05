@@ -83,6 +83,31 @@ describe("what a page loads", () => {
 		).toEqual(["HubSpot (87654321) is pasted into your pages"]);
 	});
 
+	it("knows the four tools added in 0.4: pasted, or added twice", () => {
+		const linkedin = `<script>_linkedin_partner_id = "7654321";</script><script src="https://snap.licdn.com/li.lms-analytics/insight.min.js"></script>`;
+		expect(titles(page(linkedin))).toEqual([
+			"LinkedIn Insight Tag (7654321) is pasted into your pages",
+		]);
+		expect(titles(page(linkedin), { tools: { linkedin: "7654321" } })).toEqual([
+			"LinkedIn Insight Tag is added twice",
+		]);
+		const tiktok = `<script>!function(w,d,t){w.TiktokAnalyticsObject=t;}(window,document,'ttq');ttq.load('CABC123DEF456GHI789J');</script><script src="https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=CABC123DEF456GHI789J&lib=ttq"></script>`;
+		expect(titles(page(tiktok))).toEqual([
+			"TikTok Pixel (CABC123DEF456GHI789J) is pasted into your pages",
+		]);
+		// Cookie-free counting may load without asking: only a second copy is worth a word.
+		const plausible = `<script defer data-domain="bakery.de" src="https://plausible.io/js/script.js"></script>`;
+		expect(titles(page(plausible))).toEqual([]);
+		expect(titles(page(plausible), { tools: { plausible: "bakery.de" } })).toEqual([
+			"Plausible is added twice",
+		]);
+		const umami = `<script defer src="https://cloud.umami.is/script.js" data-website-id="94db1cb1-74f4-4a40-ad6c-962362670409"></script>`;
+		expect(titles(page(umami))).toEqual([]);
+		expect(
+			titles(page(umami), { tools: { umami: "94db1cb1-74f4-4a40-ad6c-962362670409" } }),
+		).toEqual(["Umami is added twice"]);
+	});
+
 	it("names old Universal Analytics, other trackers and Google ads, each with its own advice", () => {
 		const found = scanPage(
 			page(
@@ -98,6 +123,20 @@ describe("what a page loads", () => {
 		]);
 		expect(found[0]!.advice).toContain("switched it off in 2023");
 		expect(found[2]!.advice).toContain("certified");
+	});
+
+	it("leaves alone a video or map this plugin holds back until visitors agree", () => {
+		const held = (player: string) =>
+			`<div class="cc-held" data-cc-held="video" data-cc-name="YouTube"><div class="cc-held-ask" hidden><p class="cc-held-text">This video is shown by YouTube.</p><button type="button" data-cc-load>Load the video</button><a class="cc-held-link" href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">Open it on YouTube</a></div><template>${player}</template></div>`;
+		expect(
+			titles(
+				page(
+					held(
+						`<div class="emdash-iframe"><iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe></div>`,
+					) + held(`<iframe src="https://www.google.com/maps/embed?pb=!1m18"></iframe>`),
+				),
+			),
+		).toEqual([]);
 	});
 
 	it("finds embeds that set cookies before anyone is asked, with a plain fix for each", () => {

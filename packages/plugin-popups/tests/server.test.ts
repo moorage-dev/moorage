@@ -13,6 +13,7 @@ import {
 	pathMatches,
 	showsOn,
 	simplify,
+	type Popup,
 	uniqueHandle,
 } from "../src/config.js";
 import { checkForm, describeCheck, judgeDefinition, listForms } from "../src/forms.js";
@@ -256,6 +257,34 @@ describe("the page hook", () => {
 		expect(item.c.form).toBeUndefined();
 		expect(clientItem(popup({ decline: "not-now" }), "")!.c.no).toBe("Not now");
 		expect(clientItem(popup({ decline: "none" }), "")!.c.no).toBe("");
+	});
+
+	it("marks each popup with a short fingerprint of what it says, its link and its dates", () => {
+		const base = { kind: "bar" as const, buttonUrl: "https://shop.example/cakes" };
+		const v = (raw: Partial<Popup>, origin = "") =>
+			clientItem(popup({ ...base, ...raw }), origin)!.v;
+		const same = v({});
+		expect(same).toMatch(/^[0-9a-z]{1,8}$/);
+		// The same words on www and on the bare domain, or under a new name: the same popup.
+		expect(v({}, "https://hartleys.test")).toBe(same);
+		expect(v({}, "https://www.hartleys.test")).toBe(same);
+		expect(v({ handle: "renamed", name: "Renamed" })).toBe(same);
+		// Where, when and how often it shows, and its look, are not what it says.
+		expect(v({ devices: "phone", again: "never", where: "prefix", prefixes: ["/journal/"] })).toBe(
+			same,
+		);
+		expect(v({ decline: "not-now" })).toBe(same);
+		// What it says, its link and its dates are.
+		const changed = [
+			v({ heading: "Closed on Boxing Day" }),
+			v({ text: "Back on the 27th." }),
+			v({ buttonLabel: "See the hours" }),
+			v({ buttonUrl: "https://shop.example/hours" }),
+			v({ start: NOW }),
+			v({ end: NOW + 86_400_000 }),
+		];
+		for (const each of changed) expect(each).not.toBe(same);
+		expect(new Set(changed).size).toBe(changed.length);
 	});
 });
 

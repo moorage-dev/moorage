@@ -103,6 +103,69 @@ describe("SEO page", () => {
 	});
 });
 
+describe("the page counts", () => {
+	async function checked(runtime: PluginRuntimeTestHost): Promise<BlockResponse> {
+		await runtime.admin.loadPage(PAGE);
+		for (let step = 0; step < 20; step += 1) {
+			const scan = await runtime.inspect.kv.get<{ status: string; sweep?: unknown }>("scan");
+			if (scan?.status === "done" && !scan.sweep) break;
+			await runtime.transport.invokeHook("cron", { name: "seo-scan" });
+		}
+		return runtime.admin.loadPage(PAGE);
+	}
+
+	function counts(response: BlockResponse): Record<string, unknown> {
+		const stats = flatten(response.blocks).find((block) => block.type === "stats");
+		return Object.fromEntries(
+			(stats?.type === "stats" ? stats.items : []).map((item) => [item.label, item.value]),
+		);
+	}
+
+	it("add up: hidden pages are in none of the three cards", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			collections: { services: { noindex: true, hiddenOk: true } },
+		});
+		for (const slug of ["one", "two", "three"]) {
+			await runtime.fixtures.content("pages", { slug, data: { title: slug }, status: "published" });
+		}
+		for (const slug of ["cakes", "bread"]) {
+			await runtime.fixtures.content("services", {
+				slug,
+				data: { title: slug },
+				status: "published",
+			});
+		}
+		const response = await checked(runtime);
+		const shown = counts(response);
+		expect(shown["Pages checked"]).toBe(3);
+		expect(Number(shown["Nothing to fix"]) + Number(shown["To fix"])).toBe(3);
+		expect(texts(response)).toContain("2 pages are hidden from Google and not counted above");
+	});
+
+	it("a site whose pages are all hidden says so, not that it has no pages", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			collections: {
+				pages: { noindex: true, hiddenOk: true },
+				services: { noindex: true, hiddenOk: true },
+			},
+		});
+		await runtime.fixtures.content("pages", {
+			slug: "one",
+			data: { title: "One" },
+			status: "published",
+		});
+		const response = await checked(runtime);
+		expect(counts(response)["Pages checked"]).toBe(0);
+		expect(texts(response)).not.toContain("No published pages yet");
+		expect(texts(response)).toContain("1 page is hidden from Google");
+		const widget = await runtime.admin.loadWidget("seo");
+		expect(texts(widget)).not.toContain("Your pages are being checked.");
+		expect(texts(widget)).toContain("Every page is hidden from Google");
+	});
+});
+
 describe("the help line", () => {
 	const line = (response: BlockResponse) =>
 		response.blocks.find((block) => block.type === "actions" && block.block_id === HELP_LINE);
@@ -535,5 +598,362 @@ describe("Content types", () => {
 			breadcrumbs: false,
 			robots: { nosnippet: true, maxImagePreview: "standard" },
 		});
+	});
+});
+
+describe("copying settings to another site", () => {
+	const SOURCE = {
+		site: {
+			type: "FoodEstablishment",
+			name: "Acme Bakery",
+			sameAs: ["https://www.instagram.com/acmebakery"],
+			telephone: "+44 20 7946 0000",
+			address: { streetAddress: "1 Main St", addressLocality: "Springfield" },
+			openingHours: [{ days: ["Monday"], opens: "08:00", closes: "17:00" }],
+			areaServed: [],
+		},
+		collections: { services: { type: "Service", noindex: true, hiddenOk: true } },
+		steps: { identity: true, types: true },
+		hideHelpLine: true,
+	};
+
+	/** The code block an admin copies from the Settings tab. */
+	function exported(response: BlockResponse): string {
+		const code = flatten(response.blocks).find(
+			(block) => block.type === "code" && block.block_id === "settings_export",
+		);
+		return code?.type === "code" ? code.code : "";
+	}
+
+	function applyButton(response: BlockResponse) {
+		const actions = flatten(response.blocks).find(
+			(block) => block.type === "actions" && block.block_id === "settings_import_confirm",
+		);
+		const button =
+			actions?.type === "actions"
+				? actions.elements.find(
+						(element) => element.type === "button" && element.action_id === "apply_settings",
+					)
+				: undefined;
+		return button?.type === "button" ? button : undefined;
+	}
+
+	it("shows the settings as code to copy, without the per-site switches", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", SOURCE);
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		const parsed = JSON.parse(text) as Record<string, unknown>;
+		expect(parsed.format).toBe("emdash-seo-settings");
+		expect(parsed).toMatchObject({ site: { name: "Acme Bakery", type: "FoodEstablishment" } });
+		expect(parsed).toMatchObject({ collections: { services: { type: "Service", noindex: true } } });
+		// Per-site choices stay on the site: the help line switch, setup steps, confirmations.
+		expect(text).not.toContain("hideHelpLine");
+		expect(text).not.toContain("steps");
+		expect(text).not.toContain("hiddenOk");
+	});
+
+	it("checks a paste, shows what will change, saves nothing until applied, then saves it", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", SOURCE);
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		await runtime.fixtures.plugin.setting("config", null);
+
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: text });
+		expect(checked.toast?.type).toBe("success");
+		const shown = texts(checked);
+		expect(shown).toContain("What will change");
+		expect(shown).toContain("Acme Bakery");
+		expect(shown).toContain("Restaurant, cafe or bakery");
+		// Hiding content from Google is the change that can do damage, so it is called out.
+		expect(shown).toContain("These settings hide every page in Services from Google");
+		expect(validateBlockResponse(checked, { pluginPagePaths: [PAGE] })).toEqual({
+			valid: true,
+			errors: [],
+		});
+		expect(await config(runtime)).toBeNull();
+
+		const button = applyButton(checked);
+		expect(button).toBeDefined();
+		const applied = await runtime.admin.act(PAGE, "apply_settings", { value: button?.value });
+		expect(applied.toast?.type).toBe("success");
+		const saved = await config(runtime);
+		expect(saved?.site).toMatchObject({
+			type: "FoodEstablishment",
+			name: "Acme Bakery",
+			telephone: "+44 20 7946 0000",
+			openingHours: [{ days: ["Monday"], opens: "08:00", closes: "17:00" }],
+		});
+		// Hidden again needs this site's own confirmation; the help line stays as it was here.
+		expect(saved?.collections.services).toEqual({ type: "Service", noindex: true });
+		expect(saved?.hideHelpLine).toBe(false);
+		expect(saved?.steps.identity).toBe(true);
+		expect(texts(applied)).toContain("Some pages are hidden from Google");
+	});
+
+	it("copies every content type as it is, guessed types and shown ones too", async () => {
+		const runtime = await start();
+		// The source relies on the guesses: Pages as Web page, Services as Service, both shown.
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		expect(JSON.parse(text)).toMatchObject({
+			collections: {
+				pages: { type: "WebPage", noindex: false },
+				services: { type: "Service", noindex: false },
+			},
+		});
+		// This site changed both, and had its hidden Services confirmed.
+		await runtime.fixtures.plugin.setting("config", {
+			collections: {
+				pages: { type: "AboutPage" },
+				services: { noindex: true, hiddenOk: true },
+			},
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: text });
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		expect((await config(runtime))?.collections).toEqual({
+			pages: { type: "WebPage", noindex: false },
+			services: { type: "Service", noindex: false },
+		});
+	});
+
+	it("keeps this site's confirmation for a content type it already hid", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			collections: { services: { noindex: true, hiddenOk: true } },
+		});
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: { type: "Organization", name: "Acme Two" },
+			collections: { services: { type: "Service", noindex: true } },
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(texts(checked)).not.toContain("These settings hide every page");
+		const applied = await runtime.admin.act(PAGE, "apply_settings", {
+			value: applyButton(checked)?.value,
+		});
+		expect((await config(runtime))?.collections.services).toEqual({
+			type: "Service",
+			noindex: true,
+			hiddenOk: true,
+		});
+		expect(texts(applied)).not.toContain("Some pages are hidden from Google");
+	});
+
+	it("says when nothing would change", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", SOURCE);
+		const text = exported(await runtime.admin.loadPage(PAGE));
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: text });
+		expect(texts(checked)).toContain("Nothing would change");
+		expect(applyButton(checked)).toBeUndefined();
+	});
+
+	it("leaves out content types this site does not have, and says so", async () => {
+		const runtime = await start();
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: { type: "Organization", name: "Acme" },
+			collections: { recipes: { type: "Article" }, pages: { type: "AboutPage" } },
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(texts(checked)).toContain("Left out, as this site has no such content: recipes");
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		const saved = await config(runtime);
+		expect(saved?.collections.pages?.type).toBe("AboutPage");
+		expect(saved?.collections.recipes).toBeUndefined();
+	});
+
+	it("imports a paste as the forms would save it, and never the markup field", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			site: { type: "Organization", priceRange: "$$" },
+		});
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: {
+				type: "Store",
+				name: "Acme Shop",
+				foundingDate: "2012",
+				sameAs: ["instagram.com/acme", "", "https://www.facebook.com/acme"],
+				address: { streetAddress: "1 Main St", addressCountry: "gb" },
+				openingHours: [
+					{ days: ["Monday", "Tuesday"], opens: "9:00", closes: "17:00" },
+					{ days: ["Monday"], opens: "18:00", closes: "20:00" },
+				],
+			},
+			robots: { maxSnippet: 50, maxVideoPreview: 30, maxImagePreview: "standard" },
+			jsonLdField: "custom_markup",
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(checked.toast?.type).toBe("success");
+		const shown = texts(checked);
+		expect(JSON.stringify(applyButton(checked)?.value)).not.toContain("custom_markup");
+		expect(shown).not.toContain("Field for a page's own markup");
+		expect(shown).toContain("Video previews in search results");
+		expect(shown).toContain("https://instagram.com/acme");
+		expect(shown).toContain("Not shown");
+		expect(shown).toContain("A local business customers visit (shop, cafe, clinic)");
+		expect(shown).toContain("Small");
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		const saved = await config(runtime);
+		expect(saved?.jsonLdField).toBe("json_ld");
+		expect(saved?.site.foundingDate).toBe("2012");
+		expect(saved?.site.sameAs).toEqual([
+			"https://instagram.com/acme",
+			"https://www.facebook.com/acme",
+		]);
+		expect(saved?.site.address?.addressCountry).toBe("GB");
+		expect(saved?.site.openingHours).toEqual([
+			{ days: ["Monday"], opens: "09:00", closes: "17:00" },
+			{ days: ["Monday"], opens: "18:00", closes: "20:00" },
+			{ days: ["Tuesday"], opens: "09:00", closes: "17:00" },
+		]);
+		expect(saved?.robots).toMatchObject({
+			maxSnippet: 160,
+			maxVideoPreview: 160,
+			maxImagePreview: "standard",
+			nosnippet: false,
+		});
+	});
+
+	it("keeps what no form edits on this site: map position, VAT and tax numbers, employees", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.setting("config", {
+			site: {
+				type: "Organization",
+				name: "Here",
+				geo: { latitude: 1, longitude: 2 },
+				vatID: "GB1",
+				taxID: "T1",
+				numberOfEmployees: 5,
+			},
+		});
+		const own = exported(await runtime.admin.loadPage(PAGE));
+		for (const key of ["geo", "vatID", "taxID", "numberOfEmployees", "jsonLdField"]) {
+			expect(own, key).not.toContain(`"${key}"`);
+		}
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: {
+				type: "Organization",
+				name: "There",
+				geo: { latitude: 9, longitude: 9 },
+				vatID: "GB9",
+				taxID: "T9",
+				numberOfEmployees: 99,
+			},
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		const value = JSON.stringify(applyButton(checked)?.value);
+		for (const key of ["geo", "vatID", "taxID", "numberOfEmployees"]) {
+			expect(value, key).not.toContain(`"${key}"`);
+		}
+		const table = flatten(checked.blocks).find(
+			(block) => block.type === "table" && block.page_action_id === "transfer_table",
+		);
+		const rows = JSON.stringify(table);
+		expect(rows).toContain("There");
+		for (const row of ["Map position", "VAT number", "Tax number", "Employees"]) {
+			expect(rows, row).not.toContain(row);
+		}
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		expect((await config(runtime))?.site).toMatchObject({
+			name: "There",
+			geo: { latitude: 1, longitude: 2 },
+			vatID: "GB1",
+			taxID: "T1",
+			numberOfEmployees: 5,
+		});
+	});
+
+	it("drops pasted hours when the site is not a local business, and maps no text to -1", async () => {
+		const runtime = await start();
+		const paste = JSON.stringify({
+			format: "emdash-seo-settings",
+			version: 1,
+			site: {
+				type: "Organization",
+				openingHours: [{ days: ["Monday"], opens: "09:00", closes: "17:00" }],
+			},
+			robots: { nosnippet: true, maxSnippet: 160, maxVideoPreview: -5 },
+		});
+		const checked = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+		expect(checked.toast?.type).toBe("success");
+		expect(texts(checked)).not.toContain("Mon 09:00");
+		await runtime.admin.act(PAGE, "apply_settings", { value: applyButton(checked)?.value });
+		const saved = await config(runtime);
+		expect(saved?.site.openingHours).toEqual([]);
+		expect(saved?.robots).toMatchObject({ nosnippet: true, maxSnippet: -1, maxVideoPreview: -1 });
+	});
+
+	it("refuses what is not settings from this plugin, or settings the forms would refuse", async () => {
+		const runtime = await start();
+		const settings = (site: Record<string, unknown>) =>
+			JSON.stringify({ format: "emdash-seo-settings", version: 1, site });
+		for (const [paste, message] of [
+			["", "Paste the settings first."],
+			["source,target,code\n/a,/b,301", "This is not a copy of SEO settings"],
+			['{"site":{"name":"Acme"}}', "This is not a copy of SEO settings"],
+			[settings({ type: "Spaceport" }), "kind of site"],
+			[
+				settings({
+					type: "Store",
+					openingHours: [{ days: ["Monday"], opens: "8am", closes: "5pm" }],
+				}),
+				"opening hours",
+			],
+			[settings({ type: "Organization", logo: "javascript:alert(1)" }), "logo"],
+			[settings({ type: "Organization", sameAs: ["not a link"] }), "profile"],
+			[settings({ type: "Organization", sameAs: ["https://localhost/me"] }), "profile"],
+			[settings({ type: "Organization", foundingDate: "May 2012" }), "founding date"],
+			[
+				settings({
+					type: "Store",
+					openingHours: [
+						{ days: ["Monday"], opens: "08:00", closes: "10:00" },
+						{ days: ["Monday"], opens: "11:00", closes: "13:00" },
+						{ days: ["Monday"], opens: "14:00", closes: "17:00" },
+					],
+				}),
+				"opening hours",
+			],
+			[
+				settings({
+					type: "Store",
+					openingHours: [{ days: ["Funday"], opens: "08:00", closes: "10:00" }],
+				}),
+				"opening hours",
+			],
+		] as const) {
+			const response = await runtime.admin.submit(PAGE, "check_settings", { settings: paste });
+			expect(response.toast?.type, paste).toBe("error");
+			expect(response.toast?.message, paste).toContain(message);
+			expect(applyButton(response), paste).toBeUndefined();
+		}
+		// A changed button value is checked again before anything is saved.
+		const refused = await runtime.admin.act(PAGE, "apply_settings", {
+			value: { format: "emdash-seo-settings", version: 1, site: { type: "Spaceport" } },
+		});
+		expect(refused.toast?.type).toBe("error");
+		expect(await config(runtime)).toBeNull();
+	});
+
+	it("lets only an admin see and apply settings", async () => {
+		const runtime = await start();
+		const editor = await runtime.fixtures.user({ email: "editor@acme.test", role: "editor" });
+		const page = await runtime.admin.loadPage(PAGE, { user: editor });
+		expect(texts(page)).not.toContain("emdash-seo-settings");
+		await runtime.admin.act(PAGE, "apply_settings", {
+			value: {
+				format: "emdash-seo-settings",
+				version: 1,
+				site: { type: "Person", name: "Hacked" },
+			},
+			user: editor,
+		});
+		expect(await config(runtime)).toBeNull();
 	});
 });

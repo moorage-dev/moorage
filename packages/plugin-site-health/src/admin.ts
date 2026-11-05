@@ -113,6 +113,49 @@ export function rowText(row: RowView, summary: Summary | null): string {
 	return `${fresh ? "New since the last check. " : ""}${describe(row, shorten(row.url))}${twice}${foundOn(row)}`;
 }
 
+export const DETAILS = "Details for your web person";
+
+/** "2026-10-16 08:55 UTC": a clock time that says its zone (the site's is not known). */
+function utc(iso: string): string {
+	return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+/** Why a request got no number, or why none was made. */
+function noCode(row: Pick<RowView, "kind" | "reason">): string {
+	switch (row.reason) {
+		case "draft":
+			return "not requested, the page is not published";
+		case "insecure-active":
+		case "insecure-image":
+			return "not requested, loaded over http:// on an https page";
+		case "no-site":
+			return "no answer, the name does not resolve (DNS)";
+		case "timeout":
+			return "no answer within 8 seconds";
+		case "missing":
+			return "no page with this address";
+		case "no-live":
+			return "not requested, the site could not open its own pages";
+		default:
+			return "no answer";
+	}
+}
+
+/**
+ * One folded line for the owner's web person: the address, the HTTP answer
+ * and when it came (or why there is none). Rows saved before 0.2.0 have no number.
+ */
+export function details(
+	row: Pick<RowView, "kind" | "url" | "reason" | "code" | "checkedAt">,
+	now = Date.now(),
+): string {
+	const local = row.reason === "draft" || row.kind === "insecure";
+	const answer = row.code !== undefined && !local ? `HTTP ${row.code}` : noCode(row);
+	const checked =
+		row.checkedAt && !local ? `, checked ${when(row.checkedAt, now)} (${utc(row.checkedAt)})` : "";
+	return `${row.url}: ${answer}${checked}.`;
+}
+
 function fixMenu(row: RowView, admin: boolean): ActionElement {
 	const items: Array<{ label: string; value: string }> = [];
 	const local = row.kind === "internal" || row.kind === "page";
@@ -338,6 +381,17 @@ function problemsTab(ctx: PluginContext, data: Loaded, admin: boolean, state: Pa
 				rows.map((row) => ({ text: rowText(row, summary), action: fixMenu(row, admin) })),
 				next,
 			),
+			{
+				type: "accordion",
+				label: DETAILS,
+				blocks: [
+					{
+						type: "context",
+						text: "The technical answer for each row above, to copy for whoever looks after your site.",
+					},
+					{ type: "code", code: rows.map((row) => details(row)).join("\n") },
+				],
+			},
 		);
 	}
 	if (!anyRows) {
@@ -527,6 +581,29 @@ export function emailStatus(
 	};
 }
 
+/**
+ * May search engines list the home page? Read by every full check from the home
+ * page it opens anyway, so a change shows the next day, not the next week.
+ */
+function homeRow(summary: Summary | null): { status: CheckStatus; text: string } {
+	if (!summary?.home) {
+		return summary && summary.live !== "ok"
+			? { status: "unknown", text: "We could not open your site to find out." }
+			: { status: "untested", text: "Checked with the next full check." };
+	}
+	if (summary.home === "index") {
+		return { status: "working", text: "Search engines may list your home page." };
+	}
+	const where =
+		summary.home === "meta"
+			? "a noindex tag in the page"
+			: "an X-Robots-Tag header the server sends";
+	return {
+		status: "attention",
+		text: `Your home page tells search engines not to list it (${where}), so it will not appear in search results. If that is not on purpose, whoever looks after your site can remove it.`,
+	};
+}
+
 /** Checklist rows needing attention (the widget's "Setup" count). */
 export function setupRows(
 	data: Loaded,
@@ -580,6 +657,7 @@ export function setupRows(
 				text: "Checked with the next full check.",
 			}),
 		},
+		{ name: "Home page in search results", ...homeRow(data.summary) },
 		{
 			name: "Search engines",
 			...(stored.search ?? {
@@ -899,19 +977,20 @@ async function checkAgain(
 	let after: LinkRow = row;
 	const base = row.state === "fine" ? { ...row, state: "pending" as const, fine: undefined } : row;
 	if (row.kind === "external") {
-		let result = verdict(row.url, await request(ctx, row.url, { method: "HEAD" }), "HEAD");
-		if (result.kind === "retry") result = verdict(row.url, await request(ctx, row.url), "GET");
-		after = afterExternal(base, result, now);
+		let outcome = await request(ctx, row.url, { method: "HEAD" });
+		let result = verdict(row.url, outcome, "HEAD");
+		if (result.kind === "retry") {
+			outcome = await request(ctx, row.url);
+			result = verdict(row.url, outcome, "GET");
+		}
+		after = afterExternal(base, result, now, outcome.status);
 	} else if (row.kind === "internal") {
 		const page = await pages(ctx).get(row.url);
 		after = resolveLocal(base, page ?? undefined, now);
 		if (after.state === "pending") {
-			after = origin
-				? afterOwnPath(
-						after,
-						verdict(row.url, await request(ctx, `${origin}${row.url}`), "GET"),
-						now,
-					)
+			const outcome = origin ? await request(ctx, `${origin}${row.url}`) : null;
+			after = outcome
+				? afterOwnPath(after, verdict(row.url, outcome, "GET"), now, outcome.status)
 				: { ...after, state: "unknown", reason: "no-live", due: NEVER };
 		}
 	} else if (row.kind === "page") {

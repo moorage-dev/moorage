@@ -89,6 +89,20 @@ const mail: Delivery = {
 	to: ["orders@crumb.test"],
 };
 
+const SLACK = "https://hooks.slack.com/services/T0ABC/B0DEF/slackSECRETtoken1234";
+const slack: Delivery = {
+	id: "slackdeliv",
+	kind: "chat",
+	name: "Contact us → Slack",
+	forms: ["contact"],
+	on: true,
+	repeat: "off",
+	holdSpam: false,
+	createdAt: "2026-10-20T00:00:00.000Z",
+	chat: "slack",
+	url: SLACK,
+};
+
 const CONFIG: Config = {
 	version: 2,
 	deliveries: [],
@@ -1463,7 +1477,9 @@ const ACTIONS: ActionCase[] = [
 		seed: approving([TOKEN, tokens], [LIST, conflictList], [REVOKE, ok]),
 		value: { id: zap.id, form: "contact", code: "ABCD-EFGH" },
 		did: async (_h, m) => expect(JSON.stringify(m.result)).toContain("Replace it"),
-		count: 5,
+		// 2026-11: +2, the forms saved (and their copy for 0.3.0) now that the list notes each
+		// form's Forms auto-reply.
+		count: 7,
 	},
 	{
 		action: "connect_finish",
@@ -1602,6 +1618,61 @@ describe("admin actions, on a running site with one delivery", () => {
 			...(c.nested ? { nested: c.nested } : {}),
 		})),
 	);
+});
+
+// ─── 2026-11: Slack or Discord channels ─────────────────────────────
+
+describe("Slack or Discord channels", () => {
+	const admin = async (h: Host, invoke: (user: User) => Invoke) => ({
+		h,
+		invoke: invoke((await people(h)).admin),
+	});
+	run([
+		{
+			name: "admin new_save, Slack channel, form connected (sends a test)",
+			setup: async () => {
+				const h = await running([]);
+				await h.http.respond(SLACK, ok());
+				return admin(
+					h,
+					(u) => () =>
+						h.admin.submit(
+							PAGE,
+							"new_save",
+							{ url: SLACK, name: "" },
+							{ user: u, blockId: "new2:chat:contact" },
+						),
+				);
+			},
+			did: async (h) =>
+				expect((await h.inspect.setting<Config>("config"))?.deliveries[0]).toMatchObject({
+					kind: "chat",
+					chat: "slack",
+				}),
+			count: 8,
+		},
+		{
+			name: "admin open, a Slack channel",
+			setup: async () =>
+				admin(
+					await running([slack]),
+					(u) => () => host!.admin.act(PAGE, "open", { user: u, value: slack.id }),
+				),
+			did: async (_h, m) => expect(JSON.stringify(m.result)).not.toContain("slackSECRET"),
+			count: 4,
+		},
+		{
+			name: "deliver, one due try through a Slack channel",
+			setup: async () => {
+				const h = await running([slack]);
+				await row(h, "s1", slack.id, {}, { rows: [slack.id] });
+				await h.http.respond(SLACK, ok());
+				return { h, invoke: deliverRun(h) };
+			},
+			did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
+			count: 7,
+		},
+	]);
 });
 
 // ─── With Cloudflare's limit enforced ────────────────────────────────

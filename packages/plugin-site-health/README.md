@@ -2,7 +2,7 @@
 
 Tells you what is broken on your [EmDash](https://emdashcms.com) site before a customer does: a dead link in the menu, a page that shows an error, a map that will not load. It is a broken link checker for your pages, your menu and the links to other sites, with an email when something breaks and a short setup checklist. It runs on any EmDash site, with no account and no key.
 
-![The Problems tab](images/problems-0-1-7.png)
+![The Problems tab](images/problems-0-2-0.png)
 
 ## What it does
 
@@ -11,7 +11,7 @@ Tells you what is broken on your [EmDash](https://emdashcms.com) site before a c
   - **One page:** a page that shows visitors an error, or loads a map, video, script or form over an insecure connection (browsers block those, so visitors see an empty box).
   - **One link:** a link inside a page that goes to a page that does not exist, a page not published yet, or a page another website has removed.
 
-  There is one row per broken address, with the pages it was found on. A row is marked "New since the last check" when it first appeared in the latest check.
+  There is one row per broken address, with the pages it was found on. A row is marked "New since the last check" when it first appeared in the latest check. Under each group, a folded "Details for your web person" gives each row's technical answer to copy: the HTTP status and when it was checked (in UTC), or why no request was made.
 
 - **Fix menu on every row.**
   - **Send visitors to another page:** adds a redirect from the dead address to a page you pick from a list, which fixes it everywhere at once. Admins only, as in EmDash itself.
@@ -31,11 +31,18 @@ Tells you what is broken on your [EmDash](https://emdashcms.com) site before a c
   - the insecure address sends visitors to the secure one;
   - the address with and without www;
   - a made-up address shows the "page not found" page;
-  - search engines are allowed in;
+  - search engines may list the home page (no `noindex` in its meta tags or its `X-Robots-Tag` header), checked with every full check;
+  - search engines are allowed in: robots.txt is read one group of crawlers at a time, so keeping out Google, or every search engine, needs attention, while keeping out only AI crawlers or one folder does not;
+  - the list of your pages for search engines (sitemap) answers: the one robots.txt names, or `/sitemap.xml`, as a list of pages or a list of lists;
   - pages can be kept ready for visitors;
   - scheduled tasks are running;
   - email works: who gets it, whether an email service is chosen, and when it last worked, with the test button beside it.
 - **Dashboard widget** with the count.
+- **"Links on this page" beside each entry** in the editor: what the checks found in that page's links, in the same plain words. Read-only; it shows what is already stored and opens no website, so it is instant. Nothing to set up.
+
+| Links on this page, in the editor | The Checklist                   |
+| --------------------------------- | ------------------------------- |
+| ![](images/links-panel-0-2-0.png) | ![](images/checklist-0-2-0.png) |
 
 Editors see the links they can fix. Page errors, the Checklist and Options are for Admins.
 
@@ -88,7 +95,7 @@ Then open **Tools > Site Health** in the admin sidebar.
 | Your pages           | Reads every entry, a batch each minute. Links to your own site are checked against your pages and redirects, with no fetching.                                                                                                                       | Every day, and a page again when it is saved or published. |
 | Your rendered pages  | Opens the home page (for the menu and footer) and then each page, two a minute.                                                                                                                                                                      | Every day.                                                 |
 | Links to other sites | Three a minute, on different sites, never one site more than once a minute. Each one says who it is: `EmDash-SiteHealth/0.1 (+your address)`. A link is broken only when the other website says the page is gone on two checks at least a day apart. | Every week, and again a day after a failure.               |
-| Checklist            | Up to five requests.                                                                                                                                                                                                                                 | Once a week.                                               |
+| Checklist            | Up to five requests. The home page's search-engine tags come from the home page the check opens anyway.                                                                                                                                              | Once a week.                                               |
 
 The numbers on the page are always a finished check. A check that is still running never changes them.
 

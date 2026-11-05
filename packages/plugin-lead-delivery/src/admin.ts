@@ -3,7 +3,9 @@
 import type { Block, BlockResponse, ButtonElement, FormField } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
+import { isPrivateHost, PRIVATE_ADDRESS } from "./address.js";
 import { APPROVAL_PREFIX } from "./approval.js";
+import { CHAT_HINT, maskChatUrl, parseChatUrl } from "./chat.js";
 import {
 	ago,
 	configuredOrigin,
@@ -51,6 +53,7 @@ import { type Meter, meter } from "./meter.js";
 import {
 	APPS,
 	appLabel,
+	chatLabel,
 	formName,
 	formWords,
 	formsLabel,
@@ -731,6 +734,7 @@ const KIND_LABELS = (hasEmail: boolean) => [
 		label:
 			"Another app: Zapier, Make, n8n or your own. Zapier needs a paid plan for this; Make and n8n do not",
 	},
+	{ value: "chat", label: "Slack or Discord channel: a message in the channel for each enquiry" },
 ];
 
 function knownForms(data: Data): KnownForm[] {
@@ -817,6 +821,45 @@ function matchingFields(
 	return fields;
 }
 
+/** A channel's address and the switch to leave out what people wrote. */
+function chatFields(url: string, kept: string, leaveOut: boolean): FormField[] {
+	return [
+		{
+			type: "text_input",
+			action_id: "url",
+			label: kept
+				? `New webhook address for the channel (leave empty to keep ${kept})`
+				: "The channel's webhook address (starts with https://hooks.slack.com/ or https://discord.com/api/webhooks/)",
+			initial_value: url,
+		},
+		{
+			type: "toggle",
+			action_id: "leave_out",
+			// The words are in the label: EmDash's admin does not show a switch's description.
+			label:
+				"Leave out what people wrote: the message only says an enquiry arrived, with a link to Forms → Submissions",
+			initial_value: leaveOut,
+		},
+	];
+}
+
+/** What Forms itself sends the person who wrote, when one-click connect read it from Forms. */
+function autoReplyNotes(data: Data, d: Delivery): Block[] {
+	const notes: Block[] = [];
+	for (const form of servedForms(data, d)) {
+		const reply = data.forms[form.slug]?.autoReply;
+		if (!reply) continue;
+		notes.push(
+			context(
+				reply.on
+					? `Forms also sends its own auto-reply to the person who wrote to ${form.name}. Change it in Forms → ${form.name} → Settings.`
+					: `Forms sends no auto-reply for ${form.name}: the person who wrote gets no email from the site. Turn one on in Forms → ${form.name} → Settings.`,
+			),
+		);
+	}
+	return notes;
+}
+
 function hubspotToggles(delivery: Partial<Delivery>): FormField[] {
 	return [
 		{
@@ -866,6 +909,8 @@ function newStep2(data: Data, view: Extract<View, { screen: "new2" }>): Block[] 
 			initial_value: value("hubspot", ""),
 		});
 		fields.push(...matchingFields({}, form), ...hubspotToggles({}));
+	} else if (kind === "chat") {
+		fields.push(...chatFields(value("url", ""), "", draft.leave_out === true));
 	} else {
 		fields.push(
 			{
@@ -907,6 +952,7 @@ function newStep2(data: Data, view: Extract<View, { screen: "new2" }>): Block[] 
 			actions([button("open", `Open ${view.duplicate.name}`, { value: view.duplicate.id })]),
 		);
 	}
+	if (kind === "chat") blocks.push(context(CHAT_HINT));
 	if (kind === "hubspot") {
 		blocks.push(
 			context(
@@ -937,6 +983,10 @@ function sendsTo(data: Data, d: Delivery): string {
 	const from = `from ${formsLabel(d.forms, data.forms)}`;
 	if (d.kind === "email") return `Email to ${(d.to ?? []).join(", ")} · ${from}`;
 	if (d.kind === "hubspot") return `HubSpot form in account ${d.portalId} · ${from}`;
+	if (d.kind === "chat") {
+		const url = d.url;
+		return `${chatLabel(d.chat)} channel${url ? ` at ${maskChatUrl(url)}` : ""} · ${d.leaveOut ? "without what people wrote · " : ""}${from}`;
+	}
 	let host = d.url ?? "";
 	try {
 		host = new URL(host).host;
@@ -964,7 +1014,8 @@ function testText(d: Delivery): string {
 	const when = ago(d.testedAt);
 	if (!d.testResult.ok) return `Did not arrive: ${d.testResult.plain ?? "it was refused"}`;
 	if (d.kind === "email") return `Sent ${when}. Check the inbox, and the spam folder.`;
-	const who = d.kind === "hubspot" ? "HubSpot" : appLabel(d.app);
+	const who =
+		d.kind === "hubspot" ? "HubSpot" : d.kind === "chat" ? chatLabel(d.chat) : appLabel(d.app);
 	return `Arrived ${when}: ${who} accepted it.`;
 }
 
@@ -1088,6 +1139,7 @@ async function deliveryPage(
 			button("toggle", d.on ? "Turn off" : "Turn on", { value: d.id }),
 		]),
 	);
+	blocks.push(...autoReplyNotes(data, d));
 	// A typed short name that never received anything, while another form's enquiries went nowhere.
 	const silent = view.noHints ? undefined : silentForms(data, d)[0];
 	const arrived = silent
@@ -1162,7 +1214,9 @@ async function deliveryPage(
 			? (d.to ?? []).join(", ")
 			: d.kind === "hubspot"
 				? "HubSpot"
-				: appLabel(d.app);
+				: d.kind === "chat"
+					? `the ${chatLabel(d.chat)} channel`
+					: appLabel(d.app);
 	const names = formsLabel(d.forms, data.forms);
 	blocks.push(
 		divider(),
@@ -1252,6 +1306,15 @@ function editPage(data: Data, d: Delivery, view: Extract<View, { screen: "edit" 
 			label: "Send each enquiry to (separate several addresses with commas)",
 			initial_value: value("to", (d.to ?? []).join(", ")),
 		});
+	} else if (d.kind === "chat") {
+		const url = d.url;
+		fields.push(
+			...chatFields(
+				value("url", ""),
+				url ? maskChatUrl(url) : "",
+				"leave_out" in draft ? draft.leave_out === true : d.leaveOut === true,
+			),
+		);
 	} else if (d.kind === "hubspot") {
 		fields.push({
 			type: "text_input",
@@ -1656,6 +1719,16 @@ function detailsFromForm(
 		}
 		return { details: { portalId: parsed.portalId, formGuid: parsed.formGuid } };
 	}
+	if (kind === "chat") {
+		const typed = str(values.url).trim();
+		const leaveOut = values.leave_out === true;
+		// Edit shows no address (it is a secret): an empty box keeps the one saved.
+		if (!typed && existing?.kind === "chat") return { details: { leaveOut } };
+		if (!typed) return { error: "Paste the channel's webhook address." };
+		const parsed = parseChatUrl(typed);
+		if ("error" in parsed) return { error: parsed.error };
+		return { details: { chat: parsed.platform, url: parsed.url, leaveOut } };
+	}
 	const url = str(values.url).trim();
 	let parsedUrl: URL | null = null;
 	try {
@@ -1666,12 +1739,7 @@ function detailsFromForm(
 	if (!parsedUrl || parsedUrl.protocol !== "https:") {
 		return { error: "The app's address must start with https://. Copy it again from the app." };
 	}
-	if (
-		/^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[)/.test(parsedUrl.hostname) ||
-		parsedUrl.hostname.endsWith(".local")
-	) {
-		return { error: "That address is on a private network, so this site cannot send to it." };
-	}
+	if (isPrivateHost(parsedUrl.hostname)) return { error: PRIVATE_ADDRESS };
 	const app = APPS.some((a) => a.value === values.app) ? (values.app as Delivery["app"]) : "other";
 	const keep = existing?.kind === "app" && existing.secret;
 	const secret = keep ? existing.secret! : newSecret();
@@ -1749,7 +1817,14 @@ async function sendTest(
 	const enquiry = testEnquiry(data, d);
 	const { ctx } = data;
 	const outcome = await sendTo(ctx, data.state, d, id, enquiry, true);
-	const label = d.kind === "hubspot" ? "HubSpot" : d.kind === "app" ? appLabel(d.app) : "Email";
+	const label =
+		d.kind === "hubspot"
+			? "HubSpot"
+			: d.kind === "app"
+				? appLabel(d.app)
+				: d.kind === "chat"
+					? chatLabel(d.chat)
+					: "Email";
 	const result: Delivery["testResult"] =
 		outcome.kind === "delivered"
 			? { ok: true }
@@ -1966,7 +2041,8 @@ async function adminScreen(
 	}
 	if (action === "new_continue") {
 		const picked = str(values.form);
-		const kind = (["email", "hubspot", "app"] as const).find((k) => k === values.kind) ?? "email";
+		const kind =
+			(["email", "hubspot", "app", "chat"] as const).find((k) => k === values.kind) ?? "email";
 		const again = (message: string) =>
 			render(data, { screen: "new", draft: values, toast: fail(message) });
 		if (!picked) return again("Choose a form.");
@@ -1992,7 +2068,7 @@ async function adminScreen(
 	}
 	if (action === "new_save") {
 		const [, kindText, slug] = blockId.split(":");
-		const kind = (["email", "hubspot", "app"] as const).find((k) => k === kindText);
+		const kind = (["email", "hubspot", "app", "chat"] as const).find((k) => k === kindText);
 		if (!kind || !slug) return render(data, { screen: "new" });
 		const form = await findForm(ctx, data.origin, slug, data.forms);
 		if ("error" in form) return render(data, { screen: "new", toast: fail(form.error) });
@@ -2023,7 +2099,9 @@ async function adminScreen(
 					? (duplicate.to ?? []).join(", ")
 					: kind === "hubspot"
 						? "that HubSpot form"
-						: "that address";
+						: kind === "chat"
+							? "that channel"
+							: "that address";
 			return again(`${form.name} already goes to ${where} (${duplicate.name}).`, duplicate);
 		}
 		if (!data.forms[form.slug]) await keepForms(withForm(data.forms, form));
@@ -2194,10 +2272,11 @@ async function adminScreen(
 			str(values.name).trim().slice(0, 100) ||
 			generatedName(forms, { ...d, ...parsed.details }, data.forms);
 		const updated: Delivery = { ...d, ...parsed.details, name, forms, on: values.on !== false };
-		await save({
+		const edited = {
 			...data.config,
 			deliveries: data.config.deliveries.map((x) => (x.id === id ? updated : x)),
-		});
+		};
+		await save(edited);
 		const message =
 			forms === "all" && picked.length > 1
 				? "Saved. It takes all forms, including new ones, so the other ticks were not needed."

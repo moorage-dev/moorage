@@ -1,12 +1,12 @@
 # @moorage/plugin-lead-delivery
 
-Lead Delivery for [EmDash](https://emdashcms.com) sends every enquiry from your forms where you work: your inbox, HubSpot, or another app such as Zapier, Make or n8n. Each enquiry is logged and tried again if it does not get through. If one cannot be delivered, everyone who looks after the site hears about it. It works with the official forms plugin, on any EmDash site, with no account and no key.
+Lead Delivery for [EmDash](https://emdashcms.com) sends every enquiry from your forms where you work: your inbox, HubSpot, a Slack or Discord channel, or another app such as Zapier, Make or n8n. Each enquiry is logged and tried again if it does not get through. If one cannot be delivered, everyone who looks after the site hears about it. It works with the official forms plugin, on any EmDash site, with no account and no key.
 
-![Lead delivery: counters, deliveries and the latest enquiries](images/home-0-4-3.png)
+![Lead delivery: counters, deliveries and the latest enquiries](images/home-0-5-0.png)
 
 ## How it works
 
-A **delivery** is one form and where its enquiries go: an inbox (or several), a HubSpot form, or another app. Lead Delivery names it for you, for example "Contact form → Shop inbox", and you can rename it. One form can have several deliveries, for example "Contact form → Shop inbox" and "Contact form → HubSpot".
+A **delivery** is one form and where its enquiries go: an inbox (or several), a HubSpot form, a Slack or Discord channel, or another app. Lead Delivery names it for you, for example "Contact form → Shop inbox", and you can rename it. One form can have several deliveries, for example "Contact form → Shop inbox" and "Contact form → HubSpot".
 
 Everything is on one page, **Lead delivery** under Marketing:
 
@@ -16,7 +16,9 @@ Everything is on one page, **Lead delivery** under Marketing:
 - **Edit**: the name, the address or HubSpot form, which forms it takes (one form usually; several, or all forms including new ones, for an inbox that gets everything), on or off, and HubSpot field matching.
 - **Enquiries**: the whole log, or one delivery's, with Send again.
 
-![A delivery's page](images/delivery-0-4-3.png)
+| A delivery's page              | A Slack channel's page                 |
+| ------------------------------ | -------------------------------------- |
+| ![](images/delivery-0-4-3.png) | ![](images/channel-delivery-0-5-0.png) |
 
 ## What it does
 
@@ -27,6 +29,9 @@ Everything is on one page, **Lead delivery** under Marketing:
   - Consent goes to HubSpot only when someone ticked a consent box, or when you say your HubSpot account has its privacy (GDPR) settings on.
   - Possibly fake email addresses can be marked in a HubSpot field you choose.
 - **Another app (Zapier, Make, n8n or your own).** Each enquiry is sent as flat JSON, signed with the [Standard Webhooks](https://www.standardwebhooks.com/) headers, with one secret for each delivery. The JSON has a `marks` list (`throwaway`, `repeat`, `spam`) and, for a repeat, `repeatAfterMinutes`.
+- **A Slack or Discord channel.** Paste the channel's incoming-webhook address (Slack: an app with Incoming Webhooks; Discord: Channel settings → Integrations → Webhooks). Each enquiry becomes one message with the form's fields, the marks and a link to Forms → Submissions. What people wrote cannot ping the channel (`@here`, `<!channel>` and mentions are turned off) and addresses in it show no preview; a long Discord message is shortened field by field, keeping the link to Forms. **Leave out what people wrote** sends only "New enquiry: Contact form" with the link, for a channel where not everyone should read personal details. Retries, the log and alerts work as for an app. The address is a secret, kept like an app's signing secret: after you save it the page shows only its host and last four characters, it never appears in the log, and Edit keeps it when its box is left empty.
+- **Forms' own auto-reply.** A delivery's page says whether Forms also sends its own auto-reply to the person who wrote, for forms connected in one step (Lead Delivery reads it from Forms then; for other forms it cannot see it).
+- **Safe addresses.** Only admins enter or change where enquiries go. An address on a private network (this machine, the local network, cloud-internal addresses, in any spelling) is refused when saved and again before every send. A public name that resolves to a private address cannot be caught this way.
 - **A delivery log** that Editors (usually your client) can read. It shows who sent the enquiry, through which delivery, and whether it arrived, with a Send again button. Each enquiry is sent by the scheduled run that follows its arrival, usually within a minute.
 - **Retries.** An enquiry that gets no answer is tried 8 times over about two days. When a service refuses an enquiry for a reason that would fail the same way again, it is not retried. Instead, the page says in plain words what to fix, with the service's own words beneath. A test is never retried.
 - **Alerts by email** to several addresses. The subject starts with the site's name, and each kind of alert is sent at most once a day. There are three kinds:
@@ -111,7 +116,7 @@ Lead Delivery marks possibly spam; it does not stop it reaching the form. To sto
 
 All on the one page:
 
-- **Each delivery** (admins): its name, the address, HubSpot form or app, which forms it takes, on or off, "Same email address again" (off, 24 hours or 7 days), "Don't send possibly spam", HubSpot field matching, and for an app a new signing secret.
+- **Each delivery** (admins): its name, the address, HubSpot form, channel or app, which forms it takes, on or off, "Same email address again" (off, 24 hours or 7 days), "Don't send possibly spam", HubSpot field matching, for a channel "Leave out what people wrote", and for an app a new signing secret.
 - **Settings for the whole site** (admins), folded at the bottom of the page. It opens by itself when nobody gets alerts or the forms have no way to hand enquiries over:
   - who hears when something needs fixing (prefilled with your own address);
   - this site's check, with Check again;
@@ -136,6 +141,8 @@ Nothing to do. On the first run after the update, each inbox, HubSpot form or ap
 **Does Zapier cost money?** "Webhooks by Zapier" needs a paid Zapier plan. Make's Custom webhook and n8n's Webhook node do not.
 
 **How does my app check an enquiry came from my site?** Check the `webhook-signature` header with the secret shown when you saved the delivery. Any Standard Webhooks library does it.
+
+**Why does an unticked checkbox say "no"?** Forms leaves an unticked box out of the enquiry. In the email and the Slack or Discord message, Lead Delivery lists it as "no" (for forms whose fields it knows), so you can tell it was left unticked rather than missing, and a ticked box reads "yes". A box shown only on a condition is left out. Apps such as Zapier and HubSpot receive the fields exactly as Forms sent them: no field for an unticked box, so a Zap that checks whether a field exists still works.
 
 **Why does one-step connecting ask for full admin access?** EmDash has no narrower access for this yet. Lead Delivery uses it for two calls (list the forms, set one form's address) and throws it away straight after; it never stores it. You type the code yourself on EmDash's page, so a link someone sends you cannot approve anything on its own.
 
@@ -163,7 +170,7 @@ DEMO_SITE_PORT=4401 DEMO_SITE_LEAD_DELIVERY=in-process pnpm --filter demo-site e
 # One-step connect needs a site that can call itself; localhost cannot, so this test-only switch
 # serves the demo site under a made-up name that it can call (apps/demo-site/self-alias.mjs):
 DEMO_SITE_PORT=4401 DEMO_SITE_SELF_ALIAS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-connect.spec.ts
-DEMO_SITE_PORT=4401 DEMO_SITE_SCREENSHOTS=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-screenshots.spec.ts   # new pictures in images/
+DEMO_SITE_PORT=4401 DEMO_SITE_SCREENSHOTS=1 DEMO_SITE_FAKE_CHAT=1 pnpm --filter demo-site exec playwright test tests/lead-delivery-screenshots.spec.ts   # new pictures in images/
 ```
 
 The tests never call a real service. HubSpot and the apps are simulated in the unit tests, and the browser tests use the dev email inbox and `.invalid` addresses.

@@ -232,6 +232,11 @@ function siteIdentity(value: unknown): SiteIdentity {
 	};
 }
 
+/** A founding date as the form accepts it: a year, like 2012, or a day, like 2012-05-01. */
+export function isFoundingDate(value: string): boolean {
+	return /^\d{4}(-\d{2}-\d{2})?$/.test(value);
+}
+
 /**
  * Turn whatever is stored in KV into a complete config. Stored values come
  * from an admin form and from older plugin versions, so nothing is trusted.

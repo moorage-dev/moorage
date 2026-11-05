@@ -3,7 +3,7 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { approve, saveNote, sendBack, type Decision } from "./actions.js";
+import { approve, saveNote, sendBack, withdraw, type Decision } from "./actions.js";
 import { loadConfig } from "./config.js";
 import type { Meter } from "./meter.js";
 import type { Draft, UserInfo } from "./requests.js";
@@ -17,7 +17,9 @@ import {
 	decisionBlocks,
 	historyBlock,
 	liveChanges,
+	mayWithdraw,
 	ownRequestBlocks,
+	withdrawButton,
 } from "./views.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,6 +59,8 @@ export async function handlePanel(
 				{ info, meter: m },
 			);
 		}
+		if (value?.key === key && interaction.action_id === ACTION.withdraw)
+			outcome = await withdraw(ctx, user, key);
 	}
 	if (config && interaction.type === "form_submit") {
 		const values = isRecord(interaction.values) ? interaction.values : {};
@@ -113,6 +117,17 @@ export async function handlePanel(
 			});
 		}
 		return { blocks, ...toast };
+	}
+	if (request?.status === "closed" && request.withdrawn) {
+		return {
+			blocks: [
+				{
+					type: "context",
+					text: `${user && request.withdrawn.by.id === user.id ? "You" : request.withdrawn.by.name} withdrew the request on ${when(request.withdrawn.at)}. Pressing Publish sends this page for approval again.`,
+				},
+			],
+			...toast,
+		};
 	}
 	if (!request || request.status === "closed") {
 		return {
@@ -180,6 +195,15 @@ export async function handlePanel(
 					],
 					submit: { label: "Save note", action_id: ACTION.saveNote },
 				});
+				if (mayWithdraw(request, user)) {
+					blocks.push(
+						{
+							type: "context",
+							text: "Not ready after all? Withdraw the request; the page stays as it is, unpublished changes included.",
+						},
+						{ type: "actions", elements: [withdrawButton(key)] },
+					);
+				}
 			}
 		}
 	} else if (request.status === "approved" && request.approval) {

@@ -655,7 +655,7 @@ function listBlocks(state: PageState): Block[] {
 		},
 		{
 			type: "context",
-			text: "At most one popup or slide-in opens per visit, never while the cookie banner is waiting for an answer, and never again for someone who signed up or clicked its button. Changes reach visitors within a few minutes, when cached pages refresh.",
+			text: "At most one popup or slide-in opens per visit, never while the cookie banner is waiting for an answer, and never again for someone who signed up or clicked its button. When you change what a popup says, its link or its dates, it shows once more to people who closed it or clicked its button, never to someone who signed up. Changes reach visitors within a few minutes, when cached pages refresh.",
 		},
 	);
 	if (!state.admin) {

@@ -61,6 +61,7 @@ export default defineConfig({
 			DEMO_SITE_IN_PROCESS: process.env.DEMO_SITE_IN_PROCESS ?? "",
 			DEMO_SITE_APPROVALS: process.env.DEMO_SITE_APPROVALS ?? "",
 			DEMO_SITE_LEAD_DELIVERY: process.env.DEMO_SITE_LEAD_DELIVERY ?? "",
+			DEMO_SITE_FAKE_CHAT: process.env.DEMO_SITE_FAKE_CHAT ?? "",
 			DEMO_SITE_SELF_ALIAS: ALIAS ? `${ALIAS}=${LOCAL_URL}` : "",
 		},
 	},
