@@ -12,7 +12,7 @@ import {
 import { expectHelpLine, helpLinks, setHidden } from "./help-line.js";
 
 /**
- * Analytics & Cookie Consent, in a real browser.
+ * Analytics & Cookies, in a real browser.
  *
  * Visitors use the plain `page` fixture, which has never signed in: a browser
  * that has opened the admin counts as staff and is never tracked. Settings are
