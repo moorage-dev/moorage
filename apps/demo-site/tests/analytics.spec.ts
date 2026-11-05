@@ -1570,6 +1570,9 @@ test.describe("added in 0.4", () => {
 		const hits = await stubVendors(context);
 		await stubEmbeds(context);
 		await inCountry(page, "DE");
+		// Both pages once by hand first: the dev server may reload a page the first time it bundles the router.
+		await page.goto("/embeds-test?router=1&page=2");
+		await expect(banner(page)).toBeVisible();
 		await page.goto("/embeds-test?router=1");
 		await expect(banner(page)).toBeVisible();
 		// A page change by the router, not a new page load.

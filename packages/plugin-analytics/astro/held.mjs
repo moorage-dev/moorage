@@ -103,21 +103,6 @@ export function heldKind(value) {
 	return undefined;
 }
 
-/**
- * For the Embeds plugin's `youtube` and `vimeo` blocks, whose `id` is a video
- * ID or a link to the video.
- * @param {"youtube" | "vimeo"} type
- * @param {unknown} id
- * @returns {Held | undefined}
- */
-export function heldVideo(type, id) {
-	const text = typeof id === "string" ? id.trim() : "";
-	if (type === "youtube" && YOUTUBE_ID.test(text)) return heldKind(`https://youtu.be/${text}`);
-	if (type === "vimeo" && VIMEO_ID.test(text)) return heldKind(`https://vimeo.com/${text}`);
-	const found = heldKind(text);
-	return found && found.name.toLowerCase() === type ? found : undefined;
-}
-
 /** The placeholder's words. `{name}` is YouTube, Vimeo or Google Maps. */
 export const WORDS = {
 	en: {

@@ -67,7 +67,7 @@ const page = createPublicPageContext({ Astro, kind: "custom", pageType: "website
 </head>
 ```
 
-Only the `head` placement is used. Videos and maps are held back by the plugin's own renderers for EmDash's `iframe` and `embed` blocks, which EmDash picks up by itself in `<PortableText>` from `emdash/ui`. If your theme passes its own `components` for those blocks to `PortableText`, yours win and nothing is held back. With the official Embeds plugin (`@emdash-cms/plugin-embeds`), list `analyticsPlugin()` after it in `plugins: []` to hold back its YouTube and Vimeo blocks too (the later plugin's renderer wins); they then play in YouTube's privacy-enhanced player or Vimeo's with do-not-track, instead of the Embeds plugin's lighter one. `EmDashBodyStart` and `EmDashBodyEnd` are not needed by this plugin. The banner is built by the script inside a shadow root, so your theme's styles do not change it and it does not change your theme.
+Only the `head` placement is used. Videos and maps are held back by the plugin's own renderers for EmDash's `iframe` and `embed` blocks, which EmDash picks up by itself in `<PortableText>` from `emdash/ui`. If your theme passes its own `components` for those blocks to `PortableText`, yours win and nothing is held back. The official Embeds plugin's own YouTube and Vimeo blocks (`@emdash-cms/plugin-embeds`) are not held back: they show a preview picture from YouTube or Vimeo and load the player only when clicked. `EmDashBodyStart` and `EmDashBodyEnd` are not needed by this plugin. The banner is built by the script inside a shadow root, so your theme's styles do not change it and it does not change your theme.
 
 To put a "Cookie settings" link in your footer, no theme change is needed: in the admin, under Menus, add a custom link to your footer menu with the URL `/#cookie-settings`. Any link to `/#cookie-settings` or `#cookie-settings`, in a menu or in a page's text, opens the cookie choices on any page, and the floating "Cookies" button steps aside while it is on screen. Themes that mark a link or button with `data-cookie-settings` keep working the same way.
 
@@ -187,7 +187,7 @@ pnpm --filter demo-site test:e2e                   # Playwright, on apps/demo-si
 The code has two halves.
 
 - **Server** (`src/*.ts`): settings (`config.ts`), ID checking (`ids.ts`), the admin page as Block Kit (`admin.ts`), the consent record (`record.ts`), and `fragment.ts`, which turns settings into the one script a page gets. All pure functions; `index.ts` wires them to EmDash.
-- **Block components** (`astro/`): shipped as source and compiled by the site's Astro. `held.mjs` decides which iframe and embed blocks are held back and reveals them in the browser; `Iframe.astro`, `Embed.astro` and `Video.astro` wrap EmDash's own renderers; `holding.mjs` asks the plugin's `embeds` route whether the banner can ask on this site.
+- **Block components** (`astro/`): shipped as source and compiled by the site's Astro. `held.mjs` decides which iframe and embed blocks are held back and reveals them in the browser; `Iframe.astro` and `Embed.astro` wrap EmDash's own renderers; `holding.mjs` asks the plugin's `embeds` route whether the banner can ask on this site.
 - **Words** (`src/words.ts`): the banner's words in English and the six other languages.
 - **Browser** (`src/client/*.ts`): `consent.ts` holds the rules (who is asked, what a saved answer allows) with no browser access, and `boot.ts` is the script itself: banner, loaders, enquiries.
 

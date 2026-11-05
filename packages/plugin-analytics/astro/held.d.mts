@@ -10,7 +10,6 @@ export interface Held {
 }
 
 export function heldKind(value: unknown): Held | undefined;
-export function heldVideo(type: "youtube" | "vimeo", id: unknown): Held | undefined;
 export const WORDS: Record<
 	"en" | "de" | "fr" | "es" | "it" | "nl" | "pt",
 	{ video: string; map: string; loadVideo: string; loadMap: string; open: string }

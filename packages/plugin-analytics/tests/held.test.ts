@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { RouteContext } from "emdash";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { heldKind, heldVideo, placeholderWords, reveal } from "../astro/held.mjs";
+import { heldKind, placeholderWords, reveal } from "../astro/held.mjs";
 import { CONFIG_KEY } from "../src/config.js";
 import { analyticsPlugin, createPlugin } from "../src/index.js";
 import { fakeContext } from "./helpers.js";
@@ -58,18 +58,6 @@ describe("what is held back", () => {
 		}
 	});
 
-	it("reads the Embeds plugin's video IDs and links", () => {
-		expect(heldVideo("youtube", "dQw4w9WgXcQ")?.player).toBe(
-			"https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
-		);
-		expect(heldVideo("vimeo", "76979871")?.player).toBe(
-			"https://player.vimeo.com/video/76979871?dnt=1",
-		);
-		expect(heldVideo("youtube", "https://youtu.be/dQw4w9WgXcQ")?.name).toBe("YouTube");
-		expect(heldVideo("vimeo", "https://youtu.be/dQw4w9WgXcQ")).toBeUndefined();
-		expect(heldVideo("youtube", "<script>")).toBeUndefined();
-	});
-
 	it("says so in the page's language", () => {
 		const yt = { kind: "video", name: "YouTube", link: "" } as const;
 		expect(placeholderWords("en", yt)).toEqual({
@@ -85,12 +73,12 @@ describe("what is held back", () => {
 });
 
 describe("the block components", () => {
-	it("are wired up through the plugin's descriptor, for EmDash's own iframe and embed blocks and the Embeds plugin's videos", () => {
+	it("are wired up through the plugin's descriptor, for EmDash's own iframe and embed blocks", () => {
 		expect(analyticsPlugin().componentsEntry).toBe("@moorage/plugin-analytics/astro");
 		// The .astro files are compiled by the site's Astro, so the list is read as text here.
 		const entry = readFileSync(join(import.meta.dirname, "../astro/index.mjs"), "utf8");
 		const keys = /blockComponents = \{([^}]*)\}/.exec(entry)?.[1]?.match(/\w+(?=:)/g);
-		expect(keys?.sort()).toEqual(["embed", "iframe", "vimeo", "youtube"]);
+		expect(keys?.sort()).toEqual(["embed", "iframe"]);
 	});
 
 	it("ask the plugin's embeds route, which holds back only where the banner can ask", async () => {

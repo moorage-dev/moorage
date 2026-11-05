@@ -150,10 +150,14 @@ export function boot(c: ClientConfig): void {
 	// { analytics, marketing } once this visitor's rule is known (undefined before), and
 	// "cookie-consent:change" says so each time it is known or changes, with the same detail.
 	const now = () => Object.freeze({ analytics: state.a, marketing: state.m });
-	Object.defineProperty(w, "cookieConsent", {
-		configurable: true,
-		get: () => (told ? now() : undefined),
-	});
+	try {
+		Object.defineProperty(w, "cookieConsent", {
+			configurable: true,
+			get: () => (told ? now() : undefined),
+		});
+	} catch {
+		// Another script took the name and locked it: everything else still works.
+	}
 	const tell = (name: string) => d.dispatchEvent(new CustomEvent(name, { detail: now() }));
 	const change = (next: Decision) => {
 		state = next;

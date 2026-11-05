@@ -12,7 +12,12 @@ import Held from "./Held.astro";
 
 const { node } = Astro.props as { node?: { url?: unknown; provider?: unknown } };
 const local = node?.provider === "video" || node?.provider === "audio";
-const found = local ? undefined : heldKind(node?.url);
+// Only what EmDash's Embed renders as a player (its own two patterns); a link stays a link.
+const url = typeof node?.url === "string" ? node.url : "";
+const player =
+	/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}/.test(url) ||
+	/vimeo\.com\/\d+/.test(url);
+const found = local || !player ? undefined : heldKind(url);
 const held = found?.kind === "video" ? found : undefined;
 const hold = held ? await holding(Astro.locals, Astro.url) : false;
 ---
