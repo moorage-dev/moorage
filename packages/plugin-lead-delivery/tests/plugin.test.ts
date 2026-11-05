@@ -1079,6 +1079,51 @@ describe("New delivery", () => {
 	});
 });
 
+describe("addresses on a private network", () => {
+	it("refuses them in New delivery and Edit, whichever way the address is written", async () => {
+		const { runtime, admin } = await start();
+		await setForms(runtime, [known("contact", "Contact form")]);
+		for (const url of [
+			"https://172.16.4.2/hook",
+			"https://100.64.0.1/hook",
+			"https://0.0.0.0/hook",
+			"https://2130706433/hook",
+			"https://0x7f.1/hook",
+			"https://[fd00::1]/hook",
+		]) {
+			const saved = await saveNew(runtime, admin, "app", "contact", { app: "other", url });
+			expect(saved.toast, url).toMatchObject({
+				type: "error",
+				message: "That address is on a private network, so this site cannot send to it.",
+			});
+		}
+		expect((await config(runtime)).deliveries).toEqual([]);
+		const d = delivery();
+		await setDeliveries(runtime, [d]);
+		const edited = await runtime.admin.submit(
+			PAGE,
+			"save_edit",
+			{ name: d.name, app: "other", url: "https://172.31.0.9/hook", forms: ["contact"], on: true },
+			{ user: admin, blockId: `edit:${d.id}` },
+		);
+		expect(edited.toast?.message).toBe(
+			"That address is on a private network, so this site cannot send to it.",
+		);
+		expect((await config(runtime)).deliveries[0]!.url).toBe(HOOK);
+		expect(runtime.http.requests()).toEqual([]);
+	});
+
+	it("never sends to one saved by an earlier version: it needs fixing instead", async () => {
+		const { runtime } = await start();
+		await setDeliveries(runtime, [delivery({ url: "https://172.20.0.5/hook" })]);
+		await inbound(runtime, payload("01P"));
+		const [row] = await rows(runtime);
+		expect(row).toMatchObject({ status: "fixing" });
+		expect(row!.plain).toContain("private network");
+		expect(runtime.http.requests().filter((r) => r.url.includes("172.20.0.5"))).toEqual([]);
+	});
+});
+
 describe("Connect this form", () => {
 	it("marks a form connected by hand, or skips to a page that says it is not connected", async () => {
 		const { runtime, admin } = await start();

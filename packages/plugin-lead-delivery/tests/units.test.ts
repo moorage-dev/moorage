@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { isPrivateHost, privateAddressError } from "../src/address.js";
 import { ago, parseAddresses, privateEmail, since } from "../src/config.js";
 import { emailFailure, isQuiet } from "../src/deliver.js";
 import { fromEmail, fromWebhook, humanize } from "../src/enquiry.js";
@@ -578,5 +579,89 @@ describe("a quiet form", () => {
 		expect(
 			isQuiet(form("2026-10-15T09:00:00Z", ["2026-10-02", "2026-10-07", "2026-10-15"]), now),
 		).toBe(false);
+	});
+});
+
+describe("an address on a private network", () => {
+	const host = (address: string) => new URL(address).hostname;
+
+	it("is refused for every private, local and reserved IPv4 range", () => {
+		for (const address of [
+			"https://localhost/hook",
+			"https://LOCALHOST./hook",
+			"https://app.localhost/hook",
+			"https://printer.local/hook",
+			"https://router.internal/hook",
+			"https://nas.home.arpa/hook",
+			"https://127.0.0.1/hook",
+			"https://127.8.9.1/hook",
+			"https://10.1.2.3/hook",
+			"https://172.16.0.1/hook",
+			"https://172.31.255.255/hook",
+			"https://192.168.1.1/hook",
+			"https://169.254.169.254/latest/meta-data",
+			"https://0.0.0.0/hook",
+			"https://0.1.2.3/hook",
+			"https://100.64.0.1/hook",
+			"https://100.127.255.254/hook",
+			"https://192.0.0.8/hook",
+			"https://198.18.0.1/hook",
+			"https://224.0.0.1/hook",
+			"https://240.0.0.1/hook",
+			"https://255.255.255.255/hook",
+		]) {
+			expect(isPrivateHost(host(address)), address).toBe(true);
+		}
+	});
+
+	it("is refused when IPv4 is written as one number, in hex or in octal", () => {
+		// The address parser turns each of these into 127.0.0.1 or 10.0.0.1; raw text is checked too.
+		for (const raw of ["2130706433", "0x7f.1", "0x7f000001", "0177.0.0.1", "127.1", "012.0.0.1"]) {
+			expect(isPrivateHost(raw), raw).toBe(true);
+			expect(isPrivateHost(host(`https://${raw}/hook`)), raw).toBe(true);
+		}
+	});
+
+	it("is refused for IPv6 loopback, unique-local, link-local and mapped private IPv4", () => {
+		for (const address of [
+			"https://[::1]/hook",
+			"https://[::]/hook",
+			"https://[fc00::1]/hook",
+			"https://[fd12:3456:789a::1]/hook",
+			"https://[fe80::1]/hook",
+			"https://[febf::1]/hook",
+			"https://[ff02::1]/hook",
+			"https://[::ffff:127.0.0.1]/hook",
+			"https://[::ffff:10.0.0.1]/hook",
+			"https://[::ffff:7f00:1]/hook",
+			"https://[64:ff9b::a00:1]/hook",
+		]) {
+			expect(isPrivateHost(host(address)), address).toBe(true);
+		}
+	});
+
+	it("lets public names and public addresses through", () => {
+		for (const address of [
+			"https://hooks.zapier.com/hooks/catch/1/a/",
+			"https://hook.eu1.make.com/abc",
+			"https://n8n.crumbandco.uk/webhook/1",
+			"https://hooks.slack.com/services/T0/B0/x",
+			"https://discord.com/api/webhooks/1/abc",
+			"https://172.32.0.1/hook",
+			"https://172.15.255.255/hook",
+			"https://100.128.0.1/hook",
+			"https://8.8.8.8/hook",
+			"https://[2606:4700:4700::1111]/hook",
+			"https://localhost.example.com/hook",
+		]) {
+			expect(isPrivateHost(host(address)), address).toBe(false);
+		}
+	});
+
+	it("says so in plain words, and only for a private address", () => {
+		expect(privateAddressError("https://172.20.0.5/hook")).toBe(
+			"That address is on a private network, so this site cannot send to it.",
+		);
+		expect(privateAddressError("https://hooks.zapier.com/hooks/catch/1/a/")).toBeUndefined();
 	});
 });

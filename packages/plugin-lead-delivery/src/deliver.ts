@@ -2,6 +2,7 @@
 
 import type { PluginContext, StorageCollection } from "emdash";
 
+import { privateAddressError } from "./address.js";
 import { APPROVAL_PREFIX, isLiveApproval } from "./approval.js";
 import {
 	ALERTS_KEY,
@@ -367,6 +368,14 @@ export async function sendTo(
 		}
 	}
 	if (!ctx.http) return done({ kind: "retry", raw: "Web requests are not available." });
+	// Checked again before every send: a delivery saved by an earlier version, with a laxer check.
+	const blocked = delivery.kind === "hubspot" ? undefined : privateAddressError(delivery.url ?? "");
+	if (blocked) {
+		return done({
+			kind: "fixing",
+			plain: `${blocked} Change the address in Lead delivery → ${delivery.name} → Edit.`,
+		});
+	}
 	const request =
 		delivery.kind === "hubspot"
 			? {

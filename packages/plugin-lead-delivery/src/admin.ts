@@ -3,6 +3,7 @@
 import type { Block, BlockResponse, ButtonElement, FormField } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
+import { isPrivateHost, PRIVATE_ADDRESS } from "./address.js";
 import { APPROVAL_PREFIX } from "./approval.js";
 import {
 	ago,
@@ -1666,12 +1667,7 @@ function detailsFromForm(
 	if (!parsedUrl || parsedUrl.protocol !== "https:") {
 		return { error: "The app's address must start with https://. Copy it again from the app." };
 	}
-	if (
-		/^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[)/.test(parsedUrl.hostname) ||
-		parsedUrl.hostname.endsWith(".local")
-	) {
-		return { error: "That address is on a private network, so this site cannot send to it." };
-	}
+	if (isPrivateHost(parsedUrl.hostname)) return { error: PRIVATE_ADDRESS };
 	const app = APPS.some((a) => a.value === values.app) ? (values.app as Delivery["app"]) : "other";
 	const keep = existing?.kind === "app" && existing.secret;
 	const secret = keep ? existing.secret! : newSecret();
