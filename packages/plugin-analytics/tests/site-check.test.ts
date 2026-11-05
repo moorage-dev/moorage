@@ -125,6 +125,20 @@ describe("what a page loads", () => {
 		expect(found[2]!.advice).toContain("certified");
 	});
 
+	it("leaves alone a video or map this plugin holds back until visitors agree", () => {
+		const held = (player: string) =>
+			`<div class="cc-held" data-cc-held="video" data-cc-name="YouTube"><div class="cc-held-ask" hidden><p class="cc-held-text">This video is shown by YouTube.</p><button type="button" data-cc-load>Load the video</button><a class="cc-held-link" href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">Open it on YouTube</a></div><template>${player}</template></div>`;
+		expect(
+			titles(
+				page(
+					held(
+						`<div class="emdash-iframe"><iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe></div>`,
+					) + held(`<iframe src="https://www.google.com/maps/embed?pb=!1m18"></iframe>`),
+				),
+			),
+		).toEqual([]);
+	});
+
 	it("finds embeds that set cookies before anyone is asked, with a plain fix for each", () => {
 		const found = scanPage(
 			page(

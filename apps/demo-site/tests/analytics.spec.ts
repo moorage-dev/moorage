@@ -48,7 +48,19 @@ const IDS = {
 	clarity: "ab12cd34ef",
 	hubspot: "12345678",
 };
-const NO_TOOLS = { ga4: "", gtm: "", ads: "", meta: "", clarity: "", hubspot: "", cloudflare: "" };
+const NO_TOOLS = {
+	ga4: "",
+	gtm: "",
+	ads: "",
+	meta: "",
+	clarity: "",
+	hubspot: "",
+	cloudflare: "",
+	plausible: "",
+	umami: "",
+	linkedin: "",
+	tiktok: "",
+};
 const CLOUDFLARE_TOKEN = "0123456789abcdef0123456789abcdef";
 
 test.use({ timezoneId: "America/Chicago" });
@@ -1408,4 +1420,324 @@ test("an admin sees the help line under every tab, and the switch under Advanced
 	await setHidden(page, false);
 	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
 	await expectHelpLine(page, guide);
+});
+
+test.describe("added in 0.4", () => {
+	const EMBED_HOSTS = [
+		"youtube.com",
+		"youtube-nocookie.com",
+		"vimeo.com",
+		"google.com",
+		"example.com",
+	];
+	const isEmbed = (url: URL) =>
+		EMBED_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+
+	/** Answer every video, map and other embedded page locally, and note what was asked for. */
+	async function stubEmbeds(context: BrowserContext): Promise<string[]> {
+		const hits: string[] = [];
+		await context.route(isEmbed, async (route) => {
+			hits.push(route.request().url());
+			await route.fulfill({ status: 200, contentType: "text/html", body: "<p>player</p>" });
+		});
+		return hits;
+	}
+	const held = (page: Page) => page.locator("[data-cc-held]");
+
+	test("videos and maps wait for Marketing, with a Load button for each; other embeds do not", async ({
+		page,
+		context,
+	}) => {
+		await configure({ ga4: IDS.ga4, meta: IDS.meta });
+		await stubVendors(context);
+		const hits = await stubEmbeds(context);
+		await inCountry(page, "DE");
+		await page.goto("/embeds-test");
+		await expect(banner(page)).toBeVisible();
+		await expect(held(page)).toHaveCount(3);
+		await expect(
+			page.getByText("This video is shown by YouTube, which may set cookies."),
+		).toBeVisible();
+		await expect(
+			page.getByText("This map is shown by Google Maps, which may set cookies."),
+		).toBeVisible();
+		await expect(
+			page.getByText("This video is shown by Vimeo, which may set cookies."),
+		).toBeVisible();
+		await settle(page);
+		// The page that is not a video or map loads as before; nothing else does.
+		expect(hits.map((url) => new URL(url).hostname)).toEqual(["example.com"]);
+
+		await page.getByRole("button", { name: "Load the map" }).click();
+		await expect(page.locator('iframe[src*="google.com/maps"]')).toHaveCount(1);
+		await expect(held(page)).toHaveCount(2);
+		expect(hits.some((url) => url.includes("youtube"))).toBe(false);
+
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await expect(held(page)).toHaveCount(0);
+		await expect(page.locator('iframe[src*="youtube.com/embed/dQw4w9WgXcQ"]')).toHaveCount(1);
+		await expect(page.locator('iframe[src*="player.vimeo.com/video/76979871"]')).toHaveCount(1);
+		await expect.poll(() => hits.some((url) => url.includes("youtube.com/embed"))).toBe(true);
+
+		// The answer is remembered: on the next visit they load straight away.
+		await page.reload();
+		await expect(page.locator('iframe[src*="youtube.com/embed"]')).toHaveCount(1);
+		await expect(held(page)).toHaveCount(0);
+	});
+
+	test("where nobody is asked, videos and maps render as before, with no placeholder", async ({
+		page,
+		context,
+	}) => {
+		await stubVendors(context);
+		await stubEmbeds(context);
+		await configure({ cloudflare: CLOUDFLARE_TOKEN });
+		await page.goto("/embeds-test");
+		await expect(page.locator('iframe[src*="youtube.com/embed"]')).toHaveCount(1);
+		await expect(held(page)).toHaveCount(0);
+		await expect(page.locator(".cc-held")).toHaveCount(0);
+		await configure({});
+		await page.goto("/embeds-test");
+		await expect(page.locator('iframe[src*="google.com/maps"]')).toHaveCount(1);
+		await expect(page.locator(".cc-held")).toHaveCount(0);
+	});
+
+	test("a visitor who is not asked gets the videos straight away", async ({ page, context }) => {
+		await configure({ ga4: IDS.ga4 });
+		await stubVendors(context);
+		await stubEmbeds(context);
+		await inCountry(page, "US");
+		await page.goto("/embeds-test");
+		await expect(page.locator('iframe[src*="youtube.com/embed"]')).toHaveCount(1);
+		await expect(held(page)).toHaveCount(0);
+		await expect(page.getByText("may set cookies")).toHaveCount(0);
+	});
+
+	test("the banner and the placeholders speak the page's language", async ({ page, context }) => {
+		await configure({ ga4: IDS.ga4, meta: IDS.meta });
+		await stubVendors(context);
+		await stubEmbeds(context);
+		await inCountry(page, "DE");
+		// The same page, marked as German, as a German site's theme would mark it.
+		await page.route("**/embeds-test", async (route) => {
+			const response = await route.fetch();
+			const html = (await response.text()).replace('<html lang="en"', '<html lang="de"');
+			await route.fulfill({ response, body: html });
+		});
+		const words = page.waitForResponse((response) => response.url().includes(`${API}/words?l=de`));
+		await page.goto("/embeds-test");
+		const answer = await words;
+		expect(answer.headers()["cache-control"]).toBe("public, max-age=86400");
+		expect((await answer.json()).data.t.accept).toBe("Alle akzeptieren");
+		const german = page.getByRole("region", { name: "Dürfen wir Cookies verwenden?" });
+		await expect(german).toBeVisible();
+		await expect(german).toContainText(
+			"Wir möchten Statistik-Cookies verwenden, um zu sehen, wie diese Website genutzt wird, und Marketing-Cookies, um unsere Werbung zu messen. Notwendige Cookies sind immer aktiv.",
+		);
+		await expect(german.getByRole("button", { name: "Alle akzeptieren" })).toBeVisible();
+		await expect(german.getByRole("button", { name: "Alle ablehnen" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Video laden" }).first()).toBeVisible();
+		await expect(page.getByRole("button", { name: "Karte laden" })).toBeVisible();
+
+		// An English page shows exactly the English banner, and fetches no words.
+		await page.unroute("**/embeds-test");
+		const asked: string[] = [];
+		page.on("request", (request) => asked.push(request.url()));
+		await page.goto("/embeds-test");
+		await expect(banner(page)).toBeVisible();
+		await expect(banner(page).getByRole("button", { name: "Accept all" })).toBeVisible();
+		expect(asked.filter((url) => url.includes("/words?"))).toEqual([]);
+	});
+
+	test("an admin's own button words are shown as typed", async ({ page, context }) => {
+		await configure({ ga4: IDS.ga4 });
+		await stubVendors(context);
+		await inCountry(page, "DE");
+		await save("save_wording", { label_accept: "Yes, that's fine", label_reject: "No, thank you" });
+		await page.goto("/");
+		await expect(banner(page).getByRole("button", { name: "Yes, that's fine" })).toBeVisible();
+		await expect(banner(page).getByRole("button", { name: "No, thank you" })).toBeVisible();
+		await save("save_wording", { label_accept: "", label_reject: "" });
+		await page.goto("/");
+		await expect(banner(page).getByRole("button", { name: "Accept all" })).toBeVisible();
+	});
+
+	test("with Astro's <ClientRouter />, the banner and the Cookies button stay through page changes", async ({
+		page,
+		context,
+	}) => {
+		await configure({ ga4: IDS.ga4, meta: IDS.meta });
+		const hits = await stubVendors(context);
+		await stubEmbeds(context);
+		await inCountry(page, "DE");
+		await page.goto("/embeds-test?router=1");
+		await expect(banner(page)).toBeVisible();
+		// A page change by the router, not a new page load.
+		await page.evaluate(() => ((window as unknown as { soft: boolean }).soft = true));
+		await page.locator("#next").click();
+		await expect(page.getByRole("heading", { name: "Embeds test, page two" })).toBeVisible();
+		expect(await page.evaluate(() => (window as unknown as { soft?: boolean }).soft)).toBe(true);
+		await expect(banner(page)).toBeVisible();
+		await expect(page.locator("html")).toHaveAttribute("data-cookie-consent", "asking");
+		await expect(held(page)).toHaveCount(3);
+		await settle(page);
+		expect(hits).toEqual([]);
+
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await expect(held(page)).toHaveCount(0);
+		await expect.poll(() => hits.some((url) => url.includes("gtag/js"))).toBe(true);
+		await page.locator("#first").click();
+		await expect(page.getByRole("heading", { name: "Embeds test", exact: true })).toBeVisible();
+		expect(await page.evaluate(() => (window as unknown as { soft?: boolean }).soft)).toBe(true);
+		await expect(banner(page)).toBeHidden();
+		// Back in the page (the small Cookies button steps aside while the page's own link is on screen).
+		await expect(page.locator("#cookie-consent")).toHaveCount(1);
+		await expect(page.locator('iframe[src*="youtube.com/embed"]')).toHaveCount(1);
+		// The link in the new page's text opens the choices.
+		await page.locator("#menu-cookies").click();
+		await expect(panel(page)).toBeVisible();
+	});
+
+	test("on another address than the site's, the banner shows but no tool loads", async ({
+		page,
+		context,
+	}) => {
+		await configure({ ga4: IDS.ga4, meta: IDS.meta });
+		const hits = await stubVendors(context);
+		const site = new URL(test.info().project.use.baseURL ?? "http://localhost:4399");
+		test.skip(site.hostname !== "localhost", "needs the site to run on localhost");
+		// The same server under another name: whichever loopback address it listens on.
+		let other: URL | undefined;
+		for (const name of ["127.0.0.1", "[::1]"]) {
+			const candidate = new URL(site);
+			candidate.hostname = name;
+			const ok = await page.request
+				.get(new URL("/", candidate).href)
+				.then((response) => response.ok())
+				.catch(() => false);
+			if (ok) {
+				other = candidate;
+				break;
+			}
+		}
+		test.skip(!other, "the site answers on localhost only");
+		await page.route(`**${API}/geo`, (route) =>
+			route.fulfill({ json: { success: true, data: { country: "DE" } } }),
+		);
+		const recorded: string[] = [];
+		page.on("request", (request) => {
+			if (request.url().endsWith(`${API}/record`)) recorded.push(request.url());
+		});
+		await page.goto(new URL("/", other!).href);
+		await expect(banner(page)).toBeVisible();
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await settle(page);
+		expect(hits).toEqual([]);
+		expect(recorded).toEqual([]);
+	});
+
+	test("the consent record keeps the country the server saw", async ({ page, context }) => {
+		await configure({ ga4: IDS.ga4 });
+		await stubVendors(context);
+		await inCountry(page, "DE");
+		// As Cloudflare would say where the visitor really is, whatever the browser sends.
+		await page.route(`**${API}/record`, (route) =>
+			route.continue({ headers: { ...route.request().headers(), "cf-ipcountry": "FR" } }),
+		);
+		await page.goto("/");
+		const sent = page.waitForResponse((response) => response.url().endsWith(`${API}/record`));
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await sent;
+		const status = await admin.post(`${API}/admin`, {
+			headers: { "X-EmDash-Request": "1" },
+			data: { type: "page_load", page: "/settings" },
+		});
+		const url = JSON.stringify(await status.json()).match(
+			/https?:\/\/[^"]+\/_emdash\/api\/plugins\/analytics-consent\/export\?[^"]+/,
+		)?.[0];
+		expect(url).toBeDefined();
+		const csv = await (await admin.get(url!)).text();
+		const mine = csv.split("\r\n").filter((line) => line.includes("Accepted all"));
+		expect(mine[0]).toContain(",FR,");
+	});
+
+	test('"Ask everyone again" shows the banner again to a visitor who answered', async ({
+		page,
+		context,
+	}) => {
+		await configure({ ga4: IDS.ga4 });
+		await stubVendors(context);
+		await inCountry(page, "DE");
+		await page.goto("/");
+		await banner(page).getByRole("button", { name: "Reject all" }).click();
+		await page.reload();
+		await expect(banner(page)).toBeHidden();
+		const response = await admin.post(`${API}/admin`, {
+			headers: { "X-EmDash-Request": "1" },
+			data: { type: "block_action", action_id: "ask_again" },
+		});
+		expect(JSON.stringify(await response.json())).toContain("Every visitor will be asked again.");
+		await page.reload();
+		await expect(banner(page)).toBeVisible();
+	});
+
+	test("Plausible and Umami count visits without a banner; LinkedIn and TikTok wait for Marketing", async ({
+		page,
+		context,
+	}) => {
+		const hits: string[] = [];
+		await context.route(
+			(url) =>
+				["plausible.io", "cloud.umami.is", "snap.licdn.com", "analytics.tiktok.com"].includes(
+					url.hostname,
+				),
+			async (route) => {
+				hits.push(new URL(route.request().url()).hostname);
+				await route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
+			},
+		);
+		await stubVendors(context);
+		await inCountry(page, "DE");
+		await configure({ plausible: "acme.test", umami: "94db1cb1-74f4-4a40-ad6c-962362670409" });
+		await page.goto("/");
+		await expect.poll(() => [...new Set(hits)].sort()).toEqual(["cloud.umami.is", "plausible.io"]);
+		await expect(page.locator("#cookie-consent")).toHaveCount(0);
+
+		hits.length = 0;
+		await configure({ linkedin: "1234567", tiktok: "CABC123DEF456GHI789J" });
+		await page.goto("/");
+		await expect(banner(page)).toBeVisible();
+		await settle(page);
+		expect(hits).toEqual([]);
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await expect
+			.poll(() => [...new Set(hits)].sort())
+			.toEqual(["analytics.tiktok.com", "snap.licdn.com"]);
+	});
+
+	test("other scripts can read the answer, and hear when it changes", async ({ page, context }) => {
+		await configure({ ga4: IDS.ga4, meta: IDS.meta });
+		await stubVendors(context);
+		await inCountry(page, "DE");
+		await page.addInitScript(() => {
+			const seen: unknown[] = [];
+			(window as unknown as { seen: unknown[] }).seen = seen;
+			document.addEventListener("cookie-consent:change", (event) =>
+				seen.push((event as CustomEvent).detail),
+			);
+		});
+		await page.goto("/");
+		await expect(banner(page)).toBeVisible();
+		const read = () =>
+			page.evaluate(() => (window as unknown as { cookieConsent?: unknown }).cookieConsent);
+		expect(await read()).toEqual({ analytics: false, marketing: false });
+		await banner(page).getByRole("button", { name: "Choose" }).click();
+		await panel(page).getByRole("switch", { name: "Analytics" }).check();
+		await panel(page).getByRole("button", { name: "Save my choices" }).click();
+		expect(await read()).toEqual({ analytics: true, marketing: false });
+		expect(await page.evaluate(() => (window as unknown as { seen: unknown[] }).seen)).toEqual([
+			{ analytics: false, marketing: false },
+			{ analytics: true, marketing: false },
+		]);
+	});
 });

@@ -65,7 +65,10 @@ interface PageParts {
 
 function parts(html: string, pluginId: string): PageParts {
 	const marker = `/_emdash/api/plugins/${pluginId}/`;
-	const withoutComments = html.replace(/<!--[\s\S]*?-->/g, "");
+	// What is inside a <template> never loads: a video or map this plugin holds back waits there.
+	const withoutComments = html
+		.replace(/<!--[\s\S]*?-->/g, "")
+		.replace(/<template\b[^>]*>[\s\S]*?<\/template>/gi, "");
 	let ours = false;
 	const code: string[] = [];
 	const rest = withoutComments.replace(SCRIPT, (_whole, attributes: string, body: string) => {

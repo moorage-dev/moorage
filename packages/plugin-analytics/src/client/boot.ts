@@ -499,8 +499,8 @@ export function boot(c: ClientConfig): void {
 		w
 			.fetch(c.api + "words?l=" + lang.toLowerCase() + "&w=" + c.w)
 			.then((response) => response.json())
-			.then((body: { t?: ClientConfig["t"] }) => {
-				if (body.t) c.t = body.t;
+			.then((body: { data?: { t?: ClientConfig["t"] } }) => {
+				if (body.data?.t) c.t = body.data.t;
 			})
 			// Not reached: the banner stays in English.
 			.catch(() => {});

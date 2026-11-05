@@ -13,7 +13,7 @@ import {
 	type AnalyticsConfig,
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
-import { pageFragments, scriptJson, siteHostOf } from "./fragment.js";
+import { pageFragments, siteHostOf } from "./fragment.js";
 import {
 	consentCsv,
 	consentSummary,
@@ -44,6 +44,9 @@ export function analyticsPlugin(): PluginDescriptor {
 		version,
 		format: "native",
 		entrypoint: "@moorage/plugin-analytics",
+		// Renders EmDash's iframe and embed blocks, holding videos and maps back until the
+		// visitor allows Marketing cookies (astro/held.mjs).
+		componentsEntry: "@moorage/plugin-analytics/astro",
 		options: {},
 		storage: DESCRIPTOR_STORAGE,
 	};
@@ -232,23 +235,23 @@ export function createPlugin() {
 			words: {
 				public: true,
 				methods: ["GET"],
-				response: "raw",
+				cacheControl: "public, max-age=86400",
 				handler: async (ctx) => {
 					const params = ctx.request
 						? new URL(ctx.request.url).searchParams
 						: new URLSearchParams();
 					const config = await memoSettings(ctx, () => readConfig(ctx));
-					return pluginResponse({
-						status: 200,
-						headers: {
-							"content-type": "application/json; charset=utf-8",
-							"cache-control": "public, max-age=86400",
-						},
-						body: {
-							kind: "text",
-							value: scriptJson({ t: wordsFor(config, params.get("l") ?? undefined) }),
-						},
-					});
+					return { t: wordsFor(config, params.get("l") ?? undefined) };
+				},
+			},
+			// Public: whether videos and maps are held back on this site, asked by the block
+			// components on the server (astro/holding.mjs). Yes wherever the banner can ask someone.
+			embeds: {
+				public: true,
+				methods: ["GET"],
+				handler: async (ctx) => {
+					const config = await memoSettings(ctx, () => readConfig(ctx));
+					return { hold: needsConsent(config) && config.banner.audience !== "none" };
 				},
 			},
 			// Public, never cached: tells the browser which country the visitor is in.

@@ -1,0 +1,45 @@
+---
+// Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
+//
+// A video or map held back until the visitor allows Marketing cookies. The
+// player (the slot) is inert inside a <template>; held.mjs's `reveal` puts it
+// in. The words are English here and swapped for the page's language in the
+// browser. The style is inline, once per box: a block rendered through EmDash's
+// plugin components is not always part of the page's own style graph.
+import { placeholderWords } from "./held.mjs";
+
+interface Props {
+	kind: "video" | "map";
+	name: string;
+	link: string;
+}
+
+const { kind, name, link } = Astro.props;
+const words = placeholderWords("en", { kind, name, link });
+const css =
+	".cc-held{position:relative;margin:1.5rem 0;width:100%}" +
+	".cc-held[data-cc-held]{aspect-ratio:16/9;display:grid;place-items:center;padding:20px;box-sizing:border-box;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:8px;background:color-mix(in srgb,currentColor 6%,transparent);text-align:center}" +
+	".cc-held-ask{max-width:36rem}.cc-held-ask p{margin:0 0 12px}" +
+	".cc-held-ask button{font:inherit;min-height:44px;padding:8px 18px;border:2px solid currentColor;border-radius:6px;background:none;color:inherit;cursor:pointer;margin:0 8px 8px 0}" +
+	".cc-held-open .emdash-iframe:not([style]){aspect-ratio:16/9}" +
+	".cc-held-open iframe{display:block;width:100%;height:100%;border:0}" +
+	".cc-held-open .emdash-embed-video,.cc-held-video{position:relative;aspect-ratio:16/9}" +
+	".cc-held-open .emdash-embed-video iframe,.cc-held-video iframe{position:absolute;inset:0}";
+---
+
+<style is:inline set:html={css} />
+<div class="cc-held" data-cc-held={kind} data-cc-name={name}>
+	<noscript><a href={link} rel="noopener noreferrer">{words.open}</a></noscript>
+	<div class="cc-held-ask" hidden>
+		<p class="cc-held-text">{words.text}</p>
+		<button type="button" data-cc-load>{words.load}</button>
+		<a class="cc-held-link" href={link} target="_blank" rel="noopener noreferrer">{words.open}</a>
+	</div>
+	<template><slot /></template>
+</div>
+
+<script>
+	import { reveal } from "./held.mjs";
+
+	reveal(document, window);
+</script>

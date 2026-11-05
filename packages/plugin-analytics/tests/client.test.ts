@@ -430,7 +430,10 @@ describe("the site's language", () => {
 		document.documentElement.setAttribute("lang", "de-DE");
 		const config = settings();
 		const asked = routes(() => ({
-			t: { ...config.t, title: "Dürfen wir Cookies verwenden?", accept: "Alle akzeptieren" },
+			success: true,
+			data: {
+				t: { ...config.t, title: "Dürfen wir Cookies verwenden?", accept: "Alle akzeptieren" },
+			},
 		}));
 		boot(config);
 		await ready();
@@ -473,7 +476,8 @@ describe("Astro's <ClientRouter />", () => {
 		const next = document.createElement("body");
 		next.innerHTML = body;
 		document.body.replaceWith(next);
-		for (const { name } of [...document.documentElement.attributes]) {
+		// A copy: removing attributes changes the live list.
+		for (const { name } of Array.from(document.documentElement.attributes)) {
 			document.documentElement.removeAttribute(name);
 		}
 		document.documentElement.setAttribute("lang", "en");

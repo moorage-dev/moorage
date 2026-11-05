@@ -103,41 +103,28 @@ describe("the banner's languages", () => {
 describe("the words route", () => {
 	const get = async (query: string, stored: unknown = GA) => {
 		const fake = fakeContext({ [CONFIG_KEY]: stored });
-		const response = (await createPlugin().routes.words!.handler({
+		return (await createPlugin().routes.words!.handler({
 			...fake.ctx,
 			input: undefined,
 			request: new Request(
 				`https://acme.test/_emdash/api/plugins/analytics-consent/words?${query}`,
 			),
-		} as unknown as RouteContext)) as {
-			status: number;
-			headers: Array<[string, string]>;
-			body: { kind: string; value: string };
-		};
-		const header = (name: string) => response.headers.find(([key]) => key === name)?.[1];
-		return {
-			response,
-			header,
-			json: JSON.parse(response.body.value) as { t: Record<string, string> },
-		};
+		} as unknown as RouteContext)) as { t: Record<string, string> };
 	};
 
-	it("is public, read-only and cacheable", () => {
+	it("is public, read-only and cacheable for a day", () => {
 		const route = createPlugin().routes.words!;
 		expect(route.public).toBe(true);
 		expect(route.methods).toEqual(["GET"]);
+		expect(route.cacheControl).toBe("public, max-age=86400");
 	});
 
 	it("answers with the banner's words in the language asked for", async () => {
-		const { response, header, json } = await get("l=de&w=abc");
-		expect(response.status).toBe(200);
-		expect(header("content-type")).toBe("application/json; charset=utf-8");
-		expect(header("cache-control")).toBe("public, max-age=86400");
-		expect(json.t).toEqual(wordsFor(normalizeConfig(GA), "de"));
+		expect((await get("l=de&w=abc")).t).toEqual(wordsFor(normalizeConfig(GA), "de"));
 	});
 
 	it("answers in English for a language it does not know, or none", async () => {
-		expect((await get("l=xx")).json.t.accept).toBe("Accept all");
-		expect((await get("")).json.t.accept).toBe("Accept all");
+		expect((await get("l=xx")).t.accept).toBe("Accept all");
+		expect((await get("")).t.accept).toBe("Accept all");
 	});
 });
