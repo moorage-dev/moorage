@@ -238,7 +238,10 @@ export function createPlugin() {
 					const asking = needsConsent(config) && config.banner.audience !== "none";
 					// Only answers to the banner that is live right now are kept.
 					if (!asking || input.version !== bannerVersion(config)) return { saved: false };
-					return { saved: (await saveConsent(ctx, input, new Date())) === "saved" };
+					// The country the request came from, as the server saw it, is better evidence than
+					// what the browser says; the browser's is kept only when the server knows none.
+					const country = countryOf(ctx) ?? input.country;
+					return { saved: (await saveConsent(ctx, { ...input, country }, new Date())) === "saved" };
 				},
 			},
 		},
