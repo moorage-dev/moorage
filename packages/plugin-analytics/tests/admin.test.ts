@@ -24,11 +24,16 @@ const ADMIN = 50;
 const EDITOR = 40;
 
 /** Call the real admin route the way the admin does. */
-async function call(fake: FakeContext, input: unknown, role = ADMIN): Promise<BlockResponse> {
+async function call(
+	fake: FakeContext,
+	input: unknown,
+	role = ADMIN,
+	origin = "https://acme.test",
+): Promise<BlockResponse> {
 	const handler = createPlugin().routes.admin!.handler;
 	const response = await handler({
 		...fake.ctx,
-		request: new Request("https://acme.test/_emdash/api/plugins/analytics-consent/admin"),
+		request: new Request(`${origin}/_emdash/api/plugins/analytics-consent/admin`),
 		input,
 		user: { id: "u1", email: "a@acme.test", name: null, role, createdAt: "" },
 	} as unknown as RouteContext);
@@ -533,27 +538,49 @@ describe("the banner's words", () => {
 });
 
 describe("the site's own address", () => {
-	const TITLE = "Tools load only on bakery.test";
-	const at = async (siteUrl: string | undefined, tools: Record<string, string>) => {
+	const TITLE = "Tools do not load on this address";
+	const at = async (
+		siteUrl: string | undefined,
+		tools: Record<string, string>,
+		origin = "https://acme.test",
+	) => {
 		const fake = fakeContext({ [CONFIG_KEY]: { tools } });
 		(fake.ctx as { site?: { url: string } }).site = siteUrl ? { url: siteUrl } : undefined;
-		return JSON.stringify(await load(fake));
+		return JSON.stringify(
+			await call(fake, { type: "page_load", page: "/settings" }, ADMIN, origin),
+		);
 	};
 
-	it("warns when the admin is open on another address than the site's", async () => {
-		const page = await at("https://www.bakery.test", { ga4: "G-AB12CD34EF" });
-		expect(page).toContain(TITLE);
-		expect(page).toContain("You are on acme.test");
-		expect(page).toContain("Settings > General");
+	it("warns when the admin is open on a workers.dev, pages.dev or local address other than the site's", async () => {
+		for (const origin of [
+			"https://bakery.acme.workers.dev",
+			"https://abc.bakery.pages.dev",
+			"http://localhost:4321",
+		]) {
+			const page = await at("https://www.bakery.test", { ga4: "G-AB12CD34EF" }, origin);
+			expect(page, origin).toContain(TITLE);
+			expect(page).toContain(`You are on ${new URL(origin).hostname}`);
+			expect(page).toContain("bakery.test");
+			expect(page).toContain("Settings > General");
+		}
 	});
 
-	it("says nothing on the site's own address, with no tools, or with no address set", async () => {
-		expect(await at("https://acme.test", { ga4: "G-AB12CD34EF" })).not.toContain("Tools load only");
-		expect(await at("https://www.acme.test", { ga4: "G-AB12CD34EF" })).not.toContain(
-			"Tools load only",
+	it("says nothing on any other domain, where tools load, nor on the site's own address, with no tools, or with no address set", async () => {
+		// A Site URL left on its setup address must not make the live domain look untracked.
+		expect(await at("https://www.bakery.test", { ga4: "G-AB12CD34EF" })).not.toContain(
+			"You are on",
 		);
-		expect(await at("https://bakery.test", {})).not.toContain(TITLE);
-		expect(await at(undefined, { ga4: "G-AB12CD34EF" })).not.toContain("Tools load only");
+		expect(await at("https://bakery.acme.workers.dev", { ga4: "G-AB12CD34EF" })).not.toContain(
+			"You are on",
+		);
+		expect(await at("https://acme.test", { ga4: "G-AB12CD34EF" })).not.toContain("You are on");
+		expect(await at("https://www.acme.test", { ga4: "G-AB12CD34EF" })).not.toContain("You are on");
+		expect(await at("https://bakery.test", {}, "https://x.workers.dev")).not.toContain(
+			"You are on",
+		);
+		expect(await at(undefined, { ga4: "G-AB12CD34EF" }, "https://x.workers.dev")).not.toContain(
+			"You are on",
+		);
 	});
 });
 

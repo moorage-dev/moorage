@@ -336,6 +336,43 @@ describe("who is asked", () => {
 		}
 	});
 
+	it("loads as usual on any other real domain: a Site URL left on its setup address must not stop tracking", async () => {
+		for (const [address, host] of [
+			["https://bakery.com/", "bakery-site.acme.workers.dev"],
+			["https://bakery.com/", "localhost"],
+			["https://staging.bakery.test/", "bakery.test"],
+		] as const) {
+			document.head.innerHTML = "";
+			document.body.innerHTML = "";
+			document.cookie = `${COOKIE}=;path=/;max-age=0`;
+			win.happyDOM.setURL(address);
+			boot({ ...settings(), h: host });
+			await ready();
+			press("a");
+			expect(requested(), `${address} with ${host}`).toHaveLength(3);
+		}
+	});
+
+	it("loads nothing on a workers.dev, pages.dev or local address that is not the site's", async () => {
+		for (const address of [
+			"https://bakery.acme.workers.dev/",
+			"https://abc123.bakery.pages.dev/",
+			"http://localhost:4321/",
+			"http://127.0.0.1:4321/",
+			"http://[::1]:4321/",
+			"http://bakery.localhost/",
+		]) {
+			document.head.innerHTML = "";
+			document.body.innerHTML = "";
+			document.cookie = `${COOKIE}=;path=/;max-age=0`;
+			win.happyDOM.setURL(address);
+			boot({ ...settings(), h: "bakery.test" });
+			await ready();
+			press("a");
+			expect(requested(), address).toEqual([]);
+		}
+	});
+
 	it("builds no banner when another consent tool is in charge", async () => {
 		boot(settings({ banner: { audience: "none" } }));
 		await ready();

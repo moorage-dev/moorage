@@ -35,6 +35,18 @@ export function mustAsk(
 	return zone ? ASK_ZONE.test(zone) || (!!india && /^Asia\/(Kolkata|Calcutta)$/.test(zone)) : true;
 }
 
+/**
+ * True for an address that is never a live site: a workers.dev or pages.dev
+ * address, or this computer. Only these count as "not the site" when they differ
+ * from the Site URL: a custom domain may be the live site under a Site URL that
+ * was never updated, and tracking must not stop there.
+ */
+export function devHost(host: string): boolean {
+	return /^(?:localhost|127\.0\.0\.1|\[::1\]|::1)$|\.(?:localhost|workers\.dev|pages\.dev)$/i.test(
+		host,
+	);
+}
+
 export function today(now: number): number {
 	return Math.floor(now / 864e5);
 }

@@ -8,6 +8,6 @@ YouTube and Vimeo videos and Google maps in your pages now wait for consent too.
 
 Four more tools, one box each: Plausible and Umami Cloud (visitor counts without cookies, so on their own they need no banner), and LinkedIn Insight Tag and TikTok Pixel (they wait for Marketing).
 
-Tools now load only on your site's own address, the Site URL in Settings > General (with or without www). On a staging copy or a workers.dev address the banner still shows, but nothing is tracked and no answer is recorded. If your site lives at a different address than its Site URL, the Status tab says so: update the Site URL there, or tracking stops.
+Tools no longer load on a copy of your site on a workers.dev or pages.dev address or on your laptop (localhost), unless that is the Site URL in Settings > General: the banner still shows, but nothing is tracked and no answer is recorded. Every other domain is tracked as before, so a Site URL left on an old address never stops tracking on your live site. If you open the admin on an address where tools do not load, the Status tab says so.
 
 Also new: an Ask everyone again button on the Banner tab; the consent log keeps the country the server saw rather than the one the browser reported; other scripts can read the visitor's answer from `window.cookieConsent` and a `cookie-consent:change` event; and the banner keeps working across page changes on sites that use Astro's `<ClientRouter />`. The README, banner and icon now use the plugin's name, Analytics & Cookies.

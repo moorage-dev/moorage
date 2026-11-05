@@ -2,6 +2,7 @@
 
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 
+import { devHost } from "./client/consent.js";
 import { cleanColourChoice, COLOUR_OPTIONS, OWN_COLOURS } from "./colour-sets.js";
 import {
 	cleanColors,
@@ -260,12 +261,14 @@ function trackingBlocks(state: PageState): Block[] {
 	const on = enabledTools(config);
 	const blocks: Block[] = [{ type: "header", text: "Tracking" }];
 	const here = state.origin ? new URL(state.origin).hostname.replace(/^www\./, "") : undefined;
-	if (on.length && state.siteHost && here && here !== state.siteHost) {
+	// The browser's rule (client/boot.ts): only a workers.dev, pages.dev or local address other
+	// than the Site URL goes without tools; any other domain may be the live site.
+	if (on.length && state.siteHost && here && here !== state.siteHost && devHost(here)) {
 		blocks.push({
 			type: "banner",
 			variant: "alert",
-			title: `Tools load only on ${state.siteHost}`,
-			description: `That is the Site URL in Settings > General. You are on ${here}: on any other address, such as a staging copy or workers.dev, the banner shows but no tool loads and no answer is recorded. If your site now lives at ${here}, change the Site URL there.`,
+			title: "Tools do not load on this address",
+			description: `You are on ${here}, and your Site URL in Settings > General is ${state.siteHost}. On a workers.dev or pages.dev address, or on this computer, the banner shows but no tool loads and no answer is recorded. If your site now lives at ${here}, change the Site URL there.`,
 		});
 	}
 	for (const warning of allWarnings(config)) {

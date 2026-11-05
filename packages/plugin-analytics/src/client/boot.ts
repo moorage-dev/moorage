@@ -3,6 +3,7 @@
 import {
 	COOKIE,
 	decide,
+	devHost,
 	encodeChoice,
 	mustAsk,
 	readChoice,
@@ -177,8 +178,10 @@ export function boot(c: ClientConfig): void {
 	};
 	if (c.who) mark("pending");
 	// A browser that has been signed in to the admin is staff, not a visitor. A copy of the site on
-	// another address (staging, workers.dev, a laptop) is treated the same: banner yes, tools no.
-	const away = !!c.h && here.hostname.replace(/^www\./, "") != c.h;
+	// a workers.dev or pages.dev address or a laptop, other than the Site URL, is treated the same:
+	// banner yes, tools no. Any other domain loads as usual: it may be the live site.
+	const onHost = here.hostname.replace(/^www\./, "");
+	const away = !!c.h && onHost != c.h && devHost(onHost);
 	let staff = !!local("emdash-editor") || away;
 
 	const done: Record<string, 1> = {};
