@@ -15,7 +15,14 @@ import {
 	writerJob,
 	type MailJob,
 } from "./notify.js";
-import { holdRequest, MAIL_TASK, REMIND_TASK, scheduleAsked, taskName } from "./policy.js";
+import {
+	holdRequest,
+	MAIL_TASK,
+	REMIND_TASK,
+	scheduleAsked,
+	scheduleRemindOnly,
+	taskName,
+} from "./policy.js";
 import type { CollectionInfo, UserInfo } from "./requests.js";
 import {
 	addHistory,
@@ -431,6 +438,7 @@ export async function ask(
 	if (result.notify && ctx.email) result.request.emailedAt = now;
 	await store.put(key, result.request);
 	if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);
+	else if (result.quiet) await scheduleRemindOnly(ctx, config, key, now);
 	const people = await approvers(ctx, config, user.id);
 	const names = nameList(people.slice(0, 4).map((p) => personName(p)));
 	if (people.length === 0)

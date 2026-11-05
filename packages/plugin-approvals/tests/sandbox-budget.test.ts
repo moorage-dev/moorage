@@ -1316,6 +1316,11 @@ describe("Withdraw (the person who asked)", () => {
 		expect(again?.emailedAt).toBe(emailedAt);
 		await drain();
 		expect(await mailTasks(s)).toEqual([]);
+		// The two-day reminder is still set, for the new request.
+		const tasks = (await s.host.inspect.scheduledTasks()) as unknown as Task[];
+		const remind = tasks.filter((t) => t.name.startsWith("remind-"));
+		const safe = again!.requestedAt.replace(/[^a-zA-Z0-9_-]/g, "_");
+		expect(remind.map((t) => t.name).some((name) => name.endsWith(safe))).toBe(true);
 	});
 });
 

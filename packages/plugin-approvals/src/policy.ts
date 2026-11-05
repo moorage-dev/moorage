@@ -3,7 +3,7 @@
 import type { ContentPolicyDecision, ContentPolicyEvent, PluginContext } from "emdash";
 
 import { isHeldRole, loadConfig, ROLE, type Config } from "./config.js";
-import { EMAIL_EVERY_MS } from "./notify.js";
+import { EMAIL_EVERY_MS, REMIND_AFTER_MS } from "./notify.js";
 import {
 	addHistory,
 	approvers,
@@ -31,6 +31,23 @@ export async function scheduleAsked(
 	await ctx.cron.schedule(taskName(MAIL_TASK, key, now), {
 		schedule: now,
 		data: { key, kind: "asked", ...(isNew && config.remind ? { remind: now } : {}) },
+	});
+}
+
+/**
+ * Only the two-day reminder for a new request, when its email is skipped (the approvers were
+ * emailed about this page less than a day ago). One call, as scheduleAsked; none without email.
+ */
+export async function scheduleRemindOnly(
+	ctx: PluginContext,
+	config: Config,
+	key: string,
+	now: string,
+): Promise<void> {
+	if (!ctx.email || !ctx.cron || !config.remind) return;
+	await ctx.cron.schedule(taskName(REMIND_TASK, key, now), {
+		schedule: new Date(Date.parse(now) + REMIND_AFTER_MS).toISOString(),
+		data: { key, requestedAt: now },
 	});
 }
 
@@ -84,6 +101,8 @@ export interface HoldResult {
 	again: boolean;
 	/** The page changed after an approval. */
 	changed: boolean;
+	/** A new request whose email is skipped: the approvers were emailed less than a day ago. */
+	quiet?: boolean;
 	approvedBy?: string;
 }
 
@@ -153,6 +172,7 @@ export function holdRequest(
 	return {
 		request,
 		notify: !recentlyEmailed,
+		...(recentlyEmailed ? { quiet: true } : {}),
 		again: false,
 		changed,
 		...(changed && existing?.approval ? { approvedBy: existing.approval.by.name } : {}),
@@ -332,6 +352,7 @@ export async function gate(
 		// Email is sent by a one-shot task, so a slow email never delays the publish; that task
 		// also sets the two-day reminder.
 		if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);
+		else if (result.quiet) await scheduleRemindOnly(ctx, config, key, now);
 		if (event.origin.source === "scheduler") {
 			return refuse(
 				result.changed
