@@ -13,7 +13,7 @@ import {
 	type AnalyticsConfig,
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
-import { pageFragments, siteHostOf } from "./fragment.js";
+import { pageFragments, scriptJson, siteHostOf } from "./fragment.js";
 import {
 	consentCsv,
 	consentSummary,
@@ -28,6 +28,7 @@ import {
 } from "./record.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import { checkSite, readSiteCheck, SITE_CHECK_KEY, type SiteCheck } from "./site-check.js";
+import { wordsFor } from "./words.js";
 
 export type { AnalyticsConfig } from "./config.js";
 
@@ -223,6 +224,30 @@ export function createPlugin() {
 							"cache-control": "no-store",
 						},
 						body: { kind: "text", value: consentCsv(rows, more) },
+					});
+				},
+			},
+			// Public and cacheable: the banner's words in the page's language (see words.ts). The
+			// address carries a code of the words, so a change is fetched past the browser's cache.
+			words: {
+				public: true,
+				methods: ["GET"],
+				response: "raw",
+				handler: async (ctx) => {
+					const params = ctx.request
+						? new URL(ctx.request.url).searchParams
+						: new URLSearchParams();
+					const config = await memoSettings(ctx, () => readConfig(ctx));
+					return pluginResponse({
+						status: 200,
+						headers: {
+							"content-type": "application/json; charset=utf-8",
+							"cache-control": "public, max-age=86400",
+						},
+						body: {
+							kind: "text",
+							value: scriptJson({ t: wordsFor(config, params.get("l") ?? undefined) }),
+						},
 					});
 				},
 			},

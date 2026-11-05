@@ -60,6 +60,8 @@ export interface AnalyticsConfig {
 		darkColors: { background: string; text: string; accent: string };
 		/** Ask again after this many months. */
 		months: 6 | 12;
+		/** The owner's own words for the buttons; empty means the built-in ones, in the site's language. */
+		labels: { accept: string; reject: string; choose: string; save: string; settings: string };
 	};
 	/** Address prefixes that are never tracked, e.g. "/thank-you". */
 	exclude: string[];
@@ -94,6 +96,19 @@ export function defaultMessage(config: AnalyticsConfig): string {
 }
 
 export const NO_COLORS = { background: "", text: "", accent: "" } as const;
+export const NO_LABELS = { accept: "", reject: "", choose: "", save: "", settings: "" } as const;
+/** The longest button word an owner may type. */
+export const MAX_LABEL = 40;
+
+/** The owner's button words, each one short line of text or "". */
+export function cleanLabels(value: unknown): AnalyticsConfig["banner"]["labels"] {
+	const source = isRecord(value) ? value : {};
+	const out = { ...NO_LABELS } as AnalyticsConfig["banner"]["labels"];
+	for (const key of Object.keys(NO_LABELS) as Array<keyof typeof NO_LABELS>) {
+		out[key] = cleanText(source[key], MAX_LABEL, "");
+	}
+	return out;
+}
 
 export const DEFAULT_CONFIG: AnalyticsConfig = {
 	tools: {
@@ -126,6 +141,7 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 		darkOn: false,
 		darkColors: { ...NO_COLORS },
 		months: 6,
+		labels: { ...NO_LABELS },
 	},
 	exclude: [],
 	gtmLoading: "choice",
@@ -339,6 +355,7 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 			darkOn,
 			darkColors,
 			months: rawBanner.months === 12 || rawBanner.months === "12" ? 12 : 6,
+			labels: cleanLabels(rawBanner.labels),
 		},
 		exclude: parseExcludes(source.exclude),
 		gtmLoading: oneOf(source.gtmLoading, ["choice", "immediate"], defaults.gtmLoading),

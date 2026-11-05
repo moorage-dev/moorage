@@ -12,6 +12,7 @@ import {
 	defaultMessage,
 	DEFAULT_TITLE,
 	enabledTools,
+	MAX_LABEL,
 	needsConsent,
 	normalizeConfig,
 	parseExcludes,
@@ -81,6 +82,8 @@ export interface PageState {
 	toast?: BlockResponse["toast"];
 	/** Show the Colours section open: after its own save, or a refused one. */
 	openColours?: boolean;
+	/** The same for Button words. */
+	openWording?: boolean;
 }
 
 // ── Status ──────────────────────────────────────────────────
@@ -518,14 +521,14 @@ function formId(name: FormName, config: AnalyticsConfig): string {
 	return `${name}-${shortHash(JSON.stringify(formPart(name, config)))}`;
 }
 
-type FormName = "tools" | "banner" | "colours" | "advanced";
+type FormName = "tools" | "banner" | "colours" | "wording" | "advanced";
 
 /**
  * The part of the settings each form shows. A form's id follows only its own
  * part, so saving one form never clears what is typed, and not yet saved, in another.
  */
 function formPart(name: FormName, config: AnalyticsConfig): unknown {
-	const { colourSet, colors, darkColors, darkOn, ...banner } = config.banner;
+	const { colourSet, colors, darkColors, darkOn, labels, ...banner } = config.banner;
 	switch (name) {
 		case "tools":
 			return [config.tools, config.hubspotEu, config.cloudflareWait, config.enquiries];
@@ -533,6 +536,8 @@ function formPart(name: FormName, config: AnalyticsConfig): unknown {
 			return banner;
 		case "colours":
 			return [colourSet, colors, darkColors, darkOn];
+		case "wording":
+			return labels;
 		case "advanced":
 			return [config.exclude, config.gtmLoading];
 	}
@@ -711,6 +716,7 @@ function bannerBlocks(state: PageState): Block[] {
 		},
 		...askAgainBlocks(config),
 		coloursBlock(state),
+		wordingBlock(state),
 		...previewBlocks(state),
 	];
 }
@@ -824,6 +830,42 @@ function coloursBlock(state: PageState): Block {
 					},
 				],
 				submit: { label: "Save colours", action_id: "save_colours" },
+			},
+		],
+	};
+}
+
+const LABEL_FIELDS: Array<[keyof AnalyticsConfig["banner"]["labels"], string]> = [
+	["accept", "Accept all"],
+	["reject", "Reject all"],
+	["choose", "Choose"],
+	["save", "Save my choices"],
+	["settings", "Cookies (the small button)"],
+];
+
+/** The buttons in the owner's own words, folded away: the built-in ones suit most sites. */
+function wordingBlock(state: PageState): Block {
+	const { config, draft } = state;
+	return {
+		type: "accordion",
+		label: "Button words",
+		...(state.openWording ? { default_open: true } : {}),
+		blocks: [
+			{
+				type: "context",
+				text: "The banner speaks your site's language, from the language your pages are marked with: English, Deutsch, Français, Español, Italiano, Nederlands or Português. That includes the standard heading and text above. What you type here, and a heading or text of your own, is shown as typed, in every language. Leave a box empty for the built-in words. Keep Accept all and Reject all equally plain.",
+			},
+			{
+				type: "form",
+				block_id: formId("wording", config),
+				fields: LABEL_FIELDS.map(([key, built]) => ({
+					type: "text_input" as const,
+					action_id: `label_${key}`,
+					label: `Button: ${built}`,
+					placeholder: built,
+					initial_value: text(draft, `label_${key}`, config.banner.labels[key]),
+				})),
+				submit: { label: "Save button words", action_id: "save_wording" },
 			},
 		],
 	};
@@ -1007,7 +1049,13 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		return {
 			save,
 			response: renderPage(
-				{ ...state, config: save, openColours, toast: { type: "success", message: said } },
+				{
+					...state,
+					config: save,
+					openColours,
+					openWording,
+					toast: { type: "success", message: said },
+				},
 				tab,
 			),
 		};
@@ -1016,6 +1064,7 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 		response: renderPage({ ...state, draft: values, errors, openColours, toast: REFUSED }, tab),
 	});
 	const openColours = action === "save_colours";
+	const openWording = action === "save_wording";
 	const flag = (key: string, saved: boolean) =>
 		typeof values[key] === "boolean" ? (values[key] as boolean) : saved;
 
@@ -1161,6 +1210,15 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 			},
 			TAB.banner,
 		);
+	}
+
+	if (action === "save_wording") {
+		const labels = { ...config.banner.labels };
+		for (const [key] of LABEL_FIELDS) {
+			if (has(values, `label_${key}`))
+				labels[key] = cleanText(values[`label_${key}`], MAX_LABEL, "");
+		}
+		return done({ ...config, banner: { ...config.banner, labels } }, TAB.banner);
 	}
 
 	if (action === "save_advanced") {

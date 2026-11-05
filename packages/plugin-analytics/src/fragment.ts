@@ -9,12 +9,12 @@ import {
 	bannerVersion,
 	enabledTools,
 	contrast,
-	defaultMessage,
 	isExcluded,
 	needsConsent,
 	vendorNames,
 	type AnalyticsConfig,
 } from "./config.js";
+import { wordsCode, wordsFor } from "./words.js";
 
 /** The name the browser bundle uses for its settings; swapped for JSON below. */
 const PLACEHOLDER = "__CC_CONFIG__";
@@ -22,27 +22,6 @@ const PLACEHOLDER = "__CC_CONFIG__";
 const BACKSLASH = String.fromCharCode(92);
 /** `<` and the two line separators that older browsers treat as line ends inside a script. */
 const UNSAFE_IN_SCRIPT = new RegExp(`[<${String.fromCharCode(0x2028, 0x2029)}]`, "g");
-
-/** Fixed wording of the banner. The title and message come from settings. */
-const TEXT = {
-	policy: "Privacy policy",
-	accept: "Accept all",
-	reject: "Reject all",
-	choose: "Choose",
-	always: "Always on",
-	saved: "Your choice is saved. Change it any time under Cookies.",
-	save: "Save my choices",
-	settings: "Cookies",
-	panel: "Your cookie choices",
-	need: "Essential",
-	needText: "Remembers your answer, so you are not asked on every page.",
-	an: "Analytics",
-	anText: "Shows us how visitors use this site, so we can improve it.",
-	mk: "Marketing",
-	mkText: "Lets us measure our advertising and show you relevant ads elsewhere.",
-	uses: "Used by:",
-	gpc: "Your browser asks sites not to share your data (Global Privacy Control), so Marketing stays off.",
-} as const;
 
 /** What the browser needs to know, and nothing else from the settings. */
 export function clientConfig(
@@ -68,8 +47,10 @@ export function clientConfig(
 		scheme: banner.scheme,
 		an: vendorNames(config, "analytics"),
 		mk: vendorNames(config, "marketing"),
-		t: { ...TEXT, title: banner.title, text: banner.message || defaultMessage(config) },
+		t: wordsFor(config),
 	};
+	// The browser fetches the words in the page's language only when someone can be asked.
+	if (asks) out.w = wordsCode(config);
 	if (siteHost) out.h = siteHost;
 	if (tools.ga4) out.ga = tools.ga4;
 	if (tools.gtm) out.gtm = tools.gtm;

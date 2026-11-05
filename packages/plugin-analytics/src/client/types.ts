@@ -75,7 +75,11 @@ export interface ClientConfig {
 		mkText: string;
 		uses: string;
 		gpc: string;
+		/** What the small "Cookies" button is called for screen readers; "Cookie settings" when absent. */
+		sl?: string;
 	};
+	/** Code of the words in every language, for fetching the page's language past the browser's cache. */
+	w?: string;
 }
 
 /** A visitor's saved answer. */

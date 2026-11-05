@@ -306,6 +306,7 @@ describe("saving the banner and advanced settings", () => {
 			darkOn: false,
 			darkColors: { background: "", text: "", accent: "" },
 			months: 12,
+			labels: { accept: "", reject: "", choose: "", save: "", settings: "" },
 		});
 	});
 
@@ -462,6 +463,72 @@ describe('"Ask everyone again"', () => {
 		const response = await call(fake, { type: "block_action", action_id: "ask_again" }, EDITOR);
 		expect(response.toast?.type).toBe("error");
 		expect(fake.kv.get(CONFIG_KEY)).toEqual(asking[CONFIG_KEY]);
+	});
+});
+
+describe("the banner's words", () => {
+	const wording = (response: BlockResponse) => {
+		const tabs = response.blocks.find((block) => block.type === "tab");
+		const blocks =
+			tabs?.type === "tab" ? (tabs.panels.find((p) => p.label === "Banner")?.blocks ?? []) : [];
+		const fold = blocks.find(
+			(block) => block.type === "accordion" && block.label === "Button words",
+		);
+		const form = (fold?.type === "accordion" ? fold.blocks : []).find((b) => b.type === "form");
+		return { fold, form: form?.type === "form" ? form : undefined };
+	};
+
+	it("folds the button words away on the Banner tab, empty for the built-in ones", async () => {
+		const response = await load(fakeContext());
+		expectValid(response);
+		const { fold, form } = wording(response);
+		expect(JSON.stringify(fold)).toContain("Deutsch");
+		expect(form?.submit).toEqual({ label: "Save button words", action_id: "save_wording" });
+		expect(form?.fields.map((field) => field.action_id)).toEqual([
+			"label_accept",
+			"label_reject",
+			"label_choose",
+			"label_save",
+			"label_settings",
+		]);
+		expect(
+			form?.fields.every((field) => field.type === "text_input" && field.initial_value === ""),
+		).toBe(true);
+	});
+
+	it("saves the owner's words, tidied, and empties put the built-in ones back", async () => {
+		const fake = fakeContext({ [CONFIG_KEY]: { tools: { ga4: "G-AB12CD34EF" } } });
+		const response = await call(fake, {
+			type: "form_submit",
+			action_id: "save_wording",
+			values: {
+				label_accept: "  Gern  ",
+				label_reject: "Nein\ndanke",
+				label_settings: "x".repeat(60),
+			},
+		});
+		expect(response.toast).toEqual({
+			type: "success",
+			message: "Saved. It can take a few minutes to reach visitors.",
+		});
+		expect(saved(fake).banner.labels).toEqual({
+			accept: "Gern",
+			reject: "Nein danke",
+			choose: "",
+			save: "",
+			settings: "x".repeat(40),
+		});
+		await submit(fake, "save_wording", { label_accept: "", label_reject: "" });
+		expect(saved(fake).banner.labels.accept).toBe("");
+		expect(saved(fake).banner.labels.settings).toBe("x".repeat(40));
+	});
+
+	it("keeps what is typed in the banner form when the words are saved", async () => {
+		const fake = fakeContext();
+		const before = JSON.stringify(await load(fake)).match(/"block_id":"banner-[a-z0-9]+"/)?.[0];
+		await submit(fake, "save_wording", { label_accept: "OK" });
+		const after = JSON.stringify(await load(fake)).match(/"block_id":"banner-[a-z0-9]+"/)?.[0];
+		expect(after).toBe(before);
 	});
 });
 

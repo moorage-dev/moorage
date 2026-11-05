@@ -459,7 +459,9 @@ export function boot(c: ClientConfig): void {
 			button("c", t.choose, "q") +
 			'</div></div></div><button type=button class="s' +
 			(c.btnRight ? " sr" : "") +
-			'" data-k=c aria-label="Cookie settings" hidden>' +
+			'" data-k=c aria-label="' +
+			esc(t.sl || "Cookie settings") +
+			'" hidden>' +
 			ICON +
 			"<span>" +
 			esc(t.settings) +
@@ -488,7 +490,24 @@ export function boot(c: ClientConfig): void {
 
 	// ── Start ───────────────────────────────────────────────────
 
-	const run = () => {
+	// The banner speaks the page's language (<html lang>) when it knows it. English is in this
+	// script; the others are fetched from the site, alongside the country, before the banner shows.
+	const lang = /^(de|fr|es|it|nl|pt)\b/i.exec(html.lang)?.[1];
+	const words =
+		c.w &&
+		lang &&
+		w
+			.fetch(c.api + "words?l=" + lang.toLowerCase() + "&w=" + c.w)
+			.then((response) => response.json())
+			.then((body: { t?: ClientConfig["t"] }) => {
+				if (body.t) c.t = body.t;
+			})
+			// Not reached: the banner stays in English.
+			.catch(() => {});
+
+	const run = () => (words ? words.then(decideAndShow) : decideAndShow());
+
+	const decideAndShow = () => {
 		let zone: string | undefined;
 		try {
 			zone = Intl.DateTimeFormat().resolvedOptions().timeZone;

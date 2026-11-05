@@ -404,6 +404,69 @@ describe("telling other scripts whether the banner waits", () => {
 	});
 });
 
+describe("the site's language", () => {
+	afterEach(() => document.documentElement.removeAttribute("lang"));
+
+	/** Answer the country route and the words route, and note what was asked for. */
+	function routes(words: (lang: string) => unknown): string[] {
+		const asked: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string) => {
+				asked.push(url);
+				if (url.includes("/words?")) {
+					const lang = new URL(url, "https://acme.test").searchParams.get("l") ?? "";
+					const body = words(lang);
+					if (body instanceof Error) throw body;
+					return { json: async () => body };
+				}
+				return { json: async () => ({ success: true, data: { country: "DE" } }) };
+			}),
+		);
+		return asked;
+	}
+
+	it("on a German page the banner speaks German, fetched once from the site", async () => {
+		document.documentElement.setAttribute("lang", "de-DE");
+		const config = settings();
+		const asked = routes(() => ({
+			t: { ...config.t, title: "Dürfen wir Cookies verwenden?", accept: "Alle akzeptieren" },
+		}));
+		boot(config);
+		await ready();
+		expect(asked.filter((url) => url.includes("/words?"))).toEqual([
+			`/_emdash/api/plugins/analytics-consent/words?l=de&w=${config.w}`,
+		]);
+		expect(bannerShown()).toBe(true);
+		expect(shadow().querySelector("h2")?.textContent).toBe("Dürfen wir Cookies verwenden?");
+		expect(shadow().querySelector("[data-k=a]")?.textContent).toBe("Alle akzeptieren");
+	});
+
+	it("on an English page, or one in a language it does not know, asks for nothing more", async () => {
+		for (const lang of ["en", "en-GB", "pl", ""]) {
+			document.documentElement.setAttribute("lang", lang);
+			document.body.innerHTML = "";
+			const asked = routes(() => ({}));
+			boot(settings());
+			await ready();
+			expect(
+				asked.filter((url) => url.includes("/words?")),
+				lang,
+			).toEqual([]);
+			expect(shadow().querySelector("h2")?.textContent).toBe("Can we use cookies?");
+		}
+	});
+
+	it("falls back to English when the words cannot be fetched", async () => {
+		document.documentElement.setAttribute("lang", "fr");
+		routes(() => new Error("offline"));
+		boot(settings());
+		await ready();
+		expect(bannerShown()).toBe(true);
+		expect(shadow().querySelector("h2")?.textContent).toBe("Can we use cookies?");
+	});
+});
+
 describe("Astro's <ClientRouter />", () => {
 	/** What the router does on a page change: a new body, the new page's attributes on <html>. */
 	function swap(body: string): void {
