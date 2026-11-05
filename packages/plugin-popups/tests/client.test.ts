@@ -9,7 +9,7 @@ import { boot, MEMORY_KEY, VISIT_KEY } from "../src/client/boot.js";
 import type { ClientConfig, ClientItem } from "../src/client/types.js";
 import type { Popup } from "../src/config.js";
 import { normalizeSettings } from "../src/config.js";
-import { clientConfig, clientItem, previewItem } from "../src/fragment.js";
+import { barHtml, clientConfig, clientItem, previewItem } from "../src/fragment.js";
 import { popup } from "./helpers.js";
 
 /**
@@ -32,6 +32,24 @@ function config(...popups: Array<Partial<Popup>>): ClientConfig {
 }
 
 const host = () => document.querySelector("#popups");
+/** The style the head script writes to hide top bars before the page draws. */
+const hiddenBars = () => document.head.querySelector("style")?.textContent ?? "";
+/** A new page load: no style from the last one. */
+const fresh = () => {
+	document.head.innerHTML = "";
+};
+/** A top bar as the server draws it at the start of the page. */
+const drawBar = (raw: Partial<Popup>) => {
+	const c = config(raw);
+	const item = c.items[0]!;
+	const holder = document.createElement("div");
+	holder.innerHTML = barHtml(item, c);
+	const bar = holder.firstElementChild as HTMLElement;
+	const template = bar.querySelector("template")!;
+	bar.attachShadow({ mode: "open" }).innerHTML = template.innerHTML;
+	template.remove();
+	document.body.prepend(bar);
+};
 const shadow = () => host()!.shadowRoot!;
 const beacons: string[] = [];
 
@@ -167,6 +185,48 @@ describe("a popup that opens by itself", () => {
 		expect(host()).not.toBeNull();
 	});
 
+	it("opens again for someone who closed or clicked it once it says something new, never after a sign-up", async () => {
+		const slide = { kind: "slide" as const, again: "never" as const };
+		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
+		boot(config(slide));
+		await readOn();
+		shadow().querySelector<HTMLElement>("[data-pp-close]")!.click();
+		expect(host()).toBeNull();
+		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.v).toBe(
+			config(slide).items[0]!.v,
+		);
+		const again = async (raw: Partial<Popup>) => {
+			host()?.remove();
+			sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
+			boot(config({ ...slide, ...raw }));
+			await readOn();
+		};
+		await again({});
+		expect(host()).toBeNull();
+		await again({ heading: "Christmas cakes: order by the 20th" });
+		expect(host()).not.toBeNull();
+		// A click on the button is remembered for those words too.
+		localStorage.setItem(
+			MEMORY_KEY,
+			JSON.stringify({ p: { pop00000: { d: 1, v: config(slide).items[0]!.v } }, f: {} }),
+		);
+		await again({});
+		expect(host()).toBeNull();
+		await again({ buttonUrl: "/christmas" });
+		expect(host()).not.toBeNull();
+		// A sign-up is for good, whatever the popup says later.
+		const form = { ...slide, contains: "form" as const, form: "newsletter" };
+		localStorage.setItem(
+			MEMORY_KEY,
+			JSON.stringify({
+				p: { pop00000: { d: 1, v: config(form).items[0]!.v } },
+				f: { newsletter: 1 },
+			}),
+		);
+		await again({ ...form, heading: "A new letter" });
+		expect(host()).toBeNull();
+	});
+
 	it("follows its dates and its device, whatever the cached page says", async () => {
 		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
 		const now = Date.now();
@@ -233,6 +293,66 @@ describe("top bars", () => {
 		expect(style).toContain("#popups-bar-pop00000{display:none!important}");
 		expect(style).not.toContain("pop10000");
 		expect(style).toContain("#popups-bar-pop20000{display:none!important}");
+	});
+
+	it("show again once their words, link or dates change, but not for where or how often they show", () => {
+		const bar = { kind: "bar" as const, heading: "Open 8 to 4 this week." };
+		boot(config(bar));
+		expect(hiddenBars()).not.toContain("pop00000");
+		// The visitor closes it: what they closed is remembered with the close.
+		const closed = config(bar).items[0]!;
+		localStorage.setItem(
+			MEMORY_KEY,
+			JSON.stringify({ p: { pop00000: { c: Date.now(), v: closed.v } }, f: {} }),
+		);
+		fresh();
+		boot(config(bar));
+		expect(hiddenBars()).toContain("#popups-bar-pop00000{display:none!important}");
+		// Only where, on what and how often: still closed.
+		fresh();
+		boot(config({ ...bar, devices: "all", again: "never", where: "prefix", prefixes: ["/"] }));
+		expect(hiddenBars()).toContain("#popups-bar-pop00000{display:none!important}");
+		// New words, a new link or new dates: the visitor sees it once more.
+		for (const edit of [
+			{ heading: "Closed on Boxing Day." },
+			{ buttonUrl: "/hours" },
+			{ end: Date.now() + 3 * DAY },
+		]) {
+			fresh();
+			boot(config({ ...bar, ...edit }));
+			expect(hiddenBars()).not.toContain("pop00000");
+		}
+	});
+
+	it("remembers a close made before this version against what the bar says now", () => {
+		const bar = { kind: "bar" as const, heading: "Open 8 to 4 this week." };
+		localStorage.setItem(
+			MEMORY_KEY,
+			JSON.stringify({ p: { pop00000: { c: Date.now() - DAY } }, f: {} }),
+		);
+		// The update alone brings nothing back.
+		boot(config(bar));
+		expect(hiddenBars()).toContain("#popups-bar-pop00000{display:none!important}");
+		const memory = JSON.parse(localStorage.getItem(MEMORY_KEY)!);
+		expect(memory.p.pop00000).toEqual({ c: Date.now() - DAY, v: config(bar).items[0]!.v });
+		// The next edit does.
+		fresh();
+		boot(config({ ...bar, heading: "Closed on Boxing Day." }));
+		expect(hiddenBars()).not.toContain("pop00000");
+	});
+
+	it("remember what was closed when the visitor closes one", async () => {
+		const bar = { kind: "bar" as const, heading: "Open 8 to 4 this week." };
+		const item = config(bar).items[0]!;
+		drawBar(bar);
+		boot(config(bar));
+		await ready();
+		document
+			.querySelector("[data-popups-bar]")!
+			.shadowRoot!.querySelector<HTMLElement>("[data-pp-close]")!
+			.click();
+		const memory = JSON.parse(localStorage.getItem(MEMORY_KEY)!);
+		expect(memory.p.pop00000).toEqual({ c: Date.now(), v: item.v });
 	});
 });
 
