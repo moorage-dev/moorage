@@ -72,6 +72,8 @@ function unquote(value: string): string {
 export interface PageScan {
 	/** Links in the site menu and footer (header, nav and footer elements). */
 	menu: Target[];
+	/** The same links as written, query included (WordPress's `/?p=12`). */
+	hrefs: string[];
 	/** Maps, scripts, styles and forms loaded over an insecure connection. */
 	active: string[];
 	/** Pictures over an insecure connection (browsers upgrade these). */
@@ -82,10 +84,15 @@ export interface PageScan {
 export function scanHtml(html: string, siteUrl: string): PageScan {
 	const text = html.length > HTML_LIMIT ? html.slice(0, HTML_LIMIT) : html;
 	const menu = new Map<string, Target>();
+	const hrefs = new Set<string>();
 	for (const region of text.matchAll(REGION)) {
 		for (const match of region[0].matchAll(HREF)) {
-			const target = toTarget((match[2] ?? match[3] ?? "").replaceAll("&amp;", "&"), siteUrl);
-			if (target) menu.set(target.url, target);
+			const href = (match[2] ?? match[3] ?? "").replaceAll("&amp;", "&");
+			const target = toTarget(href, siteUrl);
+			if (target) {
+				menu.set(target.url, target);
+				if (hrefs.size < 200) hrefs.add(href);
+			}
 		}
 	}
 	const active = new Set<string>();
@@ -97,7 +104,12 @@ export function scanHtml(html: string, siteUrl: string): PageScan {
 	for (const match of text.matchAll(PASSIVE)) {
 		if (match[1]) passive.add(unquote(match[1]));
 	}
-	return { menu: [...menu.values()], active: [...active], passive: [...passive] };
+	return {
+		menu: [...menu.values()],
+		hrefs: [...hrefs],
+		active: [...active],
+		passive: [...passive],
+	};
 }
 
 /** How a content type's entries are addressed, as EmDash builds the path. */

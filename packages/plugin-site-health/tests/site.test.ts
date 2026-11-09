@@ -543,10 +543,94 @@ describe("a site that cannot open its own pages", () => {
 		expect(result.rows.site).toEqual([]);
 		// The draft is known from the content alone; the address that matches no page could not be checked.
 		expect(result.rows.link.map((r) => r.url)).toEqual(["/christmas"]);
-		expect(result.unknownRows.map((r) => `${r.url} ${r.reason}`)).toContain("/old-page no-live");
+		expect(result.unknownRows.map((r) => `${r.url} ${r.reason}`)).toContain("/old-page not-public");
 		expect(runtime.http.requests()).toEqual([]);
 		const page = await runtime.admin.loadPage(PAGE);
 		expect(text(page)).toContain("This site is not public yet");
+	});
+
+	it("a page published while the first check finishes says the site is not public, not 'could not open'", async () => {
+		// The full Playwright run: the plugin's first check is past its link steps when a page is
+		// published; there is no summary yet, only the running check, which knows the site is not public.
+		const runtime = await start("");
+		await runtime.transport.invokeHook("plugin:activate", {});
+		for (let run = 0; run < 60; run += 1) {
+			const scan = await runtime.inspect.kv.get<ScanState>("scan");
+			if (scan?.phase === "checklist") break;
+			await cron(runtime);
+		}
+		expect((await runtime.inspect.kv.get<ScanState>("scan"))?.live).toBe("not-public");
+		expect(await runtime.inspect.kv.get("summary")).toBeNull();
+		const spring = (await runtime.fixtures.content("pages", {
+			slug: "spring-menu",
+			status: "published",
+			data: { title: "Spring menu", body: [link("Old menu", "/menu-2024", "s1")] },
+		})) as { id: string };
+		await runtime.transport.invokeHook("content:afterPublish", {
+			collection: "pages",
+			content: { id: spring.id },
+		});
+		await finish(runtime);
+		const result = await summary(runtime);
+		expect(result.live).toBe("not-public");
+		expect(result.unknownRows.map((r) => `${r.url} ${r.reason}`)).toContain(
+			"/menu-2024 not-public",
+		);
+		expect(text(await runtime.admin.loadPage(PAGE))).toContain(
+			"/menu-2024 matches no page we know of. Your site is not public yet",
+		);
+	});
+
+	it("a row saved as 'could not open' before the site was known to be private reads as not public", async () => {
+		const runtime = await start("");
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const id = idFor("internal", "/old-page");
+		const row = await runtime.inspect.storage.get<LinkRow>("links", id);
+		const stored = await summary(runtime);
+		// What a 0.2.0 check, or an earlier write, left behind.
+		await runtime.fixtures.plugin.storage("links", id, { ...row, reason: "no-live" });
+		await runtime.fixtures.plugin.kv("summary", {
+			...stored,
+			unknownRows: stored.unknownRows.map((r) => (r.id === id ? { ...r, reason: "no-live" } : r)),
+		});
+		const words = text(await runtime.admin.loadPage(PAGE));
+		expect(words).toContain("/old-page matches no page we know of. Your site is not public yet");
+		expect(words).not.toContain("/old-page: we could not open your site");
+	});
+
+	it("takes a full link to the site's own address on this computer as one of its pages (roundup 2026-11-09)", async () => {
+		const runtime = await start("http://127.0.0.1:4321");
+		await runtime.fixtures.content("pages", {
+			slug: "contact",
+			status: "published",
+			data: {
+				title: "Contact",
+				body: [
+					link("Team", "http://127.0.0.1:4321/team-old", "t1"),
+					link("Team, by name", "http://localhost:4321/team-older", "t2"),
+					link("About", "http://localhost:4321/about", "t3"),
+				],
+			},
+		});
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const result = await summary(runtime);
+		expect(result.live).toBe("not-public");
+		// Each is a path on this site, never a link to another site that is refused.
+		const rows = await runtime.inspect.storage.list<LinkRow>("links");
+		const external = rows.filter((r) => r.data.kind === "external").map((r) => r.data.url);
+		expect(external.filter((url) => /127\.0\.0\.1|localhost/.test(url))).toEqual([]);
+		const about = await runtime.inspect.storage.get<LinkRow>("links", idFor("internal", "/about"));
+		expect(about?.state).toBe("ok");
+		expect(result.unknownRows.map((r) => `${r.url} ${r.reason}`).sort()).toEqual(
+			expect.arrayContaining(["/team-old not-public", "/team-older not-public"]),
+		);
+		// The site cannot open itself here (EmDash refuses plugin requests to this computer).
+		expect(runtime.http.requests()).toEqual([]);
+		expect(text(await runtime.admin.loadPage(PAGE))).toContain(
+			"/team-old matches no page we know of. Your site is not public yet, so we cannot open the address to be sure; it is checked once the site has a public address.",
+		);
 	});
 
 	for (const [name, status, body] of [
@@ -900,6 +984,197 @@ describe("the Links on this page panel", () => {
 		expect(text(await runtime.admin.loadEditorPanel("links", "pages", draft.id))).toContain(
 			"Links on this page are checked once it is published.",
 		);
+	});
+});
+
+/** What a WordPress move leaves on a page (the re-run of 2026-11-09). */
+async function movedFromWordPress(runtime: PluginRuntimeTestHost): Promise<string> {
+	// EmDash does not find a page whose slug is in WordPress's coded form.
+	await runtime.http.respond(`${SITE}/%cf%84%cf%85%cf%81%ce%af`, html("Page not found", 404));
+	await runtime.http.respond(`${SITE}/contact`, html("<html><body>Contact</body></html>"));
+	await runtime.fixtures.content("pages", {
+		slug: "%cf%84%cf%85%cf%81%ce%af",
+		status: "published",
+		data: { title: "Τυρί", body: [] },
+	});
+	const contact = (await runtime.fixtures.content("pages", {
+		slug: "contact",
+		status: "published",
+		data: {
+			title: "Contact",
+			body: [
+				{
+					_type: "htmlBlock",
+					_key: "h1",
+					html: '[contact-form-7 id="9ee95fa" title="Contact form 1"]',
+				},
+				{
+					_type: "htmlBlock",
+					_key: "h2",
+					html: "<!-- wp:latest-posts /-->",
+					originalBlockName: "core/latest-posts",
+				},
+				link("Our story", "/?p=12", "w1"),
+				link("Old shop", "https://old-bakery.example/wp-content/uploads/2024/05/shop.jpg", "w2"),
+				{
+					_type: "image",
+					_key: "i1",
+					asset: { _type: "reference", _ref: "m1", url: "/_emdash/api/media/file/oven.jpg" },
+				},
+			],
+		},
+	})) as { id: string };
+	return contact.id;
+}
+
+function leftWords(page: BlockResponse): string[] {
+	const words = text(page);
+	return [
+		"is a WordPress shortcode",
+		"left from WordPress's Latest Posts block",
+		"/?p=12 is a WordPress address",
+		"looks like an address on your old WordPress site",
+		"in WordPress's coded form of its letters",
+		"oven.jpg has no alt text",
+	].filter((phrase) => words.includes(phrase));
+}
+
+describe("left over from WordPress", () => {
+	it("lists what a move left behind, says what to do, and costs no extra calls", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		const contact = await movedFromWordPress(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		const most = await finish(runtime);
+		expect(most).toBeLessThanOrEqual(9);
+		const result = await summary(runtime);
+		expect(result.left).toBe(6);
+		// Not broken links: the counts of links and of problems to fix stay as they were.
+		expect(result.fix).toEqual({ site: 1, page: 1, link: 2 });
+		const page = await runtime.admin.loadPage(PAGE);
+		expect(text(page)).toContain("Left over from WordPress");
+		expect(leftWords(page)).toHaveLength(6);
+		expect(text(page)).toContain("Edit Contact");
+		expect(validateBlockResponse(page, { pluginPagePaths: [PAGE] })).toEqual({
+			valid: true,
+			errors: [],
+		});
+
+		// An Editor sees them too, and beside the page in the editor.
+		const editor = await runtime.fixtures.user({ email: "sam@acme.test", role: "editor" });
+		expect(leftWords(await runtime.admin.loadPage(PAGE, { user: editor }))).toHaveLength(6);
+		const panel = await runtime.admin.loadEditorPanel("links", "pages", contact, { user: editor });
+		expect(text(panel)).toContain("Left over from WordPress (5)");
+		expect(text(panel)).toContain("is a WordPress shortcode");
+		expect(text(panel)).not.toMatch(/moorage/i);
+
+		// The Edit menu opens a panel with the page and what to do.
+		const id = result.leftRows?.find((r) => r.reason === "shortcode")?.id;
+		expect(id).toBeDefined();
+		const opened = await runtime.admin.act(PAGE, "fix", { value: `edit0|${id}` });
+		expect(text(opened)).toContain("Open Contact");
+		expect(validateBlockResponse(opened, { pluginPagePaths: [PAGE] })).toEqual({
+			valid: true,
+			errors: [],
+		});
+
+		// The editor cleans the page up and publishes: the rows go at once.
+		const fixed = await runtime.actions.content.update("pages", contact, {
+			data: { body: [link("Our story", "/about", "w1")] },
+		});
+		expect(fixed.success).toBe(true);
+		expect((await runtime.actions.content.publish("pages", contact)).success).toBe(true);
+		await runtime.transport.invokeHook("content:afterPublish", {
+			collection: "pages",
+			content: { id: contact },
+		});
+		const after = await summary(runtime);
+		expect(after.left).toBe(1);
+		expect(after.leftRows?.map((r) => r.reason)).toEqual(["encoded-slug"]);
+		expect(leftWords(await runtime.admin.loadPage(PAGE))).toEqual([
+			"in WordPress's coded form of its letters",
+		]);
+	});
+
+	it("a row marked as fine stays off the list through the next full check", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await movedFromWordPress(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const id = (await summary(runtime)).leftRows?.find((r) => r.reason === "no-alt")?.id;
+		const fine = await runtime.admin.act(PAGE, "fix", { value: `fine|${id}` });
+		expect(fine.toast?.message).toBe("Marked as fine. oven.jpg is not listed any more.");
+		expect((await summary(runtime)).left).toBe(5);
+		await runtime.admin.act(PAGE, "check_all");
+		await finish(runtime);
+		expect((await summary(runtime)).left).toBe(5);
+		expect(leftWords(await runtime.admin.loadPage(PAGE))).not.toContain("oven.jpg has no alt text");
+	});
+
+	it("finds the old site in the menu the home page shows", async () => {
+		const runtime = await start();
+		// The first answer for the home page is the full check's; the Checklist gets the usual one.
+		await runtime.http.respond(
+			`${SITE}/`,
+			html(
+				'<html><body><header><nav><a href="/about">About</a><a href="/?p=3">News</a><a href="https://old-bakery.example/wp-content/uploads/menu.pdf">Menu</a></nav></header></body></html>',
+			),
+		);
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const rows = (await summary(runtime)).leftRows ?? [];
+		expect(rows.map((r) => `${r.url} ${r.menu}`).sort()).toEqual([
+			"/?p=3 true",
+			"https://old-bakery.example/wp-content/uploads/menu.pdf true",
+		]);
+		expect(text(await runtime.admin.loadPage(PAGE))).toContain("Found on: Site menu (every page).");
+	});
+
+	it("forgets an old site once no page links to its WordPress addresses", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		const contact = await movedFromWordPress(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect((await summary(runtime)).oldHosts).toEqual(["old-bakery.example"]);
+		const fixed = await runtime.actions.content.update("pages", contact, {
+			data: { body: [link("About", "/about", "w1")] },
+		});
+		expect(fixed.success).toBe(true);
+		expect((await runtime.actions.content.publish("pages", contact)).success).toBe(true);
+		await runtime.admin.act(PAGE, "check_all");
+		await finish(runtime);
+		expect((await summary(runtime)).oldHosts).toBeUndefined();
+	});
+
+	it("leaves out the coded slug of content that has no page of its own", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.fixtures.collection({
+			slug: "testimonials",
+			label: "Testimonials",
+			routable: false,
+			fields: [{ slug: "title", label: "Title", type: "string" }],
+		});
+		await runtime.fixtures.content("testimonials", {
+			slug: "%cf%84%cf%85",
+			status: "published",
+			data: { title: "Τυ" },
+		});
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect((await summary(runtime)).left ?? 0).toBe(0);
+	});
+
+	it("shows nothing about WordPress on a site that never had it", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		expect((await summary(runtime)).left ?? 0).toBe(0);
+		expect(text(await runtime.admin.loadPage(PAGE))).not.toContain("WordPress");
 	});
 });
 

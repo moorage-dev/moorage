@@ -426,3 +426,69 @@ test("an admin sees the help line under every tab, and the switch in Settings hi
 	await expect(page.getByText("Saved. The help line shows again.")).toBeVisible();
 	await expectHelpLine(page, guide);
 });
+
+// EmDash's WordPress Exporter import puts Yoast and Rank Math values in content fields named
+// seo_title and seo_description, which the page never uses. The checks name them, so the owner
+// knows the value is there but has to be copied into the SEO panel.
+test("the checks name SEO values a WordPress import left in fields the page does not use", async ({
+	page,
+}) => {
+	await openSeoPage(page);
+	const headers = { "X-EmDash-Request": "1" };
+	const api = "/_emdash/api";
+	const fields = [
+		{ slug: "seo_title", label: "SEO Title", type: "string" },
+		{ slug: "seo_description", label: "SEO Description", type: "text" },
+	];
+	for (const field of fields) {
+		const added = await page.request.post(`${api}/schema/collections/pages/fields`, {
+			headers,
+			data: field,
+		});
+		expect(added.ok()).toBe(true);
+	}
+	const list = await page.request.get(`${api}/content/pages`, { headers });
+	const pages = (await list.json()) as { data: { items: Array<{ id: string; slug: string }> } };
+	const id = pages.data.items.find((item) => item.slug === "pricing")?.id ?? "";
+	expect(id).not.toBe("");
+	try {
+		// Pricing has the description an earlier test typed; Home has none of its own.
+		const home = pages.data.items.find((item) => item.slug === "home")?.id ?? "";
+		for (const [entry, data] of [
+			[id, { seo_title: "Plans and prices | Acme Bakery" }],
+			[home, { seo_description: "Fresh bread on Main Street, every morning." }],
+		] as const) {
+			const saved = await page.request.put(`${api}/content/pages/${entry}`, {
+				headers,
+				data: { data },
+			});
+			expect(saved.ok()).toBe(true);
+			const published = await page.request.post(`${api}/content/pages/${entry}/publish`, {
+				headers,
+			});
+			expect(published.ok()).toBe(true);
+		}
+
+		await openSeoPage(page);
+		await page.getByRole("button", { name: "Check all pages again" }).click();
+		await expect(page.getByText("All pages checked.")).toBeVisible({ timeout: 30_000 });
+		await expect(
+			page
+				.getByRole("row", { name: /^Home/ })
+				.getByText(/A description came from WordPress but the page doesn't use it yet/),
+		).toBeVisible();
+		await expect(page.getByText(/No search description/)).toHaveCount(0);
+		await page.getByRole("button", { name: /^Worth a look/ }).click();
+		await expect(
+			page
+				.getByRole("row", { name: /^Pricing/ })
+				.getByText(/A search title came from WordPress but the page doesn't use it yet\./),
+		).toBeVisible();
+	} finally {
+		for (const field of fields) {
+			await page.request.delete(`${api}/schema/collections/pages/fields/${field.slug}`, {
+				headers,
+			});
+		}
+	}
+});

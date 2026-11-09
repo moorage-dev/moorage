@@ -76,6 +76,85 @@ describe("page checks", () => {
 		expect(excerptOf({ excerpt: " Bread. " })).toBe("Bread.");
 	});
 
+	describe("values the WordPress import put in fields the page does not use", () => {
+		// EmDash's WordPress Exporter import writes Yoast and Rank Math values into content fields
+		// named seo_title and seo_description, not into the SEO panel, so the page never uses them.
+		const empty = { ...input().seo!, title: null, description: null };
+		const imported = {
+			title: "About us",
+			body: LONG_TEXT,
+			seo_title: "Our story | Acme",
+			seo_description: "Family bakers since 1982.",
+		};
+
+		it("says a description came from WordPress instead of saying there is none", () => {
+			const issues = checkEntry(input({ seo: empty, data: imported, siteName: "Acme" }));
+			const description = issues.find((issue) => issue.id === "imported-description");
+			expect(description).toEqual({
+				id: "imported-description",
+				level: "fix",
+				message:
+					"A description came from WordPress but the page doesn't use it yet, so Google writes its own summary of this page.",
+				fix: "Copy it from the SEO Description field into Meta Description in the page's SEO panel.",
+			});
+			expect(issues.map((issue) => issue.id)).not.toContain("no-description");
+			// The page really has no description, so it is still something to fix.
+			expect(statusOf(issues, false)).toBe("fix");
+		});
+
+		it("says a search title came from WordPress, as advice", () => {
+			const issues = checkEntry(input({ seo: empty, data: imported, siteName: "Acme" }));
+			expect(issues.find((issue) => issue.id === "imported-title")).toEqual({
+				id: "imported-title",
+				level: "look",
+				message: "A search title came from WordPress but the page doesn't use it yet.",
+				fix: 'Copy it from the SEO Title field into SEO Title in the page\'s SEO panel, without the " | Site name" ending (your site adds its name).',
+			});
+		});
+
+		it("names the imported title when the page's own title says nothing", () => {
+			const home = { ...imported, title: "Home", seo_title: "Harbour Bakery: bread and cakes" };
+			const issues = checkEntry(input({ title: "Home", seo: empty, data: home }));
+			expect(issues.find((issue) => issue.id === "generic-title")?.message).toBe(
+				'The title is just "Home", which is what Google shows as the headline. A better one came from WordPress but the page doesn\'t use it yet.',
+			);
+			expect(issues.map((issue) => issue.id)).not.toContain("imported-title");
+		});
+
+		it("still notes an unused description when the excerpt stands in for it", () => {
+			const issues = checkEntry(
+				input({ seo: empty, data: { ...imported, excerpt: "Bread, baked daily." } }),
+			);
+			const description = issues.find((issue) => issue.id === "imported-description");
+			expect(description?.level).toBe("look");
+			expect(description?.message).toBe(
+				"A description came from WordPress but the page doesn't use it yet.",
+			);
+		});
+
+		it("says nothing once the SEO panel has its own values", () => {
+			const own = { ...empty, title: "Who we are", description: "Our own words." };
+			expect(ids({ seo: own, data: imported, siteName: "Acme" })).toEqual([]);
+		});
+
+		it("ignores a title that is only the page's own title and the site's name", () => {
+			const same = { ...imported, seo_title: "About us | Acme", seo_description: "" };
+			expect(
+				ids({ seo: { ...empty, description: "Ours." }, data: same, siteName: "Acme" }),
+			).toEqual([]);
+		});
+
+		it("ignores values with unfilled Yoast or Rank Math variables, and collections without the panel", () => {
+			const raw = {
+				...imported,
+				seo_title: "%%title%% %%sep%% %%sitename%%",
+				seo_description: "%excerpt%",
+			};
+			expect(ids({ seo: empty, data: raw })).toEqual(["no-description"]);
+			expect(ids({ seo: undefined, data: imported })).toEqual([]);
+		});
+	});
+
 	it("does not ask for SEO fields on a collection without the SEO panel", () => {
 		expect(ids({ seo: undefined })).toEqual([]);
 	});
@@ -800,7 +879,11 @@ describe("Google preview panel", () => {
 		});
 		// The headline as the page shows it: the site's name after the title.
 		expect(panel.blocks[1]).toEqual({ type: "header", text: "Wedding cakes: Acme" });
-		expect(text(panel)).toContain("No description yet. Google will pick some text from the page.");
+		// The plugin cannot see which field a theme passes as the description when the SEO panel
+		// has none (EmDash's getSeoMeta takes the theme's choice before the excerpt), so it says so.
+		expect(text(panel)).toContain(
+			"No Meta Description yet. Unless your theme fills one in from another field, Google picks some text from the page.",
+		);
 		expect(text(panel)).toContain('{"label":"Shown to Google as","value":"Service"}');
 		expect(text(panel)).toContain("To fix: No search description,");
 		expect(text(panel)).toContain("What Google sees: the published page");
@@ -852,9 +935,11 @@ describe("Google preview panel", () => {
 		const panel = await host.admin.loadEditorPanel("preview", "posts", entry.id);
 
 		expect(panel.blocks[2]).toEqual({ type: "section", text: "How we bake our sourdough." });
-		expect(text(panel)).toContain("This description is the page's excerpt.");
+		expect(text(panel)).toContain(
+			"No Meta Description, so this is the page's excerpt, which EmDash uses in its place. Your theme may show another field instead, such as a standfirst or summary. To choose what search shows, fill in Meta Description in the SEO panel.",
+		);
 		expect(text(panel)).not.toContain("No search description");
-		expect(text(panel)).not.toContain("No description yet");
+		expect(text(panel)).not.toContain("No Meta Description yet");
 		// The markup the admin can open describes the page the same way.
 		expect(text(panel)).toContain("How we bake our sourdough.");
 

@@ -100,7 +100,9 @@ export async function handlePanel(
 	const url = front ? `${root}/` : (publicUrl ?? guessed);
 	const title = record.title || "(no title)";
 	const written = item.seo?.description?.trim() ?? "";
-	// As EmDash does on the page itself: no SEO description means the excerpt is used.
+	// Without an SEO description, EmDash's getSeoMeta uses the description the theme passes
+	// (moorage.dev passes its standfirst, for example), and only then the excerpt. A plugin cannot
+	// see what the theme passes, so the excerpt is shown and the panel says it may differ.
 	const fromExcerpt = written === "" && excerptOf(item.data) !== "";
 	const description = written || excerptOf(item.data);
 	const collectionType: PageSchemaType =
@@ -119,14 +121,14 @@ export async function handlePanel(
 			type: "section",
 			text:
 				description === ""
-					? "No description yet. Google will pick some text from the page."
+					? "No Meta Description yet. Unless your theme fills one in from another field, Google picks some text from the page."
 					: clip(description, DESCRIPTION_CHARS),
 		},
 		...(fromExcerpt
 			? [
 					{
 						type: "context" as const,
-						text: "This description is the page's excerpt. To write a different one for search, fill in Meta Description in the SEO panel.",
+						text: "No Meta Description, so this is the page's excerpt, which EmDash uses in its place. Your theme may show another field instead, such as a standfirst or summary. To choose what search shows, fill in Meta Description in the SEO panel.",
 					},
 				]
 			: []),

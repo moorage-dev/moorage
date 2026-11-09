@@ -59,9 +59,7 @@ export function toTarget(raw: string, siteUrl: string): Target | null {
 	const url = parseUrl(value.startsWith("//") ? `https:${value}` : value, "https://site.invalid");
 	if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) return null;
 	const host = url.hostname.toLowerCase();
-	const ownHost =
-		!isAbsolute ||
-		(site !== null && host.replace(/^www\./, "") === site.hostname.replace(/^www\./, ""));
+	const ownHost = !isAbsolute || (site !== null && sameSite(host, site.hostname.toLowerCase()));
 	if (ownHost) {
 		const path = normalizePath(url.pathname);
 		if (isSystemPath(path)) return null;
@@ -74,6 +72,27 @@ export function toTarget(raw: string, siteUrl: string): Target | null {
 	}
 	url.hash = "";
 	return { url: url.href, internal: false, host, insecure: url.protocol === "http:" };
+}
+
+/** This computer's own names: one site when the Site URL is one of them. */
+function isLoopback(host: string): boolean {
+	return (
+		host === "localhost" ||
+		host.endsWith(".localhost") ||
+		host.startsWith("127.") ||
+		host === "[::1]"
+	);
+}
+
+/**
+ * Is `host` the site at `siteHost`? With or without `www.`; and on a site whose
+ * address is this computer, under any of its names (a link written while the site
+ * was open at 127.0.0.1 on a site set up as localhost). A link from a public site
+ * to this computer is never its own.
+ */
+export function sameSite(host: string, siteHost: string): boolean {
+	if (host.replace(/^www\./, "") === siteHost.replace(/^www\./, "")) return true;
+	return isLoopback(siteHost) && isLoopback(host);
 }
 
 /** A short, stable storage id for any address (FNV-1a, 52 bits, base 36). */

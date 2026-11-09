@@ -20,9 +20,10 @@ export const STATS_KEY = "stats";
 /**
  * What a check started by this release writes, so that a finished check from an earlier one is
  * run again on the next visit to the SEO page. 2 (0.2.0): only bylines without a role label
- * are authors, and hidden pages are not counted among the pages checked.
+ * are authors, and hidden pages are not counted among the pages checked. 3 (0.2.1): titles and
+ * descriptions left by the WordPress import are recognised.
  */
-export const SCAN_REV = 2;
+export const SCAN_REV = 3;
 
 /** Name of the background task that continues a site-wide check. */
 export const SCAN_TASK = "seo-scan";
@@ -213,6 +214,7 @@ async function entriesStep(
 					config,
 					siteUrl: ctx.site.url,
 					siteName: config.site.name ?? ctx.site.name,
+					emdashSiteName: ctx.site.name,
 					// Kept as it was; the title pass below settles it for the whole site.
 					duplicateTitle: before ? isDuplicate(before) : false,
 				}),
@@ -304,6 +306,7 @@ async function sweepStep(ctx: PluginContext, state: ScanState, config: SeoConfig
 					config,
 					siteUrl: ctx.site.url,
 					siteName: config.site.name ?? ctx.site.name,
+					emdashSiteName: ctx.site.name,
 					duplicateTitle: false,
 				}),
 			});

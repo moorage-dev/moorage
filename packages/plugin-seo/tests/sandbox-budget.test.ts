@@ -497,20 +497,22 @@ describe("SEO admin page", () => {
 		["admin visit", (runtime: PluginRuntimeTestHost) => runtime.admin.loadPage(PAGE)],
 		["widget", (runtime: PluginRuntimeTestHost) => runtime.admin.loadWidget("seo")],
 	] as const) {
-		it(`${label} after updating from 0.1.13 runs the check again`, async () => {
+		it(`${label} after updating from 0.1.13 or 0.2.0 runs the check again`, async () => {
 			const runtime = await start();
 			await configured(runtime);
 			for (let index = 0; index < 3; index += 1)
 				await addPage(runtime, `p${index}`, `Page ${index}`);
 			await checkAll(runtime);
-			// The finished check as 0.1.13 left it: no rev.
+			// The finished check as 0.1.13 left it (no rev), and as 0.2.0 did (rev 2).
 			const { rev: _rev, ...old } =
 				(await runtime.inspect.kv.get<Record<string, unknown>>("scan")) ?? {};
-			await runtime.fixtures.plugin.kv("scan", old);
-			const m = await cold(runtime, `${label} after update`, () => invoke(runtime));
-			expect(m.error).toBeUndefined();
-			expect(m.calls.length).toBe(9);
-			expect((await runtime.inspect.kv.get<{ rev?: number }>("scan"))?.rev).toBe(2);
+			for (const scan of [old, { ...old, rev: 2 }]) {
+				await runtime.fixtures.plugin.kv("scan", scan);
+				const m = await cold(runtime, `${label} after update`, () => invoke(runtime));
+				expect(m.error).toBeUndefined();
+				expect(m.calls.length).toBe(9);
+				expect((await runtime.inspect.kv.get<{ rev?: number }>("scan"))?.rev).toBe(3);
+			}
 		});
 	}
 

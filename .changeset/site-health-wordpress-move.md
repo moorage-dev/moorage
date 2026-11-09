@@ -1,0 +1,7 @@
+---
+"@moorage/plugin-site-health": minor
+---
+
+New "Left over from WordPress" group on the Problems tab, shown only when something is found: WordPress shortcodes visitors see as plain text (such as `[contact-form-7 …]` or `[gallery]`), empty HTML blocks (what a WordPress Latest Posts block becomes), links to WordPress addresses (`/?p=12` on your site; `/wp-content/…` on another, and any link to that site, worded "looks like an address on your old WordPress site", in your pages and in the menu the home page shows), pages whose slug is in WordPress's coded form (`%cf%84…`), which open "Page not found", and pictures with no alt text (featured images and pictures inside the page). Each row says what to do; its Fix menu opens the page or Menus, or marks the row as fine. Editors see it too, and in the "Links on this page" panel. It is read from the pages the daily check already reads, and is not counted as broken; it shows after the next full check.
+
+Links to your own site written in full under another name for your own computer (`127.0.0.1` on a site set up as `localhost`, or the other way round) are now taken as links to your own pages, not to another site. On a site that is not public yet, an address on your own site that matches no page now says so in plain words: it is checked once the site has a public address (EmDash does not let plugins open addresses on your own computer or network).
