@@ -1,6 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { parseUrl } from "./url.js";
+import { planCopy } from "./wordpress.js";
 
 /** "fix" affects how the page appears in search; "look" is advice. */
 export type IssueLevel = "fix" | "look";
@@ -31,6 +32,11 @@ export interface CheckInput {
 	title: string;
 	/** The site's name, which a page's title tag usually ends with. */
 	siteName?: string;
+	/**
+	 * Every name the site goes by (the SEO settings' and EmDash's), any of which may end a title
+	 * brought over from WordPress. `siteName` when absent.
+	 */
+	siteNames?: string[];
 	siteUrl: string;
 	isArticle: boolean;
 	authorCount: number;
@@ -148,6 +154,10 @@ export function excerptOf(data: Record<string, unknown>): string {
 	return typeof data.excerpt === "string" ? data.excerpt.trim() : "";
 }
 
+// What to do about a value the WordPress import left in a field the page does not use.
+const COPY_FIX =
+	"An admin can copy it into the SEO panel with Copy imported WordPress SEO values on the SEO page, or paste it into";
+
 /**
  * Check one saved entry. Every rule reads data the plugin already holds and
  * is something Google documents; there are no keyword or word-count rules.
@@ -157,31 +167,68 @@ export function checkEntry(input: CheckInput): Issue[] {
 	const { seo } = input;
 	const facts = contentFacts(input.data);
 	const searchTitle = seo?.title?.trim() || input.title.trim();
+	// Values the WordPress import put in fields the page does not use (see wordpress.ts).
+	const imported = planCopy({
+		data: input.data,
+		seo,
+		title: input.title,
+		siteName: input.siteNames ?? input.siteName,
+	});
+	const unusedTitle = imported?.title !== undefined;
+	const unusedNote = "came from WordPress but the page doesn't use it yet";
 
 	if (searchTitle === "") {
 		issues.push({
 			id: "no-title",
 			level: "fix",
-			message: "This page has no title.",
-			fix: "Give the page a title.",
+			message: unusedTitle
+				? `This page has no title. One ${unusedNote}.`
+				: "This page has no title.",
+			fix: unusedTitle
+				? `${COPY_FIX} SEO Title in the page's SEO panel, without the site's name at the end.`
+				: "Give the page a title.",
 		});
 	}
 	// "Home" as the headline of the site's own search result says nothing about it.
-	if (GENERIC_TITLES.has(searchTitle.toLowerCase())) {
+	const generic = GENERIC_TITLES.has(searchTitle.toLowerCase());
+	if (generic) {
 		issues.push({
 			id: "generic-title",
 			level: "fix",
-			message: `The title is just "${searchTitle}", which is what Google shows as the headline.`,
-			fix: "Put your name and what you do in SEO Title, in the page's SEO panel.",
+			message: `The title is just "${searchTitle}", which is what Google shows as the headline.${unusedTitle ? ` A better one ${unusedNote}.` : ""}`,
+			fix: unusedTitle
+				? `${COPY_FIX} SEO Title in the page's SEO panel, without the site's name at the end.`
+				: "Put your name and what you do in SEO Title, in the page's SEO panel.",
 		});
 	}
-	if (seo && !seo.description?.trim() && excerptOf(input.data) === "") {
+	if (unusedTitle && searchTitle !== "" && !generic) {
 		issues.push({
-			id: "no-description",
-			level: "fix",
-			message: "No search description, so Google writes its own summary of this page.",
-			fix: "Fill in Meta Description in the page's SEO panel.",
+			id: "imported-title",
+			level: "look",
+			message: `A search title ${unusedNote}.`,
+			fix: `${COPY_FIX} SEO Title in the page's SEO panel, without the site's name at the end.`,
 		});
+	}
+	if (seo && !seo.description?.trim()) {
+		const excerpt = excerptOf(input.data) !== "";
+		if (imported?.description !== undefined) {
+			// The page really has no description of its own unless the excerpt stands in.
+			issues.push({
+				id: "imported-description",
+				level: excerpt ? "look" : "fix",
+				message: excerpt
+					? `A description ${unusedNote}.`
+					: `A description ${unusedNote}, so Google writes its own summary of this page.`,
+				fix: `${COPY_FIX} Meta Description in the page's SEO panel.`,
+			});
+		} else if (!excerpt) {
+			issues.push({
+				id: "no-description",
+				level: "fix",
+				message: "No search description, so Google writes its own summary of this page.",
+				fix: "Fill in Meta Description in the page's SEO panel.",
+			});
+		}
 	}
 	if (input.duplicateTitle && searchTitle !== "") {
 		issues.push({

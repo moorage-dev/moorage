@@ -497,20 +497,22 @@ describe("SEO admin page", () => {
 		["admin visit", (runtime: PluginRuntimeTestHost) => runtime.admin.loadPage(PAGE)],
 		["widget", (runtime: PluginRuntimeTestHost) => runtime.admin.loadWidget("seo")],
 	] as const) {
-		it(`${label} after updating from 0.1.13 runs the check again`, async () => {
+		it(`${label} after updating from 0.1.13 or 0.2.0 runs the check again`, async () => {
 			const runtime = await start();
 			await configured(runtime);
 			for (let index = 0; index < 3; index += 1)
 				await addPage(runtime, `p${index}`, `Page ${index}`);
 			await checkAll(runtime);
-			// The finished check as 0.1.13 left it: no rev.
+			// The finished check as 0.1.13 left it (no rev), and as 0.2.0 did (rev 2).
 			const { rev: _rev, ...old } =
 				(await runtime.inspect.kv.get<Record<string, unknown>>("scan")) ?? {};
-			await runtime.fixtures.plugin.kv("scan", old);
-			const m = await cold(runtime, `${label} after update`, () => invoke(runtime));
-			expect(m.error).toBeUndefined();
-			expect(m.calls.length).toBe(9);
-			expect((await runtime.inspect.kv.get<{ rev?: number }>("scan"))?.rev).toBe(2);
+			for (const scan of [old, { ...old, rev: 2 }]) {
+				await runtime.fixtures.plugin.kv("scan", scan);
+				const m = await cold(runtime, `${label} after update`, () => invoke(runtime));
+				expect(m.error).toBeUndefined();
+				expect(m.calls.length).toBe(9);
+				expect((await runtime.inspect.kv.get<{ rev?: number }>("scan"))?.rev).toBe(3);
+			}
 		});
 	}
 
@@ -591,6 +593,155 @@ describe("SEO admin page", () => {
 		await checkAll(runtime);
 		const m = await cold(runtime, "check_pages", () => runtime.admin.act(PAGE, "check_pages"));
 		expect(m.calls.length).toBe(9);
+	});
+});
+
+/** A site after EmDash's WordPress import: values in the seo_title/seo_description fields. */
+async function moved(pages: number): Promise<PluginRuntimeTestHost> {
+	host = await createPluginRuntimeTestHost({
+		site: { name: "Acme", url: "https://acme.test", locale: "en" },
+	});
+	await host.fixtures.collection({
+		slug: "posts",
+		label: "Posts",
+		urlPattern: "/posts/{slug}",
+		supports: ["drafts", "revisions", "seo"],
+		fields: [
+			{ slug: "title", label: "Title", type: "string" },
+			{ slug: "body", label: "Body", type: "text" },
+			{ slug: "seo_title", label: "SEO Title", type: "string" },
+			{ slug: "seo_description", label: "SEO Description", type: "text" },
+		],
+	});
+	for (let index = 0; index < pages; index += 1) {
+		await host.fixtures.content("posts", {
+			slug: `p${index}`,
+			data: {
+				title: `Post ${index}`,
+				body: LONG_TEXT,
+				seo_title: `Title ${index} | Acme`,
+				seo_description: `Description ${index}.`,
+			},
+			status: "published",
+		});
+	}
+	return host;
+}
+
+describe("Copy imported WordPress SEO values", () => {
+	type Job = { status: string; writable?: boolean; copied: { pages: number } };
+
+	it("an admin visit showing the offer makes no extra call", async () => {
+		const runtime = await moved(3);
+		await checkAll(runtime);
+		const m = await cold(runtime, "admin visit, WordPress values found", () =>
+			runtime.admin.loadPage(PAGE),
+		);
+		expect(JSON.stringify(m.result?.blocks)).toContain("Copy imported WordPress SEO values");
+		// As every visit once the check is done.
+		expect(m.calls.length).toBe(9);
+	});
+
+	it("wp_count reads the entries and tries one harmless write", async () => {
+		for (const site of ["fresh", "configured", "migrated"] as const) {
+			const runtime = await moved(3);
+			if (site === "configured") await configured(runtime);
+			if (site === "migrated") await migrated(runtime);
+			const m = await enforced(runtime, `wp_count, ${site} site`, () =>
+				runtime.admin.act(PAGE, "wp_count"),
+			);
+			// What every action reads, then the entries, the write EmDash refuses here, the count.
+			expect(m.calls.slice(-3), site).toEqual(["contentList", "contentUpdate", "kvSet"]);
+			expect(await runtime.inspect.kv.get<Job>("wordpress-seo")).toMatchObject({
+				status: "counted",
+				writable: false,
+			});
+			await runtime.dispose();
+			host = undefined;
+		}
+	});
+
+	it("wp_count on a large site stays within the calls and continues on the next click", async () => {
+		const runtime = await moved(3);
+		// Each page of entries is one read; give it more collections than one click can read.
+		for (const slug of ["a", "b", "c", "d", "e", "f"]) {
+			await runtime.fixtures.collection({
+				slug,
+				label: slug,
+				urlPattern: `/${slug}/{slug}`,
+				supports: ["seo"],
+				fields: [
+					{ slug: "title", label: "Title", type: "string" },
+					{ slug: "seo_description", label: "SEO Description", type: "text" },
+				],
+			});
+		}
+		const first = await enforced(runtime, "wp_count, first click", () =>
+			runtime.admin.act(PAGE, "wp_count"),
+		);
+		// Five reads of entries, then saving where it got to.
+		expect(first.calls.filter((call) => call === "contentList")).toHaveLength(5);
+		expect((await runtime.inspect.kv.get<Job>("wordpress-seo"))?.status).toBe("counting");
+		const second = await enforced(runtime, "wp_count, second click", () =>
+			runtime.admin.act(PAGE, "wp_count"),
+		);
+		expect([first.calls.length, second.calls.length]).toEqual([8, 6]);
+		expect((await runtime.inspect.kv.get<Job>("wordpress-seo"))?.status).toBe("counted");
+	});
+
+	it("wp_copy, the background task and wp_cancel each stay within the calls", async () => {
+		const runtime = await moved(12);
+		await runtime.admin.act(PAGE, "wp_count");
+		// As on a site that runs the plugin in its process, where EmDash accepts the write. Here,
+		// sandboxed, EmDash 1.4.0 refuses it, so the copy stops at its first write.
+		const counted = await runtime.inspect.kv.get<Job>("wordpress-seo");
+		await runtime.fixtures.plugin.kv("wordpress-seo", { ...counted, writable: true });
+		const click = await enforced(runtime, "wp_copy", () => runtime.admin.act(PAGE, "wp_copy"));
+		expect(click.calls).toEqual([
+			"kvList",
+			"schemaListCollections",
+			"contentList",
+			"contentUpdate",
+			"kvDelete",
+			"kvSet",
+		]);
+		expect((await runtime.inspect.kv.get<Job>("wordpress-seo"))?.status).toBe("failed");
+
+		// A copy under way, continued by the background task.
+		await runtime.fixtures.plugin.kv("wordpress-seo", {
+			...counted,
+			writable: true,
+			status: "copying",
+			collections: ["posts"],
+		});
+		const cron = await enforced(runtime, "cron seo-wordpress-copy", () =>
+			runtime.transport.invokeHook("cron", { name: "seo-wordpress-copy" }),
+		);
+		expect(cron.calls).toEqual([
+			"kvGet",
+			"contentList",
+			"contentUpdate",
+			"kvDelete",
+			"cronCancel",
+			"kvSet",
+		]);
+		await runtime.fixtures.plugin.kv("wordpress-seo", {
+			...counted,
+			writable: true,
+			status: "copying",
+			collections: ["posts"],
+		});
+		const cancel = await enforced(runtime, "wp_cancel while copying", () =>
+			runtime.admin.act(PAGE, "wp_cancel"),
+		);
+		expect(cancel.calls).toEqual([
+			"kvList",
+			"schemaListCollections",
+			"cronCancel",
+			"kvDelete",
+			"kvDelete",
+		]);
+		expect(await runtime.inspect.kv.get("wordpress-seo")).toBeNull();
 	});
 });
 

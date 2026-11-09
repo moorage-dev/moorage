@@ -17,6 +17,7 @@ import {
 	type SeoConfig,
 } from "./config.js";
 import { collectImages, type EntryImage } from "./images.js";
+import { planCopy, writesSomething } from "./wordpress.js";
 
 /** Storage collection holding one record per content entry. */
 export const ENTRIES = "entries";
@@ -65,6 +66,11 @@ export interface EntryRecord {
 	titleKey?: string;
 	issues?: Issue[];
 	checkedAt?: string;
+	/**
+	 * The entry has a title or description from the WordPress import that its SEO panel does not
+	 * have yet (see wordpress.ts). Absent on records written before 0.2.1.
+	 */
+	imported?: true;
 }
 
 export function entryKey(collection: string, id: string): string {
@@ -120,6 +126,8 @@ export function makeRecord(input: {
 	siteUrl: string;
 	/** The site's name as the plugin tells Google: its own setting, else EmDash's. */
 	siteName: string;
+	/** EmDash's own name for the site, which may also end a title brought over from WordPress. */
+	emdashSiteName?: string;
 	duplicateTitle: boolean;
 	/** False for a collection without public pages (testimonials, settings). */
 	hasPages: boolean;
@@ -138,6 +146,7 @@ export function makeRecord(input: {
 				seo: entry.seo,
 				title: entryTitle(entry),
 				siteName: input.siteName,
+				siteNames: [input.siteName, input.emdashSiteName ?? ""],
 				siteUrl,
 				isArticle: (ARTICLE_TYPES as readonly string[]).includes(type),
 				authorCount: authors.length,
@@ -148,6 +157,16 @@ export function makeRecord(input: {
 	const imageSeen = needsImage && previous?.imageSeen === true;
 	const issues = imageSeen ? checked.filter((issue) => issue.id !== NO_SOCIAL_IMAGE.id) : checked;
 	const images = input.hasPages ? collectImages(entry.data) : [];
+	const imported =
+		input.hasPages &&
+		writesSomething(
+			planCopy({
+				data: entry.data,
+				seo: entry.seo,
+				title: entryTitle(entry),
+				siteName: [input.siteName, input.emdashSiteName ?? ""],
+			}),
+		);
 	return {
 		v: 1,
 		publishedAt: entry.publishedAt,
@@ -171,6 +190,7 @@ export function makeRecord(input: {
 		titleKey: counted ? titleKey(title) : "",
 		issues,
 		checkedAt: new Date().toISOString(),
+		...(imported ? { imported: true as const } : {}),
 	};
 }
 
@@ -352,6 +372,7 @@ export async function viewRecord(
 		config,
 		siteUrl: ctx.site.url,
 		siteName: config.site.name ?? ctx.site.name,
+		emdashSiteName: ctx.site.name,
 		duplicateTitle: false,
 		// It is being shown as a page of its own.
 		hasPages: true,
@@ -385,6 +406,7 @@ async function prepareEntry(
 		config,
 		siteUrl: ctx.site.url,
 		siteName: config.site.name ?? ctx.site.name,
+		emdashSiteName: ctx.site.name,
 		duplicateTitle: false,
 		// Without schema access, assume the collection has pages.
 		hasPages: schema ? schema.routable && !schema.hidden : true,

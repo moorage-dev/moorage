@@ -20,9 +20,10 @@ export const STATS_KEY = "stats";
 /**
  * What a check started by this release writes, so that a finished check from an earlier one is
  * run again on the next visit to the SEO page. 2 (0.2.0): only bylines without a role label
- * are authors, and hidden pages are not counted among the pages checked.
+ * are authors, and hidden pages are not counted among the pages checked. 3 (0.2.1): titles and
+ * descriptions left by the WordPress import are recognised, and counted in `imported`.
  */
-export const SCAN_REV = 2;
+export const SCAN_REV = 3;
 
 /** Name of the background task that continues a site-wide check. */
 export const SCAN_TASK = "seo-scan";
@@ -111,6 +112,11 @@ export interface Stats {
 	look?: Array<{ collection: string; id: string; title: string; issues: string[] }>;
 	/** Titles of the first pages hidden from search. */
 	hiddenTitles?: string[];
+	/**
+	 * Published pages with a title or description from the WordPress import that their SEO panel
+	 * does not have yet. Kept by the check only (absent from a recount, and before 0.2.1).
+	 */
+	imported?: number;
 }
 
 export async function loadScan(ctx: PluginContext): Promise<ScanState | null> {
@@ -213,6 +219,7 @@ async function entriesStep(
 					config,
 					siteUrl: ctx.site.url,
 					siteName: config.site.name ?? ctx.site.name,
+					emdashSiteName: ctx.site.name,
 					// Kept as it was; the title pass below settles it for the whole site.
 					duplicateTitle: before ? isDuplicate(before) : false,
 				}),
@@ -304,6 +311,7 @@ async function sweepStep(ctx: PluginContext, state: ScanState, config: SeoConfig
 					config,
 					siteUrl: ctx.site.url,
 					siteName: config.site.name ?? ctx.site.name,
+					emdashSiteName: ctx.site.name,
 					duplicateTitle: false,
 				}),
 			});
@@ -406,6 +414,7 @@ function row(data: EntryRecord, level: "fix" | "look" = "fix"): Stats["rows"][nu
 /** Add (+1) or take away (-1) one record from the running totals. */
 function count(tally: Stats, data: EntryRecord, sign: 1 | -1): void {
 	if (!data.status || data.status === "draft" || data.status === "skip") return;
+	if (data.imported) tally.imported = (tally.imported ?? 0) + sign;
 	if (data.status !== "hidden") tally.checked += sign;
 	if (data.status === "hidden") {
 		tally.hidden += sign;
