@@ -107,7 +107,7 @@ test("on a site that is not public yet, content links are checked and a dead add
 
 	await page.getByRole("button", { name: /Links we could not check/ }).click();
 	const row = page.getByRole("row", {
-		name: /\/menu-2024: we could not open your site to check this address/,
+		name: /\/menu-2024 matches no page we know of\. Your site is not public yet/,
 	});
 	await expect(row).toBeVisible();
 	await row.getByRole("button", { name: "Fix" }).click();
@@ -136,6 +136,82 @@ test("on a site that is not public yet, content links are checked and a dead add
 	await expect(
 		page.getByText("/christmas-orders goes to a page that is not published yet."),
 	).toBeVisible({ timeout: 30_000 });
+});
+
+test("after a move from WordPress, what it left behind is listed with what to do", async ({
+	page,
+}) => {
+	await open(page);
+	// What the WordPress re-run of 2026-11-09 brought across: a Contact Form 7 shortcode as
+	// text, a link to WordPress's ?p= address, and a Greek slug kept in its coded form.
+	const created = await page.request.post(`${API}/content/pages`, {
+		headers: HEADERS,
+		data: {
+			slug: "wp-contact",
+			data: {
+				title: "Contact us",
+				content: [
+					{
+						_type: "marketing_hero",
+						_key: "wp1",
+						headline: '[contact-form-7 id="9ee95fa" title="Contact form 1"]',
+						primary_cta_label: "Our story",
+						primary_cta_url: "/?p=12",
+					},
+				],
+			},
+		},
+	});
+	expect(created.ok()).toBe(true);
+	const contact = ((await created.json()) as { data: { item: { id: string } } }).data.item.id;
+	const greek = await page.request.post(`${API}/content/pages`, {
+		headers: HEADERS,
+		data: { slug: "%cf%84%cf%85%cf%81%ce%af", data: { title: "Τυρί", content: [] } },
+	});
+	expect(greek.ok()).toBe(true);
+	const greekId = ((await greek.json()) as { data: { item: { id: string } } }).data.item.id;
+	for (const id of [contact, greekId]) {
+		const published = await page.request.post(`${API}/content/pages/${id}/publish`, {
+			headers: HEADERS,
+		});
+		expect(published.ok()).toBe(true);
+	}
+
+	await page.reload();
+	await waitForResults(page);
+	const again = page.getByRole("button", { name: "Check everything again" });
+	if (await again.isVisible()) await again.click();
+	await expect
+		.poll(
+			async () => {
+				const refresh = page.getByRole("button", { name: "Refresh" });
+				if (await refresh.isVisible()) await refresh.click();
+				await page.waitForTimeout(300);
+				return page.getByRole("heading", { name: "Left over from WordPress" }).isVisible();
+			},
+			{ timeout: 60_000, intervals: [500] },
+		)
+		.toBe(true);
+	const shortcode = page.getByRole("row", { name: /is a WordPress shortcode/ });
+	await expect(shortcode).toContainText("put a form block in its place");
+	await expect(shortcode).toContainText("Found on: Contact us.");
+	await expect(
+		page.getByRole("row", { name: /\/\?p=12 is a WordPress address this site does not use/ }),
+	).toBeVisible();
+	await expect(
+		page.getByRole("row", { name: /in WordPress's coded form of its letters/ }),
+	).toBeVisible();
+
+	// The Fix menu says what to do and opens the page.
+	await shortcode.getByRole("button", { name: "Fix" }).click();
+	await page.getByRole("menuitem", { name: "Edit Contact us" }).click();
+	await expect(page.getByText("Tidy up Contact us")).toBeVisible();
+	await expect(page.getByRole("link", { name: "Open Contact us" })).toBeVisible();
+
+	// Beside the entry, the Links on this page panel lists the same, for Editors too.
+	await page.goto(`/_emdash/admin/content/pages/${contact}`);
+	await page.getByRole("button", { name: "Links on this page", exact: true }).click();
+	await expect(page.getByText("Left over from WordPress (2)")).toBeVisible({ timeout: 30_000 });
 });
 
 test("on a phone, every row keeps its status and its Fix menu on screen", async ({ page }) => {

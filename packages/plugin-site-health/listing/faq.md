@@ -18,6 +18,10 @@ Not yet. For an address on your own site, "Send visitors to another page" fixes 
 
 Partly. Links inside your pages that point to one of your pages or posts are checked straight away, and a link to a page that is not published yet shows as broken. Links to any other address on your own site, the menus, page errors and the Checklist need the site to open its own pages, so they wait until it has a public address; until then those links are listed under "Links we could not check", never as broken.
 
+### What is "Left over from WordPress"?
+
+What a move from WordPress left in your pages that visitors may see. Each row says what to do.
+
 ### Who gets the emails?
 
 The first Admin who opens Site Health, plus anyone you add under Checklist, Options. Your site needs an email service for EmDash; the Checklist's "Send a test email" tells you whether it has one.

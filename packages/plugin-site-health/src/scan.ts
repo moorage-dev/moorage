@@ -14,6 +14,14 @@ import {
 } from "./check.js";
 import { runChecklist } from "./checklist.js";
 import { entryPath, linksInData, scanHtml, type Found } from "./extract.js";
+import {
+	leftoversIn,
+	oldHostsIn,
+	oldHostsOf,
+	oldLinksIn,
+	type LeftContext,
+	type Leftover,
+} from "./leftovers.js";
 import { groupOf, MAX_SOURCES, NEVER, type LinkRow, type PageRow, type Source } from "./model.js";
 import { homeNoindex } from "./search.js";
 import {
@@ -72,6 +80,8 @@ export async function startPass(
 		ci: 0,
 		walked: 0,
 		liveDone: 0,
+		oldHosts: data.summary?.oldHosts ?? [],
+		seenHosts: [],
 		startedAt: iso(now),
 		lastStepAt: iso(now),
 	};
@@ -153,9 +163,46 @@ function addSource(
 			};
 	Object.assign(row, extra);
 	row.editor =
-		row.kind === "internal" || row.kind === "external" || (row.kind === "insecure" && row.content);
+		row.kind === "internal" ||
+		row.kind === "external" ||
+		((row.kind === "insecure" || row.kind === "leftover") && row.content);
 	if (row.state === "broken") row.group = groupOf(row);
 	return row;
+}
+
+/** The old WordPress site's names this check knows, at most this many. */
+const MAX_OLD_HOSTS = 10;
+
+function addHosts(known: string[] | undefined, more: string[]): string[] {
+	const hosts = [...(known ?? [])];
+	for (const host of more)
+		if (!hosts.includes(host) && hosts.length < MAX_OLD_HOSTS) hosts.push(host);
+	return hosts;
+}
+
+export function leftContext(
+	siteUrl: string,
+	collections: CollectionInfo[],
+	oldHosts?: string[],
+): LeftContext {
+	return {
+		siteUrl,
+		oldHosts: oldHosts ?? [],
+		datedOwn: collections.some((c) => c.routable && /\{year\}/.test(c.pattern ?? "")),
+	};
+}
+
+/** The row for something left over from WordPress. */
+function leftRow(item: Leftover): { id: string; kind: "leftover"; url: string; host: string } {
+	const url =
+		item.type === "empty-html" ? (item.detail ? `${item.detail} block` : "HTML block") : item.text;
+	return { id: idFor("leftover", item.key), kind: "leftover", url, host: item.host ?? "" };
+}
+
+/** Its state: listed, unless someone marked it as fine. */
+function leftState(item: Leftover, existing: LinkRow | undefined): Partial<LinkRow> {
+	if (existing?.state === "fine") return {};
+	return { state: "left", reason: item.type, ...(item.detail ? { detail: item.detail } : {}) };
 }
 
 function insecureState(use: Found["use"]): Partial<LinkRow> {
@@ -207,8 +254,23 @@ async function walkStep(ctx: PluginContext, scan: ScanState, now: number): Promi
 	const pageRows: Array<{ id: string; data: PageRow }> = [];
 	const found = new Map<
 		string,
-		{ base: NonNullable<ReturnType<typeof rowFor>>; use: Found["use"]; sources: Source[] }
+		{
+			base: NonNullable<ReturnType<typeof rowFor>> | ReturnType<typeof leftRow>;
+			use: Found["use"];
+			sources: Source[];
+			left?: Leftover;
+		}
 	>();
+	// The old WordPress site, by its own addresses anywhere in this batch, before any entry is read.
+	for (const entry of entries) {
+		if (entry.status === "published")
+			scan.seenHosts = addHosts(scan.seenHosts, oldHostsIn(entry.data, ctx.site.url));
+	}
+	const context = leftContext(
+		ctx.site.url,
+		scan.collections,
+		addHosts(scan.oldHosts, scan.seenHosts ?? []),
+	);
 	for (const entry of entries) {
 		const path = col.routable ? entryPath(col.pattern, col.slug, entry) : null;
 		const title = titleOf(entry, col.titleField);
@@ -222,6 +284,15 @@ async function walkStep(ctx: PluginContext, scan: ScanState, now: number): Promi
 				const seen = found.get(base.id);
 				if (seen) seen.sources.push(source);
 				else found.set(base.id, { base, use: item.use, sources: [source] });
+			}
+			// A slug matters only for content with a page of its own.
+			const shown = { slug: col.routable ? entry.slug : null, data: entry.data };
+			for (const left of leftoversIn(shown, context)) {
+				const base = leftRow(left);
+				ids.push(base.id);
+				const seen = found.get(base.id);
+				if (seen) seen.sources.push(source);
+				else found.set(base.id, { base, use: "link", sources: [source], left });
 			}
 		}
 		if (path) {
@@ -248,15 +319,13 @@ async function walkStep(ctx: PluginContext, scan: ScanState, now: number): Promi
 		const writes = ids.map((id) => {
 			const item = found.get(id)!;
 			let row = existing.get(id);
+			const extra = item.left
+				? leftState(item.left, row)
+				: item.base.kind === "insecure"
+					? insecureState(item.use)
+					: {};
 			for (const source of item.sources) {
-				row = addSource(
-					row,
-					item.base,
-					source,
-					scan.pass,
-					now,
-					item.base.kind === "insecure" ? insecureState(item.use) : {},
-				);
+				row = addSource(row, item.base, source, scan.pass, now, extra);
 			}
 			if (row?.kind === "insecure" && row.state === "broken" && !row.since) row.since = iso(now);
 			return { id, data: row! };
@@ -348,7 +417,7 @@ async function mergeLive(
 	scan: ScanState,
 	now: number,
 	page: { path: string; title: string },
-	found: { menu: Found[]; active: string[]; passive: string[] },
+	found: { menu: Found[]; active: string[]; passive: string[]; left?: Leftover[] },
 	errors: Array<{ path: string; title: string; status: number }>,
 ): Promise<void> {
 	type Item = {
@@ -356,8 +425,19 @@ async function mergeLive(
 		base: { kind: LinkRow["kind"]; url: string; host: string };
 		source: Source;
 		extra: Partial<LinkRow>;
+		left?: Leftover;
 	};
 	const items: Item[] = [];
+	for (const left of found.left ?? []) {
+		const base = leftRow(left);
+		items.push({
+			id: base.id,
+			base,
+			source: { t: "Site menu", p: "", menu: true },
+			extra: {},
+			left,
+		});
+	}
 	for (const link of found.menu) {
 		const base = rowFor(link);
 		if (base)
@@ -396,13 +476,14 @@ async function mergeLive(
 			: new Map<string, PageRow>();
 	const merged = new Map<string, LinkRow>();
 	for (const item of items) {
+		const before = merged.get(item.id) ?? existing.get(item.id);
 		let row = addSource(
-			merged.get(item.id) ?? existing.get(item.id),
+			before,
 			item.base,
 			item.source,
 			scan.pass,
 			now,
-			item.extra,
+			item.left ? leftState(item.left, before) : item.extra,
 		);
 		if (row.kind === "internal") {
 			row = resolveLocal(row, thisPass(known, row.url, scan.pass), now);
@@ -486,6 +567,7 @@ async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): P
 		/no-store|private/.test(control) || outcome.headers?.has("set-cookie") ? "no" : "ok";
 	scan.home = homeNoindex(outcome.headers, outcome.body ?? "") ?? "index";
 	const html = scanHtml(outcome.body ?? "", ctx.site.url);
+	scan.seenHosts = addHosts(scan.seenHosts, oldHostsOf(html.hrefs, ctx.site.url));
 	await mergeLive(
 		ctx,
 		scan,
@@ -495,6 +577,10 @@ async function liveHomeStep(ctx: PluginContext, scan: ScanState, now: number): P
 			menu: html.menu.map((t) => ({ ...t, use: "link" as const })),
 			active: html.active,
 			passive: html.passive,
+			left: oldLinksIn(
+				html.hrefs,
+				leftContext(ctx.site.url, scan.collections, addHosts(scan.oldHosts, scan.seenHosts ?? [])),
+			),
 		},
 		status >= 500 ? [{ path: "/", title: "Home", status }] : [],
 	);
@@ -566,7 +652,12 @@ async function livePathsStep(ctx: PluginContext, scan: ScanState, now: number): 
 			if (!canOpen) {
 				return {
 					id: item.id,
-					data: { ...item.data, state: "unknown", reason: "no-live", due: NEVER } as LinkRow,
+					data: {
+						...item.data,
+						state: "unknown",
+						reason: scan.live === "not-public" ? "not-public" : "no-live",
+						due: NEVER,
+					} as LinkRow,
 				};
 			}
 			const outcome = await request(ctx, `${origin}${item.data.url}`);
@@ -619,17 +710,21 @@ async function countStep(ctx: PluginContext, scan: ScanState): Promise<void> {
  */
 async function listsStep(ctx: PluginContext, scan: ScanState): Promise<void> {
 	const store = links(ctx);
-	const [look, unknown, lookCount, unknownCount] = await Promise.all([
+	const [look, unknown, left, lookCount, unknownCount, leftCount] = await Promise.all([
 		store.query({ where: { state: "look" }, limit: ROWS_PER_GROUP }),
 		store.query({ where: { state: "unknown" }, limit: ROWS_PER_GROUP }),
+		store.query({ where: { state: "left" }, orderBy: { count: "desc" }, limit: ROWS_PER_GROUP }),
 		store.count({ state: "look" }),
 		store.count({ state: "unknown" }),
+		store.count({ state: "left" }),
 	]);
 	scan.counts = { ...(scan.counts ?? NO_COUNTS), look: lookCount, unknown: unknownCount };
 	scan.lists = {
 		pass: scan.pass,
 		lookRows: look.items.map(({ id, data: row }) => view(id, row)),
 		unknownRows: unknown.items.map(({ id, data: row }) => view(id, row)),
+		leftRows: left.items.map(({ id, data: row }) => view(id, row)),
+		left: leftCount,
 	};
 }
 
@@ -667,6 +762,9 @@ async function freezeStep(
 		rows,
 		lookRows: scan.lists?.lookRows ?? [],
 		unknownRows: scan.lists?.unknownRows ?? [],
+		left: scan.lists?.left ?? 0,
+		leftRows: scan.lists?.leftRows ?? [],
+		...(scan.seenHosts?.length ? { oldHosts: scan.seenHosts } : {}),
 		live: scan.live ?? "failed",
 		...(scan.live === "ok" && scan.home ? { home: scan.home } : {}),
 	};
@@ -879,12 +977,28 @@ export async function refreshEntry(
 	const source: Source = { c: collection, id: entry.id, t: title, p: path ?? "" };
 	const items = new Map<
 		string,
-		{ base: NonNullable<ReturnType<typeof rowFor>>; use: Found["use"] }
+		{
+			base: NonNullable<ReturnType<typeof rowFor>> | ReturnType<typeof leftRow>;
+			use: Found["use"];
+			left?: Leftover;
+		}
 	>();
 	for (const item of found) {
 		const base = rowFor(item);
 		if (base && !(base.kind === "internal" && base.url === path))
 			items.set(base.id, { base, use: item.use });
+	}
+	if (entry.status === "published") {
+		const oldHosts = addHosts(
+			data.summary?.oldHosts ?? data.scan.oldHosts,
+			oldHostsIn(entry.data, ctx.site.url),
+		);
+		const context = leftContext(ctx.site.url, data.scan.collections, oldHosts);
+		const shown = { slug: info.routable ? entry.slug : null, data: entry.data };
+		for (const left of leftoversIn(shown, context)) {
+			const base = leftRow(left);
+			items.set(base.id, { base, use: "link", left });
+		}
 	}
 	const internal = [...items.values()]
 		.filter((i) => i.base.kind === "internal")
@@ -917,7 +1031,11 @@ export async function refreshEntry(
 				source,
 				row?.pass ?? data.scan.pass,
 				now,
-				item.base.kind === "insecure" ? insecureState(item.use) : {},
+				item.left
+					? leftState(item.left, row)
+					: item.base.kind === "insecure"
+						? insecureState(item.use)
+						: {},
 			);
 			if (seed)
 				next = {
@@ -931,7 +1049,7 @@ export async function refreshEntry(
 				next = {
 					...next,
 					state: row?.state === "broken" && row.reason === "missing" ? "broken" : "unknown",
-					reason: row?.reason ?? "no-live",
+					reason: row?.reason ?? (data.summary?.live === "not-public" ? "not-public" : "no-live"),
 				};
 				if (next.state === "broken") next.group = groupOf(next);
 			}
