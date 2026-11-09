@@ -22,7 +22,15 @@ import {
 	type LeftContext,
 	type Leftover,
 } from "./leftovers.js";
-import { groupOf, MAX_SOURCES, NEVER, type LinkRow, type PageRow, type Source } from "./model.js";
+import {
+	groupOf,
+	MAX_SOURCES,
+	NEVER,
+	openReason,
+	type LinkRow,
+	type PageRow,
+	type Source,
+} from "./model.js";
 import { homeNoindex } from "./search.js";
 import {
 	applyChange,
@@ -1049,7 +1057,11 @@ export async function refreshEntry(
 				next = {
 					...next,
 					state: row?.state === "broken" && row.reason === "missing" ? "broken" : "unknown",
-					reason: row?.reason ?? (data.summary?.live === "not-public" ? "not-public" : "no-live"),
+					// Whether the site can open itself: the running check knows best once it has asked.
+					reason: openReason(
+						row?.reason,
+						(data.scan.status === "running" ? data.scan.live : undefined) ?? data.summary?.live,
+					),
 				};
 				if (next.state === "broken") next.group = groupOf(next);
 			}

@@ -20,6 +20,7 @@ import {
 	foundOn,
 	groupOf,
 	NEVER,
+	openReason,
 	shortFor,
 	type Group,
 	type LinkRow,
@@ -477,7 +478,12 @@ function problemsTab(ctx: PluginContext, data: Loaded, admin: boolean, state: Pa
 			],
 		});
 	}
-	const unknown = summary.unknownRows.filter(shown);
+	// A reason saved before the check knew the site was private reads as it stands now.
+	const unknown = summary.unknownRows
+		.filter(shown)
+		.map((row) =>
+			row.kind === "internal" ? { ...row, reason: openReason(row.reason, summary.live) } : row,
+		);
 	if (unknown.length > 0) {
 		blocks.push({
 			type: "accordion",

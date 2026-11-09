@@ -151,6 +151,17 @@ export function shortFor(row: Pick<LinkRow, "kind" | "reason" | "url">): string 
 		.join(" ");
 }
 
+/**
+ * Why an address on this site could not be checked, as things stand now: the site is
+ * not public yet, or it could not open its own pages. A reason saved earlier (before
+ * the check knew the site was private, or by 0.2.0) follows the current answer; any
+ * other reason stays.
+ */
+export function openReason(reason: Reason | undefined, live: string | undefined): Reason {
+	if (reason !== undefined && reason !== "no-live" && reason !== "not-public") return reason;
+	return live === "not-public" ? "not-public" : "no-live";
+}
+
 /** The words for one row, as the owner reads them. */
 export function describe(
 	row: Pick<LinkRow, "kind" | "reason" | "detail" | "url"> & { menu?: boolean },
