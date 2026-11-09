@@ -14,16 +14,27 @@ import { fits, type Counter } from "./budget.js";
 import { afterExternal, afterOwnPage, afterOwnPath, request, verdict } from "./check.js";
 import { linksInData, scanHtml } from "./extract.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
+import { leftoversIn } from "./leftovers.js";
 import {
 	describe,
 	foundOn,
 	groupOf,
 	NEVER,
+	shortFor,
 	type Group,
 	type LinkRow,
 	type PageRow,
 } from "./model.js";
-import { estimate, links, pages, passStep, resolveLocal, startPass, STEP_CALLS } from "./scan.js";
+import {
+	estimate,
+	leftContext,
+	links,
+	pages,
+	passStep,
+	resolveLocal,
+	startPass,
+	STEP_CALLS,
+} from "./scan.js";
 import { writeSettings } from "./settings-store.js";
 import {
 	applyChange,
@@ -37,7 +48,7 @@ import {
 	type RowView,
 	type Summary,
 } from "./state.js";
-import { normalizePath, parseUrl, publicOrigin, shorten } from "./url.js";
+import { idFor, normalizePath, parseUrl, publicOrigin, shorten } from "./url.js";
 
 // EmDash role levels: Editors (40) fix links; Admins (50) also see errors and setup.
 const ADMIN_ROLE = 50;
@@ -62,7 +73,15 @@ const GROUPS: Array<{ group: Group; title: string; text: string }> = [
 
 type Panel =
 	| { kind: "redirect"; id: string; url: string }
-	| { kind: "edit"; url: string; title: string; collection: string; entry: string }
+	| {
+			kind: "edit";
+			url: string;
+			title: string;
+			collection: string;
+			entry: string;
+			/** What to do, for a row left over from WordPress (not a link to change). */
+			text?: string;
+	  }
 	| { kind: "menus"; url: string };
 
 interface PageState {
@@ -110,7 +129,7 @@ export function rowText(row: RowView, summary: Summary | null): string {
 		(row.reason === "gone" || row.reason === "no-site") && row.since
 			? ` Checked twice since ${new Date(row.since).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}.`
 			: "";
-	return `${fresh ? "New since the last check. " : ""}${describe(row, shorten(row.url))}${twice}${foundOn(row)}`;
+	return `${fresh ? "New since the last check. " : ""}${describe(row, shortFor(row))}${twice}${foundOn(row)}`;
 }
 
 export const DETAILS = "Details for your web person";
@@ -136,6 +155,8 @@ function noCode(row: Pick<RowView, "kind" | "reason">): string {
 			return "no page with this address";
 		case "no-live":
 			return "not requested, the site could not open its own pages";
+		case "not-public":
+			return "not requested, the site is not public yet";
 		default:
 			return "no answer";
 	}
@@ -156,7 +177,22 @@ export function details(
 	return `${row.url}: ${answer}${checked}.`;
 }
 
+/** The Fix menu of a row left over from WordPress: where to change it, or leave it. */
+function leftMenu(row: RowView): ActionElement {
+	const items: Array<{ label: string; value: string }> = [];
+	if (row.menu) items.push({ label: "Change it in Menus", value: `menus|${row.id}` });
+	row.sources
+		.filter((source) => source.c && source.id)
+		.slice(0, 3)
+		.forEach((source, index) =>
+			items.push({ label: `Edit ${source.t}`, value: `edit${index}|${row.id}` }),
+		);
+	items.push({ label: "This is fine, stop listing it", value: `fine|${row.id}` });
+	return { type: "menu", action_id: "fix", label: "Fix", items };
+}
+
 function fixMenu(row: RowView, admin: boolean): ActionElement {
+	if (row.kind === "leftover") return leftMenu(row);
 	const items: Array<{ label: string; value: string }> = [];
 	const local = row.kind === "internal" || row.kind === "page";
 	if (admin && local && row.url !== "/" && row.reason !== "draft" && row.reason !== "page-error") {
@@ -317,11 +353,13 @@ function panelBlocks(state: PageState): Block[] {
 	}
 	if (panel.kind === "edit") {
 		return [
-			{
-				type: "banner",
-				title: `Change the link to ${shorten(panel.url)} on ${panel.title}`,
-				description: `Open the page, find the words that link to ${shorten(panel.url)} and point them at the right page: select the words, then use the link button.`,
-			},
+			panel.text
+				? { type: "banner", title: `Tidy up ${panel.title}`, description: panel.text }
+				: {
+						type: "banner",
+						title: `Change the link to ${shorten(panel.url)} on ${panel.title}`,
+						description: `Open the page, find the words that link to ${shorten(panel.url)} and point them at the right page: select the words, then use the link button.`,
+					},
 			{
 				type: "actions",
 				elements: [
@@ -394,6 +432,7 @@ function problemsTab(ctx: PluginContext, data: Loaded, admin: boolean, state: Pa
 			},
 		);
 	}
+	const left = (summary.leftRows ?? []).filter(shown);
 	if (!anyRows) {
 		blocks.push({
 			type: "empty",
@@ -401,6 +440,27 @@ function problemsTab(ctx: PluginContext, data: Loaded, admin: boolean, state: Pa
 			title: "Nothing broken. Nice work.",
 			description: `We checked ${plural(summary.pages, "page")} and ${plural(summary.links, "link")} ${when(summary.finishedAt)}. Next check: tomorrow.`,
 		});
+	}
+	if (left.length > 0) {
+		const total = admin ? (summary.left ?? left.length) : left.length;
+		blocks.push(
+			{ type: "header", text: "Left over from WordPress" },
+			{
+				type: "context",
+				text: "Things a move from WordPress left in your pages. Visitors may see them; each row says what to do.",
+			},
+			table(
+				"left_table",
+				"What we found",
+				left.map((row) => ({ text: rowText(row, null), action: leftMenu(row) })),
+			),
+		);
+		if (total > left.length) {
+			blocks.push({
+				type: "context",
+				text: `And ${total - left.length} more. They show here after the next full check.`,
+			});
+		}
 	}
 	const look = summary.lookRows.filter(shown);
 	if (look.length > 0) {
@@ -942,6 +1002,7 @@ function rowById(summary: Summary | null, id: string): RowView | undefined {
 		...summary.rows.link,
 		...summary.lookRows,
 		...summary.unknownRows,
+		...(summary.leftRows ?? []),
 	].find((row) => row.id === id);
 }
 
@@ -991,7 +1052,12 @@ async function checkAgain(
 			const outcome = origin ? await request(ctx, `${origin}${row.url}`) : null;
 			after = outcome
 				? afterOwnPath(after, verdict(row.url, outcome, "GET"), now, outcome.status)
-				: { ...after, state: "unknown", reason: "no-live", due: NEVER };
+				: {
+						...after,
+						state: "unknown",
+						reason: data.summary?.live === "not-public" ? "not-public" : "no-live",
+						due: NEVER,
+					};
 		}
 	} else if (row.kind === "page") {
 		after = origin
@@ -1005,6 +1071,26 @@ async function checkAgain(
 					now,
 				)
 			: row;
+	} else if (row.kind === "leftover") {
+		// Left over from WordPress: is it still on its page? (A menu's is listed again.)
+		const source = row.sources[0];
+		let still = true;
+		if (source?.c && source.id) {
+			const entry = await ctx.content?.get(source.c, source.id);
+			const context = leftContext(
+				ctx.site.url,
+				data.scan?.collections ?? [],
+				data.summary?.oldHosts,
+			);
+			const routable = data.scan?.collections.find((c) => c.slug === source.c)?.routable ?? true;
+			still =
+				!!entry &&
+				leftoversIn({ slug: routable ? entry.slug : null, data: entry.data }, context).some(
+					(item) => idFor("leftover", item.key) === id && item.type === row.reason,
+				);
+		}
+		const { fine: _fine, ...rest } = row;
+		after = still ? { ...rest, state: "left" } : { ...rest, state: "ok" };
 	} else {
 		// An insecure item: is it still on its page?
 		const source = row.sources[0];
@@ -1024,7 +1110,9 @@ async function checkAgain(
 	}
 	if (after.state === "broken") after.group = groupOf(after);
 	await saveRow(ctx, data, id, row, after);
-	const name = shorten(row.url);
+	const name = shortFor(row);
+	if (after.state === "left")
+		return { type: "info", message: `${name} is still there. It is listed again.` };
 	if (after.state === "ok" || after.state === "look")
 		return { type: "success", message: `Works now. ${name} is off the list.` };
 	if (after.state === "broken")
@@ -1124,6 +1212,7 @@ export async function handleAdmin(
 				);
 			if (op.startsWith("edit")) {
 				const source = row.sources.filter((s) => s.c && s.id)[Number(op.slice(4))];
+				const text = row.kind === "leftover" ? describe(row, shortFor(row)) : undefined;
 				if (source?.c && source.id) {
 					return render(
 						ctx,
@@ -1137,6 +1226,7 @@ export async function handleAdmin(
 								title: source.t,
 								collection: source.c,
 								entry: source.id,
+								...(text ? { text } : {}),
 							},
 						}),
 					);
@@ -1165,7 +1255,10 @@ export async function handleAdmin(
 						tab: 0,
 						toast: {
 							type: "success",
-							message: `Marked as fine. ${shorten(row.url)} is not checked any more.`,
+							message:
+								row.kind === "leftover"
+									? `Marked as fine. ${shortFor(row)} is not listed any more.`
+									: `Marked as fine. ${shorten(row.url)} is not checked any more.`,
 						},
 					}),
 				);

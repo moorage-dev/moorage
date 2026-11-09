@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { linksInData, scanHtml } from "../src/extract.js";
+import { leftoversIn, oldHostsIn } from "../src/leftovers.js";
 
 // A sandboxed run may use about 50 ms of CPU in all. These are the two heavy
 // pieces of a run, timed on inputs larger than a run sees, so a change that
@@ -55,6 +56,42 @@ describe("CPU per run", () => {
 		const copy = fastest(() => {
 			for (const entry of entries) JSON.parse(JSON.stringify(entry));
 		});
+		expect(ms).toBeLessThan(Math.max(copy, 1) * 10);
+	});
+
+	it("reads what a WordPress move left in a batch of 50 long pages, as fast as their links", () => {
+		const entries = Array.from({ length: 50 }, (_, i) => {
+			const entry = bigEntry(i);
+			entry.body.push({
+				_type: "block",
+				_key: "w",
+				children: [
+					{
+						_type: "span",
+						_key: "w",
+						text: `[gallery ids="1,2"] Bread [1] and [sic] cake. `.repeat(20),
+						marks: [],
+					},
+				],
+				markDefs: [{ _key: "w", _type: "link", href: "/?p=12" }],
+			});
+			return entry;
+		});
+		const context = { siteUrl: SITE, oldHosts: ["old.example"], datedOwn: false };
+		// A run reads every entry three times: its links, the old site's name, and the rest.
+		const ms = fastest(() => {
+			for (const entry of entries) {
+				linksInData(entry, SITE);
+				oldHostsIn(entry, SITE);
+				leftoversIn({ slug: "page", data: entry }, context);
+			}
+		});
+		const copy = fastest(() => {
+			for (const entry of entries) JSON.parse(JSON.stringify(entry));
+		});
+		console.info(
+			`50 pages, links and leftovers: ${ms.toFixed(1)} ms; JSON copy ${copy.toFixed(1)} ms`,
+		);
 		expect(ms).toBeLessThan(Math.max(copy, 1) * 10);
 	});
 

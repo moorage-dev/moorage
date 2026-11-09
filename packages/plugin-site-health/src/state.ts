@@ -72,13 +72,24 @@ export interface ScanState {
 	caching?: "ok" | "no";
 	/** What the home page told search engines, read from the same request. */
 	home?: HomeIndex;
-	counts?: Omit<Summary, "rows" | "lookRows" | "unknownRows" | "pass" | "finishedAt" | "live">;
+	counts?: Omit<
+		Summary,
+		"rows" | "lookRows" | "unknownRows" | "pass" | "finishedAt" | "live" | "left" | "leftRows"
+	>;
 	/**
 	 * Rows to look at and rows that could not be checked, kept by the first half
 	 * of "freeze" for the check numbered `pass` (one left by an earlier check,
 	 * after going back to 0.1.3 and forward again, is not used).
 	 */
-	lists?: Pick<Summary, "lookRows" | "unknownRows" | "pass">;
+	lists?: Pick<Summary, "lookRows" | "unknownRows" | "pass" | "leftRows" | "left">;
+	/**
+	 * The old WordPress site: other sites linked with addresses only WordPress serves.
+	 * `oldHosts` is what the last check found (used from the start of this one);
+	 * `seenHosts` is what this one finds, and becomes the next `oldHosts`, so a site
+	 * no page links to that way any more drops out.
+	 */
+	oldHosts?: string[];
+	seenHosts?: string[];
 	startedAt: string;
 	finishedAt?: string;
 	lastStepAt?: string;
@@ -128,6 +139,11 @@ export interface Summary {
 	live: LiveMode;
 	/** What the home page told search engines ("index": they may list it). Unset before 0.2.0. */
 	home?: HomeIndex;
+	/** What a move from WordPress left behind (not counted as broken). Unset before 0.3.0. */
+	left?: number;
+	leftRows?: RowView[];
+	/** The old WordPress site's names, carried into the next check. */
+	oldHosts?: string[];
 }
 
 /** May search engines list the home page, or where does it say they may not. */
@@ -271,12 +287,14 @@ export function applyChange(
 		},
 		lookRows: without(summary.lookRows, id),
 		unknownRows: without(summary.unknownRows, id),
+		...(summary.leftRows ? { leftRows: without(summary.leftRows, id) } : {}),
 	};
 	if (was === "broken" && wasGroup) {
 		next.fix[wasGroup] = Math.max(0, next.fix[wasGroup] - 1);
 		if (before?.editor) next.editorFix = Math.max(0, next.editorFix - 1);
 	}
 	if (was === "look") next.look = Math.max(0, next.look - 1);
+	if (was === "left") next.left = Math.max(0, (next.left ?? 0) - 1);
 	if (was === "unknown") next.unknown = Math.max(0, next.unknown - 1);
 	if (after && now === "broken" && after.group) {
 		next.fix[after.group] += 1;
@@ -288,6 +306,10 @@ export function applyChange(
 	if (after && now === "look") {
 		next.look += 1;
 		next.lookRows = [...next.lookRows, view(id, after)].slice(0, ROWS_PER_GROUP);
+	}
+	if (after && now === "left") {
+		next.left = (next.left ?? 0) + 1;
+		next.leftRows = [...(next.leftRows ?? []), view(id, after)].slice(0, ROWS_PER_GROUP);
 	}
 	if (after && now === "unknown") {
 		next.unknown += 1;

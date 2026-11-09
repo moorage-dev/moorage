@@ -1,16 +1,20 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import type { Use } from "./extract.js";
+import { shorten } from "./url.js";
 
-/** What a row stands for: a link on this site or another, an insecure item, or a page of this site. */
-export type Kind = "internal" | "external" | "insecure" | "page";
+/**
+ * What a row stands for: a link on this site or another, an insecure item, a page of
+ * this site, or something a move from WordPress left in the content.
+ */
+export type Kind = "internal" | "external" | "insecure" | "page" | "leftover";
 
 /**
  * Where a row stands. Only `broken` is counted. `pending` is not checked yet,
  * `look` works but takes a detour, `unknown` could not be checked, `fine`
- * was marked as fine by someone.
+ * was marked as fine by someone, `left` is left over from WordPress.
  */
-export type State = "pending" | "ok" | "look" | "broken" | "unknown" | "fine";
+export type State = "pending" | "ok" | "look" | "broken" | "unknown" | "fine" | "left";
 
 export type Reason =
 	// broken
@@ -31,7 +35,15 @@ export type Reason =
 	| "timeout"
 	| "trouble"
 	| "error"
-	| "no-live";
+	| "no-live"
+	// an address on this site that matches no page, on a site that is not public yet
+	| "not-public"
+	// left over from WordPress
+	| "shortcode"
+	| "empty-html"
+	| "old-link"
+	| "encoded-slug"
+	| "no-alt";
 
 /** How bad a broken row is: on every page, on one page, or one link. */
 export type Group = "site" | "page" | "link";
@@ -114,12 +126,54 @@ export function groupOf(row: Pick<LinkRow, "kind" | "menu" | "url">): Group {
 	return "link";
 }
 
+/** A shortcode's name, and the block that does its job in EmDash. */
+function blockFor(shortcode: string): string {
+	const name = /^\[([a-z][a-z0-9_-]*)/.exec(shortcode)?.[1] ?? "";
+	if (/form|wpforms|gravity|ninja|formidable|mc4wp|mailchimp/.test(name)) return "a form block";
+	if (name === "gallery") return "a gallery block";
+	if (name === "caption") return "a picture with a caption";
+	if (/^(embed|video|audio|playlist|youtube|vimeo)$/.test(name)) return "an embed block";
+	return "a block that does the same job";
+}
+
+const FIX_LINK = "Open the page and link those words to the page's address here.";
+
+/**
+ * How a row's address is shown: at most 30 characters with no unbroken word longer,
+ * so a phone table keeps its Fix menu on screen. A shortcode keeps its spaces.
+ */
+export function shortFor(row: Pick<LinkRow, "kind" | "reason" | "url">): string {
+	if (row.kind !== "leftover" || row.reason === "old-link") return shorten(row.url);
+	const text = row.url.length > 60 ? `${row.url.slice(0, 59)}…` : row.url;
+	return text
+		.split(" ")
+		.map((word) => (word.length > 30 ? `${word.slice(0, 29)}…` : word))
+		.join(" ");
+}
+
 /** The words for one row, as the owner reads them. */
 export function describe(
-	row: Pick<LinkRow, "kind" | "reason" | "detail" | "url">,
+	row: Pick<LinkRow, "kind" | "reason" | "detail" | "url"> & { menu?: boolean },
 	short: string,
 ): string {
+	const fixLink = row.menu
+		? "Open Menus in the sidebar, under Manage, and point that item at the page's address here."
+		: FIX_LINK;
 	switch (row.reason) {
+		case "not-public":
+			return `${short} matches no page we know of. Your site is not public yet, so we cannot open the address to be sure; it is checked once the site has a public address.`;
+		case "shortcode":
+			return `${short} is a WordPress shortcode: visitors see it as plain text. Open the page and put ${blockFor(row.url)} in its place, or delete it.`;
+		case "empty-html":
+			return `An empty HTML block${row.detail ? `, left from WordPress's ${row.detail} block,` : ""} shows nothing. Open the page and delete the block.`;
+		case "old-link":
+			return row.url.startsWith("/") || row.url.startsWith("?")
+				? `${short} is a WordPress address this site does not use, so it opens the wrong page or none. ${fixLink}`
+				: `${short} looks like an address on your old WordPress site. If it is, ${fixLink[0]!.toLowerCase()}${fixLink.slice(1, -1)}: once that site is switched off, this link stops working.`;
+		case "encoded-slug":
+			return `This page's address ${short} is in WordPress's coded form of its letters, so it opens "Page not found". Open the page and type a new slug in plain letters, such as its title in Latin letters, then publish.`;
+		case "no-alt":
+			return `${row.detail === "featured" ? "The featured image" : "The picture"} ${short} has no alt text, which screen readers and search engines read. Open the page, select the picture and fill in its alt text.`;
 		case "missing":
 			return `${short} goes to a page that does not exist.`;
 		case "draft":

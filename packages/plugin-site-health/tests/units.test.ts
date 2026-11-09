@@ -232,6 +232,12 @@ describe("words", () => {
 			"trouble",
 			"no-live",
 			"error",
+			"not-public",
+			"shortcode",
+			"empty-html",
+			"old-link",
+			"encoded-slug",
+			"no-alt",
 		] as const;
 		for (const reason of reasons) {
 			const text = words({ kind: "external", reason, url: "x", detail: "/y" }, "x");
@@ -289,6 +295,12 @@ describe("phone-safe rows", () => {
 		"trouble",
 		"no-live",
 		"error",
+		"not-public",
+		"shortcode",
+		"empty-html",
+		"old-link",
+		"encoded-slug",
+		"no-alt",
 	] as const;
 	it("never holds a word longer than 30 characters, so the Fix menu stays on screen at 390 px", () => {
 		// What is stored is already shortened: a detour's target, and the address itself when shown.

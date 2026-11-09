@@ -37,6 +37,15 @@ Tells you what is broken on your [EmDash](https://emdashcms.com) site before a c
   - pages can be kept ready for visitors;
   - scheduled tasks are running;
   - email works: who gets it, whether an email service is chosen, and when it last worked, with the test button beside it.
+- **Left over from WordPress**, a group that shows only when something is found, with no setting. Each row says what it is and what to do, and its Fix menu opens the page (or Menus), or marks it as fine:
+  - a WordPress shortcode visitors see as plain text, such as `[contact-form-7 id="…" title="…"]` or `[gallery]` (only the WordPress shape: a name with settings, a closing tag, or a well-known name; ordinary words in square brackets are left alone), one row per shortcode with the pages it is on;
+  - an empty HTML block, which is what a WordPress block such as Latest Posts becomes;
+  - links to WordPress addresses: `/?p=12` and `/?page_id=7` on this site, dated addresses such as `/2024/05/post/` when your own posts do not use dates, anything under `/wp-content/` or `/wp-admin/`, and every link to the old WordPress site once one of those has named it (in your pages, and in the menu and footer the home page shows; a site no page links to that way any more is forgotten at the next check);
+  - a page whose slug is in WordPress's coded form (`%cf%84…`), which opens "Page not found": type a new slug in plain letters (content with no page of its own is left out);
+  - pictures with no alt text: featured images and pictures inside the page.
+
+  These are read from the same pages the daily check reads, at no extra cost, and are not counted as broken. Editors see them too, and in the "Links on this page" panel.
+
 - **Dashboard widget** with the count.
 - **"Links on this page" beside each entry** in the editor: what the checks found in that page's links, in the same plain words. Read-only; it shows what is already stored and opens no website, so it is instant. Nothing to set up.
 
@@ -51,8 +60,8 @@ Editors see the links they can fix. Page errors, the Checklist and Options are f
 - It does not change the links inside your pages. That would need permission to rewrite content; the redirect fixes an address on your own site everywhere instead.
 - No score, grade, history, charts or CSV export.
 - No speed tests, security headers, certificate expiry or version checks.
-- No missing alt text (the SEO plugin does that). It does not check canonical addresses (the SEO plugin does that too).
-- It cannot read menus, widget areas or sections directly. Menu and footer links are found on the rendered home page, so they need the site to be public.
+- It does not check canonical addresses (the SEO plugin does that). Pictures with no alt text are listed with what a move from WordPress left; the SEO plugin lists them too.
+- It cannot read menus, widget areas or sections directly. Menu and footer links are found on the rendered home page, so they need the site to be public. A menu the header does not show (such as the second menu a WordPress import adds) is not seen.
 
 ## Install
 
@@ -103,9 +112,13 @@ Each run stays within the EmDash sandbox's limits of 10 calls (it makes at most 
 
 **If the site cannot open its own pages** (not public yet, bot protection, or a host that blocks a site from fetching itself), it says so in one banner. If your site is in the middle of an update and shows every visitor an error page, it says that instead, and emails at once. Links inside your content are still checked, and anything that needed the live page is listed as "could not check", never as broken.
 
+**Links to your own site, written in full** (`https://your-site/about`, or `http://127.0.0.1:4321/about` on a site set up as `localhost`) are checked like `/about`: against your pages and redirects. On a site that is not public yet, one that matches no page is listed as "could not check" and checked once the site has a public address: EmDash does not let plugins open addresses on your own computer or network, so the plugin cannot ask the site itself.
+
 ## FAQ
 
 **Why does a link show under "could not check"?** Some sites refuse automatic checkers, ask them to slow down, or did not answer within 8 seconds. Open it to see for yourself; it is tried again next week.
+
+**I moved from WordPress. What is "Left over from WordPress"?** Things the move left in your pages that visitors may see: shortcodes shown as text, empty blocks, links to WordPress addresses or to the old site, coded slugs that open "Page not found", and pictures without alt text. Each row says what to do, and goes as you tidy up. A site that never used WordPress normally sees none; a link to another site's WordPress address (a file under `/wp-content/`, say) can show, worded "looks like your old WordPress site", and "This is fine, stop listing it" takes it off.
 
 **Why do links to other sites take a day?** A site that is down for an hour should not send you an alert, so a broken answer is confirmed a day later.
 

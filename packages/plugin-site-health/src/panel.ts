@@ -3,10 +3,9 @@
 import type { Block, BlockResponse } from "@emdash-cms/blocks";
 import type { PluginContext } from "emdash";
 
-import { describe, type LinkRow, type PageRow } from "./model.js";
+import { describe, shortFor, type LinkRow, type PageRow } from "./model.js";
 import { links, pages } from "./scan.js";
 import { KEY, type ScanState } from "./state.js";
-import { shorten } from "./url.js";
 
 /** Problems listed by name in the panel; the rest are counted. */
 const PANEL_ROWS = 10;
@@ -55,9 +54,11 @@ export async function handleLinksPanel(
 	const ids = page.links ?? [];
 	if (ids.length === 0) return note("There are no links on this page.");
 	const stored = await links(ctx).getMany(ids);
-	const rows = ids
+	const listed = ids
 		.map((id) => stored.get(id))
 		.filter((row): row is LinkRow => row !== undefined && row.editor && row.state !== "fine");
+	const left = listed.filter((row) => row.kind === "leftover" && row.state === "left");
+	const rows = listed.filter((row) => row.kind !== "leftover");
 	const broken = rows.filter((row) => row.state === "broken");
 	const look = rows.filter((row) => row.state === "look");
 	const unknown = rows.filter((row) => row.state === "unknown");
@@ -67,7 +68,7 @@ export async function handleLinksPanel(
 	const list = (title: string, items: LinkRow[]) => {
 		blocks.push({ type: "section", text: `${title} (${items.length})` });
 		for (const row of items.slice(0, PANEL_ROWS)) {
-			blocks.push({ type: "context", text: describe(row, shorten(row.url)) });
+			blocks.push({ type: "context", text: describe(row, shortFor(row)) });
 		}
 		if (items.length > PANEL_ROWS) {
 			blocks.push({
@@ -78,6 +79,7 @@ export async function handleLinksPanel(
 	};
 	if (broken.length > 0) list("To fix", broken);
 	if (look.length > 0) list("Worth a look", look);
+	if (left.length > 0) list("Left over from WordPress", left);
 	const counts: string[] = [];
 	if (unknown.length > 0) {
 		counts.push(

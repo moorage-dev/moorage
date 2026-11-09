@@ -88,8 +88,24 @@ async function start(): Promise<PluginRuntimeTestHost> {
 				link("Rye flour", "https://gone.example/rye", "k4"),
 				link("LinkedIn", "https://linkedin.com/company/acme", "k5"),
 				{ _type: "iframe", _key: "m1", src: "http://maps.example/embed" },
+				// What a WordPress move leaves behind: read from the same entries, no call of its own.
+				{ _type: "htmlBlock", _key: "w1", html: '[contact-form-7 id="9ee95fa" title="Contact"]' },
+				{
+					_type: "htmlBlock",
+					_key: "w2",
+					html: "<!-- wp:latest-posts /-->",
+					originalBlockName: "core/latest-posts",
+				},
+				link("Our story", "/?p=12", "w3"),
+				link("Old shop", "https://old-acme.example/wp-content/uploads/shop.jpg", "w4"),
+				{ _type: "image", _key: "w5", asset: { _type: "reference", _ref: "m1" } },
 			],
 		},
+	});
+	await host.fixtures.content("pages", {
+		slug: "%cf%84%cf%85%cf%81%ce%af",
+		status: "published",
+		data: { title: "Τυρί", body: [] },
 	});
 	await host.fixtures.content("pages", {
 		slug: "about",
@@ -131,6 +147,8 @@ async function ownSite(runtime: PluginRuntimeTestHost): Promise<void> {
 		html('<html><body>About <img src="http://cdn.example/oven.jpg"></body></html>'),
 	);
 	await runtime.http.respond(`${SITE}/home`, html("<html><body>Home</body></html>"));
+	// The page with a WordPress-coded slug: EmDash does not find it.
+	await runtime.http.respond(`${SITE}/%cf%84%cf%85%cf%81%ce%af`, html("Page not found", 404));
 	await runtime.http.respond(`${SITE}/old-page`, html("Not found", 404));
 	await runtime.http.respond(`${SITE}/menu-2024`, html("Not found", 404));
 	await runtime.http.respond("http://acme.test/", redirect(`${SITE}/`));
@@ -293,9 +311,9 @@ describe("hooks: cron, the full check", () => {
 		expect(counts.checklist).toBe(8);
 		expect(counts.sweep).toBe(4);
 		expect(counts.count).toBe(8);
-		// In two runs: the rows to look at and could not check (6), then the broken ones, the
-		// summary, the alert for the broken menu link and the check (5).
-		expect(counts.freeze).toBe(6);
+		// In two runs: the rows to look at, could not check and left over from WordPress (8), then
+		// the broken ones, the summary, the alert for the broken menu link and the check (5).
+		expect(counts.freeze).toBe(8);
 		expect((await runtime.inspect.kv.get<Alerts>("alerts"))?.pending).toHaveLength(1);
 		expect((await runtime.inspect.kv.get<Summary>("summary"))?.rows.site.length).toBe(1);
 	});
@@ -325,7 +343,7 @@ describe("hooks: cron, the full check", () => {
 		expect(counts.checklist).toBe(8);
 		expect(counts.sweep).toBe(4);
 		expect(counts.count).toBe(8);
-		expect(counts.freeze).toBe(6);
+		expect(counts.freeze).toBe(8);
 		expect(await runtime.inspect.setting("options")).toBeNull();
 		expect((await runtime.inspect.kv.get<Alerts>("alerts"))?.pending).toHaveLength(1);
 	});
@@ -339,13 +357,13 @@ describe("hooks: cron, the full check", () => {
 			await runUntil(runtime, "freeze");
 			const scan = (await scanOf(runtime))!;
 			// 0.1.3 kept no lists; going back to it and forward again can leave an old check's.
-			const stale = { pass: scan.pass - 1, lookRows: [], unknownRows: [] };
+			const stale = { pass: scan.pass - 1, lookRows: [], unknownRows: [], leftRows: [] };
 			await runtime.fixtures.plugin.kv("scan", {
 				...scan,
 				lists: left === "by 0.1.3" ? undefined : stale,
 			});
 			const lists = await cold(runtime, `cron freeze left ${left}`, () => cron(runtime));
-			expect(lists.calls.length).toBe(6);
+			expect(lists.calls.length).toBe(8);
 			expect(await scanOf(runtime)).toMatchObject({ phase: "freeze", lists: { pass: scan.pass } });
 			const freeze = await cold(runtime, `cron freeze after, left ${left}`, () => cron(runtime));
 			expect(freeze.calls.length).toBe(5);
@@ -371,19 +389,22 @@ describe("hooks: cron, the full check", () => {
 			const queue = await runtime.inspect.kv.get<Queue>("queue");
 			await runtime.fixtures.plugin.kv("queue", { ...queue, hosts: {}, cronAt: "9999" });
 		};
-		const counts = print("cron second", await phaseByPhase(runtime, () => cron(runtime), passTurn));
+		const phases = await phaseByPhase(runtime, () => cron(runtime), passTurn);
+		const counts = print("cron second", phases);
 		expect(Object.keys(counts)).toEqual(PHASES);
 		expect(counts.walk).toBe(6);
 		expect(counts.resolve).toBe(6);
 		expect(counts["live-home"]).toBe(6);
-		// Only the pages this check walked are opened: the deleted About is not among them.
-		expect(counts["live-pages"]).toBe(4);
+		// Only the pages this check walked are opened (Home and Τυρί, two per run): the deleted
+		// About is not among them.
+		expect(counts["live-pages"]).toBe(5);
+		expect(phases.get("live-pages")?.calls.filter((c) => c === "httpFetch")).toHaveLength(2);
 		expect(counts["live-paths"]).toBe(6);
 		// The Checklist is opened once a week; the second check skips it.
 		expect(counts.checklist).toBe(2);
 		expect(counts.sweep).toBe(6);
 		expect(counts.count).toBe(8);
-		expect(counts.freeze).toBe(6);
+		expect(counts.freeze).toBe(8);
 		expect(await runtime.inspect.storage.get("pages", "/about")).toBeNull();
 	});
 });
@@ -429,6 +450,11 @@ async function dueState(runtime: PluginRuntimeTestHost): Promise<string> {
 	await runtime.http.respond(
 		"https://linkedin.com/company/acme",
 		new Response(null, { status: 403 }),
+	);
+	// The old WordPress site, still up.
+	await runtime.http.respond(
+		"https://old-acme.example/wp-content/uploads/shop.jpg",
+		new Response(null, { status: 200 }),
 	);
 	return id;
 }
@@ -506,6 +532,10 @@ describe("hooks: cron, what is due between checks", () => {
 			new Response("no", { status: 403 }),
 		);
 		await runtime.http.respond("https://instagram.com/acme", new Response(null, { status: 200 }));
+		await runtime.http.respond(
+			"https://old-acme.example/wp-content/uploads/shop.jpg",
+			new Response(null, { status: 200 }),
+		);
 		const next = await cold(runtime, "cron due after (enforced)", () => cron(runtime), true);
 		expect(next.error).toBeUndefined();
 		expect(next.refused).toEqual([]);
@@ -656,7 +686,7 @@ describe("routes: the Site Health page", () => {
 		expect(counts.checklist).toBe(9);
 		expect(counts.sweep).toBe(5);
 		expect(counts.count).toBe(9);
-		expect(counts.freeze).toBe(7);
+		expect(counts.freeze).toBe(9);
 	});
 
 	it("a page load moves a stalled check one step, each phase", async () => {
@@ -675,7 +705,7 @@ describe("routes: the Site Health page", () => {
 		expect(Object.keys(counts)).toEqual(PHASES);
 		expect(counts.checklist).toBe(9);
 		expect(counts.count).toBe(9);
-		expect(counts.freeze).toBe(7);
+		expect(counts.freeze).toBe(9);
 	});
 
 	for (const phase of ["checklist", "count", "freeze"] as const) {
@@ -789,7 +819,8 @@ describe("routes: the Site Health page", () => {
 		const m = await cold(runtime, "widget stalled freeze", () =>
 			runtime.admin.loadWidget("site-health"),
 		);
-		expect(m.calls.length).toBe(6);
+		// The lists half: to look at, could not check and left over from WordPress.
+		expect(m.calls.length).toBe(8);
 		await stall(runtime);
 		const last = await cold(runtime, "widget stalled freeze, second half", () =>
 			runtime.admin.loadWidget("site-health"),
@@ -917,6 +948,29 @@ describe("routes: actions on a finished check", () => {
 			runtime.admin.act(PAGE, "check_fine", { value: id }),
 		);
 		expect(m.calls.length).toBe(6);
+	});
+
+	it("left over from WordPress: mark as fine, open its page's panel, then check it again", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const summary = await runtime.inspect.kv.get<Summary>("summary");
+		const id = summary?.leftRows?.find((r) => r.reason === "shortcode")?.id;
+		expect(id).toBeDefined();
+		const edit = await cold(runtime, "fix edit leftover", () =>
+			runtime.admin.act(PAGE, "fix", { value: `edit0|${id}` }),
+		);
+		expect(edit.calls.length).toBe(2);
+		const fine = await cold(runtime, "fix fine leftover", () =>
+			runtime.admin.act(PAGE, "fix", { value: `fine|${id}` }),
+		);
+		expect(fine.calls.length).toBe(5);
+		// It reads the page again: still there, so it is listed again.
+		const again = await cold(runtime, "check_fine leftover", () =>
+			runtime.admin.act(PAGE, "check_fine", { value: id }),
+		);
+		expect(again.calls).toContain("contentGet");
+		expect(again.calls.length).toBe(6);
+		expect((await runtime.inspect.storage.get<LinkRow>("links", id!))?.state).toBe("left");
 	});
 
 	it("mark as fine", async () => {
@@ -1051,6 +1105,17 @@ describe("routes: the Links on this page panel (editor/links)", () => {
 		);
 		expect(m.calls).toEqual(["storageQuery", "storageGetMany"]);
 		expect(JSON.stringify(m.result)).toContain("/old-page goes to a page that does not exist.");
+	});
+
+	it("a page with what a WordPress move left: the same two reads", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const home = await idOf(runtime, "/home");
+		const m = await cold(runtime, "panel load, page with leftovers", () =>
+			runtime.admin.loadEditorPanel("links", "pages", home),
+		);
+		expect(m.calls).toEqual(["storageQuery", "storageGetMany"]);
+		expect(JSON.stringify(m.result)).toContain("Left over from WordPress (5)");
 	});
 
 	it("a draft: its row only", async () => {
