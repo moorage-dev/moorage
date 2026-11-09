@@ -95,7 +95,7 @@ describe("page checks", () => {
 				level: "fix",
 				message:
 					"A description came from WordPress but the page doesn't use it yet, so Google writes its own summary of this page.",
-				fix: "An admin can copy it into the SEO panel with Copy imported WordPress SEO values on the SEO page, or paste it into Meta Description in the page's SEO panel.",
+				fix: "Copy it from the SEO Description field into Meta Description in the page's SEO panel.",
 			});
 			expect(issues.map((issue) => issue.id)).not.toContain("no-description");
 			// The page really has no description, so it is still something to fix.
@@ -108,7 +108,7 @@ describe("page checks", () => {
 				id: "imported-title",
 				level: "look",
 				message: "A search title came from WordPress but the page doesn't use it yet.",
-				fix: "An admin can copy it into the SEO panel with Copy imported WordPress SEO values on the SEO page, or paste it into SEO Title in the page's SEO panel, without the site's name at the end.",
+				fix: 'Copy it from the SEO Title field into SEO Title in the page\'s SEO panel, without the " | Site name" ending (your site adds its name).',
 			});
 		});
 

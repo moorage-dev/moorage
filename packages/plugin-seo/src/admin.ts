@@ -48,17 +48,6 @@ import { forgetSettings } from "./settings-memo.js";
 import { copyForward, needsCopy, pickSettings, writeSettings } from "./settings-store.js";
 import { exportSettings, readTransfer, type ReadTransfer } from "./settings-transfer.js";
 import { parseUrl, readLogo, readProfileLink } from "./url.js";
-import {
-	closeCopy,
-	COPY_KEY,
-	copiedMessage,
-	copyScope,
-	copySection,
-	copyStep,
-	countStep,
-	newCopyJob,
-	type CopyJob,
-} from "./wordpress-copy.js";
 
 // EmDash role levels: an Editor can open the page, only an Admin can change settings.
 const ADMIN_ROLE = 50;
@@ -219,8 +208,6 @@ interface AdminData {
 	scan: ScanState | null;
 	/** Page counts and the first pages to fix; null before any page was checked. */
 	stats: Stats | null;
-	/** "Copy imported WordPress SEO values", while it is under way or just ended. */
-	copy: CopyJob | null;
 	/**
 	 * Settings an earlier release saved under the plain key, not yet copied to their new place.
 	 * Copied by a visit that has a call to spare for it (see refreshStats), or by any save.
@@ -255,7 +242,6 @@ async function loadData(ctx: PluginContext, { rows = true } = {}): Promise<Admin
 		moreRedirects: existing.more,
 		scan: (kv.get(SCAN_KEY) as ScanState | undefined) ?? null,
 		stats: (kv.get(STATS_KEY) as Stats | undefined) ?? null,
-		copy: (kv.get(COPY_KEY) as CopyJob | undefined) ?? null,
 	};
 }
 
@@ -572,20 +558,9 @@ function overviewTab(data: AdminData, siteName: string): Block[] {
 		...hiddenBanner(data, true),
 		...setupPrompt(data, siteName),
 		...businessDetails(data, siteName),
-		...wordpressCopy(data),
 		...pagesToFix(data),
 		...checkButton(data),
 	];
-}
-
-/**
- * "Copy imported WordPress SEO values", for admins: shown while a copy is under way or just ended,
- * or when the last full check found pages whose WordPress title or description is not used.
- */
-function wordpressCopy(data: AdminData): Block[] {
-	if (data.copy) return copySection(data.copy, 0);
-	const checked = data.scan?.status === "done" ? (data.scan.tally.imported ?? 0) : 0;
-	return copyScope(data.collections).length > 0 ? copySection(null, checked) : [];
 }
 
 function widget(data: AdminData): BlockResponse {
@@ -1395,14 +1370,10 @@ export async function handleAdmin(
 	const interaction = isRecord(input) ? input : {};
 	const action = typeof interaction.action_id === "string" ? interaction.action_id : "";
 	// These read the redirects list after their change, so not before it as well.
-	// The WordPress copy leaves the list out too, for one more call of its own.
 	const importing =
 		admin &&
 		interaction.type === "block_action" &&
-		(action === "add_redirects" ||
-			action === "more_redirects" ||
-			action === "remove_redirects" ||
-			action.startsWith("wp_"));
+		(action === "add_redirects" || action === "more_redirects" || action === "remove_redirects");
 	const data = await loadData(ctx, { rows: !importing });
 
 	if (interaction.type === "page_load" && interaction.page === "widget:seo") {
@@ -1477,70 +1448,6 @@ export async function handleAdmin(
 								message: `${checked.scan?.checked ?? 0} pages checked so far. The rest follow in the background.`,
 							},
 			});
-		}
-		// What the WordPress copy may spend: all but loadData's two reads (no redirects list).
-		const copyCalls = SANDBOX_CALLS - (LOAD_CALLS - 1);
-		if (action === "wp_count") {
-			const scope = copyScope(data.collections);
-			const job =
-				data.copy?.status === "counting"
-					? data.copy
-					: newCopyJob(scope, [data.config.site.name ?? "", ctx.site.name]);
-			if (scope.length === 0) return render(data, ctx, admin, { tab: TAB.overview });
-			const copy = await countStep(ctx, job, copyCalls);
-			return render({ ...data, copy }, ctx, admin, {
-				tab: TAB.overview,
-				toast:
-					copy.status === "counted"
-						? { type: "success", message: "Counted. Nothing has been changed yet." }
-						: { type: "info", message: "Counted part of the site. Press Continue counting." },
-			});
-		}
-		if (action === "wp_copy") {
-			const job = data.copy;
-			const ready =
-				(job?.status === "counted" && job.writable === true && job.found.pages > 0) ||
-				job?.status === "copying";
-			if (!job || !ready) return render(data, ctx, admin, { tab: TAB.overview });
-			const copy = await copyStep(ctx, job, copyCalls, { scheduled: job.status === "copying" });
-			const rechecking = copy.status !== "copying";
-			return render(
-				{ ...data, copy, ...(rechecking ? { scan: null, stats: null } : {}) },
-				ctx,
-				admin,
-				{
-					tab: TAB.overview,
-					toast:
-						copy.status === "done"
-							? { type: "success", message: copiedMessage(copy) }
-							: copy.status === "failed"
-								? { type: "error", message: "The copy stopped. See why on the Overview." }
-								: {
-										type: "info",
-										message: `${copy.copied.pages} pages copied so far. The rest follow in the background, a few each minute.`,
-									},
-				},
-			);
-		}
-		if (action === "wp_cancel") {
-			const stopped = data.copy?.status === "copying";
-			await closeCopy(ctx, data.copy);
-			return render(
-				{ ...data, copy: null, ...(stopped ? { scan: null, stats: null } : {}) },
-				ctx,
-				admin,
-				{
-					tab: TAB.overview,
-					...(stopped
-						? {
-								toast: {
-									type: "info" as const,
-									message: `Stopped. ${plural(data.copy?.copied.pages ?? 0, "page")} copied.`,
-								},
-							}
-						: {}),
-				},
-			);
 		}
 		if (action === "set_type") return save(setCollection(data, interaction.value, "type"));
 		if (action === "set_visible") {

@@ -48,13 +48,7 @@
 	// KV, and route/hook registration. Changing these between
 	// releases requires a version bump because installed
 	// users have consented to the old contract.
-	"capabilities": [
-		"content:read",
-		"content:write",
-		"bylines:read",
-		"schema:read",
-		"redirects:write",
-	],
+	"capabilities": ["content:read", "bylines:read", "schema:read", "redirects:write"],
 	"allowedHosts": [],
 	"admin": {
 		"pages": [{ "path": "/overview", "label": "SEO", "icon": "search", "group": "Marketing" }],

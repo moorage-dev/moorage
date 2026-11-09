@@ -155,8 +155,10 @@ export function excerptOf(data: Record<string, unknown>): string {
 }
 
 // What to do about a value the WordPress import left in a field the page does not use.
-const COPY_FIX =
-	"An admin can copy it into the SEO panel with Copy imported WordPress SEO values on the SEO page, or paste it into";
+const TITLE_FIX =
+	'Copy it from the SEO Title field into SEO Title in the page\'s SEO panel, without the " | Site name" ending (your site adds its name).';
+const DESCRIPTION_FIX =
+	"Copy it from the SEO Description field into Meta Description in the page's SEO panel.";
 
 /**
  * Check one saved entry. Every rule reads data the plugin already holds and
@@ -184,9 +186,7 @@ export function checkEntry(input: CheckInput): Issue[] {
 			message: unusedTitle
 				? `This page has no title. One ${unusedNote}.`
 				: "This page has no title.",
-			fix: unusedTitle
-				? `${COPY_FIX} SEO Title in the page's SEO panel, without the site's name at the end.`
-				: "Give the page a title.",
+			fix: unusedTitle ? TITLE_FIX : "Give the page a title.",
 		});
 	}
 	// "Home" as the headline of the site's own search result says nothing about it.
@@ -197,7 +197,7 @@ export function checkEntry(input: CheckInput): Issue[] {
 			level: "fix",
 			message: `The title is just "${searchTitle}", which is what Google shows as the headline.${unusedTitle ? ` A better one ${unusedNote}.` : ""}`,
 			fix: unusedTitle
-				? `${COPY_FIX} SEO Title in the page's SEO panel, without the site's name at the end.`
+				? TITLE_FIX
 				: "Put your name and what you do in SEO Title, in the page's SEO panel.",
 		});
 	}
@@ -206,7 +206,7 @@ export function checkEntry(input: CheckInput): Issue[] {
 			id: "imported-title",
 			level: "look",
 			message: `A search title ${unusedNote}.`,
-			fix: `${COPY_FIX} SEO Title in the page's SEO panel, without the site's name at the end.`,
+			fix: TITLE_FIX,
 		});
 	}
 	if (seo && !seo.description?.trim()) {
@@ -219,7 +219,7 @@ export function checkEntry(input: CheckInput): Issue[] {
 				message: excerpt
 					? `A description ${unusedNote}.`
 					: `A description ${unusedNote}, so Google writes its own summary of this page.`,
-				fix: `${COPY_FIX} Meta Description in the page's SEO panel.`,
+				fix: DESCRIPTION_FIX,
 			});
 		} else if (!excerpt) {
 			issues.push({

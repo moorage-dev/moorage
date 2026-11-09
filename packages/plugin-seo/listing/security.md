@@ -4,4 +4,4 @@ Email **security@moorage.dev**, not a public issue. Say which version you use, w
 
 ## What it keeps and sends
 
-It keeps one small record per entry in the site's own database: dates, authors, the page type and any extra structured data you add. It sends nothing to any outside service and loads no outside scripts. Redirects change only when you add, edit or remove one, or confirm an import. Entries change only when an admin presses Copy imported WordPress SEO values, and then only empty SEO panel fields.
+It keeps one small record per entry in the site's own database: dates, authors, the page type and any extra structured data you add. It sends nothing to any outside service and loads no outside scripts. Redirects change only when you add, edit or remove one, or confirm an import.

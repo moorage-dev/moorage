@@ -428,13 +428,11 @@ test("an admin sees the help line under every tab, and the switch in Settings hi
 });
 
 // EmDash's WordPress Exporter import puts Yoast and Rank Math values in content fields named
-// seo_title and seo_description, which the page never uses. In EmDash 1.4.0 only a plugin run in
-// the site's process may write the SEO panel; run sandboxed, the SEO page says so and changes nothing.
-test("an admin copies the SEO values a WordPress import left in fields the page does not use", async ({
+// seo_title and seo_description, which the page never uses. The checks name them, so the owner
+// knows the value is there but has to be copied into the SEO panel.
+test("the checks name SEO values a WordPress import left in fields the page does not use", async ({
 	page,
 }) => {
-	const inProcess =
-		process.env.DEMO_SITE_IN_PROCESS === "1" || process.env.DEMO_SITE_SEO === "in-process";
 	await openSeoPage(page);
 	const headers = { "X-EmDash-Request": "1" };
 	const api = "/_emdash/api";
@@ -449,85 +447,44 @@ test("an admin copies the SEO values a WordPress import left in fields the page 
 		});
 		expect(added.ok()).toBe(true);
 	}
-	// The business name the first test saved, which the plugin leaves off the end of a title.
-	const siteName = "Acme Bakery";
-	// Contact's own description, from the picture test above: it must stay.
-	const own = "How to reach the team, and where to find us.";
-	const description = "Talk to the bakers on Main Street, open since 1982.";
 	const list = await page.request.get(`${api}/content/pages`, { headers });
 	const pages = (await list.json()) as { data: { items: Array<{ id: string; slug: string }> } };
-	const contact = pages.data.items.find((item) => item.slug === "contact");
-	expect(contact).toBeDefined();
-	const id = contact?.id ?? "";
-	const shown = async () => {
-		await page.goto("/contact");
-		return page.locator('meta[name="description"]').getAttribute("content");
-	};
+	const id = pages.data.items.find((item) => item.slug === "pricing")?.id ?? "";
+	expect(id).not.toBe("");
 	try {
-		const saved = await page.request.put(`${api}/content/pages/${id}`, {
-			headers,
-			data: { data: { seo_title: `Visit us | ${siteName}`, seo_description: description } },
-		});
-		expect(saved.ok()).toBe(true);
-		const published = await page.request.post(`${api}/content/pages/${id}/publish`, { headers });
-		expect(published.ok()).toBe(true);
-
-		// The page keeps its own description, and has no use for WordPress's title.
-		expect(await shown()).toBe(own);
-		await expect(page.locator('meta[property="og:title"]')).not.toHaveAttribute(
-			"content",
-			"Visit us",
-		);
+		// Pricing has the description an earlier test typed; Home has none of its own.
+		const home = pages.data.items.find((item) => item.slug === "home")?.id ?? "";
+		for (const [entry, data] of [
+			[id, { seo_title: "Plans and prices | Acme Bakery" }],
+			[home, { seo_description: "Fresh bread on Main Street, every morning." }],
+		] as const) {
+			const saved = await page.request.put(`${api}/content/pages/${entry}`, {
+				headers,
+				data: { data },
+			});
+			expect(saved.ok()).toBe(true);
+			const published = await page.request.post(`${api}/content/pages/${entry}/publish`, {
+				headers,
+			});
+			expect(published.ok()).toBe(true);
+		}
 
 		await openSeoPage(page);
 		await page.getByRole("button", { name: "Check all pages again" }).click();
 		await expect(page.getByText("All pages checked.")).toBeVisible({ timeout: 30_000 });
+		await expect(
+			page
+				.getByRole("row", { name: /^Home/ })
+				.getByText(/A description came from WordPress but the page doesn't use it yet/),
+		).toBeVisible();
+		await expect(page.getByText(/No search description/)).toHaveCount(0);
 		await page.getByRole("button", { name: /^Worth a look/ }).click();
 		await expect(
 			page
-				.getByRole("row", { name: /Contact/ })
-				.getByText("A search title came from WordPress but the page doesn't use it yet."),
+				.getByRole("row", { name: /^Pricing/ })
+				.getByText(/A search title came from WordPress but the page doesn't use it yet\./),
 		).toBeVisible();
-
-		await page.getByRole("button", { name: "See what will change" }).click();
-		await expect(page.getByText("Counted. Nothing has been changed yet.")).toBeVisible();
-		// The site's name is left off the title (the site adds its own), and Contact's own
-		// description is kept.
-		const row = page.getByRole("row", { name: /^Contact Visit us/ });
-		await expect(row.getByRole("cell", { name: "Visit us", exact: true })).toBeVisible();
-		await expect(row.getByRole("cell", { name: "(kept as it is)" })).toBeVisible();
-		await expect(
-			page.getByText("1 page already has its own title or description, which is kept."),
-		).toBeVisible();
-
-		if (!inProcess) {
-			await expect(page.getByText("This site cannot copy them yet")).toBeVisible();
-			await expect(page.getByRole("button", { name: /^Copy into/ })).toHaveCount(0);
-			await page.getByRole("button", { name: "Close" }).click();
-			await page.goto("/contact");
-			await expect(page.locator('meta[property="og:title"]')).not.toHaveAttribute(
-				"content",
-				"Visit us",
-			);
-			return;
-		}
-
-		await page.getByRole("button", { name: "Copy into 1 page" }).click();
-		await expect(
-			page
-				.getByText("Copied 1 title into the SEO panel. 1 page already had its own, which was kept.")
-				.first(),
-		).toBeVisible();
-		// Live at once (the SEO panel has no drafts, so nothing is published again), and the
-		// description the page already had is not written over.
-		expect(await shown()).toBe(own);
-		await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", "Visit us");
 	} finally {
-		// Back as it was: no search title; the description stays.
-		await page.request.put(`${api}/content/pages/${id}`, {
-			headers,
-			data: { seo: { title: null } },
-		});
 		for (const field of fields) {
 			await page.request.delete(`${api}/schema/collections/pages/fields/${field.slug}`, {
 				headers,

@@ -21,7 +21,6 @@ import { isNoindex, mergeRobots } from "./robots.js";
 import { loadScan, SANDBOX_CALLS, SCAN_KEY, SCAN_TASK, scanStep, startScan } from "./scan.js";
 import { memoSettings } from "./settings-memo.js";
 import { pickSettings } from "./settings-store.js";
-import { COPY_KEY, COPY_TASK, copyStep, type CopyJob } from "./wordpress-copy.js";
 
 /**
  * An EmDash preview link, which its owner opens to check their work: settings
@@ -163,20 +162,14 @@ const plugin: SandboxedPlugin = {
 				ctx.log.warn("could not start the first page check", { error: String(error) });
 			}
 		},
-		// Continues the site-wide check, a redirects import (or its removal) a few rows at a time,
-		// and the copy of imported WordPress SEO values a few pages at a time, until each is done.
+		// Continues the site-wide check, and a redirects import (or its removal) a few rows at a
+		// time until it is done.
 		cron: async (event, ctx) => {
 			if (event.name === SCAN_TASK) {
 				const scan = await loadScan(ctx);
 				if (scan?.status === "running" || scan?.sweep)
 					await scanStep(ctx, scan, await loadConfig(ctx));
 				else await ctx.cron?.cancel(SCAN_TASK);
-				return;
-			}
-			if (event.name === COPY_TASK) {
-				const job = await ctx.kv.get<CopyJob>(COPY_KEY);
-				if (job?.status === "copying") await copyStep(ctx, job, SANDBOX_CALLS - 1);
-				else await ctx.cron?.cancel(COPY_TASK);
 				return;
 			}
 			if (event.name !== IMPORT_TASK) return;

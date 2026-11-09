@@ -7,7 +7,8 @@
  * title and description into two content fields, `seo_title` and `seo_description`, not into
  * the entry's SEO panel. Nothing reads those fields: the page's title tag and meta description
  * come from the SEO panel (or the theme), so the values are lost until someone copies them.
- * This file reads them for the checks and plans the copy into the SEO panel.
+ * This file reads them for the checks, which tell the owner what still has to be copied into the
+ * SEO panel by hand.
  */
 
 /** The content fields the WordPress import writes. */
@@ -72,7 +73,7 @@ export interface PlanInput {
 }
 
 /**
- * What the copy would write for one entry, never over a value already in the SEO panel. A title
+ * What copying would write for one entry, never over a value already in the SEO panel. A title
  * that is only the page's own title (with the site's name) adds nothing and is left out. Null
  * when there is nothing imported, or no SEO panel to copy into.
  */
@@ -96,9 +97,4 @@ export function planCopy(input: PlanInput): CopyPlan | null {
 		else if (!same(panelDescription, description)) plan.own = true;
 	}
 	return plan;
-}
-
-/** Whether a plan writes anything. */
-export function writesSomething(plan: CopyPlan | null): plan is CopyPlan {
-	return plan !== null && (plan.title !== undefined || plan.description !== undefined);
 }
