@@ -549,6 +549,56 @@ describe("a site that cannot open its own pages", () => {
 		expect(text(page)).toContain("This site is not public yet");
 	});
 
+	it("a page published while the first check finishes says the site is not public, not 'could not open'", async () => {
+		// The full Playwright run: the plugin's first check is past its link steps when a page is
+		// published; there is no summary yet, only the running check, which knows the site is not public.
+		const runtime = await start("");
+		await runtime.transport.invokeHook("plugin:activate", {});
+		for (let run = 0; run < 60; run += 1) {
+			const scan = await runtime.inspect.kv.get<ScanState>("scan");
+			if (scan?.phase === "checklist") break;
+			await cron(runtime);
+		}
+		expect((await runtime.inspect.kv.get<ScanState>("scan"))?.live).toBe("not-public");
+		expect(await runtime.inspect.kv.get("summary")).toBeNull();
+		const spring = (await runtime.fixtures.content("pages", {
+			slug: "spring-menu",
+			status: "published",
+			data: { title: "Spring menu", body: [link("Old menu", "/menu-2024", "s1")] },
+		})) as { id: string };
+		await runtime.transport.invokeHook("content:afterPublish", {
+			collection: "pages",
+			content: { id: spring.id },
+		});
+		await finish(runtime);
+		const result = await summary(runtime);
+		expect(result.live).toBe("not-public");
+		expect(result.unknownRows.map((r) => `${r.url} ${r.reason}`)).toContain(
+			"/menu-2024 not-public",
+		);
+		expect(text(await runtime.admin.loadPage(PAGE))).toContain(
+			"/menu-2024 matches no page we know of. Your site is not public yet",
+		);
+	});
+
+	it("a row saved as 'could not open' before the site was known to be private reads as not public", async () => {
+		const runtime = await start("");
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const id = idFor("internal", "/old-page");
+		const row = await runtime.inspect.storage.get<LinkRow>("links", id);
+		const stored = await summary(runtime);
+		// What a 0.2.0 check, or an earlier write, left behind.
+		await runtime.fixtures.plugin.storage("links", id, { ...row, reason: "no-live" });
+		await runtime.fixtures.plugin.kv("summary", {
+			...stored,
+			unknownRows: stored.unknownRows.map((r) => (r.id === id ? { ...r, reason: "no-live" } : r)),
+		});
+		const words = text(await runtime.admin.loadPage(PAGE));
+		expect(words).toContain("/old-page matches no page we know of. Your site is not public yet");
+		expect(words).not.toContain("/old-page: we could not open your site");
+	});
+
 	it("takes a full link to the site's own address on this computer as one of its pages (roundup 2026-11-09)", async () => {
 		const runtime = await start("http://127.0.0.1:4321");
 		await runtime.fixtures.content("pages", {
