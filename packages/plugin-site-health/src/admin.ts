@@ -539,6 +539,11 @@ const STATUS_WORD: Record<CheckStatus, string> = {
 	unknown: "Could not tell",
 };
 
+const CLOUDFLARE_REMINDER =
+	"If your site is on Cloudflare: blocking AI training there also blocks Google, and this checklist cannot see it. In Cloudflare, under Security, Settings, AI Crawler and Agent access policies, set Training to Allow or Disallow. Then check that Google Search Console can read your sitemap.";
+const CLOUDFLARE_STEPS =
+	"https://developers.cloudflare.com/bots/additional-configurations/block-ai-bots/";
+
 const CRON_STEPS = `This EmDash site's scheduled tasks are not running (the Site Health task has not run for 10 minutes).
 On Cloudflare: add a Cron Trigger to the Worker, for example in wrangler.jsonc:
   "triggers": { "crons": ["* * * * *"] }
@@ -821,6 +826,18 @@ function checklistTab(
 			text: data.checklist.checkedAt
 				? `Checked ${when(data.checklist.checkedAt)}. Changes you make elsewhere show here after the next check.`
 				: "The rest is checked with the next full check.",
+		},
+		// A reminder, not a check, so it sits after the line about checks: Cloudflare
+		// blocks only requests from Google's own addresses, so the site asking itself
+		// always gets through. No status here.
+		{
+			type: "section",
+			text: CLOUDFLARE_REMINDER,
+			accessory: {
+				type: "link",
+				label: "Cloudflare's steps",
+				target: { kind: "external", url: CLOUDFLARE_STEPS },
+			},
 		},
 	);
 	const recipients = data.options.recipients ?? [];

@@ -239,6 +239,15 @@ test("on a phone, every row keeps its status and its Fix menu on screen", async 
 	await expect(test).toBeVisible();
 	const box = await test.boundingBox();
 	if (box) expect(box.x + box.width).toBeLessThanOrEqual(width);
+	// The Cloudflare reminder: a line with a link, no status.
+	await expect(page.getByText(/^If your site is on Cloudflare: /)).toBeVisible();
+	const steps = page.getByRole("link", { name: "Cloudflare's steps" });
+	await expect(steps).toHaveAttribute(
+		"href",
+		"https://developers.cloudflare.com/bots/additional-configurations/block-ai-bots/",
+	);
+	const stepsBox = await steps.boundingBox();
+	if (stepsBox) expect(stepsBox.x + stepsBox.width).toBeLessThanOrEqual(width);
 	await expect(page.getByText("Scheduled tasks.").first()).toBeVisible();
 });
 

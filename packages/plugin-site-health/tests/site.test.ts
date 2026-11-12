@@ -12,6 +12,8 @@ import type { Alerts, Queue, ScanState, Summary } from "../src/state.js";
 import { idFor } from "../src/url.js";
 
 const PAGE = "/health";
+const CLOUDFLARE_REMINDER =
+	"If your site is on Cloudflare: blocking AI training there also blocks Google, and this checklist cannot see it. In Cloudflare, under Security, Settings, AI Crawler and Agent access policies, set Training to Allow or Disallow. Then check that Google Search Console can read your sitemap.";
 const SITE = "https://acme.test";
 
 let host: PluginRuntimeTestHost | undefined;
@@ -462,6 +464,40 @@ describe("a full check of a public site", () => {
 		expect(fine.toast?.message).toBe("Marked as fine. /christmas is not checked any more.");
 		expect(text(fine)).toContain("Links you marked as fine (1)");
 		expect((await summary(runtime)).fix.link).toBe(0);
+	});
+
+	it("reminds an Admin that Cloudflare's AI crawler setting can keep Google out, without calling it a check", async () => {
+		const runtime = await start();
+		await ownSite(runtime);
+		await runtime.transport.invokeHook("plugin:activate", {});
+		await finish(runtime);
+		const page = await runtime.admin.loadPage(PAGE);
+		const panels = page.blocks.flatMap((block) =>
+			block.type === "tab" ? block.panels.flatMap((panel) => panel.blocks) : [],
+		);
+		const reminder = panels.find(
+			(block) => block.type === "section" && block.text.startsWith("If your site is on Cloudflare"),
+		);
+		expect(reminder).toMatchObject({
+			type: "section",
+			text: CLOUDFLARE_REMINDER,
+			accessory: {
+				type: "link",
+				target: {
+					kind: "external",
+					url: "https://developers.cloudflare.com/bots/additional-configurations/block-ai-bots/",
+				},
+			},
+		});
+		// Not a row with a status, not in the banner, not in the widget's Setup count.
+		const words = text(page);
+		expect(words).not.toMatch(/"check":"[^"]*Cloudflare/);
+		expect(words).not.toMatch(/"description":"[^"]*Cloudflare/);
+		const widget = await runtime.admin.loadWidget("site-health");
+		expect(text(widget)).not.toContain("Cloudflare");
+		// Editors never see it.
+		const editor = await runtime.fixtures.user({ email: "sam@acme.test", role: "editor" });
+		expect(text(await runtime.admin.loadPage(PAGE, { user: editor }))).not.toContain("Cloudflare");
 	});
 
 	it("shows an Editor only the links they can fix", async () => {
