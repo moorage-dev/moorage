@@ -7,6 +7,7 @@ import { normalizeConfig } from "../src/config.js";
 import type { Config, Delivery, KnownForm, Send } from "../src/types.js";
 import * as old from "./fixtures/v030/config.js";
 import * as v031 from "./fixtures/v031/config.js";
+import { forgetActivation } from "./fresh-host.js";
 import { runQueued } from "./queue.js";
 
 // Where the settings live. EmDash 1.3 keeps a plugin's KV in a different table depending on how
@@ -95,6 +96,7 @@ async function site() {
 	host = await createPluginRuntimeTestHost({
 		site: { name: "Crumb & Co.", url: ORIGIN, locale: "en" },
 	});
+	await forgetActivation(host);
 	await host.http.respond(HOOK, new Response("ok", { status: 200 }));
 	const admin = await host.fixtures.user({ email: "anna@crumb.test", role: "admin" });
 	return { runtime: host, admin };

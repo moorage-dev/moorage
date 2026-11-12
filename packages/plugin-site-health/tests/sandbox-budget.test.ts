@@ -67,6 +67,10 @@ async function start(): Promise<PluginRuntimeTestHost> {
 	host = await createPluginRuntimeTestHost({
 		site: { name: "Acme Bakery", url: SITE, locale: "en" },
 	});
+	// @emdash-cms/plugin-test 0.2.12 (EmDash 1.5) activates the plugin when the host is made,
+	// before any fixture, so a first check of an empty site has begun. Forget it: these tests
+	// start from a site where the plugin has not run yet.
+	await host.fixtures.plugin.kv("scan", null);
 	await host.fixtures.collection({
 		slug: "pages",
 		label: "Pages",

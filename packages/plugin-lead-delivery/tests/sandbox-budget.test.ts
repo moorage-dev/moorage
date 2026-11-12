@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, Enquiry, KnownForm, Send } from "../src/types.js";
 import { describeCalls, measure, SANDBOX_SUBREQUESTS, type Measured } from "./bridge-budget.js";
+import { forgetActivation } from "./fresh-host.js";
 
 type Host = PluginRuntimeTestHost;
 type User = Awaited<ReturnType<Host["fixtures"]["user"]>>;
@@ -149,6 +150,7 @@ async function newHost(): Promise<Host> {
 	host = await createPluginRuntimeTestHost({
 		site: { name: "Crumb & Co.", url: ORIGIN, locale: "en" },
 	});
+	await forgetActivation(host);
 	return host;
 }
 
@@ -326,6 +328,20 @@ function run(cases: Case[]) {
 }
 
 const statuses = async (h: Host) => (await sendRows(h)).map((r) => r.status).sort();
+
+/**
+ * The tasks a test asked for. On EmDash 1.5 the test host runs plugin:activate when it is made,
+ * which schedules the every-minute "maintenance" task before the test starts; these tests are
+ * about the tasks the step under test asks for, so that one is left out.
+ */
+async function asked(h: Host): Promise<Array<{ name: string; nextRunAt: string }>> {
+	const tasks = (await h.inspect.scheduledTasks()) as Array<{
+		name: string;
+		nextRunAt: string;
+		schedule: string;
+	}>;
+	return tasks.filter((t) => !(t.name === "maintenance" && t.schedule === "* * * * *"));
+}
 const formEmail = { to: PRIVATE, subject: "New submission: Contact us", text: FORM_EMAIL };
 
 /** Run each one-shot task as EmDash's scheduler does, one per tick, until none is due. */
@@ -333,7 +349,7 @@ async function runQueued(h: Host, { enforce = false, max = 40 } = {}): Promise<n
 	const counts: number[] = [];
 	for (let n = 0; n < max; n++) {
 		const at = new Date(Date.now() + 5_000);
-		const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string; nextRunAt: string }>;
+		const tasks = await asked(h);
 		const due = tasks.filter((t) => Date.parse(t.nextRunAt) <= at.getTime());
 		if (due.length === 0) return counts;
 		expect(due, "one task due at a time").toHaveLength(1);
@@ -536,7 +552,7 @@ describe("cron deliver", () => {
 			setup: async () => deliver(await dueRows(zap, 3, ok)),
 			did: async (h) => {
 				expect(await statuses(h)).toEqual(["delivered", "delivered", "retrying"]);
-				const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
+				const tasks = await asked(h);
 				expect(tasks.map((t) => t.name.split("-")[0])).toEqual(["deliver"]);
 			},
 			count: 9,
@@ -685,7 +701,7 @@ describe("cron maintenance and the daily run", () => {
 			name: "maintenance, first run of the day, nothing due: asks for the daily run",
 			setup: async () => maintenance(await running()),
 			did: async (h) => {
-				const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
+				const tasks = await asked(h);
 				expect(tasks.map((t) => t.name)).toEqual(["daily"]);
 				expect(await h.inspect.kv.get("daily")).toBeNull();
 			},
@@ -793,7 +809,7 @@ describe("inbound", () => {
 	/** Stored and waiting for a run, and a run asked for. */
 	const queued = async (h: Host, rows: string[]) => {
 		await isStored(h, rows);
-		const tasks = (await h.inspect.scheduledTasks()) as Array<{ name: string }>;
+		const tasks = await asked(h);
 		expect(tasks.map((t) => t.name)).toEqual(["deliver"]);
 	};
 	run([
@@ -1872,7 +1888,7 @@ describe("a backlog with the limit enforced", () => {
 		expect(kept.every((e) => e.data.cleared && e.data.counted)).toBe(true);
 		const stats = (await h.inspect.kv.get<Record<string, { r: number; d: number }>>("stats"))!;
 		expect(stats[today()]).toEqual({ r: 10, d: 10 });
-		expect(await h.inspect.scheduledTasks()).toEqual([]);
+		expect(await asked(h)).toEqual([]);
 	});
 
 	it("Send all failed again, pressed twice: each sent once", async () => {

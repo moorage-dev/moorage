@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import type { Config, Delivery, KnownForm, Send } from "../src/types.js";
+import { forgetActivation } from "./fresh-host.js";
 import { runQueued } from "./queue.js";
 
 const PAGE = "/enquiries";
@@ -28,6 +29,7 @@ type User = Awaited<ReturnType<PluginRuntimeTestHost["fixtures"]["user"]>>;
 
 async function start(url = ORIGIN) {
 	host = await createPluginRuntimeTestHost({ site: { name: "Crumb & Co.", url, locale: "en" } });
+	await forgetActivation(host);
 	const admin = await host.fixtures.user({
 		email: "anna@crumb.test",
 		name: "Anna Baker",
@@ -737,6 +739,7 @@ describe("updating from 0.1", () => {
 		const runtime = (host = await createPluginRuntimeTestHost({
 			site: { name: "Crumb & Co.", url: ORIGIN, locale: "en" },
 		}));
+		await forgetActivation(runtime);
 		await runtime.fixtures.plugin.kv("config", {
 			places,
 			alertTo: ["anna@crumb.test"],

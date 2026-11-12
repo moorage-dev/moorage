@@ -43,13 +43,23 @@ async function afterSave(
 	collection: string,
 	content: unknown,
 	actor: { id: string; role: number; source?: string } | undefined,
+	editedBy?: readonly string[],
 ): Promise<void> {
 	const id = entryId(content);
+	// With EmDash's co-editing (1.5+) one save can hold several people's edits, saved as one
+	// actor. Only a save that holds the actor's own edits alone counts as theirs.
+	const own = !editedBy || editedBy.every((user) => user === actor?.id);
 	if (!id) return;
 	const store = requests(ctx);
 	const key = requestKey(collection, id);
 	const request = await store.get(key);
-	if (request?.status === "approved" && request.approval && actor && actor.source !== "mcp") {
+	if (
+		request?.status === "approved" &&
+		request.approval &&
+		actor &&
+		own &&
+		actor.source !== "mcp"
+	) {
 		// Someone who needs no approval (an admin under "Others need my OK") changed an
 		// approved page: their own change needs no new approval, so the approval follows it.
 		const config = await loadConfig(ctx);
@@ -98,6 +108,7 @@ async function afterSave(
 	};
 	if (
 		actor &&
+		own &&
 		config &&
 		actor.id !== request.requestedBy?.id &&
 		actor.role >= approverRole(config.preset)
@@ -120,7 +131,7 @@ const plugin: SandboxedPlugin = {
 		// Never fails the save.
 		"content:afterSave": async (event, ctx) => {
 			try {
-				await afterSave(ctx, event.collection, event.content, event.actor);
+				await afterSave(ctx, event.collection, event.content, event.actor, event.editedBy);
 			} catch (error) {
 				ctx.log.warn("could not update the approval after a save", { error: String(error) });
 			}

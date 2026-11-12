@@ -1017,7 +1017,14 @@ test.describe("box in a page", () => {
 			await expect(dialog.getByRole("combobox")).toContainText(
 				'No boxes yet. "Spring offer" is a popup: it opens by itself and is not placed here.',
 			);
-			await expect(dialog.getByRole("button", { name: "Insert" })).toBeDisabled();
+			// EmDash up to 1.4 greys Insert out; 1.5's dialog keeps it on and refuses an empty choice.
+			const insertButton = dialog.getByRole("button", { name: "Insert" });
+			if (await insertButton.isEnabled()) {
+				await insertButton.click();
+				await expect(dialog.getByText("Fill in at least one field.")).toBeVisible();
+			}
+			await expect(dialog).toBeVisible();
+			await expect(page.locator(".ProseMirror").last()).toHaveText("");
 
 			// A box turned off: listed, marked "(off)"; the popup is not.
 			await make({
