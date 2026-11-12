@@ -9,6 +9,7 @@ import { normalizeStore, type Store } from "../src/config.js";
 import { contentPrint } from "../src/fragment.js";
 import { HELP_LINE, HIDE_ACTION } from "../src/help-line.js";
 import { createPlugin } from "../src/index.js";
+import { PRUNE_TASK } from "../src/stats.js";
 import { fakeContext, popup, type FakeContext } from "./helpers.js";
 
 const ADMIN = 50;
@@ -480,6 +481,41 @@ describe("finished popups", () => {
 		expect(words(await press(fake, "row", "preview:abcd1234"))).toContain(
 			"https://hartleys.test/journal/?popups_preview=abcd1234&scheme=light",
 		);
+	});
+});
+
+describe("switching the plugin on", () => {
+	it("stays switched on when it fails, and an admin's visit schedules the clean-up", async () => {
+		// EmDash 1.5 runs plugin:activate when the site first starts, and switches off a plugin
+		// whose activate throws. Here its first call fails.
+		const fake = fakeContext();
+		const scheduled: string[] = [];
+		let fail = true;
+		fake.ctx.cron!.list = async () => {
+			if (fail) {
+				fail = false;
+				throw new Error("D1_ERROR: the database is not reachable");
+			}
+			return scheduled.map((name) => ({
+				name,
+				schedule: "@daily",
+				nextRunAt: "",
+				lastRunAt: null,
+			}));
+		};
+		fake.ctx.cron!.schedule = async (name: string) => {
+			scheduled.push(name);
+		};
+		const warn = vi.spyOn(fake.ctx.log, "warn");
+		const hook = createPlugin().hooks["plugin:activate"] as
+			| { handler: (event: unknown, ctx: unknown) => Promise<void> }
+			| ((event: unknown, ctx: unknown) => Promise<void>);
+		const activate = typeof hook === "function" ? hook : hook.handler;
+		await expect(activate({}, fake.ctx)).resolves.toBeUndefined();
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(scheduled).toEqual([]);
+		await load(fake);
+		expect(scheduled).toEqual([PRUNE_TASK]);
 	});
 });
 

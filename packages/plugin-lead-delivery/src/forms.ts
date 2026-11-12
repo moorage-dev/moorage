@@ -23,7 +23,13 @@ export function fieldsFromPages(pages: unknown): FieldInfo[] {
 		const list = (page as { fields?: unknown }).fields;
 		if (!Array.isArray(list)) continue;
 		for (const field of list) {
-			const f = field as { name?: unknown; label?: unknown; type?: unknown; condition?: unknown };
+			const f = field as {
+				name?: unknown;
+				label?: unknown;
+				type?: unknown;
+				condition?: unknown;
+				required?: unknown;
+			};
 			if (typeof f.name !== "string" || typeof f.label !== "string") continue;
 			if (f.type === "hidden" && !/^(utm_|page_url)/.test(f.name)) continue;
 			fields.push({
@@ -31,6 +37,7 @@ export function fieldsFromPages(pages: unknown): FieldInfo[] {
 				label: f.label,
 				...(typeof f.type === "string" ? { type: f.type } : {}),
 				...(f.condition ? { conditional: true } : {}),
+				...(f.required === true ? { required: true } : {}),
 			});
 		}
 	}

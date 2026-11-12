@@ -19,6 +19,7 @@
 // this plugin's own email:beforeSend cancels resolves without an error.
 
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
+import { PluginBridge } from "@emdash-cms/plugin-test/worker";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, Enquiry, KnownForm, Send } from "../src/types.js";
@@ -138,6 +139,18 @@ const refused = () =>
 		},
 		{ status: 400 },
 	);
+
+// A site whose next KV list fails (the database briefly away). Set before bridge-budget's counter
+// wraps the bridge on the first measure, so the failing call is still counted.
+type AnyFn = (...args: unknown[]) => unknown;
+const bridge = PluginBridge.prototype as unknown as Record<string, AnyFn>;
+const kvList = bridge.kvList!;
+let failNextList = false;
+bridge.kvList = function (this: object, ...args: unknown[]) {
+	if (!failNextList) return kvList.apply(this, args);
+	failNextList = false;
+	throw new Error("D1_ERROR: the database is not reachable");
+};
 
 let host: Host | undefined;
 
@@ -390,6 +403,37 @@ describe("plugin:activate", () => {
 			did: async (h) => expect((await h.inspect.setting<Config>("config"))?.key).toBe(KEY),
 			count: 5,
 			before: 5,
+		},
+		{
+			// EmDash 1.5 runs plugin:activate when the site first starts, and switches off a plugin
+			// whose activate throws. Here its first call fails: it says so once and resolves.
+			name: "activate, its first call fails",
+			setup: async () => {
+				const h = await newHost();
+				const invoke = () => {
+					failNextList = true;
+					return h.transport.invokeHook("plugin:activate", {});
+				};
+				return { h, invoke };
+			},
+			did: async (h, m) => {
+				expect(m.error).toBeUndefined();
+				expect(m.calls).toEqual(["kvList", "log"]);
+				expect(await h.inspect.kv.get("schedule")).toBeNull();
+				// The admin page makes the key and the every-minute task instead, and enquiries arrive.
+				const { admin } = await people(h);
+				await h.admin.loadPage(PAGE, { user: admin });
+				const key = (await h.inspect.setting<Config>("config"))?.key ?? "";
+				expect(key).toHaveLength(32);
+				expect(await h.inspect.kv.get("schedule")).toBe("* * * * *");
+				expect(await inbound(h, payload("01JFAILEDACTIVATE"), key)()).toEqual({
+					status: 200,
+					text: "Received.",
+				});
+				const stored = await h.inspect.storage.list<Enquiry>("enquiries");
+				expect(stored.map((e) => e.data.email)).toEqual(["tom@example.com"]);
+			},
+			count: 2,
 		},
 	]);
 });
