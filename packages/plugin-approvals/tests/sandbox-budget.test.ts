@@ -530,6 +530,40 @@ describe("content:afterSave, afterPublish, afterDelete", () => {
 		);
 	});
 
+	// EmDash 1.5 co-editing: one save can hold several people's edits, saved as one actor.
+	it("keeps an approval where it was when an admin's save also holds a writer's edits", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await s.host.admin.actEditorPanel("approval", "pages", id, "approve", {
+			user: admin(s),
+			value: { key: `pages:${id}` },
+		});
+		const before = await request(s, id);
+		await edit(s, id, { content: "Iced coffee £3.40 and lemon tart" }, s.admins[1]);
+		await drain();
+		await s.host.fixtures.plugin.storage("requests", `pages:${id}`, before);
+		await cold(s);
+		const event = {
+			...(await saveEvent(s, id, s.admins[1]!)),
+			editedBy: [s.admins[1]!.id, s.editor.id],
+		};
+		const m = await measure(() => s.host.transport.invokeHook("content:afterSave", event));
+		pin("afterSave, co-edited save on approved page", m, 1);
+		const after = await request(s, id);
+		expect(after?.approval?.fingerprint).toBe(before?.approval?.fingerprint);
+		expect(after?.history[0]?.text).toBe(before?.history[0]?.text);
+	});
+
+	it("does not credit an approver with a co-edited save that holds others' edits", async () => {
+		const s = await site();
+		const id = await editedWhileWaiting(s);
+		await cold(s);
+		const event = { ...(await saveEvent(s, id, admin(s))), editedBy: [admin(s).id, s.editor.id] };
+		const m = await measure(() => s.host.transport.invokeHook("content:afterSave", event));
+		pin("afterSave, co-edited save on waiting page", m, 6);
+		expect((await request(s, id))?.history[0]?.text).toBe("Changed while waiting: Content");
+	});
+
 	it("records a publish", async () => {
 		const s = await site();
 		const id = await waiting(s);
