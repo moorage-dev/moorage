@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { inboundUrl, migrate, normalizeConfig, privateEmail } from "../src/config.js";
 import * as old from "./fixtures/v012/config.js";
+import { forgetActivation } from "./fresh-host.js";
 
 // Going back to 0.1.2 must keep working: its config reader (vendored unchanged from aeb33cb in
 // tests/fixtures/v012) reads what 0.2 writes.
@@ -88,6 +89,7 @@ describe("going back to 0.1.2 after 0.2 has run", () => {
 		host = await createPluginRuntimeTestHost({
 			site: { name: "Crumb", url: "https://crumb.test", locale: "en" },
 		});
+		await forgetActivation(host);
 		await host.fixtures.plugin.kv("config", OLD);
 		const admin = await host.fixtures.user({ email: "anna@crumb.test", role: "admin" });
 		await host.admin.loadPage("/enquiries", { user: admin });

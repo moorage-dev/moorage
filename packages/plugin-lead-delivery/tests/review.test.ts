@@ -5,6 +5,7 @@ import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, Send } from "../src/types.js";
+import { forgetActivation } from "./fresh-host.js";
 import { runQueued } from "./queue.js";
 
 // What the coordinator review asked for: a site with no name, and proof that the email way never sends anything to the private address.
@@ -22,6 +23,7 @@ afterEach(async () => {
 
 async function start(name = "Crumb & Co.") {
 	host = await createPluginRuntimeTestHost({ site: { name, url: ORIGIN, locale: "en" } });
+	await forgetActivation(host);
 	const admin = await host.fixtures.user({ email: "anna@crumb.test", name: "Anna", role: "admin" });
 	await host.admin.loadPage(PAGE, { user: admin });
 	return { runtime: host, admin };

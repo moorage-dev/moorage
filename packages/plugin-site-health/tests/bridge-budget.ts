@@ -21,7 +21,7 @@ import { CloudflareSandboxRunner } from "@emdash-cms/cloudflare/sandbox";
 import { PluginBridge } from "@emdash-cms/plugin-test/worker";
 import { env } from "cloudflare:workers";
 
-/** Worker Loader's subrequest limit for one sandboxed invocation (EmDash 1.3.1 and 1.4.0). */
+/** Worker Loader's subrequest limit for one sandboxed invocation on EmDash 1.3.1 and 1.4.0. EmDash 1.5.0 raised it to 30 (emdash-cms/emdash#4712); kept at 10 while the plugins support older EmDash. */
 export const SANDBOX_SUBREQUESTS = 10;
 
 /**

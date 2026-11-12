@@ -6,6 +6,7 @@ import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Config, Delivery, KnownForm } from "../src/types.js";
+import { forgetActivation } from "./fresh-host.js";
 
 // One-click connect (Connect this form, release 2 of the redesign): the admin types a code on
 // EmDash's approval page; Lead delivery uses the access once, then throws it away.
@@ -69,6 +70,7 @@ async function start(reach: "self" | "email" = "self", url = ORIGIN) {
 	host = await createPluginRuntimeTestHost({
 		site: { name: "Crumb & Co.", url, locale: "en" },
 	});
+	await forgetActivation(host);
 	const runtime = host;
 	const admin = await runtime.fixtures.user({
 		email: "anna@crumb.test",
