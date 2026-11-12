@@ -233,6 +233,64 @@ describe("enquiries from the forms plugin", () => {
 	});
 });
 
+describe("who a reply goes to", () => {
+	// A business's public address (optional) before the person's own (required), as Forms 0.2.13
+	// lays out a quote form. Forms replies to the first required email field with a value, then to
+	// any filled email field; Lead Delivery's Reply-To follows the same rule.
+	const pages = [
+		{
+			fields: [
+				{ id: "1", name: "company", label: "Company", type: "text", required: false },
+				{ id: "2", name: "company_email", label: "Company email", type: "email", required: false },
+				{ id: "3", name: "name", label: "Your name", type: "text", required: true },
+				{ id: "4", name: "email", label: "Your email", type: "email", required: true },
+			],
+		},
+	];
+	const QUOTE = withListed({}, [{ slug: "quote", name: "Quote", pages }]).quote!;
+	const quote = (data: Record<string, string>) =>
+		fromWebhook({ ...PAYLOAD, formId: "quote", formName: "Quote", data }, QUOTE)!.enquiry;
+
+	it("reads which fields the form requires from its definition", () => {
+		expect(QUOTE.fields.map((f) => [f.key, f.required ?? false])).toEqual([
+			["company", false],
+			["company_email", false],
+			["name", true],
+			["email", true],
+		]);
+	});
+
+	it("is the first required email field with a value, not an optional one before it", async () => {
+		const both = { company_email: "hello@acme.test", name: "Ana", email: "ana@example.com" };
+		expect(quote(both).email).toBe("ana@example.com");
+		const text = [
+			'New submission for "Quote"',
+			"",
+			"Company email: hello@acme.test",
+			"Your name: Ana",
+			"Your email: ana@example.com",
+			"",
+			"Submitted at: 2026-10-16T09:00:00.000Z",
+		].join("\n");
+		const mail = await fromEmail("New submission: Quote", text, { quote: QUOTE });
+		expect(mail?.enquiry.email).toBe("ana@example.com");
+	});
+
+	it("is the first filled email field when no required one has a value", () => {
+		expect(quote({ company_email: "hello@acme.test", name: "Ana" }).email).toBe("hello@acme.test");
+	});
+
+	it("is the first filled email field for a form known from before the plugin read `required`", () => {
+		const old: KnownForm = {
+			...QUOTE,
+			fields: QUOTE.fields.map(({ required: _required, ...f }) => f),
+		};
+		const data = { company_email: "hello@acme.test", name: "Ana", email: "ana@example.com" };
+		const enquiry = fromWebhook({ ...PAYLOAD, formId: "quote", data }, old)!.enquiry;
+		expect(enquiry.email).toBe("hello@acme.test");
+	});
+});
+
 describe("HubSpot", () => {
 	it("reads the portal and form from embed code, the editor address and a share link", () => {
 		expect(
