@@ -25,7 +25,7 @@ import {
 	tickFresh,
 } from "./deliver.js";
 import { fromEmail, fromUnreadableEmail, fromWebhook, noteUnreadable } from "./enquiry.js";
-import { meter } from "./meter.js";
+import { meter, warnIfRoom } from "./meter.js";
 
 const FORMS_PLUGIN = "emdash-forms";
 
@@ -52,10 +52,20 @@ export function sameKey(a: string, b: string): boolean {
  */
 const plugin: SandboxedPlugin = {
 	hooks: {
+		// Makes the private key and the every-minute task. Best effort: EmDash 1.5 runs this when the
+		// site first starts and switches the plugin off if it throws. Anything left undone is made on
+		// the next admin visit (only then can a form be connected, so no enquiry waits on it).
 		"plugin:activate": async (_event, ctx) => {
-			const state = await loadState(ctx, { copy: true });
-			await ensureConfig(ctx, state);
-			await ensureSchedule(ctx, state, true);
+			const m = meter(ctx);
+			try {
+				const state = await loadState(m.ctx, { copy: true });
+				await ensureConfig(m.ctx, state);
+				await ensureSchedule(m.ctx, state, true);
+			} catch (error) {
+				warnIfRoom(m, "could not finish switching on; the admin page will", {
+					error: String(error),
+				});
+			}
 		},
 		cron: async (event, ctx) => {
 			const isOurs =

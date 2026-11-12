@@ -36,7 +36,8 @@ Tells you what is broken on your [EmDash](https://emdashcms.com) site before a c
   - the list of your pages for search engines (sitemap) answers: the one robots.txt names, or `/sitemap.xml`, as a list of pages or a list of lists;
   - pages can be kept ready for visitors;
   - scheduled tasks are running;
-  - email works: who gets it, whether an email service is chosen, and when it last worked, with the test button beside it.
+  - email works: who gets it, whether an email service is chosen, and when it last worked, with the test button beside it;
+  - a reminder, not a check, for sites on Cloudflare: blocking AI training in Cloudflare's AI Crawler and Agent access policies also blocks Google, so set Training to Allow or Disallow and check that Google Search Console can read your sitemap. Site Health cannot see this block (Cloudflare turns away only Google's own requests), so the line has no status and is never counted.
 - **Left over from WordPress**, a group that shows only when something is found, with no setting. Each row says what it is and what to do, and its Fix menu opens the page (or Menus), or marks it as fine:
   - a WordPress shortcode visitors see as plain text, such as `[contact-form-7 id="…" title="…"]` or `[gallery]` (only the WordPress shape: a name with settings, a closing tag, or a well-known name; ordinary words in square brackets are left alone), one row per shortcode with the pages it is on;
   - an empty HTML block, which is what a WordPress block such as Latest Posts becomes;

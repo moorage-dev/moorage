@@ -141,6 +141,29 @@ describe("the admin page", () => {
 		await load(fake);
 		expect(fake.scheduled).toEqual([{ name: PRUNE_TASK, schedule: "@daily" }]);
 	});
+
+	it("stays switched on when switching on fails, and an admin's visit schedules the clean-up", async () => {
+		// EmDash 1.5 runs plugin:activate when the site first starts, and switches off a plugin
+		// whose activate throws.
+		const fake = fakeContext();
+		const list = fake.ctx.cron!.list.bind(fake.ctx.cron);
+		let fail = true;
+		fake.ctx.cron!.list = async () => {
+			if (!fail) return list();
+			fail = false;
+			throw new Error("D1_ERROR: the database is not reachable");
+		};
+		const warn = vi.spyOn(fake.ctx.log, "warn");
+		const hook = createPlugin().hooks["plugin:activate"] as
+			| { handler: (event: unknown, ctx: unknown) => Promise<void> }
+			| ((event: unknown, ctx: unknown) => Promise<void>);
+		const activate = typeof hook === "function" ? hook : hook.handler;
+		await expect(activate({}, fake.ctx)).resolves.toBeUndefined();
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(fake.scheduled).toEqual([]);
+		await load(fake);
+		expect(fake.scheduled).toEqual([{ name: PRUNE_TASK, schedule: "@daily" }]);
+	});
 });
 
 describe("the help line", () => {

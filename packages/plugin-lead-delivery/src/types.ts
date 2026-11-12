@@ -8,6 +8,12 @@ export interface FieldInfo {
 	type?: string;
 	/** Shown only on a condition (the forms plugin's `condition`): its absence says nothing. */
 	conditional?: boolean;
+	/**
+	 * The form requires it (the forms plugin's `required`). Only set when true, and only on fields
+	 * read from the form's definition: forms known from their enquiries, or remembered by an earlier
+	 * release, have none.
+	 */
+	required?: boolean;
 }
 
 /** A form this plugin knows about: named in New delivery, or seen in an enquiry. */

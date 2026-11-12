@@ -97,17 +97,29 @@ export interface Received {
 	enquiry: Enquiry;
 }
 
-/** Fill in who sent it, attribution and the marks (possibly fake address, possibly spam) from the fields. */
+/** The keys of the fields a known form requires, from its definition (none when unknown). */
+function requiredKeys(known: KnownForm | undefined): Set<string> {
+	return new Set((known?.fields ?? []).filter((f) => f.required).map((f) => f.key));
+}
+
+/**
+ * Fill in who sent it, attribution and the marks (possibly fake address, possibly spam) from the
+ * fields. `required` is the keys of the fields the form requires, when its definition is known.
+ */
 export function finish(
 	base: Omit<Enquiry, "email" | "name" | "throwaway" | "spam" | "pageUrl" | "utm"> & {
 		pageUrl?: string;
 	},
+	required: ReadonlySet<string> = new Set(),
 ): Enquiry {
 	// Unticked rows say nothing about who wrote or whether it is spam.
 	const fields = base.fields.filter((f) => !f.unticked);
 	const byKey = (test: (f: Enquiry["fields"][number]) => boolean) =>
 		fields.find((f) => test(f) && f.value);
+	// Who a reply goes to, as Forms (0.2.13) picks its Reply-To: the first required email field
+	// with a value, then any filled email field. Fields come in the form's order, as Forms sends them.
 	const emailField =
+		byKey((f) => f.type === "email" && required.has(f.key) && isEmail(f.value)) ??
 		byKey((f) => f.type === "email" && isEmail(f.value)) ??
 		byKey((f) => /e-?mail/i.test(`${f.key} ${f.label}`) && isEmail(f.value)) ??
 		byKey((f) => isEmail(f.value));
@@ -173,15 +185,18 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 	const pageUrl = typeof payload.pageUrl === "string" ? payload.pageUrl : undefined;
 	return {
 		id: submissionId,
-		enquiry: finish({
-			formId,
-			formName: typeof formName === "string" && formName ? formName.slice(0, 200) : formId,
-			receivedAt: new Date().toISOString(),
-			fields: withUnticked(fields, known),
-			via: "web",
-			hasFiles: files.length > 0,
-			...(pageUrl && /^https?:\/\//i.test(pageUrl) ? { pageUrl } : {}),
-		}),
+		enquiry: finish(
+			{
+				formId,
+				formName: typeof formName === "string" && formName ? formName.slice(0, 200) : formId,
+				receivedAt: new Date().toISOString(),
+				fields: withUnticked(fields, known),
+				via: "web",
+				hasFiles: files.length > 0,
+				...(pageUrl && /^https?:\/\//i.test(pageUrl) ? { pageUrl } : {}),
+			},
+			requiredKeys(known),
+		),
 	};
 }
 
@@ -252,17 +267,20 @@ export async function fromEmail(
 
 	return {
 		id: `m${(await sha256(`${subject}\n${text}`)).slice(0, 40)}`,
-		enquiry: finish({
-			formId: known?.slug ?? slugify(formName),
-			formName,
-			receivedAt: new Date().toISOString(),
-			fields: withUnticked(
-				fields.filter((f) => f.value),
-				known,
-			),
-			via: "email",
-			hasFiles,
-		}),
+		enquiry: finish(
+			{
+				formId: known?.slug ?? slugify(formName),
+				formName,
+				receivedAt: new Date().toISOString(),
+				fields: withUnticked(
+					fields.filter((f) => f.value),
+					known,
+				),
+				via: "email",
+				hasFiles,
+			},
+			requiredKeys(known),
+		),
 	};
 }
 

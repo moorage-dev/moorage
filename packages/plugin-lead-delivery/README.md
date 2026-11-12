@@ -22,7 +22,7 @@ Everything is on one page, **Lead delivery** under Marketing:
 
 ## What it does
 
-- **Email.** Sends each enquiry to one or more addresses, using the form's own field labels. Pressing Reply answers the person who sent it.
+- **Email.** Sends each enquiry to one or more addresses, using the form's own field labels. Pressing Reply answers the person who sent it: the same address Forms replies to, the first required email field with a value, then any filled email field.
 - **HubSpot.** Each enquiry becomes a HubSpot form submission, so your HubSpot workflows and notifications run.
   - Paste the HubSpot form's share link or embed code. No HubSpot key is stored.
   - Each form field is matched to a HubSpot field from a list. This happens automatically where the names make it obvious. A form's fields are known once it has sent an enquiry, or when the site can look the form up.

@@ -186,8 +186,18 @@ export function createPlugin() {
 						: [];
 				return pageFragments(config, PLUGIN_ID, page, siteHostOf(ctx.site?.url), seen);
 			},
+			// Best effort: EmDash 1.5 runs this when the site first starts and switches the plugin off
+			// if it throws. A clean-up not scheduled here is scheduled on an admin's next visit.
 			"plugin:activate": async (_event, ctx) => {
-				await ensurePruneScheduled(ctx);
+				try {
+					await ensurePruneScheduled(ctx);
+				} catch (error) {
+					void Promise.resolve(
+						ctx.log.warn("could not schedule the daily clean-up; the admin page will", {
+							error: String(error),
+						}),
+					).catch(() => {});
+				}
 			},
 			cron: async (event, ctx) => {
 				if (event.name !== PRUNE_TASK) return;
