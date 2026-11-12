@@ -554,6 +554,27 @@ describe("content:afterSave, afterPublish, afterDelete", () => {
 		expect(after?.history[0]?.text).toBe(before?.history[0]?.text);
 	});
 
+	it("gets the editors of a co-edited save from EmDash's own save, sandboxed", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await s.host.admin.actEditorPanel("approval", "pages", id, "approve", {
+			user: admin(s),
+			value: { key: `pages:${id}` },
+		});
+		const before = await request(s, id);
+		const writer = s.admins[1]!;
+		const updated = await s.host.actions.content.update("pages", id, {
+			data: { content: "Iced coffee £3.40 and lemon tart" },
+			actor: { id: writer.id, role: writer.role },
+			editedBy: [writer.id, s.editor.id],
+		});
+		if (!updated.success) throw new Error(updated.error.message);
+		await drain();
+		const after = await request(s, id);
+		expect(after?.approval?.fingerprint).toBe(before?.approval?.fingerprint);
+		expect(after?.history[0]?.text).toBe(before?.history[0]?.text);
+	});
+
 	it("does not credit an approver with a co-edited save that holds others' edits", async () => {
 		const s = await site();
 		const id = await editedWhileWaiting(s);
