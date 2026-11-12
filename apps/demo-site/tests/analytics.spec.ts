@@ -624,9 +624,8 @@ test.describe("a visitor who is not asked", () => {
 		const dialog = editor.getByRole("dialog", { name: "Add Custom Link" });
 		await dialog.getByLabel("Label").fill("Cookie settings");
 		const url = dialog.getByLabel("URL");
-		// The menu editor refuses a link that starts with #, which is why the admin says /#cookie-settings.
-		await url.fill("#cookie-settings");
-		expect(await url.evaluate((input: HTMLInputElement) => input.validity.valid)).toBe(false);
+		// The admin says /#cookie-settings: EmDash's menu editor up to 1.4 refuses a link that starts
+		// with # (1.5 takes it, and the plugin opens the choices for either).
 		await url.fill("/#cookie-settings");
 		expect(await url.evaluate((input: HTMLInputElement) => input.validity.valid)).toBe(true);
 		await dialog.getByRole("button", { name: "Add", exact: true }).click();
