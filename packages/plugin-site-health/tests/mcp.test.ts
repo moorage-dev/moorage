@@ -446,15 +446,20 @@ describe("add_redirect", () => {
 		expect((await runtime.inspect.storage.get<LinkRow>("links", id))?.state).not.toBe("broken");
 	});
 
-	it("a full address on another site: EmDash refuses it, and the tool says so as the form does", async () => {
+	it("a full address: refused in plain words before EmDash is asked (EmDash redirects only to paths on the site)", async () => {
 		const runtime = await start();
-		const result = await addRedirect(runtime, {
-			id: ID["/old-page"],
-			destination: "https://shop.example/bread",
-		});
-		expect(result.ok).toBe(false);
-		expect(result.refused).toMatch(/^EmDash did not add it: Must be a path starting with \//);
-		expect(await runtime.inspect.redirects()).toHaveLength(1);
+		for (const destination of [
+			"https://shop.example/bread",
+			"http://example.com/",
+			"//cdn.example/x",
+		]) {
+			const result = await addRedirect(runtime, { id: ID["/old-page"], destination });
+			expect(result.ok).toBe(false);
+			expect(result.refused).toBe(
+				"Send visitors to a page on this site, starting with / (for example /pricing). EmDash cannot send them to another site.",
+			);
+			expect(await runtime.inspect.redirects()).toHaveLength(1);
+		}
 	});
 
 	it("never replaces a redirect that is already there", async () => {
@@ -474,7 +479,7 @@ describe("add_redirect", () => {
 		const runtime = await start();
 		const id = ID["/old-page"]!;
 		expect((await addRedirect(runtime, { id, destination: "about" })).refused).toBe(
-			"Pick a page to send visitors to.",
+			"Send visitors to a page on this site, starting with / (for example /pricing). EmDash cannot send them to another site.",
 		);
 		expect((await addRedirect(runtime, { id, destination: "/old-page/" })).refused).toBe(
 			"The old address and the new one are the same.",

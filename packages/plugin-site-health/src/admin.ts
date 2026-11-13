@@ -353,7 +353,7 @@ function panelBlocks(state: PageState): Block[] {
 						type: "combobox",
 						action_id: "destination",
 						label: "Send visitors to",
-						placeholder: "Pick a page, or type an address",
+						placeholder: "Pick a page, or type a path such as /pricing",
 						options,
 					},
 				],
@@ -1082,8 +1082,12 @@ export async function sendVisitors(
 	const refuse = (problem: string): SendResult => ({ ok: false, source, problem });
 	if (!source.startsWith("/"))
 		return refuse("The old address must be a page on this site, starting with /.");
-	if (!destination.startsWith("/") && !/^https?:\/\//.test(destination))
-		return refuse("Pick a page to send visitors to.");
+	if (!destination) return refuse("Pick a page to send visitors to.");
+	// EmDash 1.5 redirects only to paths on the site ("Must be a path starting with /"): say so in plain words.
+	if (!destination.startsWith("/") || rawDestination.startsWith("//"))
+		return refuse(
+			"Send visitors to a page on this site, starting with / (for example /pricing). EmDash cannot send them to another site.",
+		);
 	if (destination === source) return refuse("The old address and the new one are the same.");
 	const live = await pages(ctx).get(source);
 	if (live?.status === "published")
