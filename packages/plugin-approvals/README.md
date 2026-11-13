@@ -89,7 +89,7 @@ The tools are off until an Admin switches them on for Content Approval in EmDash
 
 An AI tool that changes the SEO panel of a page that is already live saves it straight to the live page, and EmDash does not yet tell plugins that such a save came from an AI tool, so it is not held or noted (see "What it does not do").
 
-To let an AI tool change a live page safely, have it save the change as a draft and then publish: the publish is held for approval like anyone else's, and the AI tool is told a person will approve it. Approving always stays with a person; no tool approves.
+To let an AI tool change a live page's text safely, have it save the change as a draft and then publish: the publish is held for approval like anyone else's, and the AI tool is told a person will approve it. This does not cover the SEO panel, which EmDash saves live at once (above). Approving always stays with a person; no tool approves.
 
 ## Permissions
 

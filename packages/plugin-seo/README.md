@@ -72,7 +72,7 @@ EmDash serves an MCP endpoint at `/_emdash/api/mcp` that AI assistants such as C
 
 The tool is off until an Admin switches it on: in the admin, open **Plugins**, open SEO & Schema Markup and switch on **Agent access**, which lists the tool. The assistant's token needs the scope `mcp:tools:seo` (this plugin's tools only) or `mcp:tools` (every plugin's tools), and the person it acts for must be an Editor or Admin. When an update adds or changes tools, EmDash asks an Admin to approve them again.
 
-To fix a page, the assistant uses EmDash's own tools, then calls `seo__to_fix` again: a page is checked again when it is saved. **On a live page, have it save the change as a draft and then publish**: EmDash puts a direct change to a live page's SEO panel live at once, so an approval plugin cannot hold it.
+To fix a page, the assistant uses EmDash's own tools, then calls `seo__to_fix` again: a page is checked again when it is saved. **On a live page, ask it to suggest new SEO titles and descriptions rather than save them**: EmDash puts a change to a live page's SEO panel live at once, even when the rest of the change is saved as a draft, so no approval can hold it.
 
 ## FAQ
 
