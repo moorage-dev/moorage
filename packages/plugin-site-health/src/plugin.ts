@@ -6,6 +6,7 @@ import type { SandboxedPlugin } from "emdash/plugin";
 import { handleAdmin } from "./admin.js";
 import { mailDue, mailStep } from "./alerts.js";
 import { counted } from "./budget.js";
+import { handleAddRedirect, handleProblems, MCP_TOOLS } from "./mcp.js";
 import { handleLinksPanel } from "./panel.js";
 import { dueStep, ensureTask, passStep, refreshEntry, startPass, TASK } from "./scan.js";
 import { KEY, load } from "./state.js";
@@ -120,7 +121,22 @@ const plugin: SandboxedPlugin = {
 			handler: async (routeCtx, ctx) =>
 				handleLinksPanel(routeCtx.ui?.entry, counted(ctx, { ops: 0 })),
 		},
+		// The tools an AI assistant may call through EmDash's MCP server (see `mcp` below).
+		// What the Problems tab shows the caller: Editors and Admins, as the page.
+		"mcp/problems": {
+			permission: "plugins:read",
+			handler: async (routeCtx, ctx) =>
+				handleProblems(routeCtx.input, routeCtx.user, counted(ctx, { ops: 0 })),
+		},
+		// The Fix menu's "Send visitors to another page": Admins only, as the button.
+		"mcp/add-redirect": {
+			permission: "redirects:manage",
+			handler: async (routeCtx, ctx) =>
+				handleAddRedirect(routeCtx.input, routeCtx.user, counted(ctx, { ops: 0 })),
+		},
 	},
+	// Off until an Admin switches them on in EmDash; each calls one of the routes above.
+	mcp: { tools: MCP_TOOLS },
 };
 
 export default plugin;

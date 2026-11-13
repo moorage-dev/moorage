@@ -52,7 +52,8 @@ import {
 import { idFor, normalizePath, parseUrl, publicOrigin, shorten } from "./url.js";
 
 // EmDash role levels: Editors (40) fix links; Admins (50) also see errors and setup.
-const ADMIN_ROLE = 50;
+export const EDITOR_ROLE = 40;
+export const ADMIN_ROLE = 50;
 /** A running check that has not moved for this long is moved along by page loads. */
 const STALLED_MS = 120_000;
 /** The scheduled task counts as not running after this long. */
@@ -192,11 +193,20 @@ function leftMenu(row: RowView): ActionElement {
 	return { type: "menu", action_id: "fix", label: "Fix", items };
 }
 
+/**
+ * Can visitors to this row's address be sent to another page ("Send visitors to another page",
+ * Admins only)? An address on this site, not the home page, not a draft and not a page that
+ * shows an error. The Fix menu and the add_redirect tool both ask this.
+ */
+export function canRedirect(row: Pick<RowView, "kind" | "url" | "reason">): boolean {
+	const local = row.kind === "internal" || row.kind === "page";
+	return local && row.url !== "/" && row.reason !== "draft" && row.reason !== "page-error";
+}
+
 function fixMenu(row: RowView, admin: boolean): ActionElement {
 	if (row.kind === "leftover") return leftMenu(row);
 	const items: Array<{ label: string; value: string }> = [];
-	const local = row.kind === "internal" || row.kind === "page";
-	if (admin && local && row.url !== "/" && row.reason !== "draft" && row.reason !== "page-error") {
+	if (admin && canRedirect(row)) {
 		items.push({ label: "Send visitors to another page", value: `redirect|${row.id}` });
 	}
 	if (row.menu) items.push({ label: "Change the link in Menus", value: `menus|${row.id}` });
@@ -1046,6 +1056,58 @@ async function saveRow(
 	}
 }
 
+export type SendResult =
+	| { ok: true; source: string; destination: string }
+	| { ok: false; source: string; problem: string };
+
+/**
+ * "Send visitors to another page": the checks, then the redirect (301), then the row it fixes.
+ * The form's button and the add_redirect tool both run exactly this. EmDash itself refuses a
+ * second redirect from the same address, so an existing one is never replaced. `stored` is the
+ * link's row when the caller has read it already (it is read here otherwise).
+ */
+export async function sendVisitors(
+	ctx: PluginContext,
+	data: Loaded,
+	id: string,
+	rawSource: string,
+	rawDestination: string,
+	now: number,
+	stored?: LinkRow | null,
+): Promise<SendResult> {
+	const source = normalizePath(rawSource);
+	const destination = rawDestination.startsWith("/")
+		? normalizePath(rawDestination)
+		: rawDestination;
+	const refuse = (problem: string): SendResult => ({ ok: false, source, problem });
+	if (!source.startsWith("/"))
+		return refuse("The old address must be a page on this site, starting with /.");
+	if (!destination.startsWith("/") && !/^https?:\/\//.test(destination))
+		return refuse("Pick a page to send visitors to.");
+	if (destination === source) return refuse("The old address and the new one are the same.");
+	const live = await pages(ctx).get(source);
+	if (live?.status === "published")
+		return refuse(`${source} is a live page. Change its address in the page editor instead.`);
+	try {
+		await ctx.redirects?.create?.({ source, destination, type: 301 });
+	} catch (error) {
+		return refuse(
+			`EmDash did not add it: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	const redirectRow: PageRow = {
+		status: "redirect",
+		path: source,
+		title: source,
+		dest: destination,
+		pass: data.scan?.pass ?? 0,
+	};
+	await pages(ctx).put(source, redirectRow);
+	const row = stored === undefined ? await links(ctx).get(id) : stored;
+	if (row) await saveRow(ctx, data, id, row, resolveLocal(row, redirectRow, now));
+	return { ok: true, source, destination };
+}
+
 /** "Check it again now": one check, at once. */
 async function checkAgain(
 	ctx: PluginContext,
@@ -1436,50 +1498,31 @@ export async function handleAdmin(
 		if (action.startsWith("add_redirect|")) {
 			const id = action.slice("add_redirect|".length);
 			const row = rowById(data.summary, id);
-			const source = normalizePath(
+			const result = await sendVisitors(
+				ctx,
+				data,
+				id,
 				typeof values.source === "string" ? values.source.trim() : (row?.url ?? ""),
+				typeof values.destination === "string" ? values.destination.trim() : "",
+				now,
 			);
-			const raw = typeof values.destination === "string" ? values.destination.trim() : "";
-			const destination = raw.startsWith("/") ? normalizePath(raw) : raw;
-			const again = async (problem: string) =>
-				render(ctx, data, admin, {
+			if (!result.ok)
+				return render(ctx, data, admin, {
 					tab: 0,
-					panel: { kind: "redirect", id, url: source || row?.url || "" },
+					panel: { kind: "redirect", id, url: result.source || row?.url || "" },
 					pickable: await pickable(ctx),
-					problem,
+					problem: result.problem,
 				});
-			if (!source.startsWith("/"))
-				return again("The old address must be a page on this site, starting with /.");
-			if (!destination.startsWith("/") && !/^https?:\/\//.test(destination))
-				return again("Pick a page to send visitors to.");
-			if (destination === source) return again("The old address and the new one are the same.");
-			const live = await pages(ctx).get(source);
-			if (live?.status === "published")
-				return again(`${source} is a live page. Change its address in the page editor instead.`);
-			try {
-				await ctx.redirects?.create?.({ source, destination, type: 301 });
-			} catch (error) {
-				return again(
-					`EmDash did not add it: ${error instanceof Error ? error.message : String(error)}`,
-				);
-			}
-			const redirectRow: PageRow = {
-				status: "redirect",
-				path: source,
-				title: source,
-				dest: destination,
-				pass: data.scan?.pass ?? 0,
-			};
-			await pages(ctx).put(source, redirectRow);
-			const stored = await links(ctx).get(id);
-			if (stored) await saveRow(ctx, data, id, stored, resolveLocal(stored, redirectRow, now));
 			return render(
 				ctx,
 				data,
 				admin,
 				await withFine({
 					tab: 0,
-					toast: { type: "success", message: `Done. ${source} now goes to ${destination}.` },
+					toast: {
+						type: "success",
+						message: `Done. ${result.source} now goes to ${result.destination}.`,
+					},
 				}),
 			);
 		}
