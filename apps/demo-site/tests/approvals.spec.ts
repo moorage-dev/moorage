@@ -146,6 +146,63 @@ async function status(by: Person, id: string): Promise<string> {
 	return ((await response.json()) as { data: { item: { status: string } } }).data.item.status;
 }
 
+/** A personal access token for this Admin. EmDash's MCP endpoint takes tokens only, no session. */
+async function apiToken(by: Person, scopes: string[]): Promise<{ id: string; token: string }> {
+	const response = await by.page.request.post(`${API}/admin/api-tokens`, {
+		headers: HEADERS,
+		data: { name: `approvals e2e ${Date.now()}`, scopes },
+	});
+	expect(response.ok(), await response.text()).toBe(true);
+	const body = (await response.json()) as { data: { token: string; info: { id: string } } };
+	return { id: body.data.info.id, token: body.data.token };
+}
+
+async function removeToken(by: Person, id: string): Promise<void> {
+	const response = await by.page.request.delete(`${API}/admin/api-tokens/${id}`, {
+		headers: HEADERS,
+	});
+	expect(response.ok(), await response.text()).toBe(true);
+}
+
+/** Switch the plugin's MCP tools on or off, as an Admin does in EmDash's plugin settings. */
+async function mcpTools(by: Person, enabled: boolean): Promise<void> {
+	const response = await by.page.request.put(`${API}/admin/plugins/approvals/mcp`, {
+		headers: HEADERS,
+		data: { enabled },
+	});
+	expect(response.ok(), await response.text()).toBe(true);
+}
+
+/** One JSON-RPC call to EmDash's MCP endpoint; it answers in one server-sent event. */
+async function mcp(token: string, method: string, params: unknown = {}): Promise<unknown> {
+	const response = await fetch(new URL(`${API}/mcp`, test.info().project.use.baseURL), {
+		method: "POST",
+		headers: {
+			authorization: `Bearer ${token}`,
+			"content-type": "application/json",
+			accept: "application/json, text/event-stream",
+		},
+		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+	});
+	const text = await response.text();
+	expect(response.ok, text).toBe(true);
+	const line = text.split("\n").find((l) => l.startsWith("data: "));
+	const message = JSON.parse(line ? line.slice(6) : text) as { result?: unknown; error?: unknown };
+	expect(message.error, text).toBeUndefined();
+	return message.result;
+}
+
+function toolNames(result: unknown): string[] {
+	return ((result as { tools: Array<{ name: string }> }).tools ?? []).map((t) => t.name);
+}
+
+/** A tool's answer: the JSON in its text content. */
+function toolData(result: unknown): Record<string, unknown> {
+	const r = result as { isError?: boolean; content: Array<{ text: string }> };
+	expect(r.isError, r.content[0]?.text).toBeFalsy();
+	return JSON.parse(r.content[0]!.text) as Record<string, unknown>;
+}
+
 /** Put this person's page in front, where it animates and takes clicks. */
 async function front(person: Person): Promise<Page> {
 	await person.page.bringToFront();
@@ -344,6 +401,7 @@ test.describe.serial("Content Approval", () => {
 	});
 
 	let menu: string;
+	let picnic: string;
 
 	test("Sam presses Publish: held, with the good news first, and a request is made", async () => {
 		menu = await createPage(sam, "Summer menu", "Iced coffee 3.20 and lemon tart");
@@ -542,6 +600,7 @@ test.describe.serial("Content Approval", () => {
 	test("Jo, a Contributor, asks from the Approvals page", async () => {
 		const draft = await createPage(jo, "Picnic ideas", "Five summer picnic ideas");
 		created.push(draft);
+		picnic = draft;
 		const page = await front(jo);
 		await page.goto(APPROVALS);
 		await expect(page.getByRole("heading", { name: "Your drafts" })).toBeVisible({
@@ -554,6 +613,88 @@ test.describe.serial("Content Approval", () => {
 		await front(ellen);
 		await ellen.page.goto(APPROVALS);
 		await expect(ellen.page.getByText(/Pages · asked by Jo Park/)).toBeVisible({ timeout: 60_000 });
+	});
+
+	test("an AI assistant reads the queue and a page's approval through MCP, once Ellen switches the tools on", async () => {
+		// Off until an Admin switches them on: the token alone does not list them.
+		const token = await apiToken(ellen, ["mcp:tools:approvals"]);
+		try {
+			const before = await mcp(token.token, "tools/list");
+			expect(toolNames(before)).not.toContain("approvals__queue");
+			await mcpTools(ellen, true);
+			const listed = toolNames(await mcp(token.token, "tools/list"));
+			expect(listed).toEqual(expect.arrayContaining(["approvals__queue", "approvals__status"]));
+
+			const queue = toolData(
+				await mcp(token.token, "tools/call", { name: "approvals__queue", arguments: {} }),
+			);
+			expect(queue.approvalOn).toBe(true);
+			expect(queue.forYou).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						title: "Picnic ideas",
+						collection: "pages",
+						id: picnic,
+						askedBy: "Jo Park",
+						kind: "publish",
+					}),
+				]),
+			);
+			expect(JSON.stringify(queue)).not.toMatch(/@bakery\.test|@agency\.test/);
+
+			const approval = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__status",
+					arguments: { collection: "pages", id: picnic },
+				}),
+			);
+			expect(approval).toMatchObject({
+				title: "Picnic ideas",
+				state: "waiting",
+				askedBy: "Jo Park",
+				youMayDecide: true,
+				approvalOn: true,
+			});
+			expect(JSON.stringify(approval)).not.toMatch(/@bakery\.test|@agency\.test/);
+		} finally {
+			await mcpTools(ellen, false);
+			await removeToken(ellen, token.id);
+		}
+	});
+
+	// Wanted (item 2 of the 2026-11 round): an AI tool that changes a live page's SEO panel through
+	// MCP leaves a line in the page's history. Not possible on EmDash 1.5.0: EmDash saves it live
+	// at once and tells plugins the save came from MCP only on publish, so content:afterSave cannot
+	// tell this save from one in the editor (mcp/server.ts builds the save's actor without
+	// `source: "mcp"`). Switch this on when EmDash passes the source with the save.
+	test.fixme("an AI tool's change to a live page's search title is noted in its history", async () => {
+		const token = await apiToken(ellen, ["content:read", "content:write"]);
+		try {
+			const read = await ellen.page.request.get(`${API}/content/pages/${menu}`, {
+				headers: HEADERS,
+			});
+			const body = (await read.json()) as { data: { _rev?: string; item: { status: string } } };
+			expect(body.data.item.status).toBe("published");
+			const saved = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "content_update",
+					arguments: {
+						collection: "pages",
+						id: menu,
+						_rev: body.data["_rev"],
+						seo: { title: "Summer menu, by an AI tool" },
+					},
+				}),
+			);
+			expect(saved).toBeTruthy();
+			await openPanel(ellen, menu);
+			await expect(
+				ellen.page.getByText(/Search title and description changed by an AI tool through MCP/),
+			).toBeVisible({ timeout: 30_000 });
+			await leave(ellen);
+		} finally {
+			await removeToken(ellen, token.id);
+		}
 	});
 
 	test("Ellen sees the help line and can hide it in Settings; Sam and Jo never see it", async () => {

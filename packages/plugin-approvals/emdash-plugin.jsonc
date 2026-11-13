@@ -16,7 +16,7 @@
 	},
 	// Registry listing only: the EmDash version a site needs, and the gallery.
 	"release": {
-		"requires": { "env:emdash": ">=1.3.0" },
+		"requires": { "env:emdash": ">=1.5.0" },
 		"artifacts": {
 			// This plugin's own glyph on the Moorage land tile, from icon.svg (scripts/render-banners.mjs in apps/demo-site).
 			"icon": { "file": "./images/icon.png" },

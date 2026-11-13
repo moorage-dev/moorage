@@ -36,7 +36,7 @@ export default defineConfig({
 "worker_loaders": [{ "binding": "LOADER" }]
 ```
 
-`sandboxed` needs a sandbox runner: on Cloudflare it takes both lines above, `sandboxRunner: sandbox()` and the `LOADER` Worker Loader binding (answering Yes to sandboxed plugins in `create-emdash` adds only the binding); on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.2.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the SEO page once, then move it.
+`sandboxed` needs a sandbox runner: on Cloudflare it takes both lines above, `sandboxRunner: sandbox()` and the `LOADER` Worker Loader binding (answering Yes to sandboxed plugins in `create-emdash` adds only the binding); on Node add `@emdash-cms/sandbox-workerd` and set `sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox"`. Without a runner, list the plugin under `plugins: [seo]` instead, which runs it in-process. Requires EmDash 1.5.0 or newer. Since 0.1.8 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the SEO page once, then move it.
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
@@ -63,6 +63,16 @@ In the entry editor, the **Google preview** panel shows how the published page m
 To fix: no title; a title that says nothing, such as "Home"; no search description (an entry's `excerpt` counts as one, as it does in EmDash; a description EmDash's WordPress import left in the entry's SEO Description field is named as such, since the page does not use it); the same title as another page; a canonical address that points at a different page. Worth a look: a search title from WordPress, or a description when the excerpt stands in, that the page does not use yet; a title that may be cut off (measured with your site's name after it, as most sites show it); no picture for shared links (dropped once the page has been shown with a picture your theme adds); an article with no author (credits with a role, such as "Photos by", are not authors); pictures without alt text; a page with almost no text. Hidden pages are listed separately and kept out of the counts, and content without a page of its own (testimonials, for example) is left out. There is no score, and no keyword, readability or word-count rule: Google documents none of them as ranking factors.
 
 Not yet: Product and Event types (they need price and date fields on the collection), and FAQ (Google stopped showing FAQ results in May 2026). Use the `json_ld` field for those today.
+
+## Use with an AI assistant (MCP)
+
+EmDash serves an MCP endpoint at `/_emdash/api/mcp` that AI assistants such as Claude or ChatGPT can connect to. This plugin adds one tool to it. The tool only reads and never changes a page, so your assistant can ask what needs fixing and then make the changes through EmDash's own content tools.
+
+- **`seo__to_fix`** returns the pages to fix, as the Overview lists them, with the pages that have the most problems first. For each page you get the content type, id, title, web address, and each problem as a code (such as `no-description`) and the Overview's sentence. It also returns the Overview's counts: pages checked, pages with nothing to fix, pages to fix, and pages hidden from search. Pages hidden from search are not listed. Input: `limit` (1 to 100, default 25) and, optionally, `collection` (a content type's slug, such as `posts`). Until every page has been checked once, it says so and lists nothing. It is for Editors and Admins, as the SEO page is.
+
+The tool is off until an Admin switches it on: in the admin, open **Plugins**, open SEO & Schema Markup and switch on **Agent access**, which lists the tool. The assistant's token needs the scope `mcp:tools:seo` (this plugin's tools only) or `mcp:tools` (every plugin's tools), and the person it acts for must be an Editor or Admin. When an update adds or changes tools, EmDash asks an Admin to approve them again.
+
+To fix a page, the assistant uses EmDash's own tools, then calls `seo__to_fix` again: a page is checked again when it is saved. **On a live page, ask it to suggest new SEO titles and descriptions rather than save them**: EmDash puts a change to a live page's SEO panel live at once, even when the rest of the change is saved as a draft, so no approval can hold it.
 
 ## FAQ
 

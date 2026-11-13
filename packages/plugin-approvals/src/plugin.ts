@@ -13,6 +13,7 @@ import {
 } from "./actions.js";
 import { handleAdmin } from "./admin.js";
 import { approverRole, isHeldRole, loadConfig } from "./config.js";
+import { QUEUE_ROUTE, queueTool, STATUS_ROUTE, statusTool, tools } from "./mcp.js";
 import { meter } from "./meter.js";
 import { deliver, queueMail, readJobs, SEND_TASK } from "./notify.js";
 import { handlePanel } from "./panel.js";
@@ -240,7 +241,18 @@ const plugin: SandboxedPlugin = {
 				return { toast, refresh: true };
 			},
 		},
+		// MCP tools (read-only); an Admin switches them on in EmDash. Anyone who can read content
+		// may call them, and each handler shows a person only what the plugin's own pages do.
+		[QUEUE_ROUTE]: {
+			permission: "content:read",
+			handler: async (routeCtx, ctx) => queueTool(ctx, routeCtx.user),
+		},
+		[STATUS_ROUTE]: {
+			permission: "content:read",
+			handler: async (routeCtx, ctx) => statusTool(ctx, routeCtx.user, routeCtx.input),
+		},
 	},
+	mcp: { tools },
 };
 
 export default plugin;

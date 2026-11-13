@@ -1,11 +1,12 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import type { PageMetadataContribution, PluginContext } from "emdash";
-import type { SandboxedPlugin } from "emdash/plugin";
+import type { SandboxedMcpTool, SandboxedPlugin } from "emdash/plugin";
 
 import { handleAdmin } from "./admin.js";
 import { CONFIG, loadConfig, normalizeConfig } from "./config.js";
 import { buildGraph } from "./graph.js";
+import { handleToFix, TO_FIX_ROUTE, TO_FIX_TOOL } from "./mcp.js";
 import { handlePanel } from "./panel.js";
 import {
 	buildEntryRecord,
@@ -194,11 +195,25 @@ const plugin: SandboxedPlugin = {
 			handler: async (routeCtx, ctx) =>
 				handlePanel(routeCtx.input, routeCtx.ui?.entry, routeCtx.user?.role, ctx),
 		},
+		// The `to_fix` MCP tool (see mcp.ts): read only, for Editors and Admins.
+		[TO_FIX_ROUTE]: {
+			permission: "content:read",
+			handler: async (routeCtx, ctx) => handleToFix(routeCtx.input, routeCtx.user?.role, ctx),
+		},
 		hello: {
 			handler: async (_routeCtx, ctx) => {
 				ctx.log.info("hello route called", { pluginId: ctx.plugin.id });
 				return { greeting: "hello", pluginId: ctx.plugin.id };
 			},
+		},
+	},
+	// Off until an Admin switches the plugin's tools on (Plugins > SEO & Schema Markup); EmDash
+	// names it `seo__to_fix`. The build moves this into the manifest and out of the runtime code.
+	mcp: {
+		tools: {
+			// Plain JSON Schema, which emdash-plugin build accepts as well as Zod (`toPluginJsonSchema`
+			// in @emdash-cms/plugin-cli), so the plugin needs no Zod; the type only names Zod.
+			to_fix: { ...TO_FIX_TOOL, input: TO_FIX_TOOL.input as unknown as SandboxedMcpTool["input"] },
 		},
 	},
 };
