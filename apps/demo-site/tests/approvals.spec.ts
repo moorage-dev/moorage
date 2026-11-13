@@ -642,20 +642,20 @@ test.describe.serial("Content Approval", () => {
 			);
 			expect(JSON.stringify(queue)).not.toMatch(/@bakery\.test|@agency\.test/);
 
-			const status = toolData(
+			const approval = toolData(
 				await mcp(token.token, "tools/call", {
 					name: "approvals__status",
 					arguments: { collection: "pages", id: picnic },
 				}),
 			);
-			expect(status).toMatchObject({
+			expect(approval).toMatchObject({
 				title: "Picnic ideas",
 				state: "waiting",
 				askedBy: "Jo Park",
 				youMayDecide: true,
 				approvalOn: true,
 			});
-			expect(JSON.stringify(status)).not.toMatch(/@bakery\.test|@agency\.test/);
+			expect(JSON.stringify(approval)).not.toMatch(/@bakery\.test|@agency\.test/);
 		} finally {
 			await mcpTools(ellen, false);
 			await removeToken(ellen, token.id);
@@ -681,7 +681,7 @@ test.describe.serial("Content Approval", () => {
 					arguments: {
 						collection: "pages",
 						id: menu,
-						_rev: body.data._rev,
+						_rev: body.data["_rev"],
 						seo: { title: "Summer menu, by an AI tool" },
 					},
 				}),
