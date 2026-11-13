@@ -492,3 +492,109 @@ test("the checks name SEO values a WordPress import left in fields the page does
 		}
 	}
 });
+
+/** One JSON-RPC call to EmDash's MCP endpoint with a token; the answer may come as an event stream. */
+async function mcp(
+	page: Page,
+	token: string,
+	method: string,
+	params: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+	const response = await page.request.post("/_emdash/api/mcp", {
+		headers: {
+			Authorization: `Bearer ${token}`,
+			Accept: "application/json, text/event-stream",
+			"Content-Type": "application/json",
+		},
+		data: { jsonrpc: "2.0", id: 1, method, params },
+	});
+	const text = await response.text();
+	expect(response.ok(), text).toBe(true);
+	const json = text.trimStart().startsWith("{")
+		? text
+		: (text
+				.split("\n")
+				.filter((line) => line.startsWith("data:"))
+				.map((line) => line.slice(5).trim())
+				.pop() ?? "{}");
+	const message = JSON.parse(json) as { result?: Record<string, unknown>; error?: unknown };
+	expect(message.error, json).toBeUndefined();
+	return message.result ?? {};
+}
+
+test("an AI assistant lists the pages to fix through MCP once an admin switches the tool on", async ({
+	page,
+}) => {
+	// The Overview finishes the first check of the pages.
+	await openSeoPage(page);
+	await expect(page.getByText("Pages checked")).toBeVisible({ timeout: 30_000 });
+	const headers = { "X-EmDash-Request": "1" };
+	const created = await page.request.post("/_emdash/api/admin/api-tokens", {
+		headers,
+		data: { name: "SEO assistant", scopes: ["mcp:tools:seo"] },
+	});
+	expect(created.ok(), await created.text()).toBe(true);
+	const { token } = ((await created.json()) as { data: { token: string } }).data;
+
+	const tools = async () =>
+		(await mcp(page, token, "tools/list")).tools as Array<{
+			name: string;
+			description: string;
+			annotations?: { destructiveHint?: boolean };
+		}>;
+	// Off until an admin switches it on.
+	expect((await tools()).map((tool) => tool.name)).not.toContain("seo__to_fix");
+	const enabled = await page.request.put("/_emdash/api/admin/plugins/seo/mcp", {
+		headers,
+		data: { enabled: true },
+	});
+	expect(enabled.ok(), await enabled.text()).toBe(true);
+	try {
+		const tool = (await tools()).find((entry) => entry.name === "seo__to_fix");
+		expect(tool?.description).toMatch(/pages of this site that have search problems to fix/);
+		expect(tool?.annotations?.destructiveHint).toBe(false);
+
+		const called = await mcp(page, token, "tools/call", {
+			name: "seo__to_fix",
+			arguments: { limit: 100 },
+		});
+		expect(called.isError, JSON.stringify(called)).toBeFalsy();
+		const content = called.content as Array<{ type: string; text: string }>;
+		const result = JSON.parse(content[0]?.text ?? "{}") as {
+			state: string;
+			counts: { pagesChecked: number; nothingToFix: number; toFix: number };
+			pages: Array<{
+				title: string;
+				address: string | null;
+				issues: Array<{ code: string; message: string }>;
+			}>;
+		};
+		expect(result.state, JSON.stringify(result)).toBe("ready");
+		expect(result.counts.pagesChecked).toBe(result.counts.nothingToFix + result.counts.toFix);
+		// The seed's pages have no search description; earlier tests fix some of them, not all.
+		expect(result.counts.toFix).toBeGreaterThan(0);
+		expect(result.pages).toHaveLength(result.counts.toFix);
+		const origin = new URL(page.url()).origin;
+		for (const row of result.pages) {
+			expect(row.address?.startsWith(`${origin}/`), `${row.title}: ${row.address}`).toBe(true);
+			expect(row.issues.length, row.title).toBeGreaterThan(0);
+			expect(row.issues[0]).toEqual({ code: expect.any(String), message: expect.any(String) });
+		}
+		// Worst first.
+		const sizes = result.pages.map((row) => row.issues.length);
+		expect(sizes).toEqual(sizes.toSorted((a, b) => b - a));
+		// The same number as the Overview's "To fix" card.
+		await openSeoPage(page);
+		await expect(page.getByText("Pages checked")).toBeVisible({ timeout: 30_000 });
+		const response = await page.request.post("/_emdash/api/plugins/seo/admin", {
+			headers,
+			data: { type: "page_load", page: "/overview" },
+		});
+		expect(await response.text()).toContain(`"label":"To fix","value":${result.counts.toFix}`);
+	} finally {
+		await page.request.put("/_emdash/api/admin/plugins/seo/mcp", {
+			headers,
+			data: { enabled: false },
+		});
+	}
+});

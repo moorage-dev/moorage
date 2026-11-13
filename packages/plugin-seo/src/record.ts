@@ -55,6 +55,12 @@ export interface EntryRecord {
 	// Page checks. Absent on records written before checks existed.
 	collection?: string;
 	entryId?: string;
+	/**
+	 * The entry's slug and language, for its address in the `to_fix` MCP tool (see mcp.ts).
+	 * Absent on records written before 0.3.0 and on entries without a slug.
+	 */
+	slug?: string;
+	locale?: string;
 	title?: string;
 	/**
 	 * Indexed: ready, look, fix or hidden; "draft" for unpublished entries;
@@ -164,6 +170,8 @@ export function makeRecord(input: {
 		...(imageSeen ? { imageSeen } : {}),
 		collection,
 		entryId: entry.id,
+		...(entry.slug ? { slug: entry.slug } : {}),
+		...(entry.locale ? { locale: entry.locale } : {}),
 		title,
 		// Only published pages with an address of their own are in search.
 		status: !input.hasPages

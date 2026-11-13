@@ -728,3 +728,76 @@ describe("Google preview panel", () => {
 		expect(m.calls.length).toBe(8);
 	});
 });
+
+// EmDash 1.5.0 allows 30 calls per invocation (emdash-cms/emdash#4712), and this plugin needs 1.5.0
+// from 0.3.0 on. Paths added since then are held to 25; the ones above keep their numbers.
+const MCP_BUDGET = 25;
+
+describe("the to_fix MCP tool", () => {
+	async function toFix(runtime: PluginRuntimeTestHost, label: string, body: unknown) {
+		const user = await runtime.fixtures.user({ email: "editor@acme.test", role: "editor" });
+		await runtime.restart();
+		const m = await measure(async () => {
+			const response = await runtime.actions.routes.request("mcp/to-fix", {
+				body,
+				user,
+				headers: { "X-EmDash-Request": "1" },
+			});
+			return (await response.json()) as { data: { pages?: unknown[]; more?: boolean } };
+		});
+		console.info(describeCalls(label, m));
+		expect(m.error, label).toBeUndefined();
+		expect(m.calls.length, label).toBeLessThanOrEqual(MCP_BUDGET);
+		expect(writes(m), label).toEqual([]);
+		return m;
+	}
+
+	it("on a checked site: one round of reads", async () => {
+		const runtime = await start();
+		for (let index = 0; index < 3; index += 1) await addPage(runtime, `p${index}`, `Page ${index}`);
+		await checkAll(runtime);
+		const m = await toFix(runtime, "to_fix checked site", {});
+		expect(m.result?.data.pages).toHaveLength(3);
+		expect(m.calls.length).toBe(6);
+	});
+
+	it("worst case: over 1,000 pages to fix, none with a slug kept (saved before 0.3.0)", async () => {
+		const runtime = await start();
+		await runtime.fixtures.plugin.kv("scan", {
+			status: "done",
+			collections: [],
+			scope: ["pages"],
+			phase: "titles",
+			checked: 0,
+			rev: 3,
+			tally: { checked: 0, fix: 0, hidden: 0, rows: [], more: false },
+			startedAt: "2026-03-04T10:00:00.000Z",
+			finishedAt: "2026-03-04T10:01:00.000Z",
+		});
+		for (let index = 0; index < 1010; index += 1) {
+			await runtime.fixtures.plugin.storage("entries", `pages:id${index}`, {
+				v: 1,
+				publishedAt: null,
+				updatedAt: null,
+				authors: [],
+				custom: [],
+				collection: "pages",
+				entryId: `id${index}`,
+				title: `Page ${index}`,
+				status: "fix",
+				issues: [{ id: "no-description", level: "fix", message: "No description.", fix: "" }],
+			});
+		}
+		const m = await toFix(runtime, "to_fix 1,010 pages, no slugs", { limit: 100 });
+		expect(m.result?.data.pages).toHaveLength(100);
+		expect(m.result?.data.more).toBe(true);
+		expect(m.calls.length).toBe(24);
+	}, 120_000);
+
+	it("before the first check: the same round, nothing written", async () => {
+		const runtime = await start();
+		await addPage(runtime, "p", "Page");
+		const m = await toFix(runtime, "to_fix checking", {});
+		expect(m.calls.length).toBe(6);
+	});
+});

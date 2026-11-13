@@ -21,3 +21,7 @@ Then open **SEO** in the admin sidebar. It works before you change anything; ans
 Setting up several sites the same way: SEO > Settings > Copy settings to another site shows the settings as text; paste it on the next site, press Check to see what will change, then apply.
 
 For IndexNow (Bing and others), search this registry for an IndexNow plugin.
+
+Needs EmDash 1.5.0 or later.
+
+AI assistants (MCP): one read-only tool, `seo__to_fix`, lists the pages to fix with their addresses and problems. It is off until an Admin switches on Agent access for it under Plugins.

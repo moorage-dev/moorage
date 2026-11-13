@@ -5,3 +5,9 @@
 declare module "cloudflare:workers" {
 	export const env: Record<string, unknown>;
 }
+
+// Vite raw imports: a built file as text (mcp.test.ts reads the generated descriptor).
+declare module "*?raw" {
+	const text: string;
+	export default text;
+}
