@@ -1145,3 +1145,86 @@ describe("routes: the Links on this page panel (editor/links)", () => {
 		expect(m.calls).toEqual(["storageQuery", "kvGet"]);
 	});
 });
+
+// The MCP tools need EmDash 1.5.0, whose sandbox allows 30 calls a run (#4712): each new path is
+// held to 25 or under, five to spare. The counts are exact, as above.
+const MCP_MOST = 25;
+
+describe("routes: the MCP tools", () => {
+	const caller = (role: number) => ({
+		id: `u${role}`,
+		email: `u${role}@acme.test`,
+		name: null,
+		role,
+		createdAt: LONG_AGO,
+	});
+
+	async function tool(
+		runtime: PluginRuntimeTestHost,
+		label: string,
+		route: string,
+		input: unknown,
+		role = 50,
+	): Promise<Measured<Record<string, unknown>>> {
+		await runtime.restart();
+		const measured = (await measure(() =>
+			runtime.transport.invokeRoute(route, input, { user: caller(role) }),
+		)) as Measured<Record<string, unknown>>;
+		console.info(describeCalls(label, measured));
+		if (measured.error) throw measured.error;
+		expect(measured.calls.length).toBeLessThanOrEqual(MCP_MOST);
+		return measured;
+	}
+
+	it("problems, as an Admin: one read of the saved state", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const m = await tool(runtime, "mcp problems admin", "mcp/problems", {});
+		expect(m.calls).toEqual(["kvList"]);
+		expect(m.result?.ok).toBe(true);
+	});
+
+	it("problems, as an Admin, past the rows each group keeps: one more read per group", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const summary = await runtime.inspect.kv.get<Summary>("summary");
+		await runtime.fixtures.plugin.kv("summary", {
+			...summary,
+			fix: { site: 40, page: 40, link: 40 },
+		});
+		const m = await tool(runtime, "mcp problems admin more", "mcp/problems", { limit: 100 });
+		expect(m.calls).toEqual(["kvList", "storageQuery", "storageQuery", "storageQuery"]);
+	});
+
+	it("problems, as an Editor", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const m = await tool(runtime, "mcp problems editor", "mcp/problems", { limit: 100 }, 40);
+		expect(m.calls).toEqual(["kvList"]);
+	});
+
+	it("add_redirect: the button's writes", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		const id = idFor("internal", "/old-page");
+		const m = await tool(runtime, "mcp add_redirect", "mcp/add-redirect", {
+			id,
+			destination: "/about",
+		});
+		expect(m.result?.ok).toBe(true);
+		expect(m.calls.length).toBe(7);
+	});
+
+	it("add_redirect: a redirect from that address is there already, refused", async () => {
+		const runtime = await start();
+		await finished(runtime);
+		await runtime.fixtures.redirect({ source: "/old-page", destination: "/" });
+		const id = idFor("internal", "/old-page");
+		const m = await tool(runtime, "mcp add_redirect exists", "mcp/add-redirect", {
+			id,
+			destination: "/about",
+		});
+		expect(m.result?.ok).toBe(false);
+		expect(m.calls.length).toBe(4);
+	});
+});

@@ -55,7 +55,7 @@
 		"release:setup": "emdash-plugin release setup"
 	},
 	"peerDependencies": {
-		"emdash": ">=1.3.0"
+		"emdash": ">=1.5.0"
 	},
 	"devDependencies": {
 		"@emdash-cms/blocks": "catalog:",

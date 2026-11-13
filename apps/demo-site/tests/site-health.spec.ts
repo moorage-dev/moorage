@@ -138,6 +138,127 @@ test("on a site that is not public yet, content links are checked and a dead add
 	).toBeVisible({ timeout: 30_000 });
 });
 
+/** One JSON-RPC answer from the MCP endpoint, which may answer as a server-sent event. */
+function rpcAnswer(text: string): Record<string, unknown> {
+	const line = text.split("\n").find((l) => l.startsWith("data: "));
+	return JSON.parse(line ? line.slice(6) : text) as Record<string, unknown>;
+}
+
+test("an AI assistant reads the problems and sends a dead address elsewhere through MCP", async ({
+	page,
+}) => {
+	await open(page);
+	await createPage(page, "mcp-spring", "MCP spring", ["/mcp-gone-page"], true);
+	await page.reload();
+	await waitForResults(page);
+	const again = page.getByRole("button", { name: "Check everything again" });
+	if (await again.isVisible()) await again.click();
+	await expect
+		.poll(
+			async () => {
+				const refresh = page.getByRole("button", { name: "Refresh" });
+				if (await refresh.isVisible()) await refresh.click();
+				await page.waitForTimeout(300);
+				return page.getByRole("button", { name: "Check everything again" }).isVisible();
+			},
+			{ timeout: 60_000, intervals: [500] },
+		)
+		.toBe(true);
+
+	// An Admin switches the plugin's tools on and makes a token for this plugin's tools only.
+	const enabled = await page.request.put(`${API}/admin/plugins/site-health/mcp`, {
+		headers: HEADERS,
+		data: { enabled: true },
+	});
+	expect(enabled.ok(), await enabled.text()).toBe(true);
+	const made = await page.request.post(`${API}/admin/api-tokens`, {
+		headers: HEADERS,
+		data: { name: "Site Health MCP test", scopes: ["mcp:tools:site-health"] },
+	});
+	expect(made.status(), await made.text()).toBe(201);
+	const token = ((await made.json()) as { data: { token: string } }).data.token;
+
+	let next = 1;
+	const rpc = async (method: string, params: Record<string, unknown>) => {
+		const response = await page.request.post(`${API}/mcp`, {
+			headers: {
+				Accept: "application/json, text/event-stream",
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+			data: [
+				{ jsonrpc: "2.0", method: "notifications/initialized" },
+				{ jsonrpc: "2.0", id: next++, method, params },
+			],
+		});
+		expect(response.status()).toBe(200);
+		return rpcAnswer(await response.text());
+	};
+	const call = async (name: string, args: Record<string, unknown>) => {
+		const answer = (await rpc("tools/call", { name, arguments: args })) as {
+			result?: { isError?: boolean; content?: Array<{ text?: string }> };
+		};
+		expect(answer.result?.isError, JSON.stringify(answer)).not.toBe(true);
+		return JSON.parse(answer.result?.content?.[0]?.text ?? "{}") as Record<string, unknown>;
+	};
+
+	const listed = (await rpc("tools/list", {})) as {
+		result: {
+			tools: Array<{
+				name: string;
+				inputSchema?: { properties?: Record<string, unknown> };
+				annotations?: { destructiveHint?: boolean };
+			}>;
+		};
+	};
+	const tools = listed.result.tools.filter((t) => t.name.startsWith("site-health__"));
+	expect(tools.map((t) => t.name).toSorted()).toEqual([
+		"site-health__add_redirect",
+		"site-health__problems",
+	]);
+	const problemsTool = tools.find((t) => t.name === "site-health__problems");
+	const redirectTool = tools.find((t) => t.name === "site-health__add_redirect");
+	// The schemas arrive whole (not loosened to "anything"), in both modes.
+	expect(problemsTool?.inputSchema?.properties).toHaveProperty("limit");
+	expect(redirectTool?.inputSchema?.properties).toHaveProperty("destination");
+	expect(problemsTool?.annotations?.destructiveHint).toBe(false);
+	expect(redirectTool?.annotations?.destructiveHint).toBe(true);
+
+	// The site is not public yet, so the dead address is under "could not check", as on the page.
+	const found = (await call("site-health__problems", { kind: "could_not_check", limit: 100 })) as {
+		ok: boolean;
+		counts: Record<string, number>;
+		problems: Array<{
+			id: string;
+			address: string;
+			problem: string;
+			canSendVisitorsElsewhere?: boolean;
+		}>;
+	};
+	expect(found.ok).toBe(true);
+	expect(found.counts.pagesChecked).toBeGreaterThan(0);
+	const row = found.problems.find((p) => p.address === "/mcp-gone-page");
+	expect(row?.problem).toContain("/mcp-gone-page matches no page we know of.");
+	expect(row?.problem).toContain("Found on: MCP spring.");
+	expect(row?.canSendVisitorsElsewhere).toBe(true);
+
+	const added = await call("site-health__add_redirect", { id: row!.id, destination: "/pricing" });
+	expect(added).toMatchObject({
+		ok: true,
+		added: { from: "/mcp-gone-page", to: "/pricing", type: 301 },
+	});
+	const response = await page.request.get("/mcp-gone-page", { maxRedirects: 0 });
+	expect(response.status()).toBe(301);
+	expect(response.headers().location).toBe("/pricing");
+
+	// A second call never replaces it.
+	const twice = await call("site-health__add_redirect", { id: row!.id, destination: "/" });
+	expect(twice.ok).toBe(false);
+	expect(String(twice.refused)).toContain("already exists");
+	const still = await page.request.get("/mcp-gone-page", { maxRedirects: 0 });
+	expect(still.headers().location).toBe("/pricing");
+});
+
 test("after a move from WordPress, what it left behind is listed with what to do", async ({
 	page,
 }) => {

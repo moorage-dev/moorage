@@ -81,7 +81,7 @@ emdash({ sandboxed: [siteHealth] });
 
 `sandboxed` needs a sandbox runner. On Cloudflare that is two things: the `LOADER` Worker Loader binding in `wrangler.jsonc` (Workers Paid only) and `sandboxRunner: sandbox()` in `astro.config.mjs`, with `sandbox` imported from `@emdash-cms/cloudflare`; answering Yes to sandboxed plugins in `create-emdash` adds only the binding. On a site without one (such as the Workers free plan), list it under `plugins: [siteHealth]` instead. It works the same. Since 0.1.3 the email list and the outside-link choice survive moving the plugin from one list to the other (the check results are rebuilt by the next check); when updating from an earlier version, update first, open the Site Health page once, then move it.
 
-**Emails from a registry install on Cloudflare need EmDash 1.4.0 or later.** On EmDash 1.3, a plugin installed from the EmDash registry (which always runs sandboxed) cannot use the site's email service on Cloudflare: every email fails with "Email is not configured", although the site's own emails work. EmDash 1.4.0 fixes this. From 0.1.6 the Checklist's Email row says so after a test email fails this way.
+**Needs EmDash 1.5.0 or later** (from 0.4.0; earlier versions of Site Health work on EmDash 1.3 and 1.4).
 
 **On Cloudflare's Workers free plan** each request gets about 10 ms of CPU. EmDash's own saving and publishing already comes close to that, and every plugin run in the site's process adds a little, so a save or publish can now and then fail with "Worker exceeded resource limits"; trying again works. Workers Paid (30 seconds per request) does not have this problem.
 
@@ -114,6 +114,17 @@ Each run stays within the EmDash sandbox's limits of 10 calls (it makes at most 
 **If the site cannot open its own pages** (not public yet, bot protection, or a host that blocks a site from fetching itself), it says so in one banner. If your site is in the middle of an update and shows every visitor an error page, it says that instead, and emails at once. Links inside your content are still checked, and anything that needed the live page is listed as "could not check", never as broken.
 
 **Links to your own site, written in full** (`https://your-site/about`, or `http://127.0.0.1:4321/about` on a site set up as `localhost`) are checked like `/about`: against your pages and redirects. On a site that is not public yet, one that matches no page is listed as "could not check" and checked once the site has a public address: EmDash does not let plugins open addresses on your own computer or network, so the plugin cannot ask the site itself.
+
+## Use with an AI assistant (MCP)
+
+An AI assistant connected to your site through EmDash's MCP server can read what Site Health found and, for an Admin, fix a dead address with a redirect. Two tools, both off until an Admin switches them on:
+
+| Tool                        | What it does                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `site-health__problems`     | The Problems tab as the caller sees it: the counts, then each problem worst first, with its address, the same sentence the page shows, the pages it was found on, and the HTTP status and time of the last check. Editors see what the page shows Editors (no page errors, no menu rows). Read-only. Options: `limit` (1 to 100, default 25) and `kind` (`broken`, `worth_a_look`, `could_not_check`, `wordpress_leftovers`). |
+| `site-health__add_redirect` | The Fix menu's "Send visitors to another page", for one problem from the list: same checks, same refusals (a live page, the same address, a draft or a page error), and it never replaces a redirect that is already there. Admins only. EmDash marks it Destructive when an Admin switches the tools on, and AI clients may ask before using it.                                                                             |
+
+To switch them on, an Admin opens **Plugins** in the admin, opens Site Health & Broken Links and turns on **Agent access**. The assistant then needs an API token (Settings, API Tokens) with the plugin tools scope for this plugin only (`mcp:tools:site-health`) or for all plugins (`mcp:tools`). A tool works only for a user allowed to do the same thing on the page: Editors and Admins for `problems`, Admins for `add_redirect`. The tools never change the links inside your pages, and never publish, unpublish or delete anything.
 
 ## FAQ
 
