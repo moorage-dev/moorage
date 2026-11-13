@@ -61,7 +61,7 @@ interface Lists {
 	all: ApprovalRequest[];
 }
 
-async function loadLists(ctx: PluginContext): Promise<Lists> {
+export async function loadLists(ctx: PluginContext): Promise<Lists> {
 	const result = await requests(ctx).query({ orderBy: { updatedAt: "desc" }, limit: LIST_LIMIT });
 	const all = result.items.map((row) => row.data);
 	return {
@@ -84,12 +84,12 @@ function canReview(config: Config, request: ApprovalRequest, user: UserInfo | un
 	return request.status === "waiting" && !request.ai && (user?.role ?? 0) >= ROLE.admin;
 }
 
-function isApprover(config: Config | null, user: UserInfo | undefined): boolean {
+export function isApprover(config: Config | null, user: UserInfo | undefined): boolean {
 	return Boolean(config && user && user.role >= approverRole(config.preset));
 }
 
 /** Only an approver sees everyone's requests; writers see their own. */
-function visible(
+export function visible(
 	config: Config | null,
 	user: UserInfo | undefined,
 	list: ApprovalRequest[],

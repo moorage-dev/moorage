@@ -1920,3 +1920,60 @@ describe(`enforced: Cloudflare's limit of ${SANDBOX_SUBREQUESTS} calls`, () => {
 		expect(id).not.toBe("");
 	});
 });
+
+// The MCP tools need EmDash 1.5.0, whose sandbox allows 30 calls per invocation (#4712): each new
+// path is pinned and kept to 25, though both fit the old 9.
+const MCP_BUDGET = 25;
+
+function pinMcp(label: string, m: Measured<Response>, count: number): void {
+	console.info(describeCalls(label, m));
+	expect(m.error).toBeUndefined();
+	expect(m.result?.status, label).toBe(200);
+	expect(m.calls.length, label).toBe(count);
+	expect(m.calls.length, `${label}: within ${MCP_BUDGET} calls`).toBeLessThanOrEqual(MCP_BUDGET);
+}
+
+function tool(s: Site, route: string, user: User, body: unknown = {}): Promise<Response> {
+	return s.host.actions.routes.request(route, {
+		user,
+		body,
+		headers: { "X-EmDash-Request": "1" },
+	});
+}
+
+describe("MCP tools", () => {
+	// kvList storageQuery schemaListCollections, however many pages wait.
+	it("queue: 25 waiting, for an admin", async () => {
+		const s = await site();
+		for (let i = 0; i < 25; i++) await waiting(s, `Page ${i + 1}`);
+		await cold(s);
+		const m = await measure(() => tool(s, "mcp/queue", admin(s)));
+		pinMcp("mcp queue, admin, 25 waiting", m, 3);
+	});
+
+	// kvList storageGet contentGet contentGetRevision schemaGetCollection.
+	it("status: an approved page changed since, for its writer", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await s.host.admin.act("/overview", "approve", {
+			user: admin(s),
+			value: { key: `pages:${id}` },
+		});
+		await edit(s, id, { ...DATA, content: "Iced coffee £3.40" });
+		await cold(s);
+		const m = await measure(() => tool(s, "mcp/status", s.editor, { collection: "pages", id }));
+		pinMcp("mcp status, approved then changed", m, 5);
+		expect(text(await m.result?.json())).toContain('"changedSinceApproval":true');
+	});
+
+	// kvList storageGet contentGet contentGetRevision: refused before the content type is read.
+	it("status: refuses a Contributor someone else's page", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() =>
+			tool(s, "mcp/status", s.contributor, { collection: "pages", id }),
+		);
+		pinMcp("mcp status, not yours", m, 4);
+	});
+});

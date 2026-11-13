@@ -47,7 +47,7 @@ export default defineConfig({
 });
 ```
 
-`sandboxed` needs a sandbox runner. On Cloudflare that is two things: the `LOADER` Worker Loader binding in `wrangler.jsonc` (Workers Paid only) and `sandboxRunner: sandbox()` in `astro.config.mjs`, with `sandbox` imported from `@emdash-cms/cloudflare`; answering Yes to sandboxed plugins in `create-emdash` adds only the binding. On a site without one, list it under `plugins: [approvals]` instead; it behaves the same. Needs EmDash 1.3.0 or later. Since 0.1.6 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the Approvals page once, then move it.
+`sandboxed` needs a sandbox runner. On Cloudflare that is two things: the `LOADER` Worker Loader binding in `wrangler.jsonc` (Workers Paid only) and `sandboxRunner: sandbox()` in `astro.config.mjs`, with `sandbox` imported from `@emdash-cms/cloudflare`; answering Yes to sandboxed plugins in `create-emdash` adds only the binding. On a site without one, list it under `plugins: [approvals]` instead; it behaves the same. Needs EmDash 1.5.0 or later (0.3 and earlier: 1.3.0). Since 0.1.6 your settings survive moving the plugin from one list to the other; when updating from an earlier version, update first, open the Approvals page once, then move it.
 
 **Emails from a registry install on Cloudflare need EmDash 1.4.0 or later.** On EmDash 1.3, a plugin installed from the EmDash registry (which always runs sandboxed) cannot use the site's email service on Cloudflare: every email fails with "Email is not configured", although the site's own emails work. EmDash 1.4.0 fixes this. From 0.2.2 the log says so when approval emails fail this way.
 
@@ -75,6 +75,21 @@ Nobody approves their own request. Work from an AI tool is the exception: the pe
 
 - **It fails safe.** Once a publish is known to need approval, any error inside the plugin refuses it with a plain message ("Not published: approval could not be checked just now. Nothing has changed.") instead of letting it through. If the plugin cannot even read its settings, every publish is refused the same way. A plugin that takes longer than 5 seconds is stopped by EmDash, which then shows its own "Failed to run content:beforePublish policy"; the plugin keeps its work small and sends email later so that does not happen. To get out of a stuck state, disable the plugin under Plugins.
 - Content types that are not ticked are let through before the plugin does anything else.
+
+## Use with an AI assistant (MCP)
+
+An AI assistant connected to your site through EmDash's MCP server (`/_emdash/api/mcp`) can read approvals with two tools. Both are read-only: they never publish, approve or change anything, and never return email addresses.
+
+| Tool                | What it returns                                                                                                                                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `approvals__queue`  | The pages waiting for approval, as the Approvals page lists them for you: those waiting for you to approve and your own that wait, each with title, content type, id, who asked, when, publish or schedule, and counts.                                       |
+| `approvals__status` | One entry's approval (give `collection` and `id`), as its Approval panel shows it: whether publishing it needs approval (for you, and for an AI tool on your key), waiting, approved, sent back or published, by whom and when, and the latest history lines. |
+
+Each person gets only their part, as on the Approvals page: approvers see every waiting page; Authors and Contributors only their own; Subscribers nothing.
+
+The tools are off until an Admin switches them on for Content Approval in EmDash's plugin settings (after a Registry update that adds tools, EmDash asks again). The assistant's token needs the scope `mcp:tools:approvals` (or `mcp:tools` for every plugin's tools). Needs EmDash 1.5.0 or later.
+
+An AI tool that changes the SEO panel of a page that is already live saves it straight to the live page, and EmDash does not yet tell plugins that such a save came from an AI tool, so it is not held or noted (see "What it does not do").
 
 ## Permissions
 
