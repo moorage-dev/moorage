@@ -126,6 +126,8 @@ An AI assistant connected to your site through EmDash's MCP server can read what
 
 To switch them on, an Admin opens **Plugins** in the admin, opens Site Health & Broken Links and turns on **Agent access**. The assistant then needs an API token (Settings, API Tokens) with the plugin tools scope for this plugin only (`mcp:tools:site-health`) or for all plugins (`mcp:tools`). A tool works only for a user allowed to do the same thing on the page: Editors and Admins for `problems`, Admins for `add_redirect`. The tools never change the links inside your pages, and never publish, unpublish or delete anything.
 
+To fix a broken link inside a page, the assistant edits the page with EmDash's own tools; Site Health checks the page again when it is saved. **On a live page, have it save the change as a draft and then publish**, so an approval plugin can hold it.
+
 ## FAQ
 
 **Why does a link show under "could not check"?** Some sites refuse automatic checkers, ask them to slow down, or did not answer within 8 seconds. Open it to see for yourself; it is tried again next week.

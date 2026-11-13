@@ -72,6 +72,8 @@ EmDash serves an MCP endpoint at `/_emdash/api/mcp` that AI assistants such as C
 
 The tool is off until an Admin switches it on: in the admin, open **Plugins**, open SEO & Schema Markup and switch on **Agent access**, which lists the tool. The assistant's token needs the scope `mcp:tools:seo` (this plugin's tools only) or `mcp:tools` (every plugin's tools), and the person it acts for must be an Editor or Admin. When an update adds or changes tools, EmDash asks an Admin to approve them again.
 
+To fix a page, the assistant uses EmDash's own tools, then calls `seo__to_fix` again: a page is checked again when it is saved. **On a live page, have it save the change as a draft and then publish**: EmDash puts a direct change to a live page's SEO panel live at once, so an approval plugin cannot hold it.
+
 ## FAQ
 
 - I moved from WordPress with the EmDash Exporter. Where are my Yoast titles and descriptions? In each entry's SEO Title and SEO Description fields, which the page does not use; the pages to fix list them. Copy each into the entry's SEO panel (SEO Title and Meta Description), leaving the " | Site name" ending off the title, because your site adds its own name and would otherwise show it twice.
