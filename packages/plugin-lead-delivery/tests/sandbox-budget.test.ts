@@ -1059,6 +1059,20 @@ describe("inbound", () => {
 			count: 7,
 		},
 		{
+			name: "inbound, HubSpot delivery, no tracking token field: stored as 0.5.1 stored it",
+			setup: async () => arrive(await running([hub])),
+			did: async (h) => {
+				await queued(h, ["retrying"]);
+				const stored = await h.inspect.storage.get<Enquiry>("enquiries", "01A");
+				const { receivedAt, ...rest } = stored!;
+				expect(receivedAt).toMatch(/^\d{4}-/);
+				expect(JSON.stringify(rest)).toBe(
+					'{"formId":"contact","formName":"Contact us","fields":[{"key":"name","label":"Your name","value":"Tom Reyes"},{"key":"email","label":"Email","value":"tom@example.com"},{"key":"message","label":"Message","value":"Hello"}],"via":"web","hasFiles":false,"email":"tom@example.com","name":"Tom Reyes","throwaway":false,"rows":["hubdeliver"]}',
+				);
+			},
+			count: 7,
+		},
+		{
 			name: "inbound, a HubSpot tracking token and no HubSpot delivery: not kept",
 			setup: async () => arrive(await running([zap]), payload("01A", { hutk: HUTK })),
 			did: async (h) => {
@@ -1296,6 +1310,22 @@ const ACTIONS: ActionCase[] = [
 		did: async (h) => expect(await statuses(h)).toEqual(["delivered"]),
 		count: 7,
 		before: 29,
+	},
+	{
+		action: "send_again",
+		label: "send_again, HubSpot refused the tracking token earlier: sent without it",
+		deliveries: [hub],
+		seed: async (h) => {
+			await row(h, "s1", hub.id, { ...gaveUp, hutkRefused: true }, { rows: [hub.id], hutk: HUTK });
+			await h.http.respond(HUBSPOT, ok());
+		},
+		value: { row: `s1~${hub.id}`, from: { screen: "home" } },
+		light: true,
+		did: async (h) => {
+			expect(await statuses(h)).toEqual(["delivered"]);
+			expect(hubspotContexts(h)).toEqual([undefined]);
+		},
+		count: 7,
 	},
 	{
 		action: "send_again",

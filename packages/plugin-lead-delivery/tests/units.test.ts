@@ -408,6 +408,12 @@ describe("HubSpot", () => {
 	});
 });
 
+/** What 0.5.1 made from PAYLOAD with a page address, read from the released code. */
+const RELEASED_ENQUIRY =
+	'{"formId":"wedding-cakes","formName":"Wedding cakes","receivedAt":"2026-10-16T09:00:00.000Z","fields":[{"key":"name","label":"Your name","type":"text","value":"Tom Reyes"},{"key":"email","label":"Email address","type":"email","value":"Tom.Reyes@gmail.com"},{"key":"phone","label":"Phone","type":"tel","value":"07700 900123"},{"key":"cake_date","label":"When do you need it?","type":"date","value":"2026-11-21"},{"key":"message","label":"Message","type":"textarea","value":"Three tiers, lemon and elderflower."},{"key":"news","label":"Send me news and offers","type":"checkbox","value":"yes"}],"via":"web","hasFiles":false,"pageUrl":"https://crumb.test/cakes","email":"tom.reyes@gmail.com","name":"Tom Reyes","throwaway":false}';
+const RELEASED_BODY =
+	'{"submittedAt":1792141200000,"fields":[{"objectTypeId":"0-1","name":"firstname","value":"Tom"},{"objectTypeId":"0-1","name":"lastname","value":"Reyes"},{"objectTypeId":"0-1","name":"email","value":"Tom.Reyes@gmail.com"},{"objectTypeId":"0-1","name":"phone","value":"07700 900123"},{"objectTypeId":"0-1","name":"message","value":"Three tiers, lemon and elderflower."}],"context":{"pageUri":"https://crumb.test/cakes","pageName":"Wedding cakes"},"legalConsentOptions":{"consent":{"consentToProcess":true,"text":"Send me news and offers"}}}';
+
 describe("the visitor's HubSpot tracking token (hutk)", () => {
 	const TOKEN = "0123456789abcdef0123456789ABCDEF";
 	const LOWER = TOKEN.toLowerCase();
@@ -440,23 +446,84 @@ describe("the visitor's HubSpot tracking token (hutk)", () => {
 		expect(fromWebhook(PAYLOAD, CAKES)!.enquiry).not.toHaveProperty("hutk");
 	});
 
-	it("is never a field to match, and a visible field of that name never reaches an inbox", async () => {
+	it("is never a field to match, whatever the case of its name", () => {
 		const pages = [
 			{
 				fields: [
 					{ name: "email", label: "Email", type: "email" },
 					{ name: "hutk", label: "hutk", type: "hidden" },
-					{ name: "hutk", label: "Tracking", type: "text" },
+					{ name: "Hutk", label: "Tracking", type: "text" },
+					{ name: "HUTK", label: "Visitor", type: "text" },
 				],
 			},
 		];
 		expect(fieldsFromPages(pages).map((f) => f.key)).toEqual(["email"]);
+	});
+
+	it("is read from a field named hutk in any case, and never kept as a field", () => {
+		for (const key of ["hutk", "Hutk", "HUTK"]) {
+			const enquiry = fromWebhook(
+				{ ...PAYLOAD, data: { ...PAYLOAD.data, [key]: TOKEN } },
+				CAKES,
+			)!.enquiry;
+			expect(enquiry.hutk).toBe(LOWER);
+			expect(JSON.stringify(enquiry.fields)).not.toContain(LOWER);
+		}
+	});
+
+	it("a visible hutk field on a known form never reaches an inbox the email way", async () => {
+		// Forms leaves hidden fields out of its email; a visible one arrives under its label.
+		const forms = withListed({}, [
+			{
+				slug: "contact",
+				name: "Contact us",
+				pages: [
+					{
+						fields: [
+							{ name: "email", label: "Email", type: "email" },
+							{ name: "message", label: "Message", type: "textarea" },
+							{ name: "Hutk", label: "Tracking", type: "text" },
+						],
+					},
+				],
+			},
+		]);
+		expect(forms.contact?.tokenLabels).toEqual(["Tracking"]);
 		const mail = (await fromEmail(
 			"New submission: Contact us",
-			`Email: tom@example.com\nhutk: ${LOWER}\n\nSubmitted at: 2026-10-16T09:00:00.000Z`,
-			{},
+			`Email: tom@example.com\nMessage: Hello\nTracking: ${LOWER}\n\nSubmitted at: 2026-10-16T09:00:00.000Z`,
+			forms,
 		))!.enquiry;
 		expect(JSON.stringify(mail)).not.toContain(LOWER);
+		expect(mail.fields.find((f) => f.key === "message")?.value).toBe("Hello");
+		expect(mail).not.toHaveProperty("hutk");
+	});
+
+	it("on a form not known, only a line labelled hutk can be told apart the email way", async () => {
+		for (const label of ["hutk", "HUTK"]) {
+			const mail = (await fromEmail(
+				"New submission: Contact us",
+				`Email: tom@example.com\n${label}: ${LOWER}\n\nSubmitted at: 2026-10-16T09:00:00.000Z`,
+				{},
+			))!.enquiry;
+			expect(JSON.stringify(mail)).not.toContain(LOWER);
+		}
+		// Under any other label it is an ordinary line: the README says the field must be Hidden.
+		const other = (await fromEmail(
+			"New submission: Contact us",
+			`Email: tom@example.com\nTracking: ${LOWER}\n\nSubmitted at: 2026-10-16T09:00:00.000Z`,
+			{},
+		))!.enquiry;
+		expect(other.fields.map((f) => f.label)).toEqual(["Email", "Tracking"]);
+	});
+
+	it("without the field, the request and the enquiry are what 0.5.1 made", () => {
+		const enquiry = {
+			...fromWebhook({ ...PAYLOAD, pageUrl: "https://crumb.test/cakes" }, CAKES)!.enquiry,
+			receivedAt: "2026-10-16T09:00:00.000Z",
+		};
+		expect(JSON.stringify(enquiry)).toBe(RELEASED_ENQUIRY);
+		expect(JSON.stringify(hubspotBody(hubspot({ gdpr: true }), enquiry))).toBe(RELEASED_BODY);
 	});
 
 	it("goes to HubSpot as context.hutk, with or without the page", () => {
@@ -532,6 +599,18 @@ describe("the visitor's HubSpot tracking token (hutk)", () => {
 		expect(outcome.kind).toBe("retry");
 		expect(outcome.tokenRefused).toBe(true);
 		expect(JSON.stringify(outcome)).not.toContain(LOWER);
+		// Also when it is not HubSpot's first complaint.
+		const second = classifyHubSpot(
+			400,
+			JSON.stringify({
+				errors: [
+					{ errorType: "REQUIRED_FIELD", message: "Phone is required" },
+					{ errorType: "INVALID_HUTK", message: `Invalid hutk ${LOWER}` },
+				],
+			}),
+		);
+		expect(second).toMatchObject({ kind: "retry", tokenRefused: true });
+		expect(JSON.stringify(second)).not.toContain(LOWER);
 	});
 });
 

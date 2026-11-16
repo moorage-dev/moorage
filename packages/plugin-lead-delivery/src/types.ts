@@ -38,6 +38,11 @@ export interface KnownForm {
 	 * read it from Forms (an admin-only list). Unknown for forms never listed that way.
 	 */
 	autoReply?: { on: boolean; at: string };
+	/**
+	 * Labels of the form's fields named `hutk` (any case), from its definition: the email way drops
+	 * a line under one of them, so a visible tracking-token field never reaches an inbox.
+	 */
+	tokenLabels?: string[];
 }
 
 export type DeliveryKind = "email" | "hubspot" | "app" | "chat";

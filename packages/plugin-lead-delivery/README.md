@@ -112,20 +112,22 @@ Lead Delivery checks once which of two ways works on your site:
 
 ## Link enquiries to HubSpot visits
 
+A job for the site's web person, not a setting on the Lead delivery page.
+
 HubSpot's tracking code (added, for example, with the Analytics & Cookies plugin) leaves a cookie called `hubspotutk` in the visitor's browser. When an enquiry sent to HubSpot carries that token, HubSpot adds the enquiry to the same contact as the visits it already recorded, with their original source and the pages they viewed. Without it the enquiry still arrives; HubSpot just starts a contact with no history.
 
-Lead Delivery cannot read the cookie itself: Forms hands enquiries over from the server, after the visitor's browser is gone. So the form has to carry it, and it does only when you set that up:
+Lead Delivery cannot read the cookie itself: Forms hands enquiries over from the server, after the visitor's browser is gone. So the form has to carry it, and it does only when someone sets that up:
 
 1. In **Forms**, open the form and add a field of type **Hidden** with the name `hutk` (any label). EmDash's form rendering puts it on the page empty. It must be Hidden: a visible field is emailed like any other. This works for forms connected straight from the form; the email way leaves hidden fields out.
-2. Add this script once to the pages with your forms (for example your site's layout). Just before a form is sent, it copies the token into that field, and only if the visitor allowed marketing cookies:
+2. Add this script once to the pages with your forms, for example in your site's layout. Just before a form is sent, it copies the token into that field. In an Astro layout keep `is:inline`: without it Astro type-checks and bundles the script, and `window.cookieConsent` is not a known type.
 
 ```html
-<script>
+<script is:inline>
 	// Copies HubSpot's tracking token into a form's hidden "hutk" field as the form is sent.
 	document.addEventListener(
 		"submit",
 		function (event) {
-			var field = event.target.querySelector && event.target.querySelector('input[name="hutk"]');
+			var field = event.target.querySelector && event.target.querySelector('input[name="hutk" i]');
 			if (!field) return;
 			var consent = window.cookieConsent; // set by Analytics & Cookies, when it is installed
 			var asks = document.documentElement.hasAttribute("data-cookie-consent");
@@ -138,14 +140,23 @@ Lead Delivery cannot read the cookie itself: Forms hands enquiries over from the
 </script>
 ```
 
+What the script checks: with Analytics & Cookies it sends the token only when the visitor allowed Marketing (and sends nothing while the banner is still waiting for an answer). Without it, the script checks no consent: it sends the token whenever HubSpot's cookie is there, except for browsers that send Global Privacy Control. If another tool asks your visitors for consent, change the `allowed` line to ask that tool before using this. On a site with a strict Content Security Policy, an inline script needs its hash or a nonce in `script-src`; or put the same code in a script file your site already loads.
+
 What happens then:
 
 - Only HubSpot deliveries send it, as HubSpot's `context.hutk`. Inboxes, Slack, Discord and other apps never get it, and it is never one of the fields you match or see in the log.
 - Only a value shaped like HubSpot's token (32 characters, digits and the letters a to f) is sent; anything else is dropped and the enquiry goes without it. If HubSpot refuses the token, that delivery tries again a minute later without it, so the enquiry is never lost over it.
-- Lead Delivery keeps it with the enquiry's contents, and only when a HubSpot delivery takes the enquiry: until all its deliveries are done (usually within a minute), or for about 30 days when one cannot be sent. Forms keeps it with the submission under Forms → Submissions, like any field, until you delete the submission.
+- Lead Delivery keeps it with the enquiry's contents, and only when a HubSpot delivery takes the enquiry: until all its deliveries are done (usually within a minute), or for about 30 days when one cannot be sent.
+- EmDash Forms keeps the hidden field with the submission like any other field, until the submission is deleted or the form's retention period removes it. Anyone who can open Forms → Submissions can see it.
+- A field named `hutk` is matched in any case (`Hutk`, `HUTK`). A form that already had a field of that name, for something else, no longer shows it in emails, channel messages, other apps' JSON or HubSpot field matching: it is treated as the visitor's token, and sent to HubSpot only if it looks like one.
 - Without the field nothing changes: no token, no cookie read.
 
-Privacy: the token is a cookie identifier, so in places where the law asks for consent, send it only with consent. The script does that with Analytics & Cookies (HubSpot is under Marketing; a visitor who takes consent back has HubSpot's cookies deleted, so nothing is left to send) and, without it, holds back for visitors whose browser sends Global Privacy Control. If you use another consent tool, change the `allowed` line to ask it. Say in your privacy policy that enquiries are linked to the visitor's earlier visits in HubSpot. To stop, delete the hidden field from the form.
+Limits:
+
+- Forms sent without a browser submit event carry no token: custom markup that posts with its own `fetch`, and forms inside a popup.
+- If the field is made visible by mistake, the email way leaves it out for forms Lead Delivery knows (from their definition) and for a field labelled `hutk`; under another label on a form it does not know, it cannot be told apart and is emailed like any other field.
+
+Privacy: the token is a cookie identifier, so where the law asks for consent, send it only with consent; see "What the script checks" above. Analytics & Cookies deletes HubSpot's cookies when a visitor takes consent back, so nothing is left to send. Say in your privacy policy that enquiries are linked to the visitor's earlier visits in HubSpot. To stop, delete the hidden field from the form.
 
 ## Stop spam
 

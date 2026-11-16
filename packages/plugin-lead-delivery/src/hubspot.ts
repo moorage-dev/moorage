@@ -210,7 +210,7 @@ export function classifyHubSpot(status: number, bodyText: string, name = "HubSpo
 		`HubSpot answered: ${first?.errorType ?? status}. ${first?.message ?? message}`.trim();
 	if (status === 408 || status === 429 || status >= 500) return { kind: "retry", raw };
 	const type = first?.errorType ?? "";
-	if (type === "INVALID_HUTK") {
+	if (errors.some((e) => e.errorType === "INVALID_HUTK")) {
 		// HubSpot's own words may repeat the token, so they are not kept.
 		return {
 			kind: "retry",

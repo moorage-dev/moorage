@@ -3,11 +3,11 @@
 import type { PluginContext } from "emdash";
 
 import { PING_KEY, randomString, routeUrl } from "./config.js";
-import { HUTK_FIELD } from "./enquiry.js";
+import { isTokenField } from "./enquiry.js";
 import type { FieldInfo, KnownForm, ReachResult } from "./types.js";
 
 export type Lookup =
-	| { kind: "found"; name: string; slug: string; fields: FieldInfo[] }
+	| { kind: "found"; name: string; slug: string; fields: FieldInfo[]; tokenLabels?: string[] }
 	| { kind: "missing" }
 	| { kind: "unreachable" };
 
@@ -34,7 +34,7 @@ export function fieldsFromPages(pages: unknown): FieldInfo[] {
 			if (typeof f.name !== "string" || typeof f.label !== "string") continue;
 			if (f.type === "hidden" && !/^(utm_|page_url)/.test(f.name)) continue;
 			// The visitor's HubSpot tracking token is never a field to match or show.
-			if (f.name === HUTK_FIELD) continue;
+			if (isTokenField(f.name)) continue;
 			fields.push({
 				key: f.name,
 				label: f.label,
@@ -45,6 +45,23 @@ export function fieldsFromPages(pages: unknown): FieldInfo[] {
 		}
 	}
 	return fields;
+}
+
+/** `{ tokenLabels }` for a form whose definition has fields named hutk (any case), else `{}`. */
+export function tokenLabelsFrom(pages: unknown): { tokenLabels?: string[] } {
+	if (!Array.isArray(pages)) return {};
+	const labels: string[] = [];
+	for (const page of pages) {
+		const list = (page as { fields?: unknown }).fields;
+		if (!Array.isArray(list)) continue;
+		for (const field of list) {
+			const f = field as { name?: unknown; label?: unknown };
+			if (typeof f.name === "string" && typeof f.label === "string" && isTokenField(f.name)) {
+				labels.push(f.label);
+			}
+		}
+	}
+	return labels.length ? { tokenLabels: labels } : {};
 }
 
 /**
@@ -66,7 +83,13 @@ export async function lookUpForm(ctx: PluginContext, origin: string, id: string)
 		if (!data || typeof data.name !== "string" || typeof data.slug !== "string") {
 			return { kind: "unreachable" };
 		}
-		return { kind: "found", name: data.name, slug: data.slug, fields: fieldsFromPages(data.pages) };
+		return {
+			kind: "found",
+			name: data.name,
+			slug: data.slug,
+			fields: fieldsFromPages(data.pages),
+			...tokenLabelsFrom(data.pages),
+		};
 	} catch {
 		return { kind: "unreachable" };
 	}
@@ -74,7 +97,7 @@ export async function lookUpForm(ctx: PluginContext, origin: string, id: string)
 
 export type FoundForm =
 	| { error: string }
-	| { slug: string; name: string; fields: FieldInfo[]; checked: boolean };
+	| { slug: string; name: string; fields: FieldInfo[]; checked: boolean; tokenLabels?: string[] };
 
 /**
  * A form named by its short name in New delivery ("Another form"), or one already known.
@@ -100,7 +123,13 @@ export async function findForm(
 		return { error: `There is no form called "${slug}". Copy its short name from Forms.` };
 	}
 	if (found.kind === "found") {
-		return { slug: found.slug, name: found.name, fields: found.fields, checked: true };
+		return {
+			slug: found.slug,
+			name: found.name,
+			fields: found.fields,
+			checked: true,
+			...(found.tokenLabels ? { tokenLabels: found.tokenLabels } : {}),
+		};
 	}
 	return { slug, name: slug, fields: [], checked: false };
 }
@@ -110,7 +139,7 @@ type Forms = Record<string, KnownForm>;
 /** The forms with one named in New delivery remembered, so "Which form?" lists it from then on. */
 export function withForm(
 	forms: Forms,
-	form: { slug: string; name: string; fields: FieldInfo[] },
+	form: { slug: string; name: string; fields: FieldInfo[]; tokenLabels?: string[] },
 ): Forms {
 	if (forms[form.slug]) return forms;
 	return {
@@ -122,6 +151,7 @@ export function withForm(
 			source: form.fields.length ? "definition" : "enquiry",
 			addedAt: new Date().toISOString(),
 			days: [],
+			...(form.tokenLabels ? { tokenLabels: form.tokenLabels } : {}),
 		},
 	};
 }
@@ -137,6 +167,7 @@ export function withListed(
 	const out = { ...forms };
 	for (const item of items) {
 		const fields = fieldsFromPages(item.pages);
+		const tokens = tokenLabelsFrom(item.pages);
 		const have = out[item.slug];
 		// Forms' own auto-reply, when the list says (its settings are in the admin-only list).
 		const settings = item.settings;
@@ -147,12 +178,16 @@ export function withListed(
 			: have?.autoReply?.on === on
 				? { autoReply: have.autoReply }
 				: { autoReply: { on, at: new Date().toISOString() } };
+		// The token's labels follow the definition when the list has one.
+		const { tokenLabels: oldLabels, ...kept } = have ?? ({} as Partial<KnownForm>);
+		const labels = Array.isArray(item.pages) ? tokens : oldLabels ? { tokenLabels: oldLabels } : {};
 		out[item.slug] = have
 			? {
-					...have,
+					...(kept as KnownForm),
 					name: item.name,
 					...(fields.length ? { fields, source: "definition" } : {}),
 					...autoReply,
+					...labels,
 				}
 			: {
 					slug: item.slug,
@@ -162,6 +197,7 @@ export function withListed(
 					addedAt: new Date().toISOString(),
 					days: [],
 					...autoReply,
+					...tokens,
 				};
 	}
 	return out;
@@ -206,7 +242,14 @@ export async function refreshDefinitions(
 		left -= 1;
 		const found = await lookUpForm(ctx, origin, form.slug);
 		if (found.kind !== "found") break;
-		out[form.slug] = { ...form, name: found.name, fields: found.fields, source: "definition" };
+		const { tokenLabels: _old, ...rest } = form;
+		out[form.slug] = {
+			...rest,
+			name: found.name,
+			fields: found.fields,
+			source: "definition",
+			...(found.tokenLabels ? { tokenLabels: found.tokenLabels } : {}),
+		};
 		changed = true;
 	}
 	return { forms: out, changed };

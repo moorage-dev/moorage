@@ -18,6 +18,11 @@ export const HUTK_FIELD = "hutk";
  * characters, lowercased. Anything else is dropped: HubSpot may refuse a whole enquiry over a
  * token it does not accept, and a lost token only costs the visitor's browsing history.
  */
+/** Whether a form field's name is the tracking token's, in any case (`hutk`, `Hutk`, `HUTK`). */
+export function isTokenField(name: string): boolean {
+	return name.toLowerCase() === HUTK_FIELD;
+}
+
 export function hubspotToken(value: unknown): string | undefined {
 	if (typeof value !== "string" || value.length > 100) return undefined;
 	const token = value.trim();
@@ -183,7 +188,7 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 	const labels = new Map((known?.fields ?? []).map((f) => [f.key, f]));
 	const fields: Enquiry["fields"] = [];
 	for (const [key, value] of Object.entries(data)) {
-		if (key === "_hp" || key === "cf-turnstile-response" || key === HUTK_FIELD) continue;
+		if (key === "_hp" || key === "cf-turnstile-response" || isTokenField(key)) continue;
 		const text = display(value).slice(0, 10_000);
 		if (!text) continue;
 		const info = labels.get(key);
@@ -197,7 +202,8 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 	}
 	const files = Array.isArray(payload.files) ? payload.files : [];
 	const pageUrl = typeof payload.pageUrl === "string" ? payload.pageUrl : undefined;
-	const hutk = hubspotToken(data[HUTK_FIELD]);
+	const tokenKey = Object.keys(data).find(isTokenField);
+	const hutk = tokenKey ? hubspotToken(data[tokenKey]) : undefined;
 	const received: Received = {
 		id: submissionId,
 		enquiry: finish(
@@ -238,7 +244,11 @@ export async function fromEmail(
 	const formName = subject.slice(SUBJECT_PREFIX.length).trim();
 	if (!formName) return null;
 	const known = Object.values(forms).find((f) => f.name === formName);
-	const knownLabels = new Map((known?.fields ?? []).map((f) => [f.label, f]));
+	const knownLabels = new Map<string, FieldInfo>((known?.fields ?? []).map((f) => [f.label, f]));
+	// A visible tracking-token field arrives under its label: read as a field of its own, then dropped.
+	for (const label of known?.tokenLabels ?? []) {
+		if (!knownLabels.has(label)) knownLabels.set(label, { key: HUTK_FIELD, label });
+	}
 
 	const lines = text.split(/\r?\n/);
 	const fields: Enquiry["fields"] = [];
@@ -280,8 +290,10 @@ export async function fromEmail(
 		}
 	}
 	for (const field of fields) field.value = field.value.trim();
-	// The tracking token is a hidden field Forms leaves out of its email; one made visible stays out.
-	const kept = fields.filter((f) => f.key.toLowerCase() !== HUTK_FIELD);
+	// The tracking token is a hidden field Forms leaves out of its email. One made visible is dropped
+	// when the form is known (by its label) or labelled hutk; under another label on a form not
+	// known it cannot be told apart (the README says the field must be Hidden).
+	const kept = fields.filter((f) => !isTokenField(f.key));
 	if (kept.length === 0) return null;
 
 	return {
