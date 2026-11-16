@@ -160,6 +160,19 @@ export function boot(c: ClientConfig): void {
 		// Another script took the name and locked it: everything else still works.
 	}
 	const tell = (name: string) => d.dispatchEvent(new CustomEvent(name, { detail: now() }));
+	// A form's hidden "hutk" field gets HubSpot's visitor token as it is sent (Lead Delivery passes it
+	// on to HubSpot), only while Marketing is allowed; otherwise it is emptied.
+	if (c.hs)
+		d.addEventListener(
+			"submit",
+			(event) => {
+				const token = /(?:^|; )hubspotutk=([0-9a-f]{32})(?:;|$)/.exec(d.cookie);
+				for (const field of (event.target as HTMLFormElement).elements || [])
+					if (/^hutk$/i.test((field as HTMLInputElement).name))
+						(field as HTMLInputElement).value = state.m && token ? token[1]! : "";
+			},
+			true,
+		);
 	const change = (next: Decision) => {
 		state = next;
 		told = 1;

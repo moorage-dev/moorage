@@ -417,6 +417,93 @@ describe("enquiries", () => {
 	});
 });
 
+describe("HubSpot's visitor token in a form's hidden hutk field", () => {
+	const TOKEN = "0123456789abcdef0123456789abcdef";
+	const hubspot = (raw: Record<string, unknown> = {}) =>
+		settings({ tools: { hubspot: "12345678" }, ...raw });
+	/** A form with a hidden hutk field (filled with `start`), sent; what the field then holds. */
+	const send = (start = "", name = "hutk") => {
+		document.querySelector("form")?.remove();
+		const form = document.createElement("form");
+		form.innerHTML = `<input type="hidden" name="${name}" value="${start}"><button>Send</button>`;
+		document.body.append(form);
+		form.addEventListener("submit", (event) => event.preventDefault());
+		form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+		return form.querySelector("input")!.value;
+	};
+	beforeEach(() => {
+		document.cookie = `hubspotutk=${TOKEN};path=/`;
+	});
+
+	it("is filled once the visitor allowed Marketing, whatever the case of the field's name", async () => {
+		boot(hubspot());
+		await ready();
+		press("a");
+		expect(send()).toBe(TOKEN);
+		expect(send("", "HUTK")).toBe(TOKEN);
+	});
+
+	it("is emptied while the banner waits, after Reject all, and after consent is taken back", async () => {
+		vi.spyOn(window.location, "reload").mockImplementation(() => {});
+		boot(hubspot());
+		await ready();
+		expect(send("stale")).toBe("");
+		press("a");
+		press("r", shadow().querySelector("dialog")!);
+		expect(send("stale")).toBe("");
+		vi.restoreAllMocks();
+	});
+
+	it("is emptied after Reject all", async () => {
+		boot(hubspot());
+		await ready();
+		press("r");
+		expect(send("stale")).toBe("");
+	});
+
+	it("is emptied for a browser that sends Global Privacy Control", async () => {
+		Object.defineProperty(navigator, "globalPrivacyControl", { value: true, configurable: true });
+		boot(hubspot());
+		await ready();
+		press("a");
+		expect(send("stale")).toBe("");
+	});
+
+	it("follows the rule for visitors who are not asked, and the banner switched off", async () => {
+		country("US");
+		boot(hubspot());
+		await ready();
+		expect(send()).toBe(TOKEN);
+		document.documentElement.removeAttribute("data-cookie-consent");
+		delete win.cookieConsent;
+		boot(hubspot({ banner: { audience: "none" } }));
+		await ready();
+		expect(send()).toBe(TOKEN);
+	});
+
+	it("is emptied when the cookie is not HubSpot's token", async () => {
+		document.cookie = "hubspotutk=not-a-token;path=/";
+		boot(hubspot());
+		await ready();
+		press("a");
+		expect(send("stale")).toBe("");
+	});
+
+	it("is left alone when HubSpot is not switched on: nothing listens", async () => {
+		// Listeners from earlier boots stay on the shared test document, so this asks what boot adds.
+		const added = (config: ClientConfig) => {
+			const spy = vi.spyOn(document, "addEventListener");
+			boot(config);
+			const types = spy.mock.calls.map(([type]) => type);
+			spy.mockRestore();
+			return types;
+		};
+		expect(added(settings())).not.toContain("submit");
+		expect(added(hubspot())).toContain("submit");
+		await ready();
+	});
+});
+
 describe("telling other scripts whether the banner waits", () => {
 	const phase = () => document.documentElement.getAttribute("data-cookie-consent");
 

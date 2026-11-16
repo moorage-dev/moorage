@@ -119,7 +119,7 @@ HubSpot's tracking code (added, for example, with the Analytics & Cookies plugin
 Lead Delivery cannot read the cookie itself: Forms hands enquiries over from the server, after the visitor's browser is gone. So the form has to carry it, and it does only when someone sets that up:
 
 1. In **Forms**, open the form and add a field of type **Hidden** with the name `hutk` (any label). EmDash's form rendering puts it on the page empty. It must be Hidden: a visible field is emailed like any other. This works for forms connected straight from the form; the email way leaves hidden fields out.
-2. Add this script once to the pages with your forms, for example in your site's layout. Just before a form is sent, it copies the token into that field. In an Astro layout keep `is:inline`: without it Astro type-checks and bundles the script, and `window.cookieConsent` is not a known type.
+2. **With Analytics & Cookies 0.4.3 or later and HubSpot switched on there, skip this step**: it fills the field itself, only while the visitor allows Marketing. Otherwise add this script once to the pages with your forms, for example in your site's layout. Just before a form is sent, it copies the token into that field. In an Astro layout keep `is:inline`: without it Astro type-checks and bundles the script, and `window.cookieConsent` is not a known type.
 
 ```html
 <script is:inline>
