@@ -81,7 +81,7 @@ async function existingRedirects(ctx: PluginContext): Promise<ExistingRedirect[]
 
 /** Read a pasted list and store what would be added. Nothing is created yet. */
 export async function checkList(ctx: PluginContext, text: string): Promise<ImportState> {
-	const plan = planImport(text, await existingRedirects(ctx));
+	const plan = planImport(text, await existingRedirects(ctx), ctx.site.url);
 	const state: ImportState = {
 		status: "checked",
 		format: plan.format,
@@ -377,8 +377,17 @@ function hostMessage(error: unknown): string {
 }
 
 /** Read one typed redirect the same way an imported row is read. */
-function readOne(source: string, destination: string, code: string): ReadyRow | string {
-	const plan = planImport(exportList([{ source, destination, type: Number(code) || 301 }]), []);
+function readOne(
+	siteUrl: string,
+	source: string,
+	destination: string,
+	code: string,
+): ReadyRow | string {
+	const plan = planImport(
+		exportList([{ source, destination, type: Number(code) || 301 }]),
+		[],
+		siteUrl,
+	);
 	return plan.ready[0] ?? plan.skipped[0]?.reason ?? "Type the old address first.";
 }
 
@@ -389,7 +398,7 @@ export async function addOne(
 	destination: string,
 	code: string,
 ): Promise<string | null> {
-	const row = readOne(source, destination, code);
+	const row = readOne(ctx.site.url, source, destination, code);
 	if (typeof row === "string") return `${row}.`;
 	try {
 		await ctx.redirects?.create?.(row);
@@ -407,7 +416,7 @@ export async function updateOne(
 	destination: string,
 	code: string,
 ): Promise<string | null> {
-	const row = readOne(source, destination, code);
+	const row = readOne(ctx.site.url, source, destination, code);
 	if (typeof row === "string") return `${row}.`;
 	try {
 		const current = await ctx.redirects?.get(id);

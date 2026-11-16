@@ -122,6 +122,72 @@ describe("reading a pasted list", () => {
 		]);
 	});
 
+	it("imports a full address on the site's own domain as a path, with or without www, http or https", () => {
+		const plan = planImport(
+			[
+				"/a,https://acme.test/new-a/",
+				"/b,http://www.acme.test/new-b",
+				"https://www.acme.test/c,https://acme.test/new-c",
+				"/d,https://ACME.test",
+				"/e,https://elsewhere.example/e",
+				"/f,https://shop.acme.test/f",
+			].join("\n"),
+			[],
+			"https://www.acme.test",
+		);
+		expect(plan.ready).toEqual([
+			{ source: "/a", destination: "/new-a/", type: 301 },
+			{ source: "/b", destination: "/new-b", type: 301 },
+			{ source: "/c", destination: "/new-c", type: 301 },
+			{ source: "/d", destination: "/", type: 301 },
+		]);
+		expect(plan.skipped.map((row) => [row.line, row.reason])).toEqual([
+			[5, "Points to another website"],
+			[6, "Points to another website"],
+		]);
+		// Without the site's address, a full address after a path is still another website.
+		expect(planImport("/a,https://acme.test/new-a", []).skipped[0]?.reason).toBe(
+			"Points to another website",
+		);
+	});
+
+	it("keeps the closing slash of a new address as written", () => {
+		const plan = planImport(
+			[
+				"/old-a/,/new-a/",
+				"/old-b,/new-b",
+				"https://old.example/old-c/,https://old.example/new-c/",
+			].join("\n"),
+			[],
+		);
+		expect(plan.ready).toEqual([
+			{ source: "/old-a", destination: "/new-a/", type: 301 },
+			{ source: "/old-b", destination: "/new-b", type: 301 },
+			{ source: "/old-c", destination: "/new-c/", type: 301 },
+		]);
+		expect(planImport("source,target,regex,code\n^/blog/(.*)$,/news/$1/,1,301", []).ready).toEqual([
+			{ source: "/blog/[...rest]", destination: "/news/[...rest]/", type: 301 },
+		]);
+	});
+
+	it("still sees a slash-only difference as the same address, a circle or an existing redirect", () => {
+		// EmDash matches an old address with or without its closing slash, so /j to /j/ would loop.
+		expect(planImport("/j/,/j", []).skipped[0]?.reason).toBe("Old and new address are the same");
+		expect(planImport("/j,/j/", []).skipped[0]?.reason).toBe("Old and new address are the same");
+
+		const circle = planImport("/a/,/b/\n/b/,/a/", []);
+		expect(circle.ready).toEqual([]);
+		expect(circle.skipped.map((row) => row.reason)).toEqual([
+			"Would send visitors in a circle",
+			"Would send visitors in a circle",
+		]);
+		expect(planImport("/new/,/old/", [{ source: "/old", destination: "/new" }]).ready).toEqual([]);
+
+		expect(planImport("/a,/b/", [{ source: "/a", destination: "/b" }]).skipped[0]?.reason).toBe(
+			"Already exists",
+		);
+	});
+
 	it("skips old addresses that end in a file type, which EmDash never redirects", () => {
 		const plan = planImport(
 			[
@@ -242,6 +308,32 @@ describe("Redirects tab", () => {
 			await runtime.transport.invokeHook("cron", { name: "redirects-import" });
 		expect(await sources(runtime)).toEqual(["/kept"]);
 		expect(await state(runtime)).toBeNull();
+	});
+
+	it("imports full addresses on the site's own domain from a pasted list", async () => {
+		const runtime = await start();
+		const checked = await runtime.admin.submit(PAGE, "check_redirects", {
+			list: "/x,https://www.acme.test/new-x/\n/y,http://acme.test/new-y\n/z,https://other.example/z",
+		});
+		expect(JSON.stringify(checked.blocks)).toContain("2 ready, 1 skipped");
+		await runtime.admin.act(PAGE, "add_redirects");
+		const rules = (await runtime.inspect.redirects())
+			.map((rule) => [rule.source, rule.destination])
+			.sort();
+		expect(rules).toEqual([
+			["/x", "/new-x/"],
+			["/y", "/new-y"],
+		]);
+
+		const one = await runtime.admin.submit(PAGE, "add_redirect", {
+			source: "/w",
+			destination: "https://acme.test/new-w/",
+			code: "301",
+		});
+		expect(one.toast?.message).toBe("Redirect added. /w now goes to https://acme.test/new-w/.");
+		expect(
+			(await runtime.inspect.redirects()).find((rule) => rule.source === "/w")?.destination,
+		).toBe("/new-w/");
 	});
 
 	it("lets an admin stop removing, keeping what is left", async () => {
