@@ -23,6 +23,8 @@ export interface ClientConfig {
 	hs?: string;
 	/** HubSpot EU data centre. */
 	hsEu?: 1;
+	/** Another HubSpot data centre (na2, na3, ap1): the script loads from js-<this>. */
+	hsR?: string;
 	cf?: string;
 	/** Cloudflare Web Analytics waits for Analytics consent. */
 	cfWait?: 1;

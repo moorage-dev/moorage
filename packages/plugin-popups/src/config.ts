@@ -43,6 +43,8 @@ export interface Popup {
 	contains: Contains;
 	buttonLabel: string;
 	buttonUrl: string;
+	/** The button link opens in a new tab (never an email or phone link). */
+	buttonNewTab: boolean;
 	/** The form's short name (or id) under Forms. */
 	form: string;
 	thanks: string;
@@ -177,6 +179,7 @@ export function normalizePopup(raw: unknown): Popup | null {
 		contains: pick(p.contains, ["button", "form"] as const, "button"),
 		buttonLabel: str(p.buttonLabel, 40),
 		buttonUrl: str(p.buttonUrl, 1000),
+		buttonNewTab: p.buttonNewTab === true,
 		form: str(p.form, 100),
 		thanks: str(p.thanks, MAX_HEADING),
 		decline: pick(p.decline, ["no-thanks", "not-now", "none"] as const, "no-thanks"),

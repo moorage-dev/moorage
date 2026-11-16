@@ -98,7 +98,31 @@ function tidy(tool: ToolId, value: string): string {
 }
 
 function looksLikeSnippet(text: string): boolean {
-	return /[<>(){};=\s]/.test(text) || text.includes("://");
+	return /[<>(){};=\s]/.test(text) || text.includes("://") || /hs-scripts\.com\//i.test(text);
+}
+
+/**
+ * HubSpot's data centres, by the code HubSpot uses for each. HubSpot's own
+ * WordPress plugin loads `js-<code>.hs-scripts.com`, and `js.hs-scripts.com`
+ * for na1 (US East); the codes are those of HubSpot's reverse proxy guide.
+ */
+export const HUBSPOT_REGIONS = {
+	na1: "US East (NA1)",
+	na2: "US West (NA2)",
+	na3: "Canada (NA3)",
+	eu1: "EU (EU1)",
+	ap1: "Australia (AP1)",
+} as const;
+export type HubSpotRegion = keyof typeof HUBSPOT_REGIONS;
+
+/** The data centre named by a pasted HubSpot code or script address; undefined when it names none. */
+export function hubspotRegionIn(raw: unknown): HubSpotRegion | undefined {
+	const match = /\bjs(?:-([a-z0-9]+))?\.hs-scripts\.com\//i.exec(
+		typeof raw === "string" ? raw : "",
+	);
+	if (!match) return undefined;
+	const code = (match[1] ?? "na1").toLowerCase();
+	return code in HUBSPOT_REGIONS ? (code as HubSpotRegion) : undefined;
 }
 
 /** The box a Google ID belongs in, when it was typed into a different one. */

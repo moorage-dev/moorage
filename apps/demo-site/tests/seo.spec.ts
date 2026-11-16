@@ -102,7 +102,7 @@ test("the first visit shows real numbers, and answering the one question changes
 	});
 });
 
-test("an admin adds one redirect, imports a list, and both work", async ({ page }) => {
+test("an admin adds one redirect, imports a list, and both work", async ({ page, baseURL }) => {
 	await openSeoPage(page);
 	await page.getByRole("tab", { name: "Redirects" }).click();
 	await expect(page.getByText("No redirects yet")).toBeVisible();
@@ -116,17 +116,19 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page 
 	await expect(page.getByRole("cell", { name: "/old-pricing" })).toBeVisible();
 
 	await page.getByRole("button", { name: "Import from WordPress" }).click();
-	await page
-		.getByRole("textbox", { name: /Your list/ })
-		.fill("source,target,regex,code\n/old-contact/,/contact,0,301\n^/legacy/(\\d+)$,/x,1,301");
+	await page.getByRole("textbox", { name: /Your list/ }).fill(
+		// A new address written in full on this site's own address is imported as a path,
+		// written the way this site writes its addresses (the demo site: no closing slash).
+		`source,target,regex,code\n/old-contact/,/contact,0,301\n/old-team,${baseURL}/team/,0,301\n^/legacy/(\\d+)$,/x,1,301`,
+	);
 	await page.getByRole("button", { name: "Check list" }).click();
-	await expect(page.getByText("1 ready, 1 skipped")).toBeVisible();
+	await expect(page.getByText("2 ready, 1 skipped")).toBeVisible();
 	await expect(
 		page.getByText("Uses a pattern. Add it by hand under Manage > Redirects"),
 	).toBeVisible();
-	await page.getByRole("button", { name: "Add 1 redirect" }).click();
+	await page.getByRole("button", { name: "Add 2 redirects" }).click();
 	await page.getByRole("button", { name: "Add", exact: true }).click();
-	await expect(page.getByText("1 redirect added from your list")).toBeVisible();
+	await expect(page.getByText("2 redirects added from your list")).toBeVisible();
 	// The list below shows the imported redirect without a reload.
 	await expect(page.getByRole("cell", { name: "/old-contact" })).toBeVisible();
 
@@ -134,6 +136,7 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page 
 	for (const [from, to] of [
 		["/old-pricing", "/pricing"],
 		["/old-contact", "/contact"],
+		["/old-team", "/team"],
 	]) {
 		const response = await page.request.get(from ?? "", { maxRedirects: 0 });
 		expect(response.status()).toBe(301);

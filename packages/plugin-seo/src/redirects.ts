@@ -148,19 +148,51 @@ function detectColumns(first: string[], rows: string[][]): Columns {
 	return { format: "plain", hasHeader, index: { source: 0, target: 1, code: 2 } };
 }
 
-/** A site path without a trailing slash; null when it is not on this site. */
+/** Astro's `trailingSlash`, as EmDash gives it to plugins in `ctx.site`. */
+export type TrailingSlash = "always" | "never" | "ignore";
+
+/**
+ * A site path from an address, without its closing slash. EmDash matches an
+ * old address with or without one; a new address is shaped by `siteStyle`.
+ */
 function toPath(value: string): { path: string } | { reason: string } {
 	let path = value.trim();
 	if (path === "") return { reason: REASON.empty };
 	if (/^https?:\/\//i.test(path)) {
 		const url = parseUrl(path);
 		if (!url) return { reason: REASON.empty };
-		path = `${url.pathname}${url.search}`;
+		path = `${url.pathname}${url.search}${url.hash}`;
 	}
 	if (path.includes("?")) return { reason: REASON.query };
 	if (!path.startsWith("/")) path = `/${path}`;
 	if (path.length > 1) path = path.replace(/\/+$/, "");
 	return { path: path === "" ? "/" : path };
+}
+
+/**
+ * A new address written the way the site writes its own: with a closing slash
+ * on a site whose addresses have one, so a visitor arrives in one step. Never
+ * after the home page, a file, a fragment or query, or a pattern placeholder
+ * (`[...rest]` carries the old address's own slash).
+ */
+function siteStyle(path: string, trailingSlash: TrailingSlash | undefined): string {
+	if (trailingSlash !== "always" || path === "/" || FILE_PATH.test(path)) return path;
+	if (/[#?]/.test(path) || path.endsWith("]")) return path;
+	return `${path}/`;
+}
+
+/**
+ * A path without its closing slash, for comparing: EmDash finds an old address
+ * with or without one, so /a/ and /a are the same address to a visitor.
+ */
+function bare(path: string): string {
+	return path.length > 1 ? path.replace(/\/+$/, "") || "/" : path;
+}
+
+/** A host as it matters for "the same website": no www., any case, any scheme. */
+function siteHost(address: string): string | undefined {
+	const host = parseUrl(address.trim())?.host.toLowerCase();
+	return host ? host.replace(/^www\./, "") : undefined;
 }
 
 const REGEX_META = /[\\^$.*+?()[\]{}|]/;
@@ -194,9 +226,16 @@ function parseCode(value: string | undefined): RedirectCode | null {
 /**
  * Read a pasted list exported from Redirection, Yoast Premium or Rank Math,
  * or a plain "old address, new address" list, and decide for every row
- * whether it can be added. Nothing is written here.
+ * whether it can be added. Nothing is written here. `siteUrl` is this site's
+ * own address: a full new address on it becomes a path. `trailingSlash` is the
+ * site's own: new addresses get a closing slash only under "always".
  */
-export function planImport(text: string, existing: ExistingRedirect[]): ImportPlan {
+export function planImport(
+	text: string,
+	existing: ExistingRedirect[],
+	siteUrl = "",
+	trailingSlash?: TrailingSlash,
+): ImportPlan {
 	const lines = text.split(/\r?\n/);
 	const delimiter = lines.some((line) => line.includes("\t")) ? "\t" : ",";
 	const table = lines
@@ -218,7 +257,8 @@ export function planImport(text: string, existing: ExistingRedirect[]): ImportPl
 
 	const ready: Array<ReadyRow & { line: number }> = [];
 	const skipped: SkippedRow[] = [];
-	const existingBySource = new Map(existing.map((rule) => [rule.source, rule.destination]));
+	const existingBySource = new Map(existing.map((rule) => [bare(rule.source), rule.destination]));
+	const ownHost = siteHost(siteUrl);
 	const seen = new Set<string>();
 
 	for (const { line, cells } of rows) {
@@ -279,22 +319,28 @@ export function planImport(text: string, existing: ExistingRedirect[]): ImportPl
 				skip(REASON.noTarget);
 				continue;
 			}
-			// A full address on another site cannot be a destination in EmDash.
-			const absolute = /^https?:\/\//i.test(targetText.trim());
-			const sourceHost = /^https?:\/\//i.test(rawSource.trim())
-				? parseUrl(rawSource.trim())?.host
-				: undefined;
-			if (absolute && sourceHost !== parseUrl(targetText.trim())?.host) {
-				skip(REASON.external);
-				continue;
+			// A full address on another site cannot be a destination in EmDash. One on this
+			// site, or on the old address's own site, becomes a path.
+			if (/^https?:\/\//i.test(targetText.trim())) {
+				const targetHost = siteHost(targetText);
+				const sourceHost = /^https?:\/\//i.test(rawSource.trim()) ? siteHost(rawSource) : undefined;
+				if (!targetHost || (targetHost !== sourceHost && targetHost !== ownHost)) {
+					skip(REASON.external);
+					continue;
+				}
 			}
 			const target = toPath(targetText);
 			if ("reason" in target) {
 				skip(target.reason === REASON.empty ? REASON.noTarget : target.reason);
 				continue;
 			}
-			destination = target.path;
-			if (destination === source.path) {
+			// "//host" or "/\\host" would leave the site; EmDash refuses it anyway.
+			if (/^\/[/\\]/.test(target.path)) {
+				skip(REASON.external);
+				continue;
+			}
+			destination = siteStyle(target.path, trailingSlash);
+			if (bare(destination) === source.path) {
 				skip(REASON.same);
 				continue;
 			}
@@ -306,7 +352,7 @@ export function planImport(text: string, existing: ExistingRedirect[]): ImportPl
 		}
 		const current = existingBySource.get(source.path);
 		if (current !== undefined) {
-			skip(current === destination ? REASON.exists : REASON.conflict);
+			skip(bare(current) === bare(destination) ? REASON.exists : REASON.conflict);
 			continue;
 		}
 		seen.add(source.path);
@@ -318,10 +364,10 @@ export function planImport(text: string, existing: ExistingRedirect[]): ImportPl
 	for (const row of ready) next.set(row.source, row.destination);
 	const safe: ReadyRow[] = [];
 	for (const row of ready) {
-		let hop = row.destination;
+		let hop = bare(row.destination);
 		let loops = false;
 		for (let step = 0; step < 20 && hop !== "" && next.has(hop); step += 1) {
-			hop = next.get(hop) ?? "";
+			hop = bare(next.get(hop) ?? "");
 			if (hop === row.source) {
 				loops = true;
 				break;

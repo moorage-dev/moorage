@@ -154,6 +154,28 @@ describe("campaign tags on button links", () => {
 	});
 });
 
+describe("a button link that opens in a new tab", () => {
+	it("is off unless chosen, and never for an email or phone link", () => {
+		expect(popup().buttonNewTab).toBe(false);
+		expect(clientItem(popup(), "")!.c.b).toEqual({ l: "Order a cake", u: "/cakes" });
+		expect(clientItem(popup({ buttonNewTab: true }), "")!.c.b).toEqual({
+			l: "Order a cake",
+			u: "/cakes",
+			n: 1,
+		});
+		expect(
+			clientItem(popup({ buttonNewTab: true, buttonUrl: "mailto:jo@x.test" }), "")!.c.b?.n,
+		).toBeUndefined();
+		expect(
+			clientItem(popup({ buttonNewTab: true, buttonUrl: "tel:+441234567890" }), "")!.c.b?.n,
+		).toBeUndefined();
+	});
+
+	it("does not change what the popup says, so nobody who closed it sees it again", () => {
+		expect(clientItem(popup({ buttonNewTab: true }), "")!.v).toBe(clientItem(popup(), "")!.v);
+	});
+});
+
 describe("the page hook", () => {
 	const store = normalizeStore({
 		popups: [
@@ -681,6 +703,16 @@ describe("routes", () => {
 			darkColors: { background: "#111827", accent: "#93c5fd", accentText: "#141414" },
 		});
 		expect(await call(fake, "box", { id: "abcd1234" })).toEqual({ box: null });
+	});
+
+	it("gives a box in a page its button link's new tab", async () => {
+		const fake = fakeContext({
+			popups: { popups: [popup({ id: "inl00001", kind: "inline", buttonNewTab: true })] },
+		});
+		const answer = (await call(fake, "box", { id: "inl00001" })) as {
+			box: { button: { label: string; url: string; newTab?: boolean } | null };
+		};
+		expect(answer.box.button).toEqual({ label: "Order a cake", url: "/cakes", newTab: true });
 	});
 
 	it("says in the editor's picker how to make a box when there is none", async () => {

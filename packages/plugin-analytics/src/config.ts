@@ -1,7 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { cleanColourChoice, OWN_COLOURS, THEME_COLOURS } from "./colour-sets.js";
-import { checkId, TOOL_NAMES, type ToolId } from "./ids.js";
+import { checkId, TOOL_NAMES, type HubSpotRegion, type ToolId } from "./ids.js";
 
 /** Everything the plugin stores about its settings lives under this one key, so a page costs one read. */
 export const CONFIG_KEY = "config";
@@ -31,6 +31,12 @@ export interface AnalyticsConfig {
 	tools: Record<ToolId, string>;
 	/** HubSpot accounts hosted in the EU load from a different address. */
 	hubspotEu: boolean;
+	/**
+	 * A HubSpot data centre other than US East and the EU, read from a pasted HubSpot
+	 * code: its script loads from `js-<region>.hs-scripts.com`. EU accounts stay under
+	 * `hubspotEu`, which earlier versions read. Empty for HubSpot's usual address.
+	 */
+	hubspotRegion: "" | OtherHubSpotRegion;
 	/** Cloudflare Web Analytics sets no cookies, so it normally does not wait for consent. */
 	cloudflareWait: boolean;
 	/** Count phone and email link clicks and sent forms as enquiries. */
@@ -139,6 +145,22 @@ export function cleanLabels(value: unknown): AnalyticsConfig["banner"]["labels"]
 	return out;
 }
 
+/** The HubSpot data centres kept in `hubspotRegion`: not US East, the usual address, nor the EU. */
+export type OtherHubSpotRegion = Exclude<HubSpotRegion, "na1" | "eu1">;
+const OTHER_HUBSPOT_REGIONS: ReadonlySet<unknown> = new Set(["na2", "na3", "ap1"]);
+
+/** Where a HubSpot account is, as stored: one of the other data centres, else the EU switch. */
+export function hubspotPlace(
+	region: unknown,
+	eu: boolean,
+): Pick<AnalyticsConfig, "hubspotEu" | "hubspotRegion"> {
+	if (region === "eu1") return { hubspotEu: true, hubspotRegion: "" };
+	if (OTHER_HUBSPOT_REGIONS.has(region)) {
+		return { hubspotEu: false, hubspotRegion: region as OtherHubSpotRegion };
+	}
+	return { hubspotEu: eu, hubspotRegion: "" };
+}
+
 export const DEFAULT_CONFIG: AnalyticsConfig = {
 	tools: {
 		ga4: "",
@@ -154,6 +176,7 @@ export const DEFAULT_CONFIG: AnalyticsConfig = {
 		tiktok: "",
 	},
 	hubspotEu: false,
+	hubspotRegion: "",
 	cloudflareWait: false,
 	enquiries: true,
 	banner: {
@@ -360,7 +383,7 @@ export function normalizeConfig(raw: unknown): AnalyticsConfig {
 
 	return {
 		tools,
-		hubspotEu: bool(source.hubspotEu, defaults.hubspotEu),
+		...hubspotPlace(source.hubspotRegion, bool(source.hubspotEu, defaults.hubspotEu)),
 		cloudflareWait: bool(source.cloudflareWait, defaults.cloudflareWait),
 		enquiries: bool(source.enquiries, defaults.enquiries),
 		banner: {

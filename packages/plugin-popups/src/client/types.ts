@@ -11,8 +11,8 @@ export interface ClientContent {
 	x: string;
 	/** Picture: address, width, height, description. */
 	img?: { u: string; w?: number; h?: number; a: string };
-	/** One button: label and link (campaign tags already added). */
-	b?: { l: string; u: string };
+	/** One button: label, link (campaign tags already added), and 1 to open it in a new tab. */
+	b?: { l: string; u: string; n?: 1 };
 	/** A form from Forms, by short name, and the thank-you heading. */
 	form?: string;
 	ty?: string;

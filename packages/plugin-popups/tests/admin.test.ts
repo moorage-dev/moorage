@@ -744,6 +744,26 @@ describe("a finished popup's page: one Save", () => {
 		expect(contentPrint(stored(fake).popups[0]!)).not.toBe(before);
 	});
 
+	it("offers to open the button link in a new tab, off until chosen", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const page = await press(fake, "row", "change:abcd1234");
+		expect(field(page, "button_new_tab")).toMatchObject({
+			type: "toggle",
+			label: "Open the link in a new tab",
+			initial_value: false,
+		});
+		const block = formOf(page, "save_all").block_id!;
+		const before = contentPrint(stored(fake).popups[0]!);
+		await submit(fake, "save_all", block, { button_new_tab: true });
+		expect(stored(fake).popups[0]!.buttonNewTab).toBe(true);
+		expect(contentPrint(stored(fake).popups[0]!)).toBe(before);
+		const again = await press(fake, "row", "change:abcd1234");
+		expect(field(again, "button_new_tab")?.initial_value).toBe(true);
+		// A save that does not send it leaves it as it was.
+		await submit(fake, "save_all", formOf(again, "save_all").block_id!, { heading: "Cakes" });
+		expect(stored(fake).popups[0]!.buttonNewTab).toBe(true);
+	});
+
 	it("keeps what was typed when a save is refused, and shows every problem at once", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		const page = await press(fake, "row", "change:abcd1234");

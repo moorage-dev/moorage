@@ -736,6 +736,25 @@ test.describe("tools with their own rules", () => {
 		expect(names).toEqual(["consent default", "consent update", "cookie_consent_update", "gtm.js"]);
 	});
 
+	test("HubSpot loads from the data centre named in the code pasted for it", async ({
+		page,
+		context,
+	}) => {
+		const said = await save("save_tools", {
+			...NO_TOOLS,
+			hubspot: `<script type="text/javascript" id="hs-script-loader" async defer src="//js-na2.hs-scripts.com/${IDS.hubspot}.js"></script>`,
+			hubspot_eu: false,
+		});
+		expect(said).toContain("US West (NA2) data centre");
+		const hits = await stubVendors(context);
+		await inCountry(page, "DE");
+		await page.goto("/");
+		await banner(page).getByRole("button", { name: "Accept all" }).click();
+		await expect
+			.poll(() => hits.filter((url) => url.includes("hs-scripts")))
+			.toEqual([`https://js-na2.hs-scripts.com/${IDS.hubspot}.js`]);
+	});
+
 	test("a changed list of tools asks again", async ({ page, context }) => {
 		await configure({ ga4: IDS.ga4 });
 		const hits = await stubVendors(context);

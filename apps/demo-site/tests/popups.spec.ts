@@ -923,6 +923,11 @@ test.describe("slide-in", () => {
 			"href",
 			"https://shop.example/cakes?utm_source=popups&utm_medium=slide-in&utm_campaign=christmas-cakes",
 		);
+		// In the same tab unless chosen.
+		await expect(region.getByRole("link", { name: "Order a cake" })).not.toHaveAttribute(
+			"target",
+			/.*/,
+		);
 		await page.waitForTimeout(1500);
 		await region.getByRole("button", { name: "No thanks" }).click();
 		await expect(region).toBeHidden();
@@ -932,6 +937,41 @@ test.describe("slide-in", () => {
 		);
 		expect(numbers).toContain('"name":"Christmas cakes (Slide-in) · On"');
 		expect(id).toBeTruthy();
+		await page.context().close();
+	});
+});
+
+test.describe("a button link in a new tab", () => {
+	test("opens the page in a new tab, and the slide-in closes behind it", async ({ browser }) => {
+		await make({
+			name: "Opening hours",
+			kind: "slide",
+			s2: {
+				heading: "New opening hours from Monday",
+				text: "Open from 7 every weekday.",
+				picture: "none",
+				contains: "button",
+				button_label: "See the hours",
+				button_url: "/popups-test?from=popup",
+				button_new_tab: true,
+				decline: "no-thanks",
+			},
+		});
+		const page = await visitor(browser);
+		await page.goto("/popups-test");
+		await read(page);
+		const region = page.getByRole("region", { name: "New opening hours from Monday" });
+		await expect(region).toBeVisible();
+		const link = region.getByRole("link", { name: "See the hours" });
+		await expect(link).toHaveAttribute("target", "_blank");
+		await expect(link).toHaveAttribute("rel", "noopener");
+		const opened = page.context().waitForEvent("page");
+		await link.click();
+		const tab = await opened;
+		await tab.waitForLoadState();
+		expect(new URL(tab.url()).pathname + new URL(tab.url()).search).toBe("/popups-test?from=popup");
+		await expect(region).toBeHidden();
+		expect(new URL(page.url()).pathname).toBe("/popups-test");
 		await page.context().close();
 	});
 });

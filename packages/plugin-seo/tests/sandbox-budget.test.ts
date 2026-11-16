@@ -605,6 +605,21 @@ describe("redirects on the SEO page", () => {
 		expect(m.calls.length).toBe(5);
 	});
 
+	it("check_redirects costs the same on a site whose addresses end in a slash", async () => {
+		host = await createPluginRuntimeTestHost({
+			site: { name: "Acme", url: "https://acme.test", locale: "en", trailingSlash: "always" },
+		});
+		const runtime = host;
+		const m = await cold(runtime, "check_redirects trailing slash", () =>
+			runtime.admin.submit(PAGE, "check_redirects", { list: "/a,https://acme.test/x\n/b,/y/" }),
+		);
+		expect(m.calls.length).toBe(5);
+		const plan = await runtime.inspect.kv.get<{ rows: Array<{ destination: string }> }>(
+			"redirects",
+		);
+		expect(plan?.rows.map((row) => row.destination)).toEqual(["/x/", "/y/"]);
+	});
+
 	const ROWS = 20;
 	const list = Array.from({ length: ROWS }, (_, i) => `/old-${i},/new-${i}`).join("\n");
 	type Import = { status: string; added: number; cursor: number; skipped: unknown[] };

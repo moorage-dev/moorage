@@ -51,6 +51,7 @@ const drawBar = (raw: Partial<Popup>) => {
 	document.body.prepend(bar);
 };
 const shadow = () => host()!.shadowRoot!;
+const link = () => shadow().querySelector<HTMLAnchorElement>("[data-pp-go]")!;
 const beacons: string[] = [];
 
 async function ready(): Promise<void> {
@@ -278,6 +279,58 @@ describe("click openers", () => {
 		expect(shadow().querySelector("dialog")!.hasAttribute("open")).toBe(true);
 		expect(location.pathname).toBe("/blog/some-post");
 		history.replaceState(null, "", "/");
+	});
+});
+
+describe("a button link that opens in a new tab", () => {
+	it("opens in the same tab unless chosen", async () => {
+		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
+		boot(config({}));
+		await readOn();
+		expect(link().hasAttribute("target")).toBe(false);
+		expect(link().hasAttribute("rel")).toBe(false);
+	});
+
+	it("opens in a new tab with rel=noopener, and a centred popup closes behind it", async () => {
+		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
+		boot(config({ kind: "modal", buttonNewTab: true, buttonUrl: "https://shop.example/cakes" }));
+		await readOn();
+		expect(shadow().querySelector("dialog")?.hasAttribute("open")).toBe(true);
+		expect(link().getAttribute("target")).toBe("_blank");
+		expect(link().getAttribute("rel")).toBe("noopener");
+		// The simulated browser would follow the link; the visitor's new tab is not the test.
+		shadow().addEventListener("click", (event) => event.preventDefault(), true);
+		link().click();
+		// The click is remembered at once; the popup leaves only after the browser has
+		// started opening the link, so removing it cannot stop the new tab.
+		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.d).toBe(1);
+		expect(host()).not.toBeNull();
+		await ready();
+		expect(host()).toBeNull();
+	});
+
+	it("closes a top bar behind it too", async () => {
+		drawBar({ kind: "bar", buttonNewTab: true, buttonUrl: "https://shop.example/cakes" });
+		boot(config({ kind: "bar", buttonNewTab: true, buttonUrl: "https://shop.example/cakes" }));
+		await ready();
+		const bar = document.querySelector<HTMLElement>("[data-popups-bar]")!;
+		bar.shadowRoot!.addEventListener("click", (event) => event.preventDefault(), true);
+		bar.shadowRoot!.querySelector<HTMLElement>("[data-pp-go]")!.click();
+		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.d).toBe(1);
+		expect(bar.style.getPropertyValue("display")).not.toBe("none");
+		await ready();
+		expect(bar.style.getPropertyValue("display")).toBe("none");
+	});
+
+	it("does the same in a top bar", () => {
+		const item = previewItem(popup({ kind: "bar", buttonNewTab: true }), "");
+		const bar = document.createElement("div");
+		bar.innerHTML = barInner(item, "Close");
+		const a = bar.querySelector("a")!;
+		expect(a.getAttribute("target")).toBe("_blank");
+		expect(a.getAttribute("rel")).toBe("noopener");
+		bar.innerHTML = barInner(previewItem(popup({ kind: "bar" }), ""), "Close");
+		expect(bar.querySelector("a")!.hasAttribute("target")).toBe(false);
 	});
 });
 
