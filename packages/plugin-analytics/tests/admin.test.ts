@@ -252,6 +252,57 @@ describe("saving tracking tools", () => {
 		expect(tabs?.type === "tab" && tabs.default_tab).toBe(1);
 	});
 
+	it("keeps the HubSpot data centre from a pasted code, through later saves", async () => {
+		const fake = fakeContext();
+		const na2 = `<script type="text/javascript" id="hs-script-loader" async defer src="//js-na2.hs-scripts.com/12345678.js"></script>`;
+		const pasted = await submit(fake, "save_tools", { hubspot: na2, hubspot_eu: false });
+		expect(saved(fake)).toMatchObject({
+			tools: { hubspot: "12345678" },
+			hubspotRegion: "na2",
+			hubspotEu: false,
+		});
+		expect(JSON.stringify(pasted.blocks)).toContain(
+			"HubSpot loads from your account's US West (NA2) data centre, read from the code you pasted.",
+		);
+
+		// The box shows just the Hub ID; saving it again keeps the data centre.
+		await submit(fake, "save_tools", {
+			hubspot: "12345678",
+			hubspot_eu: false,
+			ga4: "G-AB12CD34EF",
+		});
+		expect(saved(fake).hubspotRegion).toBe("na2");
+
+		// A different Hub ID typed by hand is another account: back to HubSpot's usual address.
+		await submit(fake, "save_tools", { hubspot: "87654321", hubspot_eu: false });
+		expect(saved(fake).hubspotRegion).toBe("");
+
+		// HubSpot's own code outranks the EU switch, either way.
+		await submit(fake, "save_tools", {
+			hubspot: "//js-eu1.hs-scripts.com/12345678.js",
+			hubspot_eu: false,
+		});
+		expect(saved(fake)).toMatchObject({ hubspotRegion: "", hubspotEu: true });
+		await submit(fake, "save_tools", { hubspot: na2, hubspot_eu: true });
+		expect(saved(fake)).toMatchObject({ hubspotRegion: "na2", hubspotEu: false });
+
+		// Switching the EU setting on by hand moves the account to the EU.
+		await submit(fake, "save_tools", { hubspot: "12345678", hubspot_eu: true });
+		expect(saved(fake)).toMatchObject({ hubspotRegion: "", hubspotEu: true });
+
+		// A plain HubSpot address leaves the EU switch as it is.
+		await submit(fake, "save_tools", {
+			hubspot: "//js.hs-scripts.com/12345678.js",
+			hubspot_eu: true,
+		});
+		expect(saved(fake)).toMatchObject({ hubspotRegion: "", hubspotEu: true });
+
+		// Emptying the box forgets the data centre.
+		await submit(fake, "save_tools", { hubspot: na2, hubspot_eu: false });
+		await submit(fake, "save_tools", { hubspot: "", hubspot_eu: false });
+		expect(saved(fake).hubspotRegion).toBe("");
+	});
+
 	it("saves nothing when one ID is wrong, names every mistake and keeps what was typed", async () => {
 		const fake = fakeContext({ [CONFIG_KEY]: { tools: { clarity: "ab12cd34ef" } } });
 		const response = await submit(fake, "save_tools", {
@@ -824,6 +875,15 @@ describe("the Status tab", () => {
 			type: "banner",
 			title: "Google Analytics may be counting twice",
 		});
+	});
+
+	it("opens HubSpot in the account's own data centre", async () => {
+		const blocks = status(
+			await load(
+				fakeContext({ [CONFIG_KEY]: { tools: { hubspot: "12345678" }, hubspotRegion: "na2" } }),
+			),
+		);
+		expect(JSON.stringify(blocks)).toContain('"url":"https://app-na2.hubspot.com/"');
 	});
 
 	it("ticks each tool, says what it waits for, and links to its own numbers", async () => {

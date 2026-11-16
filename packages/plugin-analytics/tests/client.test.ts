@@ -183,6 +183,17 @@ describe("answers", () => {
 		});
 	});
 
+	it.each([
+		[{}, "js.hs-scripts.com"],
+		[{ hubspotEu: true }, "js-eu1.hs-scripts.com"],
+		[{ hubspotRegion: "na2" }, "js-na2.hs-scripts.com"],
+	])("loads HubSpot from its account's data centre (%o)", async (raw, host) => {
+		boot(settings({ tools: { hubspot: "12345678" }, ...raw }));
+		await ready();
+		press("a");
+		expect(requested()).toContain(`https://${host}/12345678.js`);
+	});
+
 	it("Reject all loads nothing and still remembers", async () => {
 		boot(settings());
 		await ready();

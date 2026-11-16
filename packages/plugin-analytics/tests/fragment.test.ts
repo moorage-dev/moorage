@@ -191,6 +191,20 @@ describe("the page hook", () => {
 	});
 });
 
+function told(raw: Record<string, unknown>) {
+	const out = clientConfig(normalizeConfig({ tools: { hubspot: "12345678" }, ...raw }), PLUGIN_ID);
+	return { hs: out.hs, hsEu: out.hsEu, hsR: out.hsR };
+}
+
+describe("HubSpot's data centre", () => {
+	it("is told only for a region other than the US East and EU ones, which stay as before", () => {
+		expect(told({})).toEqual({ hs: "12345678", hsEu: undefined, hsR: undefined });
+		expect(told({ hubspotEu: true })).toEqual({ hs: "12345678", hsEu: 1, hsR: undefined });
+		expect(told({ hubspotRegion: "na2" })).toEqual({ hs: "12345678", hsEu: undefined, hsR: "na2" });
+		expect(clientConfig(normalizeConfig({ hubspotRegion: "na2" }), PLUGIN_ID).hsR).toBeUndefined();
+	});
+});
+
 describe("what the browser is told", () => {
 	it("carries each tool's ID and the banner settings", () => {
 		const config = normalizeConfig({

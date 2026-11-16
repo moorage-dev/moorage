@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { checkId, type ToolId } from "../src/ids.js";
+import { checkId, hubspotRegionIn, type ToolId } from "../src/ids.js";
 
 function value(tool: ToolId, raw: string): string {
 	const result = checkId(tool, raw);
@@ -15,6 +15,26 @@ function message(tool: ToolId, raw: string): string {
 	if (result.ok) throw new Error(`expected "${raw}" to be refused, got "${result.value}"`);
 	return result.message;
 }
+
+describe("HubSpot data centres", () => {
+	it("reads the region from HubSpot's code or its script address, and the Hub ID with it", () => {
+		const na2 = `<!-- Start of HubSpot Embed Code -->
+<script type="text/javascript" id="hs-script-loader" async defer src="//js-na2.hs-scripts.com/12345678.js"></script>
+<!-- End of HubSpot Embed Code -->`;
+		expect(value("hubspot", na2)).toBe("12345678");
+		expect(hubspotRegionIn(na2)).toBe("na2");
+		expect(value("hubspot", "js-na2.hs-scripts.com/12345678.js")).toBe("12345678");
+		expect(hubspotRegionIn("js-na2.hs-scripts.com/12345678.js")).toBe("na2");
+		expect(value("hubspot", "https://js-ap1.hs-scripts.com/12345678.js")).toBe("12345678");
+		expect(hubspotRegionIn("https://js-ap1.hs-scripts.com/12345678.js")).toBe("ap1");
+		expect(hubspotRegionIn("//JS-NA3.hs-scripts.com/12345678.js")).toBe("na3");
+		expect(hubspotRegionIn("//js-eu1.hs-scripts.com/12345678.js")).toBe("eu1");
+		expect(hubspotRegionIn("//js.hs-scripts.com/12345678.js")).toBe("na1");
+		// A bare ID says nothing about the region; an unknown one is not guessed at.
+		expect(hubspotRegionIn("12345678")).toBeUndefined();
+		expect(hubspotRegionIn("//js-xx9.hs-scripts.com/12345678.js")).toBeUndefined();
+	});
+});
 
 describe("tracking IDs", () => {
 	it("accepts a correct ID for each tool and tidies its case", () => {

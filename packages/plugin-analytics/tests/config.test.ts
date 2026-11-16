@@ -32,6 +32,25 @@ describe("config", () => {
 		expect(config.tools.meta).toBe("");
 	});
 
+	it("keeps a known HubSpot region, and the EU switch as it was saved", () => {
+		expect(normalizeConfig({}).hubspotRegion).toBe("");
+		expect(normalizeConfig({ hubspotRegion: "na2" }).hubspotRegion).toBe("na2");
+		expect(normalizeConfig({ hubspotRegion: "xx9" }).hubspotRegion).toBe("");
+		// EU accounts are kept under the switch older versions read.
+		expect(normalizeConfig({ hubspotRegion: "eu1" })).toMatchObject({
+			hubspotRegion: "",
+			hubspotEu: true,
+		});
+		expect(normalizeConfig({ hubspotEu: true })).toMatchObject({
+			hubspotRegion: "",
+			hubspotEu: true,
+		});
+		expect(normalizeConfig({ hubspotEu: true, hubspotRegion: "ap1" })).toMatchObject({
+			hubspotRegion: "ap1",
+			hubspotEu: false,
+		});
+	});
+
 	it("falls back on unknown choices and keeps known ones", () => {
 		const config = normalizeConfig({
 			banner: { audience: "mars", position: "right", scheme: "dark", months: 12, title: "  " },

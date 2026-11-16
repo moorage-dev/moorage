@@ -60,6 +60,7 @@ export function clientConfig(
 	if (tools.clarity) out.cl = tools.clarity;
 	if (tools.hubspot) out.hs = tools.hubspot;
 	if (tools.hubspot && config.hubspotEu) out.hsEu = 1;
+	if (tools.hubspot && config.hubspotRegion) out.hsR = config.hubspotRegion;
 	if (tools.cloudflare) out.cf = tools.cloudflare;
 	if (tools.cloudflare && config.cloudflareWait) out.cfWait = 1;
 	if (tools.plausible) out.pl = tools.plausible;

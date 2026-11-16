@@ -256,9 +256,16 @@ export function boot(c: ClientConfig): void {
 			]);
 			if (once("hs")) {
 				w.disableHubSpotCookieBanner = true;
-				load("https://js" + (c.hsEu ? "-eu1" : "") + ".hs-scripts.com/" + c.hs + ".js", {
-					id: "hs-script-loader",
-				});
+				load(
+					"https://js" +
+						(c.hsR ? "-" + c.hsR : c.hsEu ? "-eu1" : "") +
+						".hs-scripts.com/" +
+						c.hs +
+						".js",
+					{
+						id: "hs-script-loader",
+					},
+				);
 			}
 		}
 		if (c.cf && (a || !c.cfWait) && once("cf")) {

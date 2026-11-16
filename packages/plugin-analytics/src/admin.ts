@@ -13,6 +13,7 @@ import {
 	defaultMessage,
 	DEFAULT_TITLE,
 	enabledTools,
+	hubspotPlace,
 	MAX_LABEL,
 	needsConsent,
 	normalizeConfig,
@@ -28,7 +29,14 @@ import {
 } from "./config.js";
 import { clientConfig } from "./fragment.js";
 import { helpLine, hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
-import { checkId, TOOL_EXAMPLES, TOOL_NAMES, type ToolId } from "./ids.js";
+import {
+	checkId,
+	HUBSPOT_REGIONS,
+	hubspotRegionIn,
+	TOOL_EXAMPLES,
+	TOOL_NAMES,
+	type ToolId,
+} from "./ids.js";
 import type { ConsentSummary } from "./record.js";
 import type { SiteCheck } from "./site-check.js";
 
@@ -209,7 +217,11 @@ export function toolLink(config: AnalyticsConfig, tool: ToolId): string {
 		case "clarity":
 			return `https://clarity.microsoft.com/projects/view/${encodeURIComponent(config.tools.clarity)}/dashboard`;
 		case "hubspot":
-			return config.hubspotEu ? "https://app-eu1.hubspot.com/" : "https://app.hubspot.com/";
+			return config.hubspotRegion
+				? `https://app-${config.hubspotRegion}.hubspot.com/`
+				: config.hubspotEu
+					? "https://app-eu1.hubspot.com/"
+					: "https://app.hubspot.com/";
 		case "cloudflare":
 			return "https://dash.cloudflare.com/";
 		case "plausible":
@@ -607,7 +619,13 @@ function formPart(name: FormName, config: AnalyticsConfig): unknown {
 	const { colourSet, colors, darkColors, darkOn, labels, ...banner } = config.banner;
 	switch (name) {
 		case "tools":
-			return [config.tools, config.hubspotEu, config.cloudflareWait, config.enquiries];
+			return [
+				config.tools,
+				config.hubspotEu,
+				config.hubspotRegion,
+				config.cloudflareWait,
+				config.enquiries,
+			];
 		case "banner":
 			return banner;
 		case "colours":
@@ -658,6 +676,8 @@ function toolsBlocks(state: PageState): Block[] {
 					type: "toggle",
 					action_id: "hubspot_eu",
 					label: "My HubSpot account is in the EU data centre",
+					description:
+						"In another data centre? Paste the code HubSpot gives you in the HubSpot box: the data centre is read from it.",
 					initial_value: config.hubspotEu,
 				},
 				{
@@ -675,7 +695,35 @@ function toolsBlocks(state: PageState): Block[] {
 			],
 			submit: { label: "Save tools", action_id: "save_tools" },
 		},
+		...(config.tools.hubspot && config.hubspotRegion
+			? [
+					{
+						type: "context" as const,
+						text: `HubSpot loads from your account's ${HUBSPOT_REGIONS[config.hubspotRegion]} data centre, read from the code you pasted. To change it, paste HubSpot's code again.`,
+					},
+				]
+			: []),
 	];
+}
+
+/**
+ * Where the HubSpot account is after a save. HubSpot's code names its data
+ * centre, so a pasted code decides; the box then shows the Hub ID alone, which
+ * keeps it. A different Hub ID typed by hand, or switching the EU setting on,
+ * starts again from the EU setting.
+ */
+function hubspotSaved(
+	config: AnalyticsConfig,
+	hubspot: string,
+	typed: unknown,
+	eu: boolean,
+): Pick<AnalyticsConfig, "hubspotEu" | "hubspotRegion"> {
+	if (hubspot === "") return { hubspotEu: eu, hubspotRegion: "" };
+	const pasted = hubspotRegionIn(typed);
+	if (pasted === "na1") return { hubspotEu: eu, hubspotRegion: "" };
+	if (pasted) return hubspotPlace(pasted, false);
+	const kept = hubspot === config.tools.hubspot && !(eu && !config.hubspotEu);
+	return hubspotPlace(kept ? config.hubspotRegion : "", eu);
 }
 
 function bannerBlocks(state: PageState): Block[] {
@@ -1225,7 +1273,12 @@ export function handleInteraction(input: Interaction | undefined, state: PageSta
 			{
 				...config,
 				tools,
-				hubspotEu: flag("hubspot_eu", config.hubspotEu),
+				...hubspotSaved(
+					config,
+					tools.hubspot,
+					values.hubspot,
+					flag("hubspot_eu", config.hubspotEu),
+				),
 				cloudflareWait: flag("cloudflare_wait", config.cloudflareWait),
 				enquiries: flag("enquiries", config.enquiries),
 			},
