@@ -678,6 +678,38 @@ describe("cron deliver", () => {
 			count: 7,
 		},
 		{
+			name: "deliver, HubSpot refuses with the tracking token in its words: never kept",
+			setup: async () => {
+				const h = await running([hub]);
+				await row(h, "s1", hub.id, {}, { rows: [hub.id], hutk: HUTK });
+				await h.http.respond(
+					HUBSPOT,
+					Response.json(
+						{
+							errors: [
+								{
+									errorType: "FIELD_NOT_IN_FORM_DEFINITION",
+									message: `"x" (hutk ${HUTK}) is not here`,
+								},
+							],
+						},
+						{ status: 400 },
+					),
+				);
+				return deliver(h);
+			},
+			did: async (h) => {
+				const [r] = await sendRows(h);
+				expect(r?.status).toBe("fixing");
+				expect(r?.raw).toContain("[token]");
+				expect(JSON.stringify(r)).not.toContain(HUTK);
+				expect(JSON.stringify(await h.inspect.email())).not.toContain(HUTK);
+				const { admin } = await people(h);
+				expect(JSON.stringify(await page(h, admin)())).not.toContain(HUTK);
+			},
+			count: 7,
+		},
+		{
 			name: "deliver, HubSpot refuses the tracking token: tried again without it",
 			setup: async () => {
 				const h = await running([hub]);

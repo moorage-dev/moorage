@@ -116,7 +116,7 @@ HubSpot's tracking code (added, for example, with the Analytics & Cookies plugin
 
 Lead Delivery cannot read the cookie itself: Forms hands enquiries over from the server, after the visitor's browser is gone. So the form has to carry it, and it does only when you set that up:
 
-1. In **Forms**, open the form and add a field of type **Hidden** with the name `hutk` (any label). EmDash's form rendering puts it on the page empty. This works for forms connected straight from the form; the email way leaves hidden fields out.
+1. In **Forms**, open the form and add a field of type **Hidden** with the name `hutk` (any label). EmDash's form rendering puts it on the page empty. It must be Hidden: a visible field is emailed like any other. This works for forms connected straight from the form; the email way leaves hidden fields out.
 2. Add this script once to the pages with your forms (for example your site's layout). Just before a form is sent, it copies the token into that field, and only if the visitor allowed marketing cookies:
 
 ```html
