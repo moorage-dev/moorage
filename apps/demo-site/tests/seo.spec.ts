@@ -118,7 +118,7 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page,
 	await page.getByRole("button", { name: "Import from WordPress" }).click();
 	await page.getByRole("textbox", { name: /Your list/ }).fill(
 		// A new address written in full on this site's own address is imported as a path,
-		// and keeps its closing slash.
+		// written the way this site writes its addresses (the demo site: no closing slash).
 		`source,target,regex,code\n/old-contact/,/contact,0,301\n/old-team,${baseURL}/team/,0,301\n^/legacy/(\\d+)$,/x,1,301`,
 	);
 	await page.getByRole("button", { name: "Check list" }).click();
@@ -136,7 +136,7 @@ test("an admin adds one redirect, imports a list, and both work", async ({ page,
 	for (const [from, to] of [
 		["/old-pricing", "/pricing"],
 		["/old-contact", "/contact"],
-		["/old-team", "/team/"],
+		["/old-team", "/team"],
 	]) {
 		const response = await page.request.get(from ?? "", { maxRedirects: 0 });
 		expect(response.status()).toBe(301);

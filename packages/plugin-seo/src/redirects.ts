@@ -148,23 +148,37 @@ function detectColumns(first: string[], rows: string[][]): Columns {
 	return { format: "plain", hasHeader, index: { source: 0, target: 1, code: 2 } };
 }
 
+/** Astro's `trailingSlash`, as EmDash gives it to plugins in `ctx.site`. */
+export type TrailingSlash = "always" | "never" | "ignore";
+
 /**
- * A site path from an address. An old address loses its closing slash: EmDash
- * matches it with or without one. A new address keeps it as written, so on a
- * site whose addresses end in a slash the visitor arrives in one step.
+ * A site path from an address, without its closing slash. EmDash matches an
+ * old address with or without one; a new address is shaped by `siteStyle`.
  */
-function toPath(value: string, keepSlash = false): { path: string } | { reason: string } {
+function toPath(value: string): { path: string } | { reason: string } {
 	let path = value.trim();
 	if (path === "") return { reason: REASON.empty };
 	if (/^https?:\/\//i.test(path)) {
 		const url = parseUrl(path);
 		if (!url) return { reason: REASON.empty };
-		path = `${url.pathname}${url.search}`;
+		path = `${url.pathname}${url.search}${url.hash}`;
 	}
 	if (path.includes("?")) return { reason: REASON.query };
 	if (!path.startsWith("/")) path = `/${path}`;
-	if (path.length > 1) path = keepSlash ? path.replace(/\/{2,}$/, "/") : path.replace(/\/+$/, "");
+	if (path.length > 1) path = path.replace(/\/+$/, "");
 	return { path: path === "" ? "/" : path };
+}
+
+/**
+ * A new address written the way the site writes its own: with a closing slash
+ * on a site whose addresses have one, so a visitor arrives in one step. Never
+ * after the home page, a file, a fragment or query, or a pattern placeholder
+ * (`[...rest]` carries the old address's own slash).
+ */
+function siteStyle(path: string, trailingSlash: TrailingSlash | undefined): string {
+	if (trailingSlash !== "always" || path === "/" || FILE_PATH.test(path)) return path;
+	if (/[#?]/.test(path) || path.endsWith("]")) return path;
+	return `${path}/`;
 }
 
 /**
@@ -213,9 +227,15 @@ function parseCode(value: string | undefined): RedirectCode | null {
  * Read a pasted list exported from Redirection, Yoast Premium or Rank Math,
  * or a plain "old address, new address" list, and decide for every row
  * whether it can be added. Nothing is written here. `siteUrl` is this site's
- * own address: a full new address on it becomes a path.
+ * own address: a full new address on it becomes a path. `trailingSlash` is the
+ * site's own: new addresses get a closing slash only under "always".
  */
-export function planImport(text: string, existing: ExistingRedirect[], siteUrl = ""): ImportPlan {
+export function planImport(
+	text: string,
+	existing: ExistingRedirect[],
+	siteUrl = "",
+	trailingSlash?: TrailingSlash,
+): ImportPlan {
 	const lines = text.split(/\r?\n/);
 	const delimiter = lines.some((line) => line.includes("\t")) ? "\t" : ",";
 	const table = lines
@@ -309,12 +329,17 @@ export function planImport(text: string, existing: ExistingRedirect[], siteUrl =
 					continue;
 				}
 			}
-			const target = toPath(targetText, true);
+			const target = toPath(targetText);
 			if ("reason" in target) {
 				skip(target.reason === REASON.empty ? REASON.noTarget : target.reason);
 				continue;
 			}
-			destination = target.path;
+			// "//host" or "/\\host" would leave the site; EmDash refuses it anyway.
+			if (/^\/[/\\]/.test(target.path)) {
+				skip(REASON.external);
+				continue;
+			}
+			destination = siteStyle(target.path, trailingSlash);
 			if (bare(destination) === source.path) {
 				skip(REASON.same);
 				continue;
