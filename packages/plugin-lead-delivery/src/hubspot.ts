@@ -1,6 +1,6 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
-import { sentFields, UTM_KEYS } from "./enquiry.js";
+import { hubspotToken, sentFields, UTM_KEYS } from "./enquiry.js";
 import type { Delivery, Enquiry, FieldInfo } from "./types.js";
 
 /** The HubSpot fields offered in each dropdown, in the order shown. */
@@ -131,8 +131,15 @@ export function pageWithUtm(enquiry: Enquiry): string | undefined {
 	}
 }
 
-/** The Forms API v3 body for one enquiry. */
-export function hubspotBody(place: Delivery, enquiry: Enquiry): Record<string, unknown> {
+/**
+ * The Forms API v3 body for one enquiry. `withToken` false leaves the visitor's tracking token
+ * out (HubSpot refused it on an earlier try).
+ */
+export function hubspotBody(
+	place: Delivery,
+	enquiry: Enquiry,
+	withToken = true,
+): Record<string, unknown> {
 	const fields: Array<{ objectTypeId: string; name: string; value: string }> = [];
 	const add = (name: string, value: string) => {
 		if (name && value) fields.push({ objectTypeId: "0-1", name, value });
@@ -156,8 +163,13 @@ export function hubspotBody(place: Delivery, enquiry: Enquiry): Record<string, u
 	if (place.throwawayField && enquiry.throwaway) add(place.throwawayField, "true");
 
 	const body: Record<string, unknown> = { submittedAt: Date.parse(enquiry.receivedAt), fields };
+	const context: Record<string, string> = {};
 	const pageUri = pageWithUtm(enquiry);
-	if (pageUri) body.context = { pageUri, pageName: enquiry.formName };
+	if (pageUri) Object.assign(context, { pageUri, pageName: enquiry.formName });
+	// The visitor's HubSpot tracking token links the enquiry to their visits. Never their IP address.
+	const hutk = withToken ? hubspotToken(enquiry.hutk) : undefined;
+	if (hutk) context.hutk = hutk;
+	if (Object.keys(context).length > 0) body.context = context;
 	// Consent only when chosen: the person ticked a consent box, or the account asks for it.
 	const box = consent as { ticked: boolean; text: string } | null;
 	if (box?.ticked || place.gdpr) {
@@ -174,6 +186,8 @@ export interface Outcome {
 	raw?: string;
 	field?: string;
 	retryAfter?: number;
+	/** HubSpot refused the visitor's tracking token: try again without it. */
+	tokenRefused?: boolean;
 }
 
 /** What a HubSpot answer means. */
@@ -196,6 +210,14 @@ export function classifyHubSpot(status: number, bodyText: string, name = "HubSpo
 		`HubSpot answered: ${first?.errorType ?? status}. ${first?.message ?? message}`.trim();
 	if (status === 408 || status === 429 || status >= 500) return { kind: "retry", raw };
 	const type = first?.errorType ?? "";
+	if (type === "INVALID_HUTK") {
+		// HubSpot's own words may repeat the token, so they are not kept.
+		return {
+			kind: "retry",
+			tokenRefused: true,
+			raw: "HubSpot answered: INVALID_HUTK. It did not accept the visitor's tracking token; trying again without it.",
+		};
+	}
 	if (type === "FIELD_NOT_IN_FORM_DEFINITION") {
 		const field = /["“']([^"”']+)["”']/.exec(first?.message ?? "")?.[1];
 		return {

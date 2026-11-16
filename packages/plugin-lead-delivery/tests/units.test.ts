@@ -6,8 +6,8 @@ import { isPrivateHost, privateAddressError } from "../src/address.js";
 import { chatBody, classifyChat, maskChatUrl, parseChatUrl } from "../src/chat.js";
 import { ago, parseAddresses, privateEmail, since } from "../src/config.js";
 import { emailFailure, isQuiet } from "../src/deliver.js";
-import { fromEmail, fromWebhook, humanize } from "../src/enquiry.js";
-import { withListed } from "../src/forms.js";
+import { fromEmail, fromWebhook, hubspotToken, humanize } from "../src/enquiry.js";
+import { fieldsFromPages, withListed } from "../src/forms.js";
 import {
 	autoChoice,
 	classifyHubSpot,
@@ -405,6 +405,133 @@ describe("HubSpot", () => {
 		expect(classifyHubSpot(503, "").kind).toBe("retry");
 		expect(classifyHubSpot(429, "").kind).toBe("retry");
 		expect(classifyHubSpot(204, "").kind).toBe("delivered");
+	});
+});
+
+describe("the visitor's HubSpot tracking token (hutk)", () => {
+	const TOKEN = "0123456789abcdef0123456789ABCDEF";
+	const LOWER = TOKEN.toLowerCase();
+	const withToken = (hutk: unknown) =>
+		fromWebhook({ ...PAYLOAD, data: { ...PAYLOAD.data, hutk } }, CAKES)!.enquiry;
+
+	it("accepts only HubSpot's 32-character token, and lowercases it", () => {
+		expect(hubspotToken(TOKEN)).toBe(LOWER);
+		expect(hubspotToken(` ${LOWER} `)).toBe(LOWER);
+		expect(hubspotToken("")).toBeUndefined();
+		expect(hubspotToken(undefined)).toBeUndefined();
+		expect(hubspotToken(12345)).toBeUndefined();
+		expect(hubspotToken(LOWER.slice(1))).toBeUndefined();
+		expect(hubspotToken(`${LOWER}0`)).toBeUndefined();
+		expect(hubspotToken("x".repeat(10_000))).toBeUndefined();
+		expect(hubspotToken("0123456789abcdef0123456789abcdeg")).toBeUndefined();
+		expect(hubspotToken("01234567-89ab-cdef-0123-456789abcdef")).toBeUndefined();
+		expect(hubspotToken(`${LOWER.slice(0, 16)}"}${LOWER.slice(18)}`)).toBeUndefined();
+	});
+
+	it("keeps it out of the enquiry's fields, valid or not", () => {
+		for (const value of [TOKEN, "not-a-token", "x".repeat(500)]) {
+			const enquiry = withToken(value);
+			expect(enquiry.fields.map((f) => f.key)).not.toContain("hutk");
+			expect(JSON.stringify(enquiry.fields)).not.toContain(value);
+		}
+		expect(withToken(TOKEN).hutk).toBe(LOWER);
+		expect(withToken("not-a-token")).not.toHaveProperty("hutk");
+		expect(withToken("x".repeat(500))).not.toHaveProperty("hutk");
+		expect(fromWebhook(PAYLOAD, CAKES)!.enquiry).not.toHaveProperty("hutk");
+	});
+
+	it("is never a field to match, and a visible field of that name never reaches an inbox", async () => {
+		const pages = [
+			{
+				fields: [
+					{ name: "email", label: "Email", type: "email" },
+					{ name: "hutk", label: "hutk", type: "hidden" },
+					{ name: "hutk", label: "Tracking", type: "text" },
+				],
+			},
+		];
+		expect(fieldsFromPages(pages).map((f) => f.key)).toEqual(["email"]);
+		const mail = (await fromEmail(
+			"New submission: Contact us",
+			`Email: tom@example.com\nhutk: ${LOWER}\n\nSubmitted at: 2026-10-16T09:00:00.000Z`,
+			{},
+		))!.enquiry;
+		expect(JSON.stringify(mail)).not.toContain(LOWER);
+	});
+
+	it("goes to HubSpot as context.hutk, with or without the page", () => {
+		const enquiry = withToken(TOKEN);
+		expect(hubspotBody(hubspot(), enquiry).context).toEqual({ hutk: LOWER });
+		const onPage = { ...enquiry, pageUrl: "https://crumb.test/cakes" };
+		expect(hubspotBody(hubspot(), onPage).context).toEqual({
+			pageUri: "https://crumb.test/cakes",
+			pageName: "Wedding cakes",
+			hutk: LOWER,
+		});
+		// Not as a field, whatever the matching says.
+		const body = hubspotBody(
+			hubspot({ mapping: { "wedding-cakes": { hutk: "message" } } }),
+			enquiry,
+		);
+		expect(JSON.stringify(body.fields)).not.toContain(LOWER);
+	});
+
+	it("is left out when there is none, when it is malformed, and after HubSpot refused it", () => {
+		expect(hubspotBody(hubspot(), fromWebhook(PAYLOAD, CAKES)!.enquiry)).not.toHaveProperty(
+			"context",
+		);
+		// A stored value that is not a token (an older record, a changed rule) is never sent.
+		const odd = { ...withToken(TOKEN), hutk: "abc" };
+		expect(hubspotBody(hubspot(), odd)).not.toHaveProperty("context");
+		expect(hubspotBody(hubspot(), withToken(TOKEN), false)).not.toHaveProperty("context");
+	});
+
+	it("never reaches an inbox, a channel or another app", () => {
+		const enquiry = { ...withToken(TOKEN), pageUrl: "https://crumb.test/x" };
+		const out = [
+			JSON.stringify(enquiryEmail("Crumb", enquiry, false)),
+			JSON.stringify(
+				chatBody(
+					{
+						...hubspot(),
+						kind: "chat",
+						chat: "slack",
+						url: "https://hooks.slack.com/services/T/B/x",
+					},
+					enquiry,
+					false,
+					"https://crumb.test",
+				),
+			),
+			JSON.stringify(
+				chatBody(
+					{
+						...hubspot(),
+						kind: "chat",
+						chat: "discord",
+						url: "https://discord.com/api/webhooks/1/x",
+					},
+					enquiry,
+					false,
+					"https://crumb.test",
+				),
+			),
+			JSON.stringify(appPayload("01JABCDEF", enquiry, false)),
+		];
+		for (const text of out) {
+			expect(text).not.toContain(LOWER);
+			expect(text.toLowerCase()).not.toContain("hutk");
+		}
+	});
+
+	it("HubSpot refusing the token is tried again without it, and its words never carry it", () => {
+		const answer = JSON.stringify({
+			errors: [{ errorType: "INVALID_HUTK", message: `Invalid hutk ${LOWER}` }],
+		});
+		const outcome = classifyHubSpot(400, answer);
+		expect(outcome.kind).toBe("retry");
+		expect(outcome.tokenRefused).toBe(true);
+		expect(JSON.stringify(outcome)).not.toContain(LOWER);
 	});
 });
 

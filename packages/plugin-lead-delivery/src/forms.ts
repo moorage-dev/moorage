@@ -3,6 +3,7 @@
 import type { PluginContext } from "emdash";
 
 import { PING_KEY, randomString, routeUrl } from "./config.js";
+import { HUTK_FIELD } from "./enquiry.js";
 import type { FieldInfo, KnownForm, ReachResult } from "./types.js";
 
 export type Lookup =
@@ -32,6 +33,8 @@ export function fieldsFromPages(pages: unknown): FieldInfo[] {
 			};
 			if (typeof f.name !== "string" || typeof f.label !== "string") continue;
 			if (f.type === "hidden" && !/^(utm_|page_url)/.test(f.name)) continue;
+			// The visitor's HubSpot tracking token is never a field to match or show.
+			if (f.name === HUTK_FIELD) continue;
 			fields.push({
 				key: f.name,
 				label: f.label,

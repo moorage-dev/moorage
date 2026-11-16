@@ -286,8 +286,14 @@ export async function receive(
 		});
 	}
 
+	// The visitor's HubSpot tracking token is kept only for a HubSpot delivery to send.
+	const { hutk, ...contents } = enquiry;
+	const toHubSpot = rows.some(
+		(r) => config.deliveries.find((d) => d.id === r.data.destination)?.kind === "hubspot",
+	);
 	const created = await enquiries(ctx).compareAndSet(id, null, {
-		...enquiry,
+		...contents,
+		...(hutk && toHubSpot ? { hutk } : {}),
 		rows: rows.map((r) => r.data.destination),
 	});
 	if (!created.applied) return { duplicate: true, queued: 0 };
@@ -344,9 +350,18 @@ export async function sendTo(
 	id: string,
 	enquiry: Enquiry,
 	test: boolean,
+	withToken = true,
 ): Promise<Outcome & { ms: number }> {
 	const started = Date.now();
-	const done = (outcome: Outcome) => ({ ...outcome, ms: Date.now() - started });
+	// A service's own words are shown in the log: never with the visitor's tracking token in them.
+	const token = enquiry.hutk;
+	const hide = (words?: string) => (token && words ? words.split(token).join("[token]") : words);
+	const done = (outcome: Outcome) => ({
+		...outcome,
+		...(outcome.raw ? { raw: hide(outcome.raw) } : {}),
+		...(outcome.plain ? { plain: hide(outcome.plain) } : {}),
+		ms: Date.now() - started,
+	});
 	if (delivery.kind === "email") {
 		if (!ctx.email) {
 			return done({
@@ -400,7 +415,7 @@ export async function sendTo(
 						init: {
 							method: "POST",
 							headers: { "content-type": "application/json" },
-							body: JSON.stringify(hubspotBody(delivery, enquiry)),
+							body: JSON.stringify(hubspotBody(delivery, enquiry, withToken)),
 						},
 					}
 				: await appRequest(d, id, enquiry, test);
@@ -452,10 +467,29 @@ async function tryRow(
 				: "This delivery was deleted.",
 		};
 	}
-	const outcome = await sendTo(ctx, state, delivery, row.enquiryId, enquiry, row.test === true);
+	const outcome = await sendTo(
+		ctx,
+		state,
+		delivery,
+		row.enquiryId,
+		enquiry,
+		row.test === true,
+		!row.hutkRefused,
+	);
 	const attempts = row.attempts + 1;
 	const { plain: _plain, raw: _raw, field: _field, held: _held, ...rest } = row;
 	const base = { ...rest, attempts, ms: outcome.ms };
+	if (outcome.kind === "retry" && outcome.tokenRefused && !row.hutkRefused) {
+		// Tried again without the token at the next run, even after what was its last try.
+		return {
+			...base,
+			status: "retrying",
+			nextAt: new Date(now).toISOString(),
+			hutkRefused: true,
+			plain: "HubSpot did not accept the visitor's tracking token; trying again without it.",
+			...(outcome.raw ? { raw: outcome.raw } : {}),
+		};
+	}
 	if (outcome.kind === "delivered") {
 		return { ...base, status: "delivered", nextAt: "", deliveredAt: new Date(now).toISOString() };
 	}

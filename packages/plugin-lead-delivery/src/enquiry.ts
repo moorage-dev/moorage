@@ -10,6 +10,20 @@ import type { Enquiry, FieldInfo, KnownForm } from "./types.js";
 export const UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
 const PAGE_KEYS = new Set(["page_url", "pageUrl", "page"]);
 
+/** The form field that carries the visitor's HubSpot tracking token (see `hubspotToken`). */
+export const HUTK_FIELD = "hutk";
+
+/**
+ * The visitor's HubSpot tracking token as HubSpot sets it in the `hubspotutk` cookie: 32 hex
+ * characters, lowercased. Anything else is dropped: HubSpot may refuse a whole enquiry over a
+ * token it does not accept, and a lost token only costs the visitor's browsing history.
+ */
+export function hubspotToken(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length > 100) return undefined;
+	const token = value.trim();
+	return /^[0-9a-f]{32}$/i.test(token) ? token.toLowerCase() : undefined;
+}
+
 /** "cake_date" → "Cake date". Used only when the form's own label is unknown. */
 export function humanize(key: string): string {
 	const words = key
@@ -169,7 +183,7 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 	const labels = new Map((known?.fields ?? []).map((f) => [f.key, f]));
 	const fields: Enquiry["fields"] = [];
 	for (const [key, value] of Object.entries(data)) {
-		if (key === "_hp" || key === "cf-turnstile-response") continue;
+		if (key === "_hp" || key === "cf-turnstile-response" || key === HUTK_FIELD) continue;
 		const text = display(value).slice(0, 10_000);
 		if (!text) continue;
 		const info = labels.get(key);
@@ -183,7 +197,8 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 	}
 	const files = Array.isArray(payload.files) ? payload.files : [];
 	const pageUrl = typeof payload.pageUrl === "string" ? payload.pageUrl : undefined;
-	return {
+	const hutk = hubspotToken(data[HUTK_FIELD]);
+	const received: Received = {
 		id: submissionId,
 		enquiry: finish(
 			{
@@ -198,6 +213,8 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 			requiredKeys(known),
 		),
 	};
+	if (hutk) received.enquiry.hutk = hutk;
+	return received;
 }
 
 const SUBJECT_PREFIX = "New submission: ";
@@ -263,7 +280,9 @@ export async function fromEmail(
 		}
 	}
 	for (const field of fields) field.value = field.value.trim();
-	if (fields.length === 0) return null;
+	// The tracking token is a hidden field Forms leaves out of its email; one made visible stays out.
+	const kept = fields.filter((f) => f.key.toLowerCase() !== HUTK_FIELD);
+	if (kept.length === 0) return null;
 
 	return {
 		id: `m${(await sha256(`${subject}\n${text}`)).slice(0, 40)}`,
@@ -273,7 +292,7 @@ export async function fromEmail(
 				formName,
 				receivedAt: new Date().toISOString(),
 				fields: withUnticked(
-					fields.filter((f) => f.value),
+					kept.filter((f) => f.value),
 					known,
 				),
 				via: "email",

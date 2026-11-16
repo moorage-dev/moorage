@@ -135,6 +135,12 @@ export interface Enquiry {
 	/** Milliseconds since the same address last sent this form (within 7 days). */
 	repeatAfterMs?: number;
 	hasFiles: boolean;
+	/**
+	 * The visitor's HubSpot tracking token (their `hubspotutk` cookie), from the form's hidden
+	 * field `hutk`. Never one of the fields; kept only when a HubSpot delivery takes the enquiry,
+	 * and gone with the rest of the contents.
+	 */
+	hutk?: string;
 	/** Read from an email whose format was not recognised; kept as text. */
 	unreadable?: boolean;
 	/** Contents removed once all its deliveries were done; kept so a repeat is still recognised. */
@@ -179,4 +185,6 @@ export interface Send {
 	held?: boolean;
 	test?: boolean;
 	ms?: number;
+	/** HubSpot refused the visitor's tracking token: this delivery's later tries go without it. */
+	hutkRefused?: true;
 }

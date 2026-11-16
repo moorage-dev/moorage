@@ -28,6 +28,7 @@ Everything is on one page, **Lead delivery** under Marketing:
   - Each form field is matched to a HubSpot field from a list. This happens automatically where the names make it obvious. A form's fields are known once it has sent an enquiry, or when the site can look the form up.
   - Consent goes to HubSpot only when someone ticked a consent box, or when you say your HubSpot account has its privacy (GDPR) settings on.
   - Possibly fake email addresses can be marked in a HubSpot field you choose.
+  - Optional: HubSpot can link an enquiry to the visitor's earlier visits (their original source and the pages they viewed) when your form sends HubSpot's tracking token. Off until your form has the hidden field for it; see "Link enquiries to HubSpot visits" below.
 - **Another app (Zapier, Make, n8n or your own).** Each enquiry is sent as flat JSON, signed with the [Standard Webhooks](https://www.standardwebhooks.com/) headers, with one secret for each delivery. The JSON has a `marks` list (`throwaway`, `repeat`, `spam`) and, for a repeat, `repeatAfterMinutes`.
 - **A Slack or Discord channel.** Paste the channel's incoming-webhook address (Slack: an app with Incoming Webhooks; Discord: Channel settings → Integrations → Webhooks). Each enquiry becomes one message with the form's fields, the marks and a link to Forms → Submissions. What people wrote cannot ping the channel (`@here`, `<!channel>` and mentions are turned off) and addresses in it show no preview; a long Discord message is shortened field by field, keeping the link to Forms. **Leave out what people wrote** sends only "New enquiry: Contact form" with the link, for a channel where not everyone should read personal details. Retries, the log and alerts work as for an app. The address is a secret, kept like an app's signing secret: after you save it the page shows only its host and last four characters, it never appears in the log, and Edit keeps it when its box is left empty.
 - **Forms' own auto-reply.** A delivery's page says whether Forms also sends its own auto-reply to the person who wrote, for forms connected in one step (Lead Delivery reads it from Forms then; for other forms it cannot see it).
@@ -52,7 +53,8 @@ Everything is on one page, **Lead delivery** under Marketing:
 - File attachments are not sent. The log says the enquiry has one, and the file stays in Forms → Submissions.
 - It does not replace the Forms inbox: every enquiry is kept there whatever happens here.
 - It does not block spam at the form. See "Stop spam" below.
-- No reports or charts, no routing rules, no syncing back from HubSpot, no HubSpot tracking cookie.
+- No reports or charts, no routing rules, no syncing back from HubSpot.
+- It never reads cookies. HubSpot's tracking token (the `hubspotutk` cookie) reaches HubSpot only when your form sends it in a hidden field named `hutk`, which only your own page script fills; see "Link enquiries to HubSpot visits". It never sends the visitor's IP address.
 
 ## Install
 
@@ -107,6 +109,43 @@ Lead Delivery checks once which of two ways works on your site:
   - a message that itself contains lines like "Label: value" can be split wrongly.
 
 "Reset the private address" (under Settings for the whole site) changes both addresses. Every connected form stops sending until it is connected again, and each delivery's page offers Connect this form again.
+
+## Link enquiries to HubSpot visits
+
+HubSpot's tracking code (added, for example, with the Analytics & Cookies plugin) leaves a cookie called `hubspotutk` in the visitor's browser. When an enquiry sent to HubSpot carries that token, HubSpot adds the enquiry to the same contact as the visits it already recorded, with their original source and the pages they viewed. Without it the enquiry still arrives; HubSpot just starts a contact with no history.
+
+Lead Delivery cannot read the cookie itself: Forms hands enquiries over from the server, after the visitor's browser is gone. So the form has to carry it, and it does only when you set that up:
+
+1. In **Forms**, open the form and add a field of type **Hidden** with the name `hutk` (any label). EmDash's form rendering puts it on the page empty. This works for forms connected straight from the form; the email way leaves hidden fields out.
+2. Add this script once to the pages with your forms (for example your site's layout). Just before a form is sent, it copies the token into that field, and only if the visitor allowed marketing cookies:
+
+```html
+<script>
+	// Copies HubSpot's tracking token into a form's hidden "hutk" field as the form is sent.
+	document.addEventListener(
+		"submit",
+		function (event) {
+			var field = event.target.querySelector && event.target.querySelector('input[name="hutk"]');
+			if (!field) return;
+			var consent = window.cookieConsent; // set by Analytics & Cookies, when it is installed
+			var asks = document.documentElement.hasAttribute("data-cookie-consent");
+			var allowed = consent ? consent.marketing === true : !asks && !navigator.globalPrivacyControl;
+			var token = /(?:^|;\s*)hubspotutk=([0-9a-f]{32})(?:;|$)/i.exec(document.cookie);
+			field.value = allowed && token ? token[1] : "";
+		},
+		true,
+	);
+</script>
+```
+
+What happens then:
+
+- Only HubSpot deliveries send it, as HubSpot's `context.hutk`. Inboxes, Slack, Discord and other apps never get it, and it is never one of the fields you match or see in the log.
+- Only a value shaped like HubSpot's token (32 characters, digits and the letters a to f) is sent; anything else is dropped and the enquiry goes without it. If HubSpot refuses the token, that delivery tries again a minute later without it, so the enquiry is never lost over it.
+- Lead Delivery keeps it with the enquiry's contents, and only when a HubSpot delivery takes the enquiry: until all its deliveries are done (usually within a minute), or for about 30 days when one cannot be sent. Forms keeps it with the submission under Forms → Submissions, like any field, until you delete the submission.
+- Without the field nothing changes: no token, no cookie read.
+
+Privacy: the token is a cookie identifier, so in places where the law asks for consent, send it only with consent. The script does that with Analytics & Cookies (HubSpot is under Marketing; a visitor who takes consent back has HubSpot's cookies deleted, so nothing is left to send) and, without it, holds back for visitors whose browser sends Global Privacy Control. If you use another consent tool, change the `allowed` line to ask it. Say in your privacy policy that enquiries are linked to the visitor's earlier visits in HubSpot. To stop, delete the hidden field from the form.
 
 ## Stop spam
 

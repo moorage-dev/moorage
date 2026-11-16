@@ -140,6 +140,19 @@ const refused = () =>
 		{ status: 400 },
 	);
 
+const HUTK = "0123456789abcdef0123456789abcdef";
+const tokenRefused = () =>
+	Response.json(
+		{ errors: [{ errorType: "INVALID_HUTK", message: `Invalid hutk ${HUTK}` }] },
+		{ status: 400 },
+	);
+/** The `context` of each request sent to HubSpot, in order. */
+const hubspotContexts = (h: Host) =>
+	h.http
+		.requests()
+		.filter((r) => r.url === HUBSPOT)
+		.map((r) => (JSON.parse(new TextDecoder().decode(r.body)) as { context?: unknown }).context);
+
 // A site whose next KV list fails (the database briefly away). Set before bridge-budget's counter
 // wraps the bridge on the first measure, so the failing call is still counted.
 type AnyFn = (...args: unknown[]) => unknown;
@@ -647,6 +660,48 @@ describe("cron deliver", () => {
 			before: 26,
 		},
 		{
+			name: "deliver, HubSpot with the visitor's tracking token",
+			setup: async () => {
+				const h = await running([hub]);
+				await row(h, "s1", hub.id, {}, { rows: [hub.id], hutk: HUTK });
+				await h.http.respond(HUBSPOT, ok());
+				return deliver(h);
+			},
+			did: async (h) => {
+				expect(await statuses(h)).toEqual(["delivered"]);
+				expect(hubspotContexts(h)).toEqual([{ hutk: HUTK }]);
+				// The token goes with the enquiry's contents.
+				const stored = await h.inspect.storage.get<Enquiry>("enquiries", "s1");
+				expect(stored?.cleared).toBe(true);
+				expect(JSON.stringify(stored)).not.toContain(HUTK);
+			},
+			count: 7,
+		},
+		{
+			name: "deliver, HubSpot refuses the tracking token: tried again without it",
+			setup: async () => {
+				const h = await running([hub]);
+				await row(h, "s1", hub.id, { attempts: 7 }, { rows: [hub.id], hutk: HUTK });
+				await h.http.respond(HUBSPOT, tokenRefused());
+				return deliver(h);
+			},
+			did: async (h) => {
+				const [r] = await sendRows(h);
+				// Not given up, even on what would be its last try, and nobody is alerted.
+				expect(r).toMatchObject({ status: "retrying", hutkRefused: true });
+				expect(JSON.stringify(r)).not.toContain(HUTK);
+				expect(await h.inspect.email()).toHaveLength(0);
+				// The next try goes without it.
+				await h.http.respond(HUBSPOT, ok());
+				await h.fixtures.plugin.storage("deliveries", `s1~${hub.id}`, { ...r!, nextAt: ago(1000) });
+				await deliverRun(h)();
+				expect(hubspotContexts(h)).toEqual([{ hutk: HUTK }, undefined]);
+				expect(await statuses(h)).toEqual(["delivered"]);
+			},
+			// kvList storageQuery storageGetMany httpFetch storagePutMany
+			count: 5,
+		},
+		{
 			name: "deliver, one email delivery due",
 			setup: async () => deliver(await dueRows(mail, 1)),
 			did: async (h) => {
@@ -956,6 +1011,30 @@ describe("inbound", () => {
 			did: async (h) => expect(await statuses(h)).toEqual(["delivered", "skipped"]),
 			count: 6,
 			before: 14,
+		},
+		{
+			name: "inbound, a HubSpot tracking token, HubSpot and app deliveries",
+			setup: async () => arrive(await running([zap, hub]), payload("01A", { hutk: HUTK })),
+			did: async (h) => {
+				await queued(h, ["retrying", "retrying"]);
+				const stored = await h.inspect.storage.get<Enquiry>("enquiries", "01A");
+				expect(stored?.hutk).toBe(HUTK);
+				expect(JSON.stringify(stored?.fields)).not.toContain(HUTK);
+				// The admin page lists the enquiry without the token.
+				const { admin } = await people(h);
+				expect(JSON.stringify(await page(h, admin)())).not.toContain(HUTK);
+			},
+			count: 7,
+		},
+		{
+			name: "inbound, a HubSpot tracking token and no HubSpot delivery: not kept",
+			setup: async () => arrive(await running([zap]), payload("01A", { hutk: HUTK })),
+			did: async (h) => {
+				await queued(h, ["retrying"]);
+				const stored = await h.inspect.storage.get<Enquiry>("enquiries", "01A");
+				expect(JSON.stringify(stored)).not.toContain(HUTK);
+			},
+			count: 7,
 		},
 		{
 			name: "inbound, first enquiry after updating from 0.3.0",
