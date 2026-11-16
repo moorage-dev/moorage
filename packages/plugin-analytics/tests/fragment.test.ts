@@ -201,6 +201,12 @@ describe("HubSpot's data centre", () => {
 		expect(told({})).toEqual({ hs: "12345678", hsEu: undefined, hsR: undefined });
 		expect(told({ hubspotEu: true })).toEqual({ hs: "12345678", hsEu: 1, hsR: undefined });
 		expect(told({ hubspotRegion: "na2" })).toEqual({ hs: "12345678", hsEu: undefined, hsR: "na2" });
+		// A stored value that is not a known data centre never reaches the page.
+		expect(told({ hubspotRegion: "evil.com/x" })).toEqual({
+			hs: "12345678",
+			hsEu: undefined,
+			hsR: undefined,
+		});
 		expect(clientConfig(normalizeConfig({ hubspotRegion: "na2" }), PLUGIN_ID).hsR).toBeUndefined();
 	});
 });

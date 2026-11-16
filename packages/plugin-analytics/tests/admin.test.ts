@@ -297,6 +297,14 @@ describe("saving tracking tools", () => {
 		});
 		expect(saved(fake)).toMatchObject({ hubspotRegion: "", hubspotEu: true });
 
+		// A paste naming a data centre the plugin does not know changes nothing about the region.
+		await submit(fake, "save_tools", { hubspot: na2, hubspot_eu: false });
+		await submit(fake, "save_tools", {
+			hubspot: "//js-xx9.hs-scripts.com/12345678.js",
+			hubspot_eu: false,
+		});
+		expect(saved(fake)).toMatchObject({ tools: { hubspot: "12345678" }, hubspotRegion: "na2" });
+
 		// Emptying the box forgets the data centre.
 		await submit(fake, "save_tools", { hubspot: na2, hubspot_eu: false });
 		await submit(fake, "save_tools", { hubspot: "", hubspot_eu: false });
