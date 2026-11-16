@@ -477,7 +477,13 @@ export function boot(c: ClientConfig): void {
 				"</div></form>"
 			: '<div class="r">' +
 				(content.b
-					? '<a class="p" href="' + esc(content.b.u) + '" data-pp-go>' + esc(content.b.l) + "</a>"
+					? '<a class="p" href="' +
+						esc(content.b.u) +
+						'"' +
+						(content.b.n ? ' target="_blank" rel="noopener"' : "") +
+						" data-pp-go>" +
+						esc(content.b.l) +
+						"</a>"
 					: "") +
 				no +
 				"</div>";
@@ -577,6 +583,8 @@ export function boot(c: ClientConfig): void {
 				remember(item, { d: 1 });
 				count(item, "clicked");
 				if (previewId) event.preventDefault();
+				// The link opened in a new tab: this one stays, so the popup steps aside.
+				else if (item.c.b?.n && !inline) close("done");
 			}
 			// A click on the dimmed page around a popup closes it.
 			else if (modal && target === box) {

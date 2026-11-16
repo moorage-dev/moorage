@@ -34,7 +34,7 @@ import {
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, listForms, type FormCheck } from "./forms.js";
-import { boxColours, isPopupPreview, pageFragments, previewItem } from "./fragment.js";
+import { boxColours, isPopupPreview, opensNewTab, pageFragments, previewItem } from "./fragment.js";
 import { withHelpLine } from "./help-line.js";
 import { fetchOwnSite } from "./self-fetch.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
@@ -578,7 +578,11 @@ export function createPlugin() {
 							form: popup.contains === "form" ? popup.form : "",
 							button:
 								popup.contains === "button" && popup.buttonLabel && popup.buttonUrl
-									? { label: popup.buttonLabel, url: popup.buttonUrl }
+									? {
+											label: popup.buttonLabel,
+											url: popup.buttonUrl,
+											...(opensNewTab(popup) ? { newTab: true } : {}),
+										}
 									: null,
 							scheme: store.settings.scheme,
 							...boxColours(store.settings),

@@ -13,7 +13,13 @@ const esc = (text: string) => text.replace(/[&<>"']/g, (ch) => "&#" + ch.charCod
  */
 export function barInner(item: ClientItem, close: string, tag?: string): string {
 	const link = item.c.b
-		? ' <a href="' + esc(item.c.b.u) + '" data-pp-go>' + esc(item.c.b.l) + "</a>"
+		? ' <a href="' +
+			esc(item.c.b.u) +
+			'"' +
+			(item.c.b.n ? ' target="_blank" rel="noopener"' : "") +
+			" data-pp-go>" +
+			esc(item.c.b.l) +
+			"</a>"
 		: "";
 	return (
 		'<div class="pp bar" role="region" aria-label="Announcement"><div class="i">' +

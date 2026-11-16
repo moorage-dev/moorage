@@ -980,6 +980,16 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 				initial_value: typed(state, "button_url", popup.buttonUrl),
 				...(buttonCondition ? { condition: buttonCondition } : {}),
 			},
+			{
+				type: "toggle",
+				action_id: "button_new_tab",
+				label: "Open the link in a new tab",
+				description: short
+					? "Off by default. Email and phone links open as usual."
+					: "Off by default: most visitors expect a link to open where they are. Email and phone links open as usual.",
+				initial_value: popup.buttonNewTab,
+				...(buttonCondition ? { condition: buttonCondition } : {}),
+			},
 		);
 	}
 	if (!bar && !inline) {
@@ -2043,6 +2053,7 @@ export async function handleInteraction(
 				contains: "button",
 				buttonLabel: "",
 				buttonUrl: "",
+				buttonNewTab: false,
 				form: "",
 				thanks: "",
 				decline: "no-thanks",
@@ -2223,6 +2234,8 @@ async function wordsPart(
 				: popup.thanks,
 			buttonLabel: buttonLabel.slice(0, 40),
 			buttonUrl,
+			buttonNewTab:
+				typeof values.button_new_tab === "boolean" ? values.button_new_tab : popup.buttonNewTab,
 			decline: has(values, "decline") ? (values.decline as Popup["decline"]) : popup.decline,
 			formNote: contains === "form" ? formNote || (form === popup.form ? popup.formNote : "") : "",
 		},

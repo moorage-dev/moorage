@@ -13,7 +13,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
   - **Slide-in:** slides in at a bottom corner and leaves the page usable. It opens by itself. On phones it is a sheet at the bottom, at most 45% of the screen.
   - **Popup:** opens by itself over the page, in the middle of the screen, and dims the page. On phones it opens as a sheet at the bottom, unless the visitor opened it by clicking.
   - **Box in a page:** sits inside a page or post, where an editor places it while editing (the "Popups box" block). It is the only kind that is placed; the others open by themselves. If your site styles its forms (the `.ec-form` classes of the Forms plugin), a form in the box keeps that look.
-- **What it says:** a heading, a short text, a picture from your media library, and either one button or a form from the official Forms plugin. Sign-ups land in the Forms inbox, with all of its emails and notifications.
+- **What it says:** a heading, a short text, a picture from your media library, and either one button or a form from the official Forms plugin. The button (or a top bar's link) can open its page in a new tab ("Open the link in a new tab", off by default; email and phone links always open as usual); a popup or top bar then closes on the page they were on. Sign-ups land in the Forms inbox, with all of its emails and notifications.
 - **When it opens:** "after they have read a while" (40% down the page or 30 seconds), "when they click" a link or button your web person sets up, or "when they are about to leave" (computers only). Top bars show as soon as the page opens. There are no raw seconds or percentages to set.
 - **Where and when:** every page, pages under an address, or a whole collection; "never on these pages"; phones, computers or both; a start and an end, with a date and a time in your site's time zone.
 - **Respect, built in and not switchable:**
@@ -112,6 +112,7 @@ Popups take your theme's colours from these CSS variables. All of them are optio
 | ------------ | --------------------------------------------------------------------------- | ------------------------------------------------ |
 | Each popup   | Kind                                                                        | chosen when made                                 |
 |              | Heading, text, picture, button or form, "No thanks" words                   | No thanks                                        |
+|              | Open the link in a new tab                                                  | Off                                              |
 |              | When it opens                                                               | After they have read a while (top bars: at once) |
 |              | Show on the first page they visit (popups, computers only)                  | Off                                              |
 |              | Where, never on these pages, phones or computers                            | Every page; phones and computers                 |

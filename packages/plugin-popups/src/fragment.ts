@@ -90,6 +90,11 @@ export function contentPrint(popup: Popup): string {
 	return (hash >>> 0).toString(36);
 }
 
+/** Whether the button link opens in a new tab: when chosen, and never for an email or phone link. */
+export function opensNewTab(popup: Popup): boolean {
+	return popup.buttonNewTab && !/^(mailto|tel):/i.test(popup.buttonUrl.trim());
+}
+
 /** What the browser needs to know about one popup, and nothing else. Boxes in a page are drawn by the server. */
 export function clientItem(popup: Popup, siteOrigin: string): ClientItem | null {
 	return popup.kind === "inline" ? null : previewItem(popup, siteOrigin);
@@ -118,6 +123,7 @@ export function previewItem(popup: Popup, siteOrigin: string): ClientItem {
 			l: popup.buttonLabel,
 			u: inline ? popup.buttonUrl : tagLink(popup.buttonUrl, popup, siteOrigin),
 		};
+		if (opensNewTab(popup)) c.b.n = 1;
 	}
 	const item: ClientItem = {
 		i: popup.id,

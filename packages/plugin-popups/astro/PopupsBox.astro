@@ -17,7 +17,8 @@ interface Box {
 	text: string;
 	picture: { url: string; alt: string; width: number | null; height: number | null } | null;
 	form: string;
-	button: { label: string; url: string } | null;
+	/** `newTab`: open the link in a new tab (older servers leave it out). */
+	button: { label: string; url: string; newTab?: boolean } | null;
 	scheme: "auto" | "light" | "dark";
 	/** The look's colours, and the button's words on them (older servers leave those out). */
 	colors: { background: string; text: string; accent: string; accentText?: string } | null;
@@ -114,7 +115,13 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 			)}
 			{box.button && (
 				<p class="popups-box-go">
-					<a class="popups-box-button" href={box.button.url} data-popups-go>
+					<a
+						class="popups-box-button"
+						href={box.button.url}
+						target={box.button.newTab ? "_blank" : undefined}
+						rel={box.button.newTab ? "noopener" : undefined}
+						data-popups-go
+					>
 						{box.button.label}
 					</a>
 				</p>
