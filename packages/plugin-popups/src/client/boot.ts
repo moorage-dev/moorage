@@ -583,8 +583,9 @@ export function boot(c: ClientConfig): void {
 				remember(item, { d: 1 });
 				count(item, "clicked");
 				if (previewId) event.preventDefault();
-				// The link opened in a new tab: this one stays, so the popup steps aside.
-				else if (item.c.b?.n && !inline) close("done");
+				// The link opened in a new tab: this one stays, so the popup steps aside, after
+				// the browser has started opening the link (removing it first could stop that).
+				else if (item.c.b?.n && !inline) setTimeout(() => close("done"), 0);
 			}
 			// A click on the dimmed page around a popup closes it.
 			else if (modal && target === box) {
@@ -949,7 +950,8 @@ export function boot(c: ClientConfig): void {
 					remember(item, { d: 1 });
 					count(item, "clicked");
 					// The link opened in a new tab: this one stays, so the bar steps aside.
-					if (item.c.b?.n) host.style.setProperty("display", "none", "important");
+					if (item.c.b?.n)
+						setTimeout(() => host.style.setProperty("display", "none", "important"), 0);
 				}
 			});
 		}

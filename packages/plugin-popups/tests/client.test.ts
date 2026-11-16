@@ -291,17 +291,22 @@ describe("a button link that opens in a new tab", () => {
 		expect(link().hasAttribute("rel")).toBe(false);
 	});
 
-	it("opens in a new tab with rel=noopener, and the popup closes behind it", async () => {
+	it("opens in a new tab with rel=noopener, and a centred popup closes behind it", async () => {
 		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
-		boot(config({ buttonNewTab: true, buttonUrl: "https://shop.example/cakes" }));
+		boot(config({ kind: "modal", buttonNewTab: true, buttonUrl: "https://shop.example/cakes" }));
 		await readOn();
+		expect(shadow().querySelector("dialog")?.hasAttribute("open")).toBe(true);
 		expect(link().getAttribute("target")).toBe("_blank");
 		expect(link().getAttribute("rel")).toBe("noopener");
 		// The simulated browser would follow the link; the visitor's new tab is not the test.
 		shadow().addEventListener("click", (event) => event.preventDefault(), true);
 		link().click();
-		expect(host()).toBeNull();
+		// The click is remembered at once; the popup leaves only after the browser has
+		// started opening the link, so removing it cannot stop the new tab.
 		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.d).toBe(1);
+		expect(host()).not.toBeNull();
+		await ready();
+		expect(host()).toBeNull();
 	});
 
 	it("closes a top bar behind it too", async () => {
@@ -311,8 +316,10 @@ describe("a button link that opens in a new tab", () => {
 		const bar = document.querySelector<HTMLElement>("[data-popups-bar]")!;
 		bar.shadowRoot!.addEventListener("click", (event) => event.preventDefault(), true);
 		bar.shadowRoot!.querySelector<HTMLElement>("[data-pp-go]")!.click();
-		expect(bar.style.getPropertyValue("display")).toBe("none");
 		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.d).toBe(1);
+		expect(bar.style.getPropertyValue("display")).not.toBe("none");
+		await ready();
+		expect(bar.style.getPropertyValue("display")).toBe("none");
 	});
 
 	it("does the same in a top bar", () => {
