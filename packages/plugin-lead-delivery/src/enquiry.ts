@@ -10,6 +10,25 @@ import type { Enquiry, FieldInfo, KnownForm } from "./types.js";
 export const UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
 const PAGE_KEYS = new Set(["page_url", "pageUrl", "page"]);
 
+/** The form field that carries the visitor's HubSpot tracking token (see `hubspotToken`). */
+export const HUTK_FIELD = "hutk";
+
+/**
+ * The visitor's HubSpot tracking token as HubSpot sets it in the `hubspotutk` cookie: 32 hex
+ * characters, lowercased. Anything else is dropped: HubSpot may refuse a whole enquiry over a
+ * token it does not accept, and a lost token only costs the visitor's browsing history.
+ */
+/** Whether a form field's name is the tracking token's, in any case (`hutk`, `Hutk`, `HUTK`). */
+export function isTokenField(name: string): boolean {
+	return name.toLowerCase() === HUTK_FIELD;
+}
+
+export function hubspotToken(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length > 100) return undefined;
+	const token = value.trim();
+	return /^[0-9a-f]{32}$/i.test(token) ? token.toLowerCase() : undefined;
+}
+
 /** "cake_date" → "Cake date". Used only when the form's own label is unknown. */
 export function humanize(key: string): string {
 	const words = key
@@ -169,7 +188,7 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 	const labels = new Map((known?.fields ?? []).map((f) => [f.key, f]));
 	const fields: Enquiry["fields"] = [];
 	for (const [key, value] of Object.entries(data)) {
-		if (key === "_hp" || key === "cf-turnstile-response") continue;
+		if (key === "_hp" || key === "cf-turnstile-response" || isTokenField(key)) continue;
 		const text = display(value).slice(0, 10_000);
 		if (!text) continue;
 		const info = labels.get(key);
@@ -183,7 +202,9 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 	}
 	const files = Array.isArray(payload.files) ? payload.files : [];
 	const pageUrl = typeof payload.pageUrl === "string" ? payload.pageUrl : undefined;
-	return {
+	const tokenKey = Object.keys(data).find(isTokenField);
+	const hutk = tokenKey ? hubspotToken(data[tokenKey]) : undefined;
+	const received: Received = {
 		id: submissionId,
 		enquiry: finish(
 			{
@@ -198,6 +219,8 @@ export function fromWebhook(payload: unknown, known: KnownForm | undefined): Rec
 			requiredKeys(known),
 		),
 	};
+	if (hutk) received.enquiry.hutk = hutk;
+	return received;
 }
 
 const SUBJECT_PREFIX = "New submission: ";
@@ -221,7 +244,11 @@ export async function fromEmail(
 	const formName = subject.slice(SUBJECT_PREFIX.length).trim();
 	if (!formName) return null;
 	const known = Object.values(forms).find((f) => f.name === formName);
-	const knownLabels = new Map((known?.fields ?? []).map((f) => [f.label, f]));
+	const knownLabels = new Map<string, FieldInfo>((known?.fields ?? []).map((f) => [f.label, f]));
+	// A visible tracking-token field arrives under its label: read as a field of its own, then dropped.
+	for (const label of known?.tokenLabels ?? []) {
+		if (!knownLabels.has(label)) knownLabels.set(label, { key: HUTK_FIELD, label });
+	}
 
 	const lines = text.split(/\r?\n/);
 	const fields: Enquiry["fields"] = [];
@@ -263,7 +290,11 @@ export async function fromEmail(
 		}
 	}
 	for (const field of fields) field.value = field.value.trim();
-	if (fields.length === 0) return null;
+	// The tracking token is a hidden field Forms leaves out of its email. One made visible is dropped
+	// when the form is known (by its label) or labelled hutk; under another label on a form not
+	// known it cannot be told apart (the README says the field must be Hidden).
+	const kept = fields.filter((f) => !isTokenField(f.key));
+	if (kept.length === 0) return null;
 
 	return {
 		id: `m${(await sha256(`${subject}\n${text}`)).slice(0, 40)}`,
@@ -273,7 +304,7 @@ export async function fromEmail(
 				formName,
 				receivedAt: new Date().toISOString(),
 				fields: withUnticked(
-					fields.filter((f) => f.value),
+					kept.filter((f) => f.value),
 					known,
 				),
 				via: "email",

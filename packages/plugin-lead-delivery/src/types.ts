@@ -38,6 +38,11 @@ export interface KnownForm {
 	 * read it from Forms (an admin-only list). Unknown for forms never listed that way.
 	 */
 	autoReply?: { on: boolean; at: string };
+	/**
+	 * Labels of the form's fields named `hutk` (any case), from its definition: the email way drops
+	 * a line under one of them, so a visible tracking-token field never reaches an inbox.
+	 */
+	tokenLabels?: string[];
 }
 
 export type DeliveryKind = "email" | "hubspot" | "app" | "chat";
@@ -135,6 +140,12 @@ export interface Enquiry {
 	/** Milliseconds since the same address last sent this form (within 7 days). */
 	repeatAfterMs?: number;
 	hasFiles: boolean;
+	/**
+	 * The visitor's HubSpot tracking token (their `hubspotutk` cookie), from the form's hidden
+	 * field `hutk`. Never one of the fields; kept only when a HubSpot delivery takes the enquiry,
+	 * and gone with the rest of the contents.
+	 */
+	hutk?: string;
 	/** Read from an email whose format was not recognised; kept as text. */
 	unreadable?: boolean;
 	/** Contents removed once all its deliveries were done; kept so a repeat is still recognised. */
@@ -179,4 +190,6 @@ export interface Send {
 	held?: boolean;
 	test?: boolean;
 	ms?: number;
+	/** HubSpot refused the visitor's tracking token: this delivery's later tries go without it. */
+	hutkRefused?: true;
 }

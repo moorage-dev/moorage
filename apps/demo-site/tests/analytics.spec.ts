@@ -926,6 +926,53 @@ test.describe("enquiries", () => {
 		expect(JSON.stringify([layer, pixel])).not.toMatch(/Ada|example\.com/);
 	});
 
+	test("with HubSpot on, a form's hidden hutk field carries HubSpot's visitor token only after Accept all", async ({
+		page,
+		context,
+	}) => {
+		await configure({ ga4: IDS.ga4, meta: IDS.meta, hubspot: IDS.hubspot });
+		try {
+			await stubVendors(context);
+			await inCountry(page, "DE");
+			const sent: Array<Record<string, unknown>> = [];
+			await page.route("**/emdash-forms/submit", async (route) => {
+				sent.push((route.request().postDataJSON() as { data: Record<string, unknown> }).data);
+				await route.continue();
+			});
+			await page.goto("/lead-test");
+			await expect(banner(page)).toBeVisible();
+			const token = "0123456789abcdef0123456789abcdef";
+			await page.evaluate((value) => {
+				document.cookie = `hubspotutk=${value};path=/`;
+				const field = document.createElement("input");
+				field.type = "hidden";
+				field.name = "hutk";
+				field.value = "left-over";
+				document.querySelector("form[data-ec-form]")!.append(field);
+			}, token);
+			const send = async () => {
+				await page.getByLabel("Your name").fill("Ada Lovelace");
+				await page.getByLabel("Email").fill("ada@example.com");
+				await page.getByRole("button", { name: "Submit" }).click();
+				await expect.poll(() => sent.length).toBeGreaterThan(0);
+				return sent.splice(0).at(-1)!.hutk;
+			};
+			// Before an answer the field is emptied, whatever it held.
+			expect(await send()).toBe("");
+			await page.goto("/lead-test");
+			await banner(page).getByRole("button", { name: "Accept all" }).click();
+			await page.evaluate(() => {
+				const field = document.createElement("input");
+				field.type = "hidden";
+				field.name = "hutk";
+				document.querySelector("form[data-ec-form]")!.append(field);
+			});
+			expect(await send()).toBe(token);
+		} finally {
+			await configure({ ga4: IDS.ga4, meta: IDS.meta });
+		}
+	});
+
 	test("turning the setting off stops counting", async ({ page, context }) => {
 		await save("save_tools", { enquiries: false });
 		await stubVendors(context);
