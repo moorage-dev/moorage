@@ -948,6 +948,8 @@ export function boot(c: ClientConfig): void {
 				} else if (target.closest("[data-pp-go]")) {
 					remember(item, { d: 1 });
 					count(item, "clicked");
+					// The link opened in a new tab: this one stays, so the bar steps aside.
+					if (item.c.b?.n) host.style.setProperty("display", "none", "important");
 				}
 			});
 		}

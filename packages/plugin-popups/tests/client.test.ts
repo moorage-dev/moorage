@@ -304,6 +304,17 @@ describe("a button link that opens in a new tab", () => {
 		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.d).toBe(1);
 	});
 
+	it("closes a top bar behind it too", async () => {
+		drawBar({ kind: "bar", buttonNewTab: true, buttonUrl: "https://shop.example/cakes" });
+		boot(config({ kind: "bar", buttonNewTab: true, buttonUrl: "https://shop.example/cakes" }));
+		await ready();
+		const bar = document.querySelector<HTMLElement>("[data-popups-bar]")!;
+		bar.shadowRoot!.addEventListener("click", (event) => event.preventDefault(), true);
+		bar.shadowRoot!.querySelector<HTMLElement>("[data-pp-go]")!.click();
+		expect(bar.style.getPropertyValue("display")).toBe("none");
+		expect(JSON.parse(localStorage.getItem(MEMORY_KEY)!).p.pop00000.d).toBe(1);
+	});
+
 	it("does the same in a top bar", () => {
 		const item = previewItem(popup({ kind: "bar", buttonNewTab: true }), "");
 		const bar = document.createElement("div");
