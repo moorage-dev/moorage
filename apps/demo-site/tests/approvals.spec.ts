@@ -301,9 +301,7 @@ test.describe.serial("Content Approval", () => {
 			page.getByText("Others need my OK before publishing (recommended for agencies)"),
 		).toBeVisible();
 		await expect(page.getByText("I need someone else's OK before publishing")).toBeVisible();
-		await expect(
-			page.getByText("AI tools connected to your site always need a person's OK"),
-		).toBeVisible();
+		await expect(page.getByText("Hold what AI tools publish for approval")).toBeVisible();
 		await expect(page.getByRole("heading", { name: "What approval can't hold" })).toBeVisible();
 		await expect(
 			page.getByText(/The SEO panel, categories, tags and bylines of a page that is already live/),
@@ -803,21 +801,12 @@ test.describe.serial("Content Approval", () => {
 			page.getByText(/Pages · asked by Sam Reyes · .* · new page/).first(),
 		).toBeVisible();
 		await page.getByText("Decide several at once").click();
-		// "Select all" draws the form again with every box ticked; what is submitted is what shows.
-		await page.getByRole("button", { name: /^Select all \(\d+\)$/ }).click();
-		const boxes = page.getByRole("checkbox");
-		await expect(page.getByRole("button", { name: "Clear all" })).toBeVisible();
-		const count = await boxes.count();
-		expect(count).toBeGreaterThanOrEqual(4);
-		for (let i = 0; i < count; i++) await expect(boxes.nth(i)).toBeChecked();
-		// Untick Summer menu, still waiting from earlier: the three new pages stay ticked.
-		await page.getByRole("checkbox", { name: /^Summer menu · Pages/ }).click();
-		await expect(page.getByRole("checkbox", { name: /^Summer menu · Pages/ })).not.toBeChecked();
+		// "All N waiting for you" is a choice in the form; the boxes show for "Only the ones I tick".
+		await expect(page.getByRole("radio", { name: /^All \d+ waiting for you$/ })).toBeVisible();
 		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
-			await expect(
-				page.getByRole("checkbox", { name: new RegExp(`^${title} · Pages`) }),
-			).toBeChecked();
-		await page.getByRole("button", { name: "Continue", exact: true }).click();
+			await page.getByRole("checkbox", { name: new RegExp(`^${title} · Pages`) }).click();
+		await expect(page.getByRole("checkbox", { name: /^Summer menu · Pages/ })).not.toBeChecked();
+		await page.getByRole("button", { name: "Check selection", exact: true }).click();
 		await expect(page.getByRole("heading", { name: "Approve and publish these 3?" })).toBeVisible();
 		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
 			await expect(page.getByText(title, { exact: true })).toBeVisible();
@@ -937,7 +926,7 @@ test.describe.serial("Content Approval", () => {
 			const refused = toolData(
 				await mcp(token.token, "tools/call", {
 					name: "approvals__approve",
-					arguments: { collection: "pages", id: first },
+					arguments: { collection: "pages", id: first, version: changes.version },
 				}),
 			);
 			expect(refused.error).toBe(
@@ -952,7 +941,12 @@ test.describe.serial("Content Approval", () => {
 					arguments: { collection: "pages", id: first, version: changes.version },
 				}),
 			);
-			expect(approved).toMatchObject({ ok: true, state: "published", title: "Scones" });
+			expect(approved).toMatchObject({
+				ok: true,
+				state: "published",
+				published: true,
+				title: "Scones",
+			});
 			await expect.poll(() => status(ellen, first)).toBe("published");
 			const sent = toolData(
 				await mcp(token.token, "tools/call", {
@@ -963,7 +957,7 @@ test.describe.serial("Content Approval", () => {
 			expect(sent).toMatchObject({ ok: true, state: "sent_back" });
 			await openPanel(sam, second);
 			await expect(
-				sam.page.getByText(/^Sent back by An AI tool acting for Ellen Marsh/),
+				sam.page.getByText(/^Sent back by an AI tool acting for Ellen Marsh/),
 			).toBeVisible();
 			await leave(sam);
 		} finally {

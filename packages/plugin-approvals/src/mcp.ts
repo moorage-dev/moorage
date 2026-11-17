@@ -10,6 +10,7 @@ import type { UserInfo } from "./requests.js";
 import {
 	collectionInfo,
 	copyOf,
+	nameNow,
 	readDraft,
 	titleOf,
 	UNNAMED,
@@ -37,6 +38,8 @@ export const SEND_BACK_ROUTE = "mcp/send-back";
 export const ASK_ROUTE = "mcp/ask";
 
 const HISTORY_LINES = 10;
+/** Requests stored as "Untitled" by an earlier release that queue names per call (one read each). */
+const QUEUE_NAMED = 10;
 
 /** The entry: a content type and an id, or a request id from the queue ("pages:01J…"). */
 const TARGET = {
@@ -90,14 +93,14 @@ export const tools: Record<string, McpTool> = {
 	},
 	changes: {
 		description:
-			"Show what a request waiting for approval would change on one entry, field by field: the text live now and the text that would go live, or every filled-in field when the entry is not live yet. Give collection and id, or the request id. Also returns the version to pass to approve. Compares the entry's own fields only: not its SEO panel, categories, tags, bylines or menus; pictures and files are named as changed, not shown. Read-only.",
+			"Show what a request waiting for approval would change on one entry, field by field: the text live now and the text that would go live, or every filled-in field when the entry is not live yet. Give collection and id, or the request id. Also returns the version to pass to approve. A field longer than 2,000 characters is truncated to the part that changed and marked truncated: true with its full length. Compares the entry's own fields only: not its SEO panel, categories, tags, bylines or menus; pictures and files are named as changed, not shown. Only for an entry that has a request. Read-only.",
 		route: CHANGES_ROUTE,
 		input: schema({ type: "object", properties: TARGET, additionalProperties: false }),
 		destructive: false,
 	},
 	approve: {
 		description:
-			'Approve a page that waits for approval, for the person whose key you use, and publish it now (publish: false approves only; it then goes live when someone presses Publish). Works only when the site\'s Admin has switched on "AI tools may approve"; otherwise it refuses and says where. Pass version from changes to approve only the version you checked. Recorded as approved by an AI tool acting for that person; the writer is told. Never deletes anything.',
+			'Approve a page that waits for approval, for the person whose key you use, and publish it now (publish: false approves only; it then goes live when someone presses Publish). With publish true, a request to schedule is published now, not at its time; pass publish: false to leave the scheduling to its writer. The result says whether it was published. Call changes first and pass its version: only that version is approved. Works only when the site\'s Admin has switched on "AI tools may approve"; otherwise it refuses and says where. Recorded as approved by an AI tool acting for that person; the writer is told. Never deletes anything.',
 		route: APPROVE_ROUTE,
 		input: schema({
 			type: "object",
@@ -105,13 +108,15 @@ export const tools: Record<string, McpTool> = {
 				...TARGET,
 				version: {
 					type: "string",
-					description: "The version from changes: refused if the page changed since.",
+					minLength: 1,
+					description: "The version from changes (required): refused if the page changed since.",
 				},
 				publish: {
 					type: "boolean",
 					description: "Publish now (default true), or approve only.",
 				},
 			},
+			required: ["version"],
 			additionalProperties: false,
 		}),
 		destructive: true,
@@ -191,6 +196,11 @@ export async function queueTool(ctx: PluginContext, user: UserInfo | undefined) 
 	const sentBack = visible(config, user, lists.sentBack);
 	const forYou = config ? waiting.filter((r) => canDecide(config, r, user)) : [];
 	const yours = waiting.filter((r) => !forYou.includes(r));
+	// Requests an earlier release stored as "Untitled": named from their entry, a few per call.
+	const titleFields = new Map(collections.map((c) => [c.slug, c.titleField]));
+	const unnamed = [...forYou, ...yours].filter((r) => r.title === UNNAMED).slice(0, QUEUE_NAMED);
+	for (const request of unnamed)
+		request.title = await nameNow(ctx, request, titleFields.get(request.collection) ?? null);
 	const row = (request: ApprovalRequest) => ({
 		title: noEmail(request.title),
 		collection: request.collection,
@@ -318,13 +328,78 @@ const NO_TARGET = {
 
 /** Longest text returned for one field, before or after. */
 const FIELD_CHARS = 2000;
+/** Unchanged text kept on each side of a change in a long field. */
+const CONTEXT_CHARS = 300;
 
-function clip(text: string): string {
-	return text.length > FIELD_CHARS ? `${text.slice(0, FIELD_CHARS - 1)}…` : text;
+interface FieldShown {
+	before: string | null;
+	after: string | null;
+	change: string;
+	/** Set when a text was longer than FIELD_CHARS and only part of it is returned. */
+	truncated?: true;
+	beforeLength?: number;
+	afterLength?: number;
+}
+
+/** The start of the word at `at` (back to the last space). */
+function wordStart(text: string, at: number): number {
+	const space = text.lastIndexOf(" ", Math.max(0, at - 1));
+	return space < 0 ? 0 : space + 1;
+}
+
+/** The end of the word at `at` (on to the next space). */
+function wordEnd(text: string, at: number): number {
+	const space = text.indexOf(" ", at);
+	return space < 0 ? text.length : space;
+}
+
+/** A part of a text, marked with "…" where it was cut. */
+function part(text: string, from: number, to: number): string {
+	const end = Math.min(to, from + FIELD_CHARS);
+	return `${from > 0 ? "…" : ""}${text.slice(from, end)}${end < text.length ? "…" : ""}`;
+}
+
+/**
+ * One changed text field. Short texts come back whole. A text longer than FIELD_CHARS comes back
+ * as the part that changed, with some unchanged text around it, cut with "…", and says so
+ * (truncated, and both full lengths), so a reviewer always knows when it has not seen everything.
+ */
+export function shownChange(old: string, now: string): FieldShown {
+	if (old.length <= FIELD_CHARS && now.length <= FIELD_CHARS) {
+		return {
+			before: old === "" ? null : old,
+			after: now === "" ? null : now,
+			change: `${describeTextChange(old, now, "future")}.`,
+		};
+	}
+	let same = 0;
+	const shortest = Math.min(old.length, now.length);
+	while (same < shortest && old[same] === now[same]) same++;
+	let tail = 0;
+	while (tail < shortest - same && old[old.length - 1 - tail] === now[now.length - 1 - tail])
+		tail++;
+	const start = wordStart(old, same);
+	const oldEnd = wordEnd(old, old.length - tail);
+	const nowEnd = wordEnd(now, now.length - tail);
+	const from = wordStart(old, Math.max(0, start - CONTEXT_CHARS));
+	return {
+		before: old === "" ? null : part(old, from, oldEnd + CONTEXT_CHARS),
+		after: now === "" ? null : part(now, from, nowEnd + CONTEXT_CHARS),
+		change: `${describeTextChange(old.slice(start, oldEnd), now.slice(start, nowEnd), "future")}.`,
+		truncated: true,
+		beforeLength: old.length,
+		afterLength: now.length,
+	};
+}
+
+function clip(text: string): { text: string; truncated?: true; length?: number } {
+	return text.length > FIELD_CHARS
+		? { text: `${text.slice(0, FIELD_CHARS)}…`, truncated: true, length: text.length }
+		: { text };
 }
 
 export const NOT_SHOWN =
-	"Compares the entry's own fields as text. Not shown: the SEO panel (search title, description, sharing picture), categories, tags, bylines and menus; pictures and files are named as changed, not shown; formatting and link addresses inside rich text are left out, only its words are shown.";
+	"Compares the entry's own fields as text. A field longer than 2,000 characters is truncated: only the part that changed is returned, with some text around it, marked truncated: true with the full lengths (beforeLength, afterLength); open the entry to read all of it. Not shown: the SEO panel (search title, description, sharing picture), categories, tags, bylines and menus; pictures and files are named as changed, not shown; formatting and link addresses inside rich text are left out, only its words are shown.";
 
 /**
  * What a request would change, field by field. 5 calls: settings, the request, the page (2),
@@ -350,28 +425,26 @@ export async function changesTool(ctx: PluginContext, user: UserInfo | undefined
 		request?.requestedBy?.id !== user.id
 	)
 		return NOT_YOURS;
+	if (!request) return { error: "Nothing waits for approval on this entry: it has no request." };
 	const info = await collectionInfo(ctx, collection);
 	const after = copyOf(info, draft.data);
 	const before = draft.live ? new Map(copyOf(info, draft.live.data).map((f) => [f.slug, f])) : null;
-	const fields: Array<{
-		field: string;
-		label: string;
-		before: string | null;
-		after: string | null;
-		change: string;
-	}> = [];
+	const fields: Array<{ field: string; label: string } & FieldShown> = [];
 	for (const field of after) {
 		const was = before?.get(field.slug);
 		before?.delete(field.slug);
 		if (!before) {
-			if (field.text !== "")
+			if (field.text !== "") {
+				const shown = clip(field.text);
 				fields.push({
 					field: field.slug,
 					label: field.label,
 					before: null,
-					after: clip(field.text),
+					after: shown.text,
 					change: "new",
+					...(shown.truncated ? { truncated: true, afterLength: shown.length } : {}),
 				});
+			}
 			continue;
 		}
 		if (field.picture) {
@@ -387,23 +460,20 @@ export async function changesTool(ctx: PluginContext, user: UserInfo | undefined
 		}
 		const old = was?.text ?? "";
 		if (old === field.text) continue;
-		fields.push({
-			field: field.slug,
-			label: field.label,
-			before: old === "" ? null : clip(old),
-			after: field.text === "" ? null : clip(field.text),
-			change: `${describeTextChange(old, field.text, "future")}.`,
-		});
+		fields.push({ field: field.slug, label: field.label, ...shownChange(old, field.text) });
 	}
 	for (const gone of before?.values() ?? []) {
-		if (gone.text !== "")
+		if (gone.text !== "") {
+			const shown = clip(gone.text);
 			fields.push({
 				field: gone.slug,
 				label: gone.label,
-				before: clip(gone.text),
+				before: shown.text,
 				after: null,
 				change: "removed.",
+				...(shown.truncated ? { truncated: true, beforeLength: shown.length } : {}),
 			});
+		}
 	}
 	const waiting = request?.status === "waiting";
 	return {
@@ -466,8 +536,14 @@ export async function decideTool(
 	const key = requestKey(where.collection, where.id);
 	let decision: Decision;
 	if (kind === "approve") {
+		const version = typeof raw.version === "string" ? raw.version.trim() : "";
+		if (!version)
+			return {
+				error:
+					"Give the version: call changes first and pass its version, so only what you checked is approved.",
+			};
 		decision = await approve(ctx, config, user, key, {
-			seen: typeof raw.version === "string" ? raw.version : undefined,
+			seen: version,
 			publish: raw.publish !== false,
 			agent: true,
 		});
@@ -484,10 +560,18 @@ export async function decideTool(
 			...(state ? { state } : {}),
 			...(title ? { title } : {}),
 		};
+	const published = state === "published";
+	const scheduleNote =
+		kind === "approve" && decision.request?.wants === "schedule"
+			? published
+				? " This was a request to schedule; it is published now."
+				: " This was a request to schedule; its writer can schedule it now."
+			: "";
 	return {
 		ok: true,
-		message: noEmail(decision.message),
+		message: `${noEmail(decision.message)}${scheduleNote}`,
 		...(state ? { state } : {}),
+		...(kind === "approve" ? { published } : {}),
 		...(title ? { title } : {}),
 	};
 }

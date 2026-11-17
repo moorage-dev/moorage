@@ -22,8 +22,6 @@ import { canDecide } from "./views.js";
  */
 
 export const BULK = {
-	all: "bulk_all",
-	none: "bulk_none",
 	review: "bulk_review",
 	go: "bulk_go",
 	back: "bulk_back",
@@ -40,6 +38,7 @@ export interface BulkItem {
 /** The Waiting tab's form as it should open: what is ticked, and the choice made. */
 export interface BulkState {
 	ticked: Set<string>;
+	which?: "ticked" | "all";
 	do?: BulkDo;
 	reason?: string;
 }
@@ -155,7 +154,6 @@ export function bulkBlocks(
 	if (forYou.length === 0 || (forYou.length === 1 && !state?.ticked.size)) return [];
 	const values = forYou.map((r) => optionValue(r));
 	const ticked = values.filter((v) => state?.ticked.has(readOption(v)!.key));
-	const all = ticked.length === values.length;
 	stamp = (stamp + 1) % 1_000_000;
 	return [
 		{
@@ -165,21 +163,31 @@ export function bulkBlocks(
 			blocks: [
 				{
 					type: "context",
-					text: "Tick the pages, choose what to do, then press Continue. You see the list before anything happens.",
+					text: "Choose the pages and what to do, then press Check selection. You see the list before anything happens.",
 				},
 				{
 					type: "form",
 					block_id: `bulk-${Date.now().toString(36)}-${stamp}`,
 					fields: [
-						all
-							? { type: "button", action_id: BULK.none, label: "Clear all" }
-							: { type: "button", action_id: BULK.all, label: `Select all (${values.length})` },
+						// "Select all" as a choice inside the form: a button would draw the form again
+						// and lose the action and the note typed so far.
+						{
+							type: "radio",
+							action_id: "which",
+							label: "Which pages",
+							options: [
+								{ label: "Only the ones I tick", value: "ticked" },
+								{ label: `All ${values.length} waiting for you`, value: "all" },
+							],
+							initial_value: state?.which ?? "ticked",
+						},
 						{
 							type: "checkbox",
 							action_id: "pick",
 							label: "Pages waiting for you, oldest first",
 							options: forYou.map((r, i) => ({ label: optionLabel(r, names), value: values[i]! })),
 							initial_value: ticked,
+							condition: { field: "which", eq: "ticked" },
 						},
 						{
 							type: "radio",
@@ -200,7 +208,7 @@ export function bulkBlocks(
 							condition: { field: "do", eq: "send_back" },
 						},
 					],
-					submit: { label: "Continue", action_id: BULK.review },
+					submit: { label: "Check selection", action_id: BULK.review },
 				},
 			],
 		},
@@ -278,13 +286,11 @@ export function confirmView(input: {
 			`${gone} of those ${gone === 1 ? "is" : "are"} no longer waiting for you, so ${gone === 1 ? "it is" : "they are"} left out.`,
 		);
 	if (input.do === "publish") {
-		notes.push(
-			"Oldest first. As with Approve and publish on one page, a request to schedule goes live now.",
-		);
+		notes.push("Oldest first.");
+		if (chosen.some((row) => row.request.wants === "schedule"))
+			notes.push("A request to schedule is approved, not published: its writer then schedules it.");
 	}
-	notes.push(
-		"A few are done at a time; any page that changed since you looked is left for you to review.",
-	);
+	notes.push("Any page that changed since this list was drawn is skipped and stays in Waiting.");
 	blocks.push(
 		{ type: "context", text: notes.join(" ") },
 		{
@@ -355,7 +361,7 @@ export async function runBulk(
 				config,
 				user,
 				item.key,
-				{ seen: item.seen, publish: true },
+				{ seen: item.seen, publish: true, keepSchedule: true },
 				{ info },
 			);
 		} else {
@@ -366,6 +372,23 @@ export async function runBulk(
 	return { results, rest: items.slice(next) };
 }
 
+/** One request's line on the results: done, approved but not live, or not done and why. */
+function outcome(decision: Decision): { state: "done" | "approved" | "failed"; text: string } {
+	const request = decision.request;
+	if (!request) return { state: "failed", text: "This request no longer exists." };
+	if (decision.ok && request.status === "approved" && request.wants === "schedule") {
+		const writer = request.requestedBy && !request.ai ? request.requestedBy.name : null;
+		return {
+			state: "done",
+			text: `Approved. ${writer ? `${writer.split(" ")[0]} can` : "Its writer can"} schedule it now.`,
+		};
+	}
+	if (decision.ok) return { state: "done", text: decision.message };
+	if (request.status === "approved")
+		return { state: "approved", text: "Approved, not live yet: press Publish on the page." };
+	return { state: "failed", text: `Not done: ${decision.message}` };
+}
+
 /** After a press: each request's outcome, then Continue for the rest or the way back. */
 export function resultView(
 	what: BulkDo,
@@ -373,17 +396,16 @@ export function resultView(
 	results: Result[],
 	rest: BulkItem[],
 ): BlockResponse {
-	const ok = results.filter((r) => r.decision.ok).length;
-	const failed = results.filter((r) => !r.decision.ok);
+	const lines = results.map((r) => ({ ...r, ...outcome(r.decision) }));
+	const ok = lines.filter((r) => r.state === "done").length;
+	const notLive = lines.filter((r) => r.state === "approved").length;
+	const failed = lines.filter((r) => r.state === "failed");
 	const blocks: Block[] = [{ type: "header", text: "Approvals" }];
 	blocks.push({ type: "header", text: VERB[what] });
-	for (const { item, decision } of results) {
+	for (const line of lines) {
 		blocks.push(
-			{ type: "section", text: decision.request?.title ?? item.key },
-			{
-				type: "context",
-				text: decision.ok ? decision.message : `Not done: ${decision.message}`,
-			},
+			{ type: "section", text: line.decision.request?.title ?? line.item.key },
+			{ type: "context", text: line.text },
 		);
 	}
 	const back = {
@@ -414,6 +436,7 @@ export function resultView(
 		blocks.push({ type: "actions", elements: [{ ...back, style: "primary" as const }] });
 	}
 	const parts = [`${DONE[what]} ${ok}.`];
+	if (notLive > 0) parts.push(`${notLive} approved, not live yet.`);
 	if (failed.length > 0) parts.push(`${failed.length} could not be: see below.`);
 	if (rest.length > 0) parts.push(`${rest.length} more to go: press Continue.`);
 	return {

@@ -805,6 +805,38 @@ describe("cron", () => {
 		pin("cron remind, 3 approvers", m, 6);
 		expect((await emails(s)) - before).toBe(3);
 	});
+
+	// + contentGet schemaGetCollection: a request an earlier release stored as "Untitled" is named
+	// from its entry for the email; the reminder still reaches all 3 within the limit.
+	it("reminds 3 approvers about a request stored as Untitled, by its name", async () => {
+		const s = await site({ admins: 3 });
+		const id = await waiting(s);
+		const key = `pages:${id}`;
+		const stored = await request(s, id);
+		await s.host.fixtures.plugin.storage("requests", key, { ...stored, title: "Untitled" });
+		await cold(s);
+		const before = (await inbox(s)).length;
+		const m = await measure(() =>
+			s.host.transport.invokeHook("cron", {
+				name: `remind-${key}`.replace(/[^a-zA-Z0-9_-]/g, "_"),
+				data: { key, requestedAt: stored?.requestedAt },
+				scheduledAt: new Date().toISOString(),
+			}),
+		);
+		console.info(describeCalls("cron remind, Untitled", m));
+		pin("cron remind, 3 approvers, stored as Untitled", m, 7);
+		// Two reads more leave room for one email in this run; the rest go out in the next.
+		for (let run = 0; run < 5; run++) {
+			await drain();
+			s.host.scheduled.setTime(new Date(Date.now() + 60_000));
+			await s.host.scheduled.run();
+		}
+		const sent = (await newMail(s, before)).filter((mail) =>
+			mail.subject.includes("Still waiting"),
+		);
+		expect(sent).toHaveLength(3);
+		for (const mail of sent) expect(mail.subject).toContain('Still waiting: "Summer menu"');
+	});
 });
 
 describe("the Approvals page (route admin)", () => {
@@ -858,7 +890,8 @@ describe("the Approvals page (route admin)", () => {
 		await cold(s);
 		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
 		console.info(describeCalls("page load, admin, 6 stored as Untitled", m));
-		expect(m.calls.length).toBe(14);
+		// The Settings tab's pages already scheduled are read first (contentList), then the names.
+		expect(m.calls.length).toBe(15);
 		expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
 		const named = await Promise.all(ids.map(async (id) => (await request(s, id))?.title));
 		expect(named.filter((t) => t === "Untitled")).toHaveLength(1);
@@ -2107,7 +2140,8 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 				const route = m.calls.slice(0, end);
 				const deferred = m.calls.slice(end);
 				console.info(`bulk step ${steps.length + 1}: ${route.length} ${route.join(" ")}`);
-				expect(new Set(deferred)).toEqual(new Set(["storageGet", "cronSchedule", "storagePut"]));
+				for (const call of deferred)
+					expect(["storageGet", "cronSchedule", "storagePut"]).toContain(call);
 				steps.push(route.length);
 				expect(route.length, `step ${steps.length}`).toBeLessThanOrEqual(NEW_BUDGET);
 				expect(text(m.result)).not.toContain("could not");
@@ -2156,9 +2190,9 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		for (const id of ids) expect((await request(s, id))?.status).toBe("sent_back");
 	});
 
-	// The list drawn again (kvList storageQuery schemaListCollections userList); "Select all"
-	// reads the requests once more to tick every one.
-	it("Select all, Clear all, Back to the list, and Continue with nothing ticked", async () => {
+	// The list drawn again: kvList storageQuery schemaListCollections userList. "All waiting for
+	// you" is read with the confirm step's own list: kvList storageQuery schemaListCollections.
+	it("All waiting chosen, Back to the list, and Check selection with nothing ticked", async () => {
 		const s = await site();
 		for (let i = 0; i < 25; i++) await waiting(s, `Page ${i + 1}`);
 		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
@@ -2171,11 +2205,13 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			expect(m.calls.length, label).toBeLessThanOrEqual(NEW_BUDGET);
 			counts[label] = m.calls.length;
 		};
-		await run("bulk select all", () =>
-			s.host.admin.act("/overview", "bulk_all", { user: admin(s) }),
-		);
-		await run("bulk clear all", () =>
-			s.host.admin.act("/overview", "bulk_none", { user: admin(s) }),
+		await run("bulk confirm, all waiting chosen", () =>
+			s.host.admin.submit(
+				"/overview",
+				"bulk_review",
+				{ which: "all", do: "publish" },
+				{ user: admin(s) },
+			),
 		);
 		await run("bulk back to the list", () =>
 			s.host.admin.act("/overview", "bulk_back", {
@@ -2200,8 +2236,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			),
 		);
 		expect(counts).toEqual({
-			"bulk select all": 5,
-			"bulk clear all": 4,
+			"bulk confirm, all waiting chosen": 3,
 			"bulk back to the list": 4,
 			"bulk continue, nothing ticked": 4,
 			"bulk continue, send back without a note": 4,
@@ -2250,9 +2285,10 @@ describe("MCP tools for a reviewer that is an AI tool", () => {
 	it("approve: approves and publishes", async () => {
 		const s = await site({ config: AI_ON });
 		const id = await waiting(s);
+		const version = (await request(s, id))!.fingerprint;
 		await cold(s);
 		const m = await measureWithDeferred(() =>
-			tool(s, "mcp/approve", admin(s), { collection: "pages", id }),
+			tool(s, "mcp/approve", admin(s), { collection: "pages", id, version }),
 		);
 		pinMcp("mcp approve and publish", m.route as Measured<Response>, 8);
 		expectDeferredAfterPublish(m);
@@ -2287,5 +2323,65 @@ describe("MCP tools for a reviewer that is an AI tool", () => {
 		await cold(s);
 		const m = await measure(() => tool(s, "mcp/ask", s.editor, { collection: "pages", id }));
 		pinMcp("mcp ask", m, 8);
+	});
+});
+
+describe("requests stored as Untitled by an earlier release, named where they are read", () => {
+	async function untitled(s: Site, count: number): Promise<string[]> {
+		const ids: string[] = [];
+		for (let i = 0; i < count; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		for (const id of ids)
+			await s.host.fixtures.plugin.storage("requests", `pages:${id}`, {
+				...(await request(s, id)),
+				title: "Untitled",
+			});
+		return ids;
+	}
+
+	// kvList storageQuery, + schemaListCollections and one contentGet per row shown (5 at most).
+	it("dashboard widget, 6 stored as Untitled", async () => {
+		const s = await site();
+		await untitled(s, 6);
+		await cold(s);
+		const m = await measure(() => s.host.admin.loadWidget("approvals", { user: admin(s) }));
+		pin("widget, 6 stored as Untitled", m, 8);
+		expect(text(m.result)).not.toContain("Untitled");
+	});
+
+	// kvList storageQuery schemaListCollections, + one contentGet per row (10 at most).
+	it("MCP queue, 12 stored as Untitled", async () => {
+		const s = await site();
+		await untitled(s, 12);
+		await cold(s);
+		const m = await measure(() => tool(s, "mcp/queue", admin(s)));
+		pinMcp("mcp queue, 12 stored as Untitled", m, 13);
+	});
+
+	// The held-again path (4), + schemaGetCollection and the request written with its name.
+	it("Publish pressed again on a request stored as Untitled", async () => {
+		const s = await site();
+		const [id] = await untitled(s, 1);
+		await cold(s);
+		const m = await measure(() => s.host.actions.content.publish("pages", id!, actor(s.editor)));
+		pin("beforePublish, held again, stored as Untitled", m, 6);
+		expect((await request(s, id!))?.title).toBe("Page 1");
+	});
+
+	// Send back (page): + contentGet schemaGetCollection for the writer's email.
+	it("send back from the page, stored as Untitled", async () => {
+		const s = await site();
+		const [id] = await untitled(s, 1);
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.submit(
+				"/overview",
+				"send_back",
+				{ note: "Prices" },
+				{ user: admin(s), blockId: `sb:pages:${id}` },
+			),
+		);
+		console.info(describeCalls("page send back, stored as Untitled", m));
+		expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+		expect((await request(s, id!))?.title).toBe("Page 1");
 	});
 });

@@ -219,6 +219,16 @@ describe("tool queue", () => {
 		expect((data.yours as Array<{ id: string }>)[0]!.id).toBe(own);
 	});
 
+	it("names a request an earlier version stored as Untitled", async () => {
+		const s = await site();
+		const id = await waiting(s, s.editor, "Summer menu");
+		const key = `pages:${id}`;
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", key);
+		await s.host.fixtures.plugin.storage("requests", key, { ...stored, title: "Untitled" });
+		const { data } = await call(s, "mcp/queue", s.admin);
+		expect((data.forYou as Array<{ title: string }>)[0]!.title).toBe("Summer menu");
+	});
+
 	it("gives a Subscriber nothing", async () => {
 		const s = await site();
 		await waiting(s, s.editor, "Summer menu");
@@ -335,6 +345,12 @@ describe("tool status", () => {
 
 const AI_ON = { ...HELD, aiApprove: true };
 
+/** The version `changes` returns for an entry, as an Admin sees it. */
+async function version(s: Site, id: string): Promise<string> {
+	const { data } = await call(s, "mcp/changes", s.admin, { collection: "pages", id });
+	return data.version as string;
+}
+
 describe("tool changes", () => {
 	it("shows a new page field by field, with nothing before", async () => {
 		const s = await site();
@@ -365,7 +381,11 @@ describe("tool changes", () => {
 	it("shows only what differs from the live page, before and after, from a request id", async () => {
 		const s = await site(AI_ON);
 		const id = await waiting(s, s.editor, "Summer menu");
-		await call(s, "mcp/approve", s.admin, { collection: "pages", id });
+		await call(s, "mcp/approve", s.admin, {
+			collection: "pages",
+			id,
+			version: await version(s, id),
+		});
 		await settled();
 		const updated = await s.host.actions.content.update("pages", id, {
 			data: { content: "Iced coffee £3.40 and lemon tart" },
@@ -390,6 +410,53 @@ describe("tool changes", () => {
 		]);
 	});
 
+	it("refuses an entry with no request", async () => {
+		const s = await site();
+		const id = await page(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/changes", s.admin, { collection: "pages", id });
+		expect(data).toEqual({ error: "Nothing waits for approval on this entry: it has no request." });
+	});
+
+	it("shows a change past 2,000 characters, and says what it did not show", async () => {
+		const s = await site();
+		const long = (end: string) =>
+			`${"Bread and butter. ".repeat(180)}Price ${end}. ${"Cake. ".repeat(100)}`;
+		const id = await page(s, s.editor, "Summer menu");
+		const set = async (content: string) => {
+			const updated = await s.host.actions.content.update("pages", id, {
+				data: { content },
+				actor: { id: s.admin.id, role: s.admin.role },
+			});
+			if (!updated.success) throw new Error(updated.error.message);
+		};
+		await set(long("3.20"));
+		const live = await s.host.actions.content.publish("pages", id, {
+			actor: { id: s.admin.id, role: s.admin.role },
+			origin: { source: "api" },
+		});
+		expect(live.success).toBe(true);
+		await settled();
+		await set(long("3.40"));
+		await s.host.actions.content.publish("pages", id, {
+			actor: { id: s.editor.id, role: s.editor.role },
+			origin: { source: "api" },
+		});
+		await settled();
+		const { data } = await call(s, "mcp/changes", s.admin, { collection: "pages", id });
+		const fields = data.fields as Array<Record<string, unknown>>;
+		expect(fields).toHaveLength(1);
+		const field = fields[0]!;
+		expect(field.change).toBe('"3.20." becomes "3.40.".');
+		expect(field.truncated).toBe(true);
+		expect(field.beforeLength).toBe(long("3.20").trim().length);
+		expect(String(field.before)).toContain("Price 3.20");
+		expect(String(field.after)).toContain("Price 3.40");
+		expect(String(field.after).length).toBeLessThanOrEqual(2002);
+		expect(String(data.notShown)).toMatch(/truncated/);
+		const tool = s.host.manifest.mcp?.tools.find((t) => t.name === "changes");
+		expect(tool?.description).toMatch(/truncated/);
+	});
+
 	it("shows an Author only their own pages", async () => {
 		const s = await site();
 		const id = await waiting(s, s.editor, "Summer menu");
@@ -399,6 +466,60 @@ describe("tool changes", () => {
 });
 
 describe("tools approve and send_back", () => {
+	it("approve refuses without the version the AI tool checked", async () => {
+		const s = await site(AI_ON);
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/approve", s.admin, { collection: "pages", id });
+		expect(data.error).toBe(
+			"Give the version: call changes first and pass its version, so only what you checked is approved.",
+		);
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+		const tool = s.host.manifest.mcp?.tools.find((t) => t.name === "approve");
+		expect(tool?.inputSchema).toMatchObject({ required: ["version"] });
+	});
+
+	it("approve says when a request to schedule was published now", async () => {
+		const s = await site(AI_ON);
+		const id = await page(s, s.editor, "Summer menu");
+		const held = await s.host.actions.content.schedule(
+			"pages",
+			id,
+			new Date(Date.now() + 86_400_000).toISOString(),
+			{
+				actor: { id: s.editor.id, role: s.editor.role },
+				origin: { source: "api" },
+			},
+		);
+		expect(held.success).toBe(false);
+		const { data } = await call(s, "mcp/approve", s.admin, {
+			collection: "pages",
+			id,
+			version: await version(s, id),
+		});
+		await settled();
+		expect(data).toMatchObject({ ok: true, state: "published", published: true });
+		expect(String(data.message)).toContain("This was a request to schedule; it is published now.");
+		const off = await page(s, s.editor, "Bake sale");
+		await s.host.actions.content.schedule(
+			"pages",
+			off,
+			new Date(Date.now() + 86_400_000).toISOString(),
+			{
+				actor: { id: s.editor.id, role: s.editor.role },
+				origin: { source: "api" },
+			},
+		);
+		const later = await call(s, "mcp/approve", s.admin, {
+			collection: "pages",
+			id: off,
+			version: await version(s, off),
+			publish: false,
+		});
+		expect(later.data).toMatchObject({ ok: true, state: "approved", published: false });
+		const tool = s.host.manifest.mcp?.tools.find((t) => t.name === "approve");
+		expect(tool?.description).toMatch(/request to schedule is published now/);
+	});
+
 	it("refuse while AI approval is off, and say where to switch it on", async () => {
 		const s = await site();
 		const id = await waiting(s, s.editor, "Summer menu");
@@ -414,7 +535,11 @@ describe("tools approve and send_back", () => {
 	it("approve and publish, recorded as an AI tool acting for the person", async () => {
 		const s = await site(AI_ON);
 		const id = await waiting(s, s.editor, "Summer menu");
-		const { data } = await call(s, "mcp/approve", s.admin, { collection: "pages", id });
+		const { data } = await call(s, "mcp/approve", s.admin, {
+			collection: "pages",
+			id,
+			version: await version(s, id),
+		});
 		await settled();
 		expect(data).toMatchObject({ ok: true, state: "published" });
 		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
@@ -422,7 +547,7 @@ describe("tools approve and send_back", () => {
 		expect(stored?.history.map((h) => h.text)).toContain(
 			"An AI tool acting for Ellen Marsh approved",
 		);
-		expect(stored?.history[0]?.text).toBe("Published by An AI tool acting for Ellen Marsh");
+		expect(stored?.history[0]?.text).toBe("Published by an AI tool acting for Ellen Marsh");
 	});
 
 	it("approve without publishing when asked", async () => {
@@ -431,6 +556,7 @@ describe("tools approve and send_back", () => {
 		const { data } = await call(s, "mcp/approve", s.admin, {
 			collection: "pages",
 			id,
+			version: await version(s, id),
 			publish: false,
 		});
 		expect(data).toMatchObject({ ok: true, state: "approved" });
@@ -440,7 +566,11 @@ describe("tools approve and send_back", () => {
 	it("may approve a request made by the same person when AI approval is on", async () => {
 		const s = await site({ ...AI_ON, preset: "me" });
 		const id = await waiting(s, s.editor, "Summer menu");
-		const { data } = await call(s, "mcp/approve", s.editor, { collection: "pages", id });
+		const { data } = await call(s, "mcp/approve", s.editor, {
+			collection: "pages",
+			id,
+			version: await version(s, id),
+		});
 		await settled();
 		expect(data).toMatchObject({ ok: true, state: "published" });
 	});
@@ -460,7 +590,11 @@ describe("tools approve and send_back", () => {
 	it("refuse someone who does not approve on this site", async () => {
 		const s = await site(AI_ON);
 		const id = await waiting(s, s.author, "Summer menu");
-		const { data } = await call(s, "mcp/approve", s.editor, { collection: "pages", id });
+		const { data } = await call(s, "mcp/approve", s.editor, {
+			collection: "pages",
+			id,
+			version: await version(s, id),
+		});
 		expect(data.error).toBe("You can't approve on this site.");
 	});
 
@@ -471,7 +605,7 @@ describe("tools approve and send_back", () => {
 			s,
 			"mcp/approve",
 			s.editor,
-			{ collection: "pages", id },
+			{ collection: "pages", id, version: await version(s, id) },
 			{ mcp: false },
 		);
 		expect(data.error).toMatch(/only through an AI tool connected with MCP/);
@@ -498,6 +632,21 @@ describe("tools approve and send_back", () => {
 });
 
 describe("tool ask_approval", () => {
+	it("asks on a content type not ticked when what AI tools publish is held", async () => {
+		const s = await site({ ...HELD, collections: [] });
+		const id = await page(s, s.author, "Summer menu");
+		const { data } = await call(s, "mcp/ask", s.author, { collection: "pages", id });
+		expect(data).toMatchObject({ ok: true });
+		expect(String(data.message)).toMatch(/^Sent for approval\./);
+	});
+
+	it("says approval is off on a type not ticked when AI publishing is not held", async () => {
+		const off = await site({ ...HELD, collections: [], ai: false });
+		const other = await page(off, off.author, "Summer menu");
+		const refused = await call(off, "mcp/ask", off.author, { collection: "pages", id: other });
+		expect(String(refused.data.message)).toBe("Approval is off for Pages.");
+	});
+
 	it("asks for approval of a draft without a publish, as from an AI tool", async () => {
 		const s = await site();
 		const id = await page(s, s.author, "Summer menu");

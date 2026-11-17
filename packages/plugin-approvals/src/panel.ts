@@ -7,7 +7,15 @@ import { approve, saveNote, sendBack, withdraw, type Decision } from "./actions.
 import { loadConfig } from "./config.js";
 import type { Meter } from "./meter.js";
 import type { Draft, UserInfo } from "./requests.js";
-import { approvers, collectionInfo, readDraft, requestKey, requests, when } from "./requests.js";
+import {
+	approvers,
+	collectionInfo,
+	inSentence,
+	readDraft,
+	requestKey,
+	requests,
+	when,
+} from "./requests.js";
 import {
 	ACTION,
 	askedLine,
@@ -140,7 +148,7 @@ export async function handlePanel(
 			blocks: [
 				{
 					type: "banner",
-					title: `Sent back by ${request.sentBack.by.name}, ${when(request.sentBack.at)}`,
+					title: `Sent back by ${inSentence(request.sentBack.by.name)}, ${when(request.sentBack.at)}`,
 					description: `"${request.sentBack.note}"`,
 				},
 				{ type: "section", text: "Make the changes, save, then press Publish again." },
@@ -209,7 +217,7 @@ export async function handlePanel(
 	} else if (request.status === "approved" && request.approval) {
 		if (request.approval.fingerprint === draft.fingerprint) {
 			blocks.push(
-				{ type: "section", text: `Approved by ${request.approval.by.name}` },
+				{ type: "section", text: `Approved by ${inSentence(request.approval.by.name)}` },
 				{
 					type: "context",
 					text: `${when(request.approval.at)}. Press Publish when you're ready, or schedule it.`,
@@ -221,7 +229,7 @@ export async function handlePanel(
 				{
 					type: "banner",
 					variant: "alert",
-					title: `Changed since ${request.approval.by.name} approved it`,
+					title: `Changed since ${inSentence(request.approval.by.name)} approved it`,
 					description:
 						changes.length > 0
 							? changes.map((c) => `${c.label}: ${c.text}`).join(" ")
@@ -233,7 +241,7 @@ export async function handlePanel(
 	} else if (request.status === "published") {
 		blocks.push({
 			type: "section",
-			text: `Published ${when(request.publishedAt ?? request.updatedAt)}.${request.approval ? ` Approved by ${request.approval.by.name}.` : ""}`,
+			text: `Published ${when(request.publishedAt ?? request.updatedAt)}.${request.approval ? ` Approved by ${inSentence(request.approval.by.name)}.` : ""}`,
 		});
 		if (request.approval && request.approval.fingerprint !== draft.fingerprint) {
 			blocks.push({

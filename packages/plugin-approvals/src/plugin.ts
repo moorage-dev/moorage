@@ -34,6 +34,7 @@ import { gate } from "./policy.js";
 import {
 	addHistory,
 	collectionInfo,
+	inSentence,
 	liveChange,
 	personName,
 	readDraft,
@@ -179,7 +180,7 @@ const plugin: SandboxedPlugin = {
 							: request.approval,
 					};
 					delete updated.publishing;
-					addHistory(updated, now, `Published by ${pending.by.name}`);
+					addHistory(updated, now, `Published by ${inSentence(pending.by.name)}`);
 					await store.put(key, updated);
 					return;
 				}

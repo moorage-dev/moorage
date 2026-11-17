@@ -82,6 +82,8 @@ export interface ApprovalRequest {
 	 * differ from the live page. Missing on requests made before 0.5.0.
 	 */
 	changed?: { live: boolean; fields: string[] };
+	/** An earlier release stored it as "Untitled" and its entry could not be read to name it. */
+	nameTried?: boolean;
 	/**
 	 * "Approve and publish" pressed: the publish that follows records "Published by" and sends
 	 * these emails (content:afterPublish), so the button itself stays within its calls.
@@ -264,8 +266,37 @@ export function titleOf(
 /** The name an earlier release stored for an entry it could not name. */
 export const UNNAMED = "Untitled";
 
+/**
+ * A request's name, read from its entry when an earlier release stored it as "Untitled": the
+ * entry (one call) and, unless `titleField` is given, its content type (one more). The stored
+ * name otherwise, or when the entry cannot be read.
+ */
+export async function nameNow(
+	ctx: PluginContext,
+	request: Pick<ApprovalRequest, "title" | "collection" | "entryId">,
+	titleField?: string | null,
+): Promise<string> {
+	if (request.title !== UNNAMED || !ctx.content) return request.title;
+	try {
+		const item = await ctx.content.get(request.collection, request.entryId);
+		if (!item) return request.title;
+		const field =
+			titleField !== undefined
+				? titleField
+				: (await ctx.schema?.getCollection(request.collection))?.titleField;
+		return entryName(field, item.data ?? {}, item.slug, request.entryId);
+	} catch {
+		return request.title;
+	}
+}
+
 export function copyOf(info: CollectionInfo, data: Record<string, unknown>): FieldText[] {
 	return textCopy(info.fields, data, info.title);
+}
+
+/** A name inside a sentence: "an AI tool acting for Ellen Marsh", a person's name as it is. */
+export function inSentence(name: string): string {
+	return name.startsWith("An AI tool ") ? `a${name.slice(1)}` : name;
 }
 
 export function personName(user: Pick<UserInfo, "name" | "email"> | null | undefined): string {

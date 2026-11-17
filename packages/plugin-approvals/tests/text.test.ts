@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { publishFailedMessage } from "../src/actions.js";
+import { resultView } from "../src/bulk.js";
 import { emailFailureHint, writerJob } from "../src/notify.js";
 import { entryName, when } from "../src/requests.js";
 import {
@@ -220,5 +221,40 @@ describe("the writer's email after a send back", () => {
 			'The note from an AI tool acting for Ellen Marsh: "Prices"',
 		);
 		expect(job?.message.text).not.toContain("An's note");
+	});
+});
+
+describe("a bulk result line", () => {
+	const request = (status: string, wants = "publish") =>
+		({
+			collection: "pages",
+			entryId: "01J",
+			title: "Summer menu",
+			status,
+			wants,
+			requestedBy: { id: "u1", name: "Sam Reyes" },
+			ai: false,
+			history: [],
+		}) as never;
+	const line = (decision: Parameters<typeof resultView>[2][number]["decision"]) =>
+		JSON.stringify(
+			resultView("publish", "", [{ item: { key: "pages:01J", seen: "f" }, decision }], []),
+		);
+
+	it("says an approval that could not be published is approved, not live, without 'Not done'", () => {
+		const text = line({
+			ok: false,
+			message: "Approved, but it could not be published just now. Press Publish on the page.",
+			request: request("approved"),
+		});
+		expect(text).toContain("Approved, not live yet: press Publish on the page.");
+		expect(text).not.toContain("Not done");
+		expect(text).toContain("1 approved, not live yet.");
+	});
+
+	it("says a request that is gone no longer exists", () => {
+		expect(line({ ok: false, message: "This request has already been decided." })).toContain(
+			"This request no longer exists.",
+		);
 	});
 });

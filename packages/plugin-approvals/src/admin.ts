@@ -35,7 +35,9 @@ import {
 	approvers,
 	collectionInfo,
 	entryName,
+	inSentence,
 	mayApprove,
+	nameNow,
 	personName,
 	readDraft,
 	requests,
@@ -44,6 +46,7 @@ import {
 	versions,
 	when,
 	type ApprovalRequest,
+	type ApprovedVersion,
 } from "./requests.js";
 import { writeSettings } from "./settings-store.js";
 import { nameList, readableDates } from "./text.js";
@@ -251,7 +254,7 @@ function sentBackRows(list: ApprovalRequest[], names: Map<string, string>): Bloc
 			{ type: "section", text: request.title, accessory: openLink(request) },
 			{
 				type: "context",
-				text: `${names.get(request.collection) ?? request.collection} · sent back by ${request.sentBack?.by.name ?? "an approver"}, ${ago(request.sentBack?.at ?? request.updatedAt)}: "${request.sentBack?.note ?? ""}"`,
+				text: `${names.get(request.collection) ?? request.collection} · sent back by ${inSentence(request.sentBack?.by.name ?? "an approver")}, ${ago(request.sentBack?.at ?? request.updatedAt)}: "${request.sentBack?.note ?? ""}"`,
 			},
 			{ type: "divider" },
 		);
@@ -264,8 +267,8 @@ function summary(request: ApprovalRequest): string {
 	const edited = (request.edits ?? []).map((e) => e.by.name);
 	const approvedBy = a
 		? a.override !== undefined
-			? `approved without review by ${a.by.name}, ${when(a.at)}: "${a.override}"`
-			: `approved by ${a.by.name}${edited.length > 0 ? `, edited by ${nameList([...new Set(edited)])} before approving` : ""}`
+			? `approved without review by ${inSentence(a.by.name)}, ${when(a.at)}: "${a.override}"`
+			: `approved by ${inSentence(a.by.name)}${edited.length > 0 ? `, edited by ${nameList([...new Set(edited)])} before approving` : ""}`
 		: "";
 	switch (request.status) {
 		case "published":
@@ -273,9 +276,9 @@ function summary(request: ApprovalRequest): string {
 		case "approved":
 			return a?.override !== undefined
 				? approvedBy.charAt(0).toUpperCase() + approvedBy.slice(1)
-				: `Approved by ${a?.by.name ?? "?"}, ${when(a?.at ?? request.updatedAt)}`;
+				: `Approved by ${inSentence(a?.by.name ?? "?")}, ${when(a?.at ?? request.updatedAt)}`;
 		case "sent_back":
-			return `Sent back by ${request.sentBack?.by.name ?? "an approver"}, ${when(request.sentBack?.at ?? request.updatedAt)}: "${request.sentBack?.note ?? ""}"`;
+			return `Sent back by ${inSentence(request.sentBack?.by.name ?? "an approver")}, ${when(request.sentBack?.at ?? request.updatedAt)}: "${request.sentBack?.note ?? ""}"`;
 		case "closed":
 			return request.history[0]?.text ?? "Closed";
 		default:
@@ -283,8 +286,18 @@ function summary(request: ApprovalRequest): string {
 	}
 }
 
-async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise<Block[]> {
-	const rows = list.slice(0, HISTORY_ROWS);
+/** The approved text copies of the History rows: one call, none when nothing was approved. */
+async function approvedCopies(
+	ctx: PluginContext,
+	rows: ApprovalRequest[],
+): Promise<Map<string, ApprovedVersion>> {
+	const ids = rows
+		.map((r) => r.approval?.versionId)
+		.filter((id): id is string => typeof id === "string");
+	return ids.length > 0 ? await versions(ctx).getMany(ids) : new Map();
+}
+
+function historyRows(rows: ApprovalRequest[], copies: Map<string, ApprovedVersion>): Block[] {
 	if (rows.length === 0)
 		return [
 			{
@@ -293,10 +306,6 @@ async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise
 				description: "Approvals and pages sent back appear here.",
 			},
 		];
-	const ids = rows
-		.map((r) => r.approval?.versionId)
-		.filter((id): id is string => typeof id === "string");
-	const copies = ids.length > 0 ? await versions(ctx).getMany(ids) : new Map();
 	const blocks: Block[] = [];
 	for (const request of rows) {
 		blocks.push(
@@ -337,12 +346,19 @@ async function nameUnnamed(
 ): Promise<void> {
 	const ctx = m.ctx;
 	if (!ctx.content) return;
-	const unnamed = shown.filter((r) => r.title === UNNAMED).slice(0, RENAMED_PER_LOAD);
+	// Closed rows are left as they are; a row whose entry is gone is marked, so the next load
+	// moves on to the rows after it.
+	const unnamed = shown
+		.filter((r) => r.title === UNNAMED && r.status !== "closed" && !r.nameTried)
+		.slice(0, RENAMED_PER_LOAD);
 	for (const request of unnamed) {
 		if (m.left(CALLS_PER_RUN_1_5) < 3) return;
 		try {
 			const item = await ctx.content.get(request.collection, request.entryId);
-			if (!item) continue;
+			if (!item) {
+				await requests(ctx).updateIf(key(request), { where: {}, set: { nameTried: true } });
+				continue;
+			}
 			const title = entryName(
 				titleFields.get(request.collection),
 				item.data ?? {},
@@ -524,7 +540,7 @@ function settingsBlocks(
 			{
 				type: "toggle",
 				action_id: "ai",
-				label: "AI tools connected to your site always need a person's OK",
+				label: "Hold what AI tools publish for approval",
 				description:
 					"Holds anything an AI tool publishes, on every content type, even those not ticked above. The person whose key the tool uses may approve it.",
 				initial_value: current.ai,
@@ -534,7 +550,7 @@ function settingsBlocks(
 				action_id: "aiApprove",
 				label: "AI tools may approve",
 				description:
-					"Lets an AI tool connected to your site approve and publish, or send back, what waits for approval, acting for the person whose key it uses, that person's own requests included. Each decision is recorded as made by an AI tool for that person. Off: only people decide.",
+					"Lets an AI tool connected to your site approve and publish, or send back, what waits for approval, acting for the person whose key it uses, that person's own requests included. Each decision is recorded as made by an AI tool for that person. This includes pages the AI tool itself wrote or published: with this on, an AI tool can put its own work live without a person. Off: only people decide.",
 				initial_value: current.aiApprove,
 			},
 			{
@@ -713,13 +729,6 @@ async function listPage(
 	const sentBack = visible(config, user, lists.sentBack);
 	const done = visible(config, user, lists.done);
 	const titleFields = new Map(collections.map((c) => [c.slug, c.titleField]));
-	// On opening the page: requests an earlier release could not name get their name now.
-	if (scheduledWith)
-		await nameUnnamed(
-			scheduledWith,
-			[...waiting, ...sentBack, ...done.slice(0, HISTORY_ROWS)],
-			titleFields,
-		);
 	// Nobody decides on their own request: an approver's own requests are listed apart.
 	const forYou = config ? waiting.filter((r) => canDecide(config, r, user)) : [];
 	const yours = waiting.filter((r) => !forYou.includes(r));
@@ -733,6 +742,20 @@ async function listPage(
 	// Under "I need someone else's OK" an approver's own work is held too.
 	const onlyApprover =
 		approver && config !== null && isHeldRole(config.preset, user?.role) && others.length === 0;
+
+	// Every read first, the rows after: the names an earlier release could not store are filled
+	// in last, with what is left of EmDash 1.5's allowance, so they never take the calls of the
+	// reads this page made before (the Settings tab's pages already scheduled among them).
+	const drafts = await draftRows(ctx, config, user, lists.all, names, titleFields);
+	const historyShown = done.slice(0, HISTORY_ROWS);
+	const copies = await approvedCopies(ctx, historyShown);
+	// Last of the page's own reads, so it uses only the calls left over.
+	const scheduled =
+		admin && scheduledWith
+			? await scheduledPages(scheduledWith, config, collections, lists.all)
+			: null;
+	if (scheduledWith)
+		await nameUnnamed(scheduledWith, [...waiting, ...sentBack, ...historyShown], titleFields);
 
 	const waitingBlocks: Block[] = [
 		{
@@ -778,13 +801,7 @@ async function listPage(
 
 	// Short labels, no counts: four tabs with counts ran off a 390 px phone's screen.
 	// The numbers at the top of Waiting carry the counts.
-	const drafts = await draftRows(ctx, config, user, lists.all, names, titleFields);
-	const history = await historyRows(ctx, done);
-	// Last, so it uses only the calls left over.
-	const scheduled =
-		admin && scheduledWith
-			? await scheduledPages(scheduledWith, config, collections, lists.all)
-			: null;
+	const history = historyRows(historyShown, copies);
 	const panels = [
 		{ label: "Waiting", blocks: [...waitingBlocks, ...drafts] },
 		{ label: "Sent back", blocks: sentBackRows(sentBack, names) },
@@ -909,7 +926,16 @@ async function widget(
 		{ type: "stats", items: [{ label: "Waiting for you", value: mine.length }] },
 	];
 	if (yours > 0) blocks.push({ type: "context", text: `${yours} of yours waiting` });
-	for (const request of mine.slice(0, 5)) {
+	const shown = mine.slice(0, 5);
+	// Requests an earlier release stored as "Untitled": named from their entries (one read each,
+	// and the content types once): 8 calls at most.
+	if (shown.some((r) => r.title === UNNAMED)) {
+		const types = (await ctx.schema?.listCollections()) ?? [];
+		const fields = new Map(types.map((c) => [c.slug, c.titleField]));
+		for (const request of shown)
+			request.title = await nameNow(ctx, request, fields.get(request.collection) ?? null);
+	}
+	for (const request of shown) {
 		blocks.push(
 			{ type: "section", text: request.title },
 			{
@@ -1055,13 +1081,6 @@ async function adminScreen(
 	}
 	if (config && interaction.type === "block_action") {
 		const raw = isRecord(interaction.value) ? interaction.value : {};
-		if (action === BULK.all || action === BULK.none) {
-			const lists = action === BULK.all ? await loadLists(ctx) : null;
-			const ticked = new Set(
-				(lists?.waiting ?? []).filter((r) => canDecide(config, r, user)).map((r) => key(r)),
-			);
-			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, { ticked });
-		}
 		if (action === BULK.back) {
 			const ticked = new Set(readItems(raw.items).map((item) => item.key));
 			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, { ticked });
@@ -1075,19 +1094,21 @@ async function adminScreen(
 	}
 	if (config && interaction.type === "form_submit" && action === BULK.review) {
 		const values = isRecord(interaction.values) ? interaction.values : {};
-		const items = readItems(values.pick);
+		const all = values.which === "all";
+		const ticked = readItems(values.pick);
 		const what = readDo(values.do);
 		const reason = typeof values.reason === "string" ? values.reason.trim() : "";
 		const state: BulkState = {
-			ticked: new Set(items.map((item) => item.key)),
+			ticked: new Set(ticked.map((item) => item.key)),
+			which: all ? "all" : "ticked",
 			do: what,
 			...(reason ? { reason } : {}),
 		};
 		const problem =
-			items.length === 0
-				? "Tick at least one page, then press Continue."
+			!all && ticked.length === 0
+				? "Tick at least one page, or choose all, then press Check selection."
 				: what === "send_back" && reason === ""
-					? "Write what should change, then press Continue."
+					? "Write what should change, then press Check selection."
 					: null;
 		if (problem) {
 			const toast = { type: "error" as const, message: problem };
@@ -1095,6 +1116,12 @@ async function adminScreen(
 		}
 		const lists = await loadLists(ctx);
 		const collections = (await ctx.schema?.listCollections()) ?? [];
+		// "All waiting for you": every request this person may decide, as the list stands now.
+		const items = all
+			? lists.waiting
+					.filter((r) => canDecide(config, r, user))
+					.map((r) => ({ key: key(r), seen: r.fingerprint }))
+			: ticked;
 		return confirmView({
 			config,
 			user,

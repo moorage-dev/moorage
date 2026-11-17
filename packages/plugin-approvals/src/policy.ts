@@ -15,6 +15,7 @@ import {
 	requests,
 	seoGaps,
 	when,
+	UNNAMED,
 	type ApprovalRequest,
 } from "./requests.js";
 import { cleanReason, fieldHashes, fingerprint, nameList, secondPerson } from "./text.js";
@@ -195,7 +196,7 @@ export function heldMessage(
 	const names = asked ?? "";
 	if (ai) {
 		const next = aiApprove
-			? "Do not publish it again: an approver, or an AI tool allowed to approve on this site, will decide."
+			? "Do not publish it again: an approver will decide."
 			: "Do not try again: a person will approve and publish it.";
 		const rule = aiApprove
 			? "On this site what AI tools publish waits for approval"
@@ -316,9 +317,13 @@ export async function gate(
 		const now = new Date().toISOString();
 		// The same version already waiting keeps its request as it is: no content type to read.
 		const again = existing?.status === "waiting" && existing.fingerprint === version;
-		const title = again
-			? existing.title
-			: entryName((await collectionInfo(ctx, event.collection)).title?.slug, data, slug, id);
+		// An earlier release's "Untitled" is named again, with one read of the content type.
+		const renamed = again && existing.title === UNNAMED;
+		const title =
+			again && !renamed
+				? existing.title
+				: entryName((await collectionInfo(ctx, event.collection)).title?.slug, data, slug, id);
+		if (renamed && existing) existing.title = title;
 		let requestedBy: ApprovalRequest["requestedBy"] = null;
 		if (event.actor) {
 			const user = await ctx.users?.get(event.actor.id).catch(() => null);
@@ -367,7 +372,8 @@ export async function gate(
 			if (content.status !== "published" || live) result.request.changed = liveChange(live, data);
 		}
 		if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
-		if (!result.again || result.notify || checksChanged) await store.put(key, result.request);
+		if (!result.again || result.notify || checksChanged || renamed)
+			await store.put(key, result.request);
 		// Email is sent by a one-shot task, so a slow email never delays the publish; that task
 		// also sets the two-day reminder.
 		if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);

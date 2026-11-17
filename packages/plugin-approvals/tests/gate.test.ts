@@ -203,14 +203,14 @@ describe("the publish gate", () => {
 		expect(result.error.message).toContain("Do not try again");
 	});
 
-	it("tells an AI tool that an allowed AI tool may decide, when AI approval is on", async () => {
+	it("tells a publishing AI tool that an approver will decide, when AI approval is on", async () => {
 		const s = await site({ ...HELD, aiApprove: true });
 		const id = await page(s, {}, s.admin);
 		const result = await s.host.actions.content.publish("pages", id, actor(s.admin, "mcp"));
 		expect(result.success).toBe(false);
 		if (result.success) return;
 		expect(result.error.message).toMatch(
-			/^Sent for approval\. Not live yet\. On this site what AI tools publish waits for approval; .*Do not publish it again: an approver, or an AI tool allowed to approve on this site, will decide\.$/,
+			/^Sent for approval\. Not live yet\. On this site what AI tools publish waits for approval; .*Do not publish it again: an approver will decide\.$/,
 		);
 	});
 
@@ -1072,15 +1072,21 @@ describe("deciding several at once from the Waiting list", () => {
 		expect(text(list)).toContain('"action_id":"review"');
 	});
 
-	it("selects all with one button, and never offers someone their own request", async () => {
+	it("selects all with one choice, and never offers someone their own request", async () => {
 		const s = await site({ ...HELD, preset: "me" });
 		await held(s, "Summer menu");
 		await held(s, "Bake sale");
 		await held(s, "Ellen's own", s.admin);
-		const all = await s.host.admin.act("/overview", "bulk_all", { user: s.admin });
-		const form = bulkForm(all);
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }));
 		expect(form?.options.map((o) => o.label.split(" · ")[0])).toEqual(["Summer menu", "Bake sale"]);
-		expect(form?.ticked).toHaveLength(2);
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain("Approve and publish these 2?");
+		expect(text(confirm)).not.toContain("Ellen's own");
 	});
 
 	it("asks to confirm, listing what is selected, then approves and publishes them oldest first", async () => {
@@ -1125,7 +1131,7 @@ describe("deciding several at once from the Waiting list", () => {
 		);
 		expect(empty.toast).toEqual({
 			type: "error",
-			message: "Write what should change, then press Continue.",
+			message: "Write what should change, then press Check selection.",
 		});
 		expect(bulkForm(empty)?.ticked).toEqual(pick);
 		const confirm = await s.host.admin.submit(
@@ -1177,5 +1183,231 @@ describe("deciding several at once from the Waiting list", () => {
 		const ticked = bulkForm(back)?.ticked ?? [];
 		expect(ticked).toHaveLength(1);
 		expect(ticked[0]).toContain(`pages:${changed}@`);
+	});
+});
+
+/** A page Sam asked to schedule (held). */
+async function heldSchedule(s: Site, title: string): Promise<string> {
+	const created = await s.host.actions.content.create("pages", {
+		data: { title, content: "Iced coffee £3.20" },
+		slug: title.toLowerCase().replace(/\s+/g, "-"),
+		authorId: s.editor.id,
+		actor: { id: s.editor.id, role: s.editor.role },
+	});
+	if (!created.success) throw new Error(created.error.message);
+	const id = created.data.item.id;
+	const held = await s.host.actions.content.schedule(
+		"pages",
+		id,
+		new Date(Date.now() + 86_400_000).toISOString(),
+		{
+			...actor(s.editor),
+		},
+	);
+	if (held.success) throw new Error("expected the schedule to be held");
+	return id;
+}
+
+/** The radio "Which pages" and the tick boxes, values as the form would submit them. */
+function allValues(response: unknown): string[] {
+	return bulkForm(response)?.options.map((o) => o.value) ?? [];
+}
+
+describe("deciding several at once: the audit's findings", () => {
+	it("approves a request to schedule without publishing it, and says so before and after", async () => {
+		const s = await site(HELD);
+		const now = await held(s, "Summer menu");
+		const later = await heldSchedule(s, "Autumn menu");
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "ticked", pick, do: "publish" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain(
+			"A request to schedule is approved, not published: its writer then schedules it.",
+		);
+		const done = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: buttonValue(confirm, "bulk_go"),
+		});
+		await settled();
+		expect(text(done)).toContain("Approved. Sam can schedule it now.");
+		expect((await request(s, now))?.status).toBe("published");
+		expect((await request(s, later))?.status).toBe("approved");
+		expect((await s.host.inspect.content.get("pages", later))?.status).toBe("draft");
+	});
+
+	it("uses the audit's words: Check selection, the confirm note, approved but not live, a request that is gone", async () => {
+		const s = await site(HELD);
+		await held(s, "Summer menu");
+		await held(s, "Bake sale");
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"label":"Check selection"');
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "ticked", pick, do: "publish" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain(
+			"Any page that changed since this list was drawn is skipped and stays in Waiting.",
+		);
+		const value = buttonValue(confirm, "bulk_go") as {
+			items: Array<{ key: string; seen: string }>;
+		};
+		value.items.push({ key: "pages:gone", seen: "x" });
+		const done = await s.host.admin.act("/overview", "bulk_go", { user: s.admin, value });
+		await settled();
+		expect(text(done)).toContain("This request no longer exists.");
+	});
+
+	it("selects every waiting page with one choice in the form, keeping the action and the note", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"label":"All 2 waiting for you"');
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", pick: [], do: "send_back", reason: "Prices are out of date" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain("Send back these 2?");
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: buttonValue(confirm, "bulk_go"),
+		});
+		for (const id of [first, second])
+			expect((await request(s, id))?.sentBack?.note).toBe("Prices are out of date");
+	});
+
+	it("refuses every row of a tampered list from someone who does not approve", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu", s.contributor);
+		const done = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.editor,
+			value: {
+				do: "publish",
+				items: [{ key: `pages:${id}`, seen: (await request(s, id))!.fingerprint }],
+			},
+		});
+		expect(text(done)).toContain("You can't approve on this site.");
+		expect((await request(s, id))?.status).toBe("waiting");
+	});
+
+	it("two approvers pressing the same step approve each page once", async () => {
+		const s = await site(HELD);
+		const ids = [await held(s, "Summer menu"), await held(s, "Bake sale")];
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "ticked", pick, do: "publish" },
+			{ user: s.admin },
+		);
+		const value = buttonValue(confirm, "bulk_go");
+		await Promise.all([
+			s.host.admin.act("/overview", "bulk_go", { user: s.admin, value }),
+			s.host.admin.act("/overview", "bulk_go", { user: s.admin2, value }),
+		]);
+		await settled();
+		for (const id of ids) {
+			const stored = await request(s, id);
+			expect(stored?.status).toBe("published");
+			expect(stored?.history.filter((h) => / approved$/.test(h.text))).toHaveLength(1);
+		}
+	});
+});
+
+describe("the audit's naming and wording findings", () => {
+	it("calls the first AI switch what it does, and warns on the second", async () => {
+		const s = await site(HELD);
+		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(body).toContain('"label":"Hold what AI tools publish for approval"');
+		expect(body).not.toContain("always need a person's OK");
+		expect(body).toContain(
+			"This includes pages the AI tool itself wrote or published: with this on, an AI tool can put its own work live without a person.",
+		);
+	});
+
+	it("names old Untitled rows in the widget and on a repeat Publish", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu");
+		const key = `pages:${id}`;
+		await s.host.fixtures.plugin.storage("requests", key, {
+			...(await request(s, id)),
+			title: "Untitled",
+		});
+		const widget = text(await s.host.admin.loadWidget("approvals", { user: s.admin }));
+		expect(widget).toContain('"text":"Summer menu"');
+		await s.host.actions.content.publish("pages", id, actor(s.editor));
+		expect((await request(s, id))?.title).toBe("Summer menu");
+	});
+
+	it("names an old Untitled row in the send-back email", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu");
+		const key = `pages:${id}`;
+		await s.host.fixtures.plugin.storage("requests", key, {
+			...(await request(s, id)),
+			title: "Untitled",
+		});
+		await s.host.admin.submit(
+			"/overview",
+			"send_back",
+			{ note: "Prices" },
+			{
+				user: s.admin,
+				blockId: `sb:${key}`,
+			},
+		);
+		const stored = await request(s, id);
+		expect(stored?.status).toBe("sent_back");
+		expect(stored?.title).toBe("Summer menu");
+	});
+
+	it("back-fill skips closed rows and moves past rows it cannot name", async () => {
+		const s = await site(HELD);
+		const ids: string[] = [];
+		for (let i = 0; i < 6; i++) ids.push(await held(s, `Page ${i + 1}`));
+		// Five rows whose entries are gone (an earlier version kept them waiting), then one that exists.
+		for (let i = 0; i < 5; i++) {
+			const stored = await request(s, ids[i]!);
+			await s.host.fixtures.plugin.storage("requests", `pages:gone${i}`, {
+				...stored,
+				entryId: `gone${i}`,
+				title: "Untitled",
+				requestedAt: `2026-01-0${i + 1}T00:00:00.000Z`,
+			});
+		}
+		await s.host.fixtures.plugin.storage("requests", `pages:${ids[5]}`, {
+			...(await request(s, ids[5]!)),
+			title: "Untitled",
+		});
+		await s.host.admin.loadPage("/overview", { user: s.admin });
+		await s.host.admin.loadPage("/overview", { user: s.admin });
+		expect((await request(s, ids[5]!))?.title).toBe("Page 6");
+	});
+
+	it("writes an AI tool in lower case mid-sentence", async () => {
+		const s = await site({ ...HELD, aiApprove: true });
+		const id = await held(s, "Summer menu");
+		await s.host.fixtures.plugin.storage("requests", `pages:${id}`, {
+			...(await request(s, id)),
+			status: "approved",
+			approval: {
+				by: { id: s.admin.id, name: "An AI tool acting for Ellen Marsh" },
+				at: new Date().toISOString(),
+				fingerprint: "x",
+				versionId: "",
+			},
+		});
+		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(body).toContain("Approved by an AI tool acting for Ellen Marsh");
+		expect(body).not.toContain("by An AI tool");
 	});
 });
