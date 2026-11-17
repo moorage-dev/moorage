@@ -10,10 +10,12 @@ import {
 	addHistory,
 	copyOf,
 	mayApprove,
+	nameNow,
 	readDraft,
 	requests,
 	seoGaps,
 	titleOf,
+	UNNAMED,
 	versions,
 	type ApprovalRequest,
 	type ApprovedVersion,
@@ -45,6 +47,8 @@ export type RowDo = "publish" | "send_back";
 export interface Row {
 	key: string;
 	seen: string;
+	/** The name the confirm step showed, for results about a row that was never read. */
+	title?: string;
 }
 
 export interface RowResult {
@@ -123,7 +127,50 @@ export async function decideRows(
 			continue;
 		}
 		if (request.status !== "waiting") {
-			fail("This request has already been decided.");
+			// Run again after a run that stopped part-way (EmDash retries a failed task): what this
+			// person already decided at this version counts as done, and an approval whose publish
+			// did not happen is published now.
+			const mine =
+				what === "send_back"
+					? request.status === "sent_back" && request.sentBack?.by.id === user.id
+					: request.approval?.by.id === user.id && request.approval.fingerprint === row.seen;
+			if (!mine) {
+				fail("This request has already been decided.");
+				continue;
+			}
+			if (
+				what === "publish" &&
+				request.status === "approved" &&
+				request.wants !== "schedule" &&
+				ctx.content?.publish
+			) {
+				const draft = await readDraft(ctx, request.collection, request.entryId, {
+					forPublish: true,
+				});
+				try {
+					if (!draft?.rev || draft.fingerprint !== row.seen) throw new Error("changed");
+					await ctx.content.publish(request.collection, request.entryId, { _rev: draft.rev });
+				} catch {
+					results.push({
+						key: row.key,
+						title: request.title,
+						state: "approved",
+						text: "Approved, not live yet: press Publish on the page.",
+					});
+					continue;
+				}
+			}
+			results.push({
+				key: row.key,
+				title: request.title,
+				state: "done",
+				text:
+					what === "send_back"
+						? "Sent back with your note."
+						: request.wants === "schedule"
+							? "Approved. Its writer can schedule it now."
+							: "Approved and published. It's live now.",
+			});
 			continue;
 		}
 		if (!mayApprove(config, request, user)) {
@@ -144,6 +191,11 @@ export async function decideRows(
 		const first = writer ? writer.split(" ")[0] : null;
 
 		if (what === "send_back") {
+			// An earlier release's "Untitled", named for the writer's email (one read, those rows only).
+			if (request.title === UNNAMED) {
+				const field = types.get(request.collection)?.title?.slug ?? null;
+				request.title = await nameNow(ctx, request, field);
+			}
 			const sent: ApprovalRequest = {
 				...request,
 				status: "sent_back",
@@ -153,6 +205,7 @@ export async function decideRows(
 			const written = await store.updateIf(row.key, {
 				where: guard,
 				set: {
+					title: sent.title,
 					status: sent.status,
 					sentBack: sent.sentBack,
 					history: sent.history,

@@ -28,8 +28,13 @@ export const PICK_PREFIX = "state:bulk-pick:";
 export const RUN_PREFIX = "state:bulk:";
 export const RUN_TASK = "bulk";
 
-/** Lanes side by side, at most. */
-const LANES = 5;
+/**
+ * Lanes side by side, at most. One: EmDash runs a tick's tasks one after another, so lanes side
+ * by side would interleave and "oldest first" would not hold (an owner may rely on it: plugin
+ * pages before release entries). More lanes make Cloudflare faster (a tick runs up to 10 tasks)
+ * at the cost of that order.
+ */
+const LANES = 1;
 /** A finished run's results are shown this long unless dismissed. */
 const KEEP_MS = 7 * 86_400_000;
 /** A selection shown on the confirm step stays good this long. */
@@ -177,9 +182,18 @@ export async function runLane(
 	const run = entries.get(`${RUN_PREFIX}${userId}`) as Run | undefined;
 	const laneKey = `${RUN_PREFIX}${userId}:${laneNo}`;
 	const lane = entries.get(laneKey) as Lane | undefined;
+	if (!run || run.id !== runId || !lane || lane.run !== runId) return;
+	// Run again after its lane was written but before the next task was set (EmDash retries a
+	// failed task): set it now, so the lane goes on.
+	if (lane.seq === seq + 1 && lane.rows.length > 0 && ctx.cron && !run.stopped) {
+		await ctx.cron.schedule(taskName(runId, laneNo, lane.seq), {
+			schedule: new Date().toISOString(),
+			data: { user: userId, run: runId, lane: laneNo, seq: lane.seq },
+		});
+		return;
+	}
 	// A task already done (run twice, or an older run's): nothing to do.
-	if (!run || run.id !== runId || !lane || lane.run !== runId || lane.seq !== seq) return;
-	if (lane.rows.length === 0) return;
+	if (lane.seq !== seq || lane.rows.length === 0) return;
 	const store = (rows: Row[], results: RowResult[]) =>
 		ctx.kv.set(laneKey, { run: runId, seq: seq + 1, rows, results } satisfies Lane);
 	if (run.stopped || !config) {
@@ -194,7 +208,7 @@ export async function runLane(
 				...lane.results,
 				...lane.rows.map((r) => ({
 					key: r.key,
-					title: r.key,
+					title: r.title ?? r.key,
 					state: "failed" as const,
 					text: "You can't approve on this site any more, so this was not decided.",
 				})),
@@ -212,7 +226,12 @@ export async function runLane(
 }
 
 function stoppedResult(row: Row): RowResult {
-	return { key: row.key, title: row.key, state: "failed", text: "Not done: you stopped the run." };
+	return {
+		key: row.key,
+		title: row.title ?? row.key,
+		state: "failed",
+		text: "Not done: you stopped the run.",
+	};
 }
 
 /** Stop this person's run: each lane stops at its next turn. One call. */
@@ -247,7 +266,7 @@ export function perRun(what: RowDo, config: Config): number {
 export const RUN_ACTION = { stop: "bulk_stop", dismiss: "bulk_dismiss", refresh: "back" } as const;
 
 /** The banner at the top of Waiting while a run goes, and its results when it is done. */
-export function runBlocks(state: RunState | null): Block[] {
+export function runBlocks(state: RunState | null, ticked = 0): Block[] {
 	if (!state) return [];
 	const { run, results } = state;
 	const done = results.filter((r) => r.state === "done").length;
@@ -259,7 +278,8 @@ export function runBlocks(state: RunState | null): Block[] {
 			{
 				type: "banner",
 				title: `${doing} ${pages}: ${done} done, ${look.length} need a look. You can leave this page.`,
-				description: "A few are done at a time in the background. Refresh to see how far it is.",
+				description:
+					"A few are done at a time in the background, oldest first. Refresh to see how far it is. If the numbers do not move for a few minutes, this site's scheduled tasks may not be running: press Stop, then Dismiss, and decide from the list.",
 			},
 			{
 				type: "actions",
@@ -287,7 +307,7 @@ export function runBlocks(state: RunState | null): Block[] {
 		{
 			type: "banner",
 			variant: look.length > 0 ? "alert" : "default",
-			title: `${run.stopped ? "Stopped. " : ""}${finished}${look.length > 0 ? ` ${look.length} need a look: they are ticked below.` : ""}`,
+			title: `${run.stopped ? "Stopped. " : ""}${finished}${look.length > 0 ? ` ${look.length} need a look${ticked > 0 ? `; ${ticked === look.length ? "they are" : `${ticked} still waiting are`} ticked below` : ""}.` : ""}`,
 		},
 		{
 			type: "accordion",

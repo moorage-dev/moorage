@@ -44,7 +44,7 @@ const failTimes = new Map<string, number>();
 		string,
 		(...args: unknown[]) => unknown
 	>;
-	for (const name of ["emailSend", "contentPublish", "storagePut", "cronSchedule"]) {
+	for (const name of ["emailSend", "contentPublish", "storagePut", "cronSchedule", "kvSet"]) {
 		const original = proto[name]!;
 		proto[name] = function (this: unknown, ...args: unknown[]) {
 			const times = failTimes.get(name) ?? 0;
@@ -2168,16 +2168,16 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		expect(text(m.result)).toContain("Approve and publish these 25?");
 	});
 
-	// kvList, kvSet (the run), kvSet + cronSchedule per lane (5), kvDelete (the selection), then
+	// kvList, kvSet (the run), kvSet + cronSchedule for its lane, kvDelete (the selection), then
 	// the list with its banner: kvList storageQuery schemaListCollections userList.
-	it("the press: starts five lanes and shows the banner", async () => {
+	it("the press: starts the run and shows the banner", async () => {
 		const s = await site();
 		for (let i = 0; i < 50; i++) await waiting(s, `Page ${i + 1}`);
 		await chooseAll(s);
 		await cold(s);
 		const m = await measure(() => s.host.admin.act("/overview", "bulk_go", { user: admin(s) }));
 		console.info(describeCalls("bulk press, 50 selected", m));
-		expect(m.calls.length).toBe(17);
+		expect(m.calls.length).toBe(9);
 		expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
 		expect(text(m.result)).toContain("Approving 50 pages: 0 done, 0 need a look.");
 	});
@@ -2310,6 +2310,64 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		console.info(describeCalls("bulk dismiss", dismiss));
 		expect(dismiss.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
 		for (const id of ["Page 1"]) expect(id).toBeTruthy();
+	});
+
+	// The run's write of its lane fails after it decided its rows: EmDash runs the task again,
+	// which counts those rows as done (decided by this person at that version) and goes on.
+	it("a run that fails part-way is run again: nothing decided twice, nothing lost", async () => {
+		const s = await site();
+		const ids: string[] = [];
+		for (let i = 0; i < 6; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		await chooseAll(s);
+		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		const user = admin(s);
+		const run = await s.host.inspect.kv.get<{ id: string }>(`state:bulk:${user.id}`);
+		const event = {
+			name: `bulk-${run!.id}-0-0`,
+			data: { user: user.id, run: run!.id, lane: 0, seq: 0 },
+			scheduledAt: new Date().toISOString(),
+		};
+		failTimes.set("kvSet", 1);
+		await s.host.transport.invokeHook("cron", event).catch(() => undefined);
+		await drain();
+		await cold(s);
+		const again = await measure(async () => {
+			const out = await s.host.transport.invokeHook("cron", event);
+			await drain();
+			return out;
+		});
+		console.info(describeCalls("bulk run again after a failed write", again));
+		expect(again.error).toBeUndefined();
+		const counts = await runLanes(s);
+		expect(counts.every((n) => n <= NEW_BUDGET)).toBe(true);
+		for (const id of ids) {
+			const stored = await request(s, id);
+			expect(stored?.status).toBe("published");
+			expect(stored?.history.filter((h) => h.text === "Ellen Marsh approved")).toHaveLength(1);
+		}
+		const list = text(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		expect(list).toContain("Approved 6 of 6 pages.");
+	});
+
+	// A task run again after its lane was written: kvList, then the next task set (cronSchedule).
+	it("a task run again after its lane was written only sets the next task", async () => {
+		const s = await site();
+		for (let i = 0; i < 6; i++) await waiting(s, `Page ${i + 1}`);
+		await chooseAll(s);
+		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		const user = admin(s);
+		const run = await s.host.inspect.kv.get<{ id: string }>(`state:bulk:${user.id}`);
+		const event = {
+			name: `bulk-${run!.id}-0-0`,
+			data: { user: user.id, run: run!.id, lane: 0, seq: 0 },
+			scheduledAt: new Date().toISOString(),
+		};
+		await s.host.transport.invokeHook("cron", event);
+		await drain();
+		await cold(s);
+		const m = await measure(() => s.host.transport.invokeHook("cron", event));
+		console.info(describeCalls("bulk task run again", m));
+		expect(m.calls).toEqual(["kvList", "cronSchedule"]);
 	});
 
 	it("approve and publish fails for one page: approved, not live, and said so", async () => {

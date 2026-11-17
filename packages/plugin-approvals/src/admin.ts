@@ -794,8 +794,9 @@ async function listPage(
 	}
 	// A bulk decision of this person's: its banner, and what needs a look left ticked.
 	const run = entries && user ? runOf(entries, user.id) : null;
-	waitingBlocks.push(...runBlocks(run));
 	const look = needsLook(run);
+	const stillWaiting = forYou.filter((r) => look.has(key(r))).length;
+	waitingBlocks.push(...runBlocks(run, ctx.cron ? stillWaiting : 0));
 	const form: BulkState | undefined = bulk ?? (look.size > 0 ? { ticked: look } : undefined);
 	if (approver) {
 		waitingBlocks.push(

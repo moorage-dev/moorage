@@ -1183,7 +1183,7 @@ describe("deciding several at once from the Waiting list", () => {
 		await settled();
 		const done = ((await press(s, s.admin)) as { list: unknown }).list;
 		await settled();
-		expect(text(done)).toContain("Approved 1 of 2 pages. 1 need a look: they are ticked below.");
+		expect(text(done)).toContain("Approved 1 of 2 pages. 1 need a look; they are ticked below.");
 		expect(text(done)).toContain("This page changed while you were looking");
 		expect((await request(s, fine))?.status).toBe("published");
 		expect((await request(s, changed))?.status).toBe("waiting");

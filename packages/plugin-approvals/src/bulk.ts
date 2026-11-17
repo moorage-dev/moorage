@@ -30,6 +30,7 @@ export type BulkDo = "publish" | "send_back";
 export interface BulkItem {
 	key: string;
 	seen: string;
+	title?: string;
 }
 
 /** The Waiting tab's form as it should open: what is ticked, and the choice made. */
@@ -298,5 +299,8 @@ export function confirmView(input: {
 			],
 		},
 	);
-	return { response: { blocks }, rows: chosen.map((row) => row.item) };
+	return {
+		response: { blocks },
+		rows: chosen.map((row) => ({ ...row.item, title: row.request.title })),
+	};
 }
