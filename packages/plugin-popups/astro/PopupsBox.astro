@@ -15,6 +15,15 @@ interface Box {
 	handle?: string;
 	heading: string;
 	text: string;
+	/** Picture on top, its panel colour, a label, a note and highlighted words (from 0.3; left out when unset). */
+	design?: "top";
+	panel?: string;
+	label?: string;
+	note?: string;
+	highlight?: string;
+	/** The highlighted words' own colour, and whether a dark device uses the button colour instead. */
+	highlightColor?: string;
+	highlightDark?: boolean;
 	picture: { url: string; alt: string; width: number | null; height: number | null } | null;
 	form: string;
 	/** `newTab`: open the link in a new tab (older servers leave it out). */
@@ -66,7 +75,17 @@ const ownDark = box?.darkColors
 // rules beat them, so a site that styles its forms keeps that look inside the box.
 const css = `
 .popups-box{--pb-text:var(--popups-text,var(--cookie-consent-text,currentColor));position:relative;max-width:640px;margin:28px 0;padding:24px;color:var(--pb-text);background:var(--popups-surface,var(--cookie-consent-surface,color-mix(in srgb,currentColor 6%,transparent)));border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:10px;font-family:var(--popups-font,var(--cookie-consent-font))}
-.popups-box h2{margin:0;font-weight:600;font-size:22px;line-height:1.25;font-family:var(--popups-heading-font,var(--cookie-consent-heading-font))}
+.popups-box h2{margin:0;font-weight:600;font-size:22px;line-height:1.25;font-family:var(--popups-heading-font,var(--cookie-consent-heading-font,var(--pb-h)))}
+.popups-box .popups-box-label{display:inline-block;margin:0 0 10px;padding:2px 12px;font-size:13px;border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:99px}
+.popups-box .popups-box-hl{color:var(--pb-hc,var(--popups-accent,var(--cookie-consent-accent,inherit)))}
+@media (prefers-color-scheme:dark){.popups-box .popups-box-hd{color:var(--popups-accent,var(--cookie-consent-accent,inherit))}}
+.popups-box-top .popups-box-button,.popups-box-top :where(.ec-form) button:where(.ec-form-submit){border-radius:12px}
+.popups-box .popups-box-note{margin:8px 0 0;font-size:13px;opacity:.85}
+.popups-box-top{text-align:center;border-radius:20px;overflow:hidden}
+.popups-box-top .popups-box-pan{display:grid;place-items:center;margin:-24px -24px 18px;padding:24px;background:var(--pb-pn,var(--popups-accent,var(--cookie-consent-accent,#141414)))}
+.popups-box-top .popups-box-pan img{display:block;max-width:100%;max-height:260px;width:auto;height:auto}
+.popups-box-top .popups-box-button,.popups-box-top :where(.ec-form) button:where(.ec-form-submit){width:100%}
+.popups-box-top :where(.ec-form){text-align:left}
 .popups-box>p{margin:6px 0 0}
 .popups-box .popups-box-pic{display:block;width:calc(100% + 48px);max-width:none;height:180px;margin:-24px -24px 18px;object-fit:cover;border-radius:9px 9px 0 0}
 :where(.popups-box) form:where(.ec-form){margin-top:16px}
@@ -80,24 +99,47 @@ const css = `
 :where(.popups-box .ec-form) span:where(.ec-form-error:empty){display:none}
 .popups-box .popups-box-go{margin-top:18px}
 .popups-box :focus-visible{outline:3px solid var(--pb-text);outline-offset:2px}
-@media (max-width:600px){.popups-box{padding:20px}.popups-box .popups-box-pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}}
+@media (max-width:600px){.popups-box{padding:20px}.popups-box-top .popups-box-pan{margin:-20px -20px 16px}.popups-box-top .popups-box-pan img{max-height:180px}.popups-box .popups-box-pic{width:calc(100% + 40px);margin:-20px -20px 16px;height:140px}}
 `;
+const top = box?.design === "top" && !!box.picture;
+// The highlighted words, split out of the heading; Astro escapes each part.
+const at = box?.highlight ? box.heading.indexOf(box.highlight) : -1;
+const parts =
+	box && at >= 0
+		? [box.heading.slice(0, at), box.highlight!, box.heading.slice(at + box.highlight!.length)]
+		: null;
+// The page's main heading font (its h1, else its first h2) for the box's heading, set by a tiny
+// script right after the box, before it is painted, so the heading never changes font in view.
+const HEADING_FONT =
+	'(function(b,h){if(b&&h)b.style.setProperty("--pb-h",getComputedStyle(h).fontFamily)})(document.currentScript.previousElementSibling,document.querySelector("h1")||document.querySelector("h2"))';
 const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice(2, 7)}` : "";
 ---
 
 {
 	box && (
+		<>
 		<section
-			class="popups-box"
+			class={top ? "popups-box popups-box-top" : "popups-box"}
 			data-popups-box={box.id}
 			data-popups-handle={box.handle}
 			data-scheme={box.scheme}
 			role="region"
 			aria-labelledby={headingId}
-			style={own || undefined}
+			style={own + (top && box.panel ? `--pb-pn:${box.panel};` : "") || undefined}
 		>
 			<style is:inline set:html={css + ownDark} />
-			{box.picture && (
+			{top && box.picture && (
+				<div class="popups-box-pan">
+					<img
+						src={box.picture.url}
+						alt={box.picture.alt}
+						width={box.picture.width ?? undefined}
+						height={box.picture.height ?? undefined}
+						loading="lazy"
+					/>
+				</div>
+			)}
+			{!top && box.picture && (
 				<img
 					class="popups-box-pic"
 					src={box.picture.url}
@@ -107,7 +149,23 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 					loading="lazy"
 				/>
 			)}
-			<h2 id={headingId}>{box.heading}</h2>
+			{box.label && <p class="popups-box-label">{box.label}</p>}
+			<h2 id={headingId}>
+				{parts ? (
+					<>
+						{parts[0]}
+						<span
+							class={box.highlightDark ? "popups-box-hl popups-box-hd" : "popups-box-hl"}
+							style={box.highlightColor ? `--pb-hc:${box.highlightColor}` : undefined}
+						>
+							{parts[1]}
+						</span>
+						{parts[2]}
+					</>
+				) : (
+					box.heading
+				)}
+			</h2>
 			{box.text && <p>{box.text}</p>}
 			{FormEmbed && <FormEmbed node={{ formId: box.form }} />}
 			{box.form && !FormEmbed && (
@@ -126,7 +184,10 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 					</a>
 				</p>
 			)}
+			{box.note && <p class="popups-box-note">{box.note}</p>}
 		</section>
+		<script is:inline set:html={HEADING_FONT} />
+		</>
 	)
 }
 

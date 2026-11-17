@@ -1874,3 +1874,363 @@ test.describe("colours", () => {
 		}
 	});
 });
+
+/** A real picture of a known size, uploaded the way the media library does it. */
+async function uploadPicture(browser: Browser): Promise<string> {
+	const page = await visitor(browser);
+	await page.goto("/");
+	const buffer = await page.screenshot({ clip: { x: 0, y: 0, width: 480, height: 300 } });
+	await page.context().close();
+	const upload = await admin.post("/_emdash/api/media", {
+		headers: H,
+		multipart: { file: { name: "offer.png", mimeType: "image/png", buffer } },
+	});
+	expect(upload.ok(), await upload.text()).toBe(true);
+	return ((await upload.json()) as { data: { item: { id: string } } }).data.item.id;
+}
+
+const REPORT_WORDS = {
+	label: "Free Revenue Report",
+	heading: "Check How Much Revenue Your Salon Is Losing to Missed Calls",
+	highlight: "Losing to Missed Calls",
+	text: "Get your free report and uncover lost revenue.",
+	button_label: "See What I'm Losing",
+	button_url: "/contact",
+	note: "Takes less than 30 seconds",
+	decline: "not-interested",
+};
+
+test.describe("Picture on top", () => {
+	test("shows the whole picture on its panel, the label, the highlighted words and the note", async ({
+		browser,
+	}) => {
+		const picture = await uploadPicture(browser);
+		await make({
+			name: "Revenue report",
+			kind: "modal",
+			s2: { ...REPORT_WORDS, picture, design: "top", panel: "#f7cb45", contains: "button" },
+			s3: { trigger: "click" },
+		});
+		const page = await visitor(browser);
+		await page.goto("/popups-test?opener=revenue-report");
+		await page
+			.locator("[data-popup='revenue-report'],a[href*='#popup-revenue-report']")
+			.first()
+			.click();
+		const dialog = page.getByRole("dialog", { name: REPORT_WORDS.heading });
+		await expect(dialog).toBeVisible();
+		// The picture's shape is known once it has loaded.
+		await page.waitForFunction(() => {
+			const img = document
+				.querySelector("#popups")
+				?.shadowRoot?.querySelector<HTMLImageElement>(".pan img");
+			return !!img && img.complete && img.naturalWidth > 0;
+		});
+		const drawn = await page.evaluate(() => {
+			const root = document.querySelector("#popups")!.shadowRoot!;
+			const img = root.querySelector<HTMLImageElement>(".pan img")!;
+			const close = root.querySelector(".x")!.getBoundingClientRect();
+			const panel = getComputedStyle(root.querySelector(".pan")!).backgroundColor;
+			return {
+				top: root.querySelector("dialog")!.classList.contains("top"),
+				src: img.getAttribute("src"),
+				// The whole picture: never cropped, its shape kept.
+				shape: Math.abs(img.naturalWidth / img.naturalHeight - img.width / img.height) < 0.02,
+				panel,
+				label: root.querySelector(".lb")!.textContent,
+				highlight: root.querySelector("h2 .hl")!.textContent,
+				note: root.querySelector(".nt")!.textContent,
+				no: root.querySelector(".q")!.textContent,
+				centred: getComputedStyle(root.querySelector("h2")!).textAlign,
+				close: [Math.round(close.width), Math.round(close.height)],
+				// The page's own fonts: the heading in the page's main heading font, the text in its body font.
+				headingFont:
+					getComputedStyle(root.querySelector("h2")!).fontFamily ===
+					getComputedStyle(document.querySelector("h1")!).fontFamily,
+				textFont:
+					getComputedStyle(root.querySelector("dialog p")!).fontFamily ===
+					getComputedStyle(document.body).fontFamily,
+			};
+		});
+		expect(drawn).toMatchObject({
+			top: true,
+			shape: true,
+			panel: "rgb(247, 203, 69)",
+			label: REPORT_WORDS.label,
+			highlight: REPORT_WORDS.highlight,
+			note: REPORT_WORDS.note,
+			no: "Thanks, I'm not interested",
+			centred: "center",
+			close: [44, 44],
+			headingFont: true,
+			textFont: true,
+		});
+		// The public file address, which visitors can load.
+		expect(drawn.src).toMatch(/^\/_emdash\/api\/media\/file\//);
+		await page.keyboard.press("Escape");
+		await expect(dialog).toBeHidden();
+		await page.context().close();
+	});
+});
+
+test.describe("Picture on top in a box in a page", () => {
+	test("draws the panel, label, highlighted words and note in the server's HTML", async ({
+		browser,
+	}) => {
+		const picture = await uploadPicture(browser);
+		const id = await make({
+			name: "Report box",
+			kind: "inline",
+			s2: { ...REPORT_WORDS, picture, design: "top", panel: "#f7cb45", contains: "button" },
+		});
+		const page = await visitor(browser);
+		await page.goto(`/popups-test?box=${id}`);
+		const region = page.getByRole("region", { name: REPORT_WORDS.heading });
+		await expect(region).toBeVisible();
+		await expect(region).toHaveClass(/popups-box-top/);
+		await expect(region.locator(".popups-box-pan img")).toHaveAttribute(
+			"src",
+			/^\/_emdash\/api\/media\/file\//,
+		);
+		await expect(region.locator(".popups-box-pan")).toHaveCSS(
+			"background-color",
+			"rgb(247, 203, 69)",
+		);
+		await expect(region.locator(".popups-box-label")).toHaveText(REPORT_WORDS.label);
+		await expect(region.locator("h2 .popups-box-hl")).toHaveText(REPORT_WORDS.highlight);
+		await expect(region.locator("h2")).toHaveText(REPORT_WORDS.heading);
+		await expect(region.locator(".popups-box-note")).toHaveText(REPORT_WORDS.note);
+		await page.context().close();
+	});
+});
+
+test.describe("tools for an AI assistant (MCP)", () => {
+	/** One JSON-RPC call to EmDash's MCP endpoint, which takes tokens only; it answers in one event. */
+	async function mcp(token: string, method: string, params: unknown = {}): Promise<unknown> {
+		const response = await fetch(new URL("/_emdash/api/mcp", test.info().project.use.baseURL), {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+		});
+		const text = await response.text();
+		expect(response.ok, text).toBe(true);
+		const line = text.split("\n").find((l) => l.startsWith("data: "));
+		const message = JSON.parse(line ? line.slice(6) : text) as {
+			result?: unknown;
+			error?: unknown;
+		};
+		expect(message.error, text).toBeUndefined();
+		return message.result;
+	}
+	const call = async (token: string, name: string, args: Record<string, unknown>) => {
+		const r = (await mcp(token, "tools/call", { name: `popups__${name}`, arguments: args })) as {
+			isError?: boolean;
+			content: Array<{ text: string }>;
+		};
+		return { error: r.isError === true, text: r.content[0]!.text };
+	};
+	const data = (r: { error: boolean; text: string }) => {
+		expect(r.error, r.text).toBe(false);
+		return JSON.parse(r.text) as Record<string, unknown>;
+	};
+	const switchTools = async (enabled: boolean) => {
+		const response = await admin.put("/_emdash/api/admin/plugins/popups/mcp", {
+			headers: H,
+			data: { enabled },
+		});
+		expect(response.ok(), await response.text()).toBe(true);
+	};
+
+	test("are off until an Admin switches them on; then list, get, create, update, turn on and off work with a key", async ({
+		browser,
+	}) => {
+		const picture = await uploadPicture(browser);
+		const tokenResponse = await admin.post("/_emdash/api/admin/api-tokens", {
+			headers: H,
+			data: { name: `popups e2e ${Date.now()}`, scopes: ["mcp:tools:popups"] },
+		});
+		expect(tokenResponse.ok(), await tokenResponse.text()).toBe(true);
+		const token = (
+			(await tokenResponse.json()) as { data: { token: string; info: { id: string } } }
+		).data;
+		try {
+			const names = async () =>
+				((await mcp(token.token, "tools/list")) as { tools: Array<{ name: string }> }).tools
+					.map((t) => t.name)
+					.filter((n) => n.startsWith("popups__"));
+			expect(await names()).toEqual([]);
+			await switchTools(true);
+			expect(new Set(await names())).toEqual(
+				new Set(
+					["create", "get", "list", "turn_off", "turn_on", "update"].map((n) => `popups__${n}`),
+				),
+			);
+
+			// create: finished and off, with a picture set through the key alone (no cookie).
+			const created = data(
+				await call(token.token, "create", {
+					name: "AI offer",
+					kind: "slide-in",
+					design: "top",
+					picture,
+					label: "This week",
+					heading: "Fresh rye, this week only",
+					highlight: "this week only",
+					buttonLabel: "See the bread",
+					buttonUrl: "/contact",
+					note: "Order by Friday",
+				}),
+			);
+			const id = String(created.id);
+			made.push(id);
+			expect(created).toMatchObject({ on: false, status: "Off", kind: "slide-in" });
+			expect(created.settings).toMatchObject({ design: "top" });
+			const refused = await call(token.token, "create", {
+				name: "Bad",
+				kind: "popup",
+				heading: "Hello",
+				buttonLabel: "Go",
+				buttonUrl: "javascript:alert(1)",
+			});
+			expect(refused.error).toBe(true);
+			expect(refused.text).toContain("The link must be a page on this site");
+
+			const list = data(await call(token.token, "list", {}));
+			expect(list.popups).toEqual(
+				expect.arrayContaining([expect.objectContaining({ id, name: "AI offer", on: false })]),
+			);
+			const got = data(await call(token.token, "get", { id }));
+			expect(got.settings).toMatchObject({
+				heading: "Fresh rye, this week only",
+				note: "Order by Friday",
+			});
+			expect(String(got.results)).toMatch(/^Since /);
+
+			const updated = data(await call(token.token, "update", { id, text: "Baked at dawn." }));
+			expect(updated.settings).toMatchObject({
+				text: "Baked at dawn.",
+				heading: "Fresh rye, this week only",
+			});
+
+			expect(data(await call(token.token, "turn_on", { id }))).toMatchObject({
+				on: true,
+				status: "On",
+			});
+			// The page shows it with the picture's public address.
+			const page = await visitor(browser);
+			await page.goto("/popups-test?opener=ai-offer");
+			const html = await page.content();
+			expect(html).toContain("Fresh rye, this week only");
+			expect(html).toMatch(/\/_emdash\/api\/media\/file\/[A-Za-z0-9]+\.png/);
+			await page.context().close();
+			expect(data(await call(token.token, "turn_off", { id }))).toMatchObject({ on: false });
+		} finally {
+			await switchTools(false);
+			await admin.delete(`/_emdash/api/admin/api-tokens/${token.info.id}`, { headers: H });
+		}
+	});
+});
+
+test.describe("tools for an AI assistant, with an Editor's key", () => {
+	const API_ROOT = "/_emdash/api";
+	async function me(request: APIRequestContext): Promise<string> {
+		const response = await request.get(`${API_ROOT}/auth/me`, { headers: H });
+		expect(response.ok()).toBe(true);
+		return ((await response.json()) as { data: { id: string } }).data.id;
+	}
+	async function updateUser(request: APIRequestContext, id: string, data: Record<string, unknown>) {
+		const response = await request.put(`${API_ROOT}/admin/users/${id}`, { headers: H, data });
+		expect(response.ok(), await response.text()).toBe(true);
+	}
+	async function rpc(token: string, name: string, args: Record<string, unknown>) {
+		const response = await fetch(new URL(`${API_ROOT}/mcp`, test.info().project.use.baseURL), {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: { name: `popups__${name}`, arguments: args },
+			}),
+		});
+		const text = await response.text();
+		const line = text.split("\n").find((l) => l.startsWith("data: "));
+		const message = JSON.parse(line ? line.slice(6) : text) as {
+			result: { isError?: boolean; content: Array<{ text: string }> };
+		};
+		return { error: message.result.isError === true, text: message.result.content[0]!.text };
+	}
+
+	test("changes words, is refused Admin-only fields in plain words, and cannot turn on a half-made popup", async ({
+		browser,
+	}) => {
+		// Dev sign-in makes the dev Admin; with that address free, a new sign-in is a new person,
+		// who then gets the Editor role. The Admin takes the address back after.
+		const adminId = await me(admin);
+		await updateUser(admin, adminId, { email: "owner@bakery.test" });
+		const context = await browser.newContext();
+		let editorToken = "";
+		try {
+			const page = await context.newPage();
+			await page.goto("/_emdash/api/setup/dev-bypass?redirect=/");
+			const editorId = await me(context.request);
+			expect(editorId).not.toBe(adminId);
+			await updateUser(context.request, editorId, { name: "Sam Reyes", email: "sam@bakery.test" });
+			// Tokens are made by Admins, so the key first, then the Editor role; a call through the
+			// key acts with the person's role at the time of the call.
+			const token = await context.request.post(`${API_ROOT}/admin/api-tokens`, {
+				headers: H,
+				data: { name: `popups editor ${Date.now()}`, scopes: ["mcp:tools:popups"] },
+			});
+			expect(token.ok(), await token.text()).toBe(true);
+			editorToken = ((await token.json()) as { data: { token: string } }).data.token;
+			await updateUser(admin, editorId, { role: 40 });
+		} finally {
+			await updateUser(admin, adminId, { email: "dev@emdash.local" });
+		}
+		const tools = await admin.put(`${API_ROOT}/admin/plugins/popups/mcp`, {
+			headers: H,
+			data: { enabled: true },
+		});
+		expect(tools.ok()).toBe(true);
+		try {
+			const id = await make(FORM_POPUP);
+			const changed = await rpc(editorToken, "update", { id, text: "A new loaf every month." });
+			expect(changed.error, changed.text).toBe(false);
+			expect(JSON.parse(changed.text).settings.text).toBe("A new loaf every month.");
+			const refused = await rpc(editorToken, "update", { id, where: "prefix", design: "top" });
+			expect(refused.error).toBe(true);
+			expect(refused.text).toContain(
+				"Only an administrator can change these: design, where. Leave them out, or ask an administrator.",
+			);
+			// A popup an Admin started but never finished.
+			const first = await adminPost(`${API}/admin`, {
+				type: "form_submit",
+				action_id: "save_s1",
+				block_id: "s1:new:x",
+				values: { name: "Half made", kind: "modal" },
+			});
+			const half = [
+				...JSON.stringify(first.data.blocks).matchAll(/"block_id":"s2:([a-z0-9]+):/g),
+			][0]![1]!;
+			made.push(half);
+			const off = await rpc(editorToken, "turn_on", { id: half });
+			expect(off.error).toBe(true);
+			expect(off.text).toContain("not finished");
+		} finally {
+			await admin.put(`${API_ROOT}/admin/plugins/popups/mcp`, {
+				headers: H,
+				data: { enabled: false },
+			});
+			await context.close();
+		}
+	});
+});

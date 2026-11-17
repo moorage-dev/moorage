@@ -12,6 +12,8 @@ export const PROBLEMS_KEY = "problems";
 export const MAX_POPUPS = 20;
 export const MAX_HEADING = 60;
 export const MAX_TEXT = 240;
+export const MAX_LABEL = 30;
+export const MAX_NOTE = 60;
 const MAX_PATHS = 30;
 const MAX_EMAILS = 10;
 
@@ -20,7 +22,8 @@ export type Trigger = "read" | "click" | "exit" | "load";
 export type Where = "all" | "prefix" | "collections";
 export type Devices = "all" | "desktop" | "phone";
 export type Again = "week" | "month" | "never";
-export type Decline = "no-thanks" | "not-now" | "none";
+export type Decline = "no-thanks" | "not-now" | "not-interested" | "none";
+export type Design = "plain" | "top";
 export type Contains = "button" | "form";
 
 export interface Picture {
@@ -40,6 +43,17 @@ export interface Popup {
 	heading: string;
 	text: string;
 	picture: Picture | null;
+	/** "plain" (the look before 0.3) or "top": the whole picture on a coloured panel, centred words. */
+	design: Design;
+	/** The panel's colour behind the picture (#rrggbb); empty uses the button colour. */
+	panel: string;
+	/** A short label above the heading, a short note under the button: optional words. */
+	label: string;
+	note: string;
+	/** Words from the heading drawn in the button colour; empty for none. */
+	highlight: string;
+	/** The highlighted words' own colour (#rrggbb); empty uses the button colour. A look, not words. */
+	highlightColor: string;
 	contains: Contains;
 	buttonLabel: string;
 	buttonUrl: string;
@@ -116,6 +130,7 @@ export const KIND_LABEL: Record<Kind, string> = {
 export const DECLINE_LABEL: Record<Decline, string> = {
 	"no-thanks": "No thanks",
 	"not-now": "Not now",
+	"not-interested": "Thanks, I'm not interested",
 	none: "Only the close button",
 };
 
@@ -161,6 +176,12 @@ function cleanPicture(value: unknown): Picture | null {
 	return { id, url, alt: str(raw.alt, 300), width: size(raw.width), height: size(raw.height) };
 }
 
+/** Highlighted words are kept only while the heading still has them. */
+function cleanHighlight(value: unknown, heading: string): string {
+	const words = str(value, MAX_HEADING);
+	return words && heading.includes(words) ? words : "";
+}
+
 export function normalizePopup(raw: unknown): Popup | null {
 	if (typeof raw !== "object" || raw === null) return null;
 	const p = raw as Record<string, unknown>;
@@ -176,13 +197,24 @@ export function normalizePopup(raw: unknown): Popup | null {
 		heading: str(p.heading, MAX_HEADING),
 		text: str(p.text, MAX_TEXT),
 		picture: cleanPicture(p.picture),
+		// A top bar has one look.
+		design: kind === "bar" ? "plain" : pick(p.design, ["plain", "top"] as const, "plain"),
+		panel: cleanColor(p.panel),
+		label: kind === "bar" ? "" : str(p.label, MAX_LABEL),
+		note: kind === "bar" ? "" : str(p.note, MAX_NOTE),
+		highlight: kind === "bar" ? "" : cleanHighlight(p.highlight, str(p.heading, MAX_HEADING)),
+		highlightColor: kind === "bar" ? "" : cleanColor(p.highlightColor),
 		contains: pick(p.contains, ["button", "form"] as const, "button"),
 		buttonLabel: str(p.buttonLabel, 40),
 		buttonUrl: str(p.buttonUrl, 1000),
 		buttonNewTab: p.buttonNewTab === true,
 		form: str(p.form, 100),
 		thanks: str(p.thanks, MAX_HEADING),
-		decline: pick(p.decline, ["no-thanks", "not-now", "none"] as const, "no-thanks"),
+		decline: pick(
+			p.decline,
+			["no-thanks", "not-now", "not-interested", "none"] as const,
+			"no-thanks",
+		),
 		// Only a top bar may open as the page opens.
 		trigger: trigger === "load" && kind !== "bar" ? "read" : trigger,
 		where: pick(p.where, ["all", "prefix", "collections"] as const, "all"),
@@ -294,6 +326,21 @@ export function colorProblems(colors: Colors): string[] {
 		);
 	}
 	return problems;
+}
+
+/**
+ * Why highlighted words would be hard to read on the chosen colours, or "": the button
+ * colour on the background, at least 4.5 to 1, on each version of the look. Only colours
+ * known here are checked; a theme's own colours are its business.
+ */
+export function highlightProblem(looks: Colors[]): string {
+	for (const { background, accent } of looks) {
+		if (!background || !accent) continue;
+		const ratio = contrast(accent, background);
+		if (ratio < 4.5)
+			return `The highlighted words would be hard to read: the button colour on the background has a contrast of ${ratio.toFixed(1)} to 1, and needs at least 4.5. Leave "Highlight these words" empty, or choose other colours under Settings.`;
+	}
+	return "";
 }
 
 /** Links a popup may send visitors to: https, http, a page on this site, email or phone. */

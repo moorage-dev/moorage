@@ -270,8 +270,8 @@ describe("the page hook", () => {
 	it("keeps the browser script small", () => {
 		const code = (pageFragments(store, "popups", page("/journal/x"), NOW)[0] as { code: string })
 			.code;
-		// Everything, including the form drawing and the stylesheet: at most 9 KB over the wire.
-		expect(gzipSync(code).length).toBeLessThan(9 * 1024);
+		// Everything, including the form drawing and the stylesheet: at most 9.5 KB over the wire (9 KB before the designs of 0.3).
+		expect(gzipSync(code).length).toBeLessThan(9.5 * 1024);
 	});
 
 	it("never sends a form to a top bar, and gives the decline words", () => {

@@ -8,12 +8,14 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 
 ## What it does
 
-- **Four kinds, one look.**
+- **Four kinds.**
   - **Top bar:** a thin strip above the header, in the page itself. It is part of the page when it loads, so it never moves the page or covers a sticky header.
   - **Slide-in:** slides in at a bottom corner and leaves the page usable. It opens by itself. On phones it is a sheet at the bottom, at most 45% of the screen.
   - **Popup:** opens by itself over the page, in the middle of the screen, and dims the page. On phones it opens as a sheet at the bottom, unless the visitor opened it by clicking.
   - **Box in a page:** sits inside a page or post, where an editor places it while editing (the "Popups box" block). It is the only kind that is placed; the others open by themselves. If your site styles its forms (the `.ec-form` classes of the Forms plugin), a form in the box keeps that look.
-- **What it says:** a heading, a short text, a picture from your media library, and either one button or a form from the official Forms plugin. The button (or a top bar's link) can open its page in a new tab ("Open the link in a new tab", off by default; email and phone links always open as usual); a popup or top bar then closes on the page they were on. Sign-ups land in the Forms inbox, with all of its emails and notifications.
+- **What it says:** a heading, a short text, a picture from your media library, and either one button or a form from the official Forms plugin. Popups, slide-ins and boxes can also have a small label above the heading (such as "Free guide"), a few words of the heading shown in the button colour or a colour of their own ("Highlight these words", "Highlight colour"), and a small note under the button (such as "Takes less than a minute"). The button (or a top bar's link) can open its page in a new tab ("Open the link in a new tab", off by default; email and phone links always open as usual); a popup or top bar then closes on the page they were on. Sign-ups land in the Forms inbox, with all of its emails and notifications.
+- **Two designs** for popups, slide-ins and boxes in a page: **Plain** (the picture as a strip across the top, words on the left) and **Picture on top** (the whole picture, never cropped, on a coloured panel; centred words; a full-width button; rounder corners). The panel takes the button colour unless you choose another. Without a picture, Picture on top looks like Plain. On a phone, a popup that opens by itself is a sheet at the bottom without its picture, as before, and a slide-in keeps its picture at most 88 px tall, so both stay within 45% of the screen.
+- **Fonts:** popups use your page's own fonts: the text takes the page's text font, and the heading the font of the page's own main heading. A theme can still set `--popups-font` and `--popups-heading-font`.
 - **When it opens:** "after they have read a while" (40% down the page or 30 seconds), "when they click" a link or button your web person sets up, or "when they are about to leave" (computers only). Top bars show as soon as the page opens. There are no raw seconds or percentages to set.
 - **Where and when:** every page, pages under an address, or a whole collection; "never on these pages"; phones, computers or both; a start and an end, with a date and a time in your site's time zone.
 - **Respect, built in and not switchable:**
@@ -22,13 +24,13 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
   - A popup waits for the visitor's second page. On computers you can allow it on the first page.
   - Never while someone is typing.
   - Never again for someone who signed up or clicked. After a close it shows again after a week, after a month, or never.
-  - Changed means new: when you change what a popup or top bar says, its link or its dates, it shows once more to people who closed it or clicked its button (never to someone who signed up). Changing only where, on what or how often it shows, its name or its colours does not bring it back.
-  - Always a 44 px close button, and Esc closes it. Nothing closes by itself, and the "No thanks" words come from a fixed list.
+  - Changed means new: when you change what a popup or top bar says (its heading, text, label or note), its picture, its link or its dates, it shows once more to people who closed it or clicked its button (never to someone who signed up). Changing only where, on what or how often it shows, its name, its design, the highlighted words or its colours does not bring it back.
+  - Always a 44 px close button, and Esc closes it. Nothing closes by itself, and the words to say no come from a fixed list: "No thanks", "Not now", "Thanks, I'm not interested", or only the close button.
 - **Results:** each popup's own page shows how it is doing, for a period you pick: the last 30 days (where it opens), this month, last month or since it started. Two numbers: Sign-ups (or Button clicks for a popup with a button) and Rate, each with the change from the period before (the last 30 days against the 30 before, this month against the same days of last month, last month against the month before). Under them, a small chart of sign-ups or clicks a day (a week, for long periods), and one line with how often it was seen (at least half of it on screen for a second) and closed. The Results tab puts every popup side by side for the same period, sortable by Seen or Rate. Rates, the share seen on phones and the changes appear from 100 views. Both have a spreadsheet download (daily counts; the link works for ten minutes, so open the page again for a fresh one). Days follow your site's time zone. It stores no cookies and nothing about any visitor; counts are kept for 400 days.
 - **Which popup a sign-up came from:** button links to other websites get campaign tags (`utm_source=popups`, `utm_medium`, `utm_campaign=<popup>`), so Google Analytics shows those visits as coming from the popup. A form does the same when it has hidden fields with those names (see below), so the sign-up's details under Forms, Lead Delivery and your CRM show the popup.
 - **Preview:** "Preview on your site" (light or dark) shows the popup at once, for you only, exactly where a visitor sees it: a top bar at the top, a slide-in in its corner, a popup centred (a sheet on phones). A box in a page shows at the top of the page's content, lined up with the page's text as visitors see it in a post, since its place is where an editor puts the block. It says whether a real visitor would see it now and, if not, why ("this browser closed it 3 days ago; it shows again after a month"). Nothing is counted and the form does not send.
 - **Colours:** your theme's colours (the default), one of five ready-made sets, or your own. Each set has a matching dark version for visitors whose device is in dark mode, and the cookie banner in Analytics & Cookies offers the same sets, so the two match.
-- **Checks:** the form's short name is checked when you save. Your own colours are refused when they are hard to read, and so are unsafe links. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
+- **Checks:** the form's short name is checked when you save. Your own colours are refused when they are hard to read, and so are unsafe links. Highlighted words must be in the heading, and with your own colours or a ready-made set they must be easy to read on the background (if a later colour change makes them hard to read, they are shown like the rest of the heading). A highlight colour of their own is checked the same way; when it may not read on a dark device (the theme's own dark colours, or a set's dark version where it fails), dark devices show the words in the button colour instead. If a form later disappears, the popup stays closed (visitors see nothing broken), the list shows a red warning, and the people on the Settings tab get one email that day. If the form is only paused under Forms, the popup waits, the list shows a yellow warning, and it opens again by itself once the form is back on.
 
 | A popup's results                                                  | A popup's results, on a phone                                   |
 | ------------------------------------------------------------------ | --------------------------------------------------------------- |
@@ -41,7 +43,7 @@ Popups for [EmDash](https://emdashcms.com): a top bar for news such as opening h
 ## What it does not do
 
 - No A/B tests, countdowns, "spin to win", full-screen takeovers or exit intent on phones.
-- No custom CSS, and no colours, fonts or sizes per popup: one look for all of them.
+- No custom CSS or HTML, and no fonts or sizes per popup. Per popup you choose only the design (Plain or Picture on top) and its panel colour; the colours and fonts are the same for all of them.
 - It does not build forms. Make the form under Forms, then name it here.
 - Forms with Cloudflare Turnstile or a file upload only work in a box in a page for now, not in a popup, slide-in or top bar.
 - There is no automatic box "after every post": an editor places the block where it should go.
@@ -64,7 +66,7 @@ export default defineConfig({
 });
 ```
 
-It needs EmDash 1.3.0 or later, and for forms in popups the forms plugin 0.2.11 or later: earlier versions save a ticked checkbox, such as a consent box, as unticked. There are no options; everything is set on the admin page.
+It needs EmDash 1.5.0 or later (1.3.0 for versions before 0.3.0), and for forms in popups the forms plugin 0.2.11 or later: earlier versions save a ticked checkbox, such as a consent box, as unticked. There are no options; everything is set on the admin page.
 
 ### What your theme must render
 
@@ -104,24 +106,27 @@ Where they show: open a sign-up under Forms to see them, and Lead Delivery passe
 
 Popups take your theme's colours from these CSS variables. All of them are optional, and they can differ in light and dark. When one is missing, the cookie banner's `--cookie-consent-*` variable of the same name is used, then a calm neutral colour.
 
-`--popups-background`, `--popups-text`, `--popups-surface` (the box itself), `--popups-rule` (its edge), `--popups-accent` (buttons), `--popups-accent-text`, `--popups-font`, `--popups-heading-font`, `--popups-radius`, `--popups-shadow`, `--popups-backdrop`.
+`--popups-background`, `--popups-text`, `--popups-surface` (the box itself), `--popups-rule` (its edge), `--popups-accent` (buttons), `--popups-accent-text`, `--popups-font` (default: the page's own font), `--popups-heading-font` (default: the font of the page's main heading), `--popups-radius`, `--popups-shadow`, `--popups-backdrop`.
 
 ## Settings
 
-| Where        | Setting                                                                     | Default                                          |
-| ------------ | --------------------------------------------------------------------------- | ------------------------------------------------ |
-| Each popup   | Kind                                                                        | chosen when made                                 |
-|              | Heading, text, picture, button or form, "No thanks" words                   | No thanks                                        |
-|              | Open the link in a new tab                                                  | Off                                              |
-|              | When it opens                                                               | After they have read a while (top bars: at once) |
-|              | Show on the first page they visit (popups, computers only)                  | Off                                              |
-|              | Where, never on these pages, phones or computers                            | Every page; phones and computers                 |
-|              | Show again after a close                                                    | After a month                                    |
-|              | Starts, ends (date and time, site's time zone), on or off (beside the name) | No dates; on ("Save and finish" starts it)       |
-| Settings tab | Light or dark                                                               | Follow the visitor's device                      |
-|              | Colours: theme, a ready-made set, or my own (checked for contrast)          | Your theme's colours                             |
-|              | Slide-in corner                                                             | Bottom right                                     |
-|              | Emails when a popup cannot open                                             | None                                             |
+| Where        | Setting                                                                                                                 | Default                                          |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Each popup   | Kind                                                                                                                    | chosen when made                                 |
+|              | Heading, text, picture, button or form, "No thanks" words                                                               | No thanks                                        |
+|              | Small label above the heading (up to 30 letters), Highlight these words, Small note under the button (up to 60 letters) | None                                             |
+|              | Highlight colour (Admins)                                                                                               | The button colour                                |
+|              | Design: Plain or Picture on top; Panel colour behind the picture (Admins)                                               | Plain; the button colour                         |
+|              | Open the link in a new tab                                                                                              | Off                                              |
+|              | When it opens                                                                                                           | After they have read a while (top bars: at once) |
+|              | Show on the first page they visit (popups, computers only)                                                              | Off                                              |
+|              | Where, never on these pages, phones or computers                                                                        | Every page; phones and computers                 |
+|              | Show again after a close                                                                                                | After a month                                    |
+|              | Starts, ends (date and time, site's time zone), on or off (beside the name)                                             | No dates; on ("Save and finish" starts it)       |
+| Settings tab | Light or dark                                                                                                           | Follow the visitor's device                      |
+|              | Colours: theme, a ready-made set, or my own (checked for contrast)                                                      | Your theme's colours                             |
+|              | Slide-in corner                                                                                                         | Bottom right                                     |
+|              | Emails when a popup cannot open                                                                                         | None                                             |
 
 A new popup is off while you make it. Its last step has "Turn it on" already switched on, so "Save and finish" starts it at its start time; switch it off first to keep it off.
 
@@ -145,6 +150,21 @@ A new popup is made one step at a time. Once it is finished, its own page has, f
 | ![](images/admin-new-popup-0-2-1-emdash-1-4-desktop-light.png) | ![](images/admin-colours-0-2-1-emdash-1-4-desktop-light.png) | ![](images/editor-which-box-0-2-1-emdash-1-4-desktop-light.png) |
 
 Editors can change words, pictures, dates and on or off, preview, and read the results. Administrators can also change the kind, the form, where it shows, the settings, and duplicate or delete popups. A site can have up to 20 popups.
+
+## Use with an AI assistant (MCP)
+
+An AI assistant connected to your site through EmDash's MCP server can read and change popups with six tools. The tools are off until an Admin switches them on for Popups in EmDash's plugin settings. EmDash ties that consent to the tools as they are, so an update that changes a tool switches them off until an Admin switches them on again. The assistant's token needs the scope `mcp:tools:popups` (or `mcp:tools` for every plugin's tools). Needs EmDash 1.5.0 or later. Each tool follows the same checks and the same rules as the admin page: Editors may change words, pictures, the button, the closing words, dates and on or off; Admins also the kind, the form, where it shows and the design. No tool deletes a popup.
+
+| Tool               | What it does                                                                                     | Who                        |
+| ------------------ | ------------------------------------------------------------------------------------------------ | -------------------------- |
+| `popups__list`     | Every popup: id, name, kind, on or off, status, where it shows, warnings. Read-only.             | Editors and Admins         |
+| `popups__get`      | One popup's full settings, dates in your site's time zone, and a line of its results. Read-only. | Editors and Admins         |
+| `popups__create`   | Makes a finished popup, turned off unless `on: true` is passed.                                  | Admins                     |
+| `popups__update`   | Changes the fields it is given; the rest stay as they are.                                       | Editors (words) and Admins |
+| `popups__turn_on`  | Turns one popup on.                                                                              | Editors and Admins         |
+| `popups__turn_off` | Turns one popup off.                                                                             | Editors and Admins         |
+
+`popups__get` returns the popup's `settings` with the same names and values `popups__update` takes, so they can be changed and sent back. A picture is given by its id in the media library; if the site cannot read it for a key, the tool says so, and the picture can be set on the popup's page instead. The tools' addresses are ordinary plugin routes: a signed-in Editor's browser can reach them while the tools are switched off, which gives nothing the admin page does not already allow. Changes reach visitors within a few minutes, when cached pages refresh.
 
 ## FAQ
 

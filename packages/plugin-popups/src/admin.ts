@@ -6,11 +6,15 @@ import { cleanColourChoice, COLOUR_OPTIONS, OWN_COLOURS } from "./colour-sets.js
 import {
 	colorProblems,
 	cleanColor,
+	contrast,
 	DECLINE_LABEL,
 	isLive,
+	highlightProblem,
 	isSafeLink,
 	KIND_LABEL,
 	MAX_HEADING,
+	MAX_LABEL,
+	MAX_NOTE,
 	MAX_POPUPS,
 	MAX_TEXT,
 	newId,
@@ -26,6 +30,7 @@ import {
 } from "./config.js";
 import type { ExportRange } from "./export-link.js";
 import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
+import { highlightLooks, lookColours } from "./fragment.js";
 import { hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import {
 	compare,
@@ -134,14 +139,14 @@ const TRIGGER_SHORT: Record<keyof typeof TRIGGER_CHOICE, string> = {
 	exit: "When they are about to leave (computers only)",
 };
 
-function kindLine(popup: Popup): string {
+export function kindLine(popup: Popup): string {
 	if (popup.contains === "form" && popup.form && popup.kind !== "bar") {
 		return `${KIND_LABEL[popup.kind]} with a form`;
 	}
 	return KIND_LABEL[popup.kind];
 }
 
-function datesText(popup: Popup, state: PageState): string {
+export function datesText(popup: Popup, state: PageState): string {
 	const when = (ms: number) => describeMoment(ms, state.zone, state.now);
 	if (popup.start && popup.end) return `${when(popup.start)} to ${when(popup.end)}`;
 	if (popup.start) return `From ${when(popup.start)}`;
@@ -164,7 +169,7 @@ export function statusOf(popup: Popup, state: PageState): string {
 	return "On";
 }
 
-function showsOnText(popup: Popup, state: PageState): string {
+export function showsOnText(popup: Popup, state: PageState): string {
 	if (popup.kind === "inline") return "Where it is placed";
 	let where = "Every page";
 	if (popup.where === "prefix")
@@ -521,23 +526,25 @@ function errorBlocks(state: PageState): Block[] {
 
 // ── The list ────────────────────────────────────────────────
 
-const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; description: string }> =
-	{
-		missing: (p) => ({
-			title: `"${p.name}" cannot open: there is no form called "${p.form}" any more`,
-			description:
-				"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit (Form). Visitors see nothing broken in the meantime; the popup simply stays closed.",
-		}),
-		unsupported: (p) => ({
-			title: `"${p.name}" cannot open: its form uses Turnstile or a file upload`,
-			description:
-				"Those only work in a box in a page for now. Choose another form under Edit (Form), or make a box in a page with this form.",
-		}),
-		paused: (p) => ({
-			title: `"${p.name}" is waiting: its form "${p.form}" is paused under Forms`,
-			description: "It opens again by itself once the form is turned back on under Forms.",
-		}),
-	};
+export const PROBLEM_TEXT: Record<
+	ProblemKind,
+	(popup: Popup) => { title: string; description: string }
+> = {
+	missing: (p) => ({
+		title: `"${p.name}" cannot open: there is no form called "${p.form}" any more`,
+		description:
+			"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit (Form). Visitors see nothing broken in the meantime; the popup simply stays closed.",
+	}),
+	unsupported: (p) => ({
+		title: `"${p.name}" cannot open: its form uses Turnstile or a file upload`,
+		description:
+			"Those only work in a box in a page for now. Choose another form under Edit (Form), or make a box in a page with this form.",
+	}),
+	paused: (p) => ({
+		title: `"${p.name}" is waiting: its form "${p.form}" is paused under Forms`,
+		description: "It opens again by itself once the form is turned back on under Forms.",
+	}),
+};
 
 /** Why a live popup with a form cannot open or is waiting, and the fix; the list and its page alike. */
 function problemBanner(state: PageState, popup: Popup): Block[] {
@@ -900,7 +907,17 @@ type Field = Record<string, unknown>;
 function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 	const bar = popup.kind === "bar";
 	const inline = popup.kind === "inline";
-	const fields: Field[] = [
+	const fields: Field[] = [];
+	if (!bar)
+		fields.push({
+			type: "text_input",
+			action_id: "label",
+			label: short
+				? `Small label above the heading (optional, up to ${MAX_LABEL} letters)`
+				: `Small label above the heading (optional, up to ${MAX_LABEL} letters), such as "Free guide"`,
+			initial_value: typed(state, "label", popup.label),
+		});
+	fields.push(
 		{
 			type: "text_input",
 			action_id: "heading",
@@ -912,6 +929,29 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 				: "Fresh from the oven, once a month",
 			initial_value: typed(state, "heading", popup.heading),
 		},
+		...(bar
+			? []
+			: [
+					{
+						type: "text_input",
+						action_id: "highlight",
+						label: short
+							? "Highlight these words (optional)"
+							: "Highlight these words (optional): copy a few words from the heading to show them in the button colour",
+						initial_value: typed(state, "highlight", popup.highlight),
+					},
+					...(state.admin
+						? [
+								{
+									type: "text_input",
+									action_id: "highlight_colour",
+									label: "Highlight colour (optional, like #e8457a; empty uses the button colour)",
+									placeholder: "#e8457a",
+									initial_value: typed(state, "highlight_colour", popup.highlightColor),
+								},
+							]
+						: []),
+				]),
 		{
 			type: "text_input",
 			action_id: "text",
@@ -919,7 +959,7 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 			multiline: !bar,
 			initial_value: typed(state, "text", popup.text),
 		},
-	];
+	);
 	if (!bar) {
 		fields.push({
 			type: "combobox",
@@ -929,6 +969,39 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 			options: pictureOptions(state, popup),
 			initial_value: typed(state, "picture", popup.picture?.id ?? "none"),
 		});
+	}
+	if (!bar && state.admin) {
+		fields.push(
+			{
+				type: "radio",
+				action_id: "design",
+				label: "Design",
+				options: [
+					{
+						value: "plain",
+						label: short
+							? "Plain"
+							: "Plain: the picture as a strip across the top, words on the left",
+					},
+					{
+						value: "top",
+						label: short
+							? "Picture on top"
+							: "Picture on top: the whole picture on a coloured panel, words centred, a full-width button",
+					},
+				],
+				initial_value: typed(state, "design", popup.design),
+			},
+			{
+				type: "text_input",
+				action_id: "panel",
+				label:
+					"Panel colour behind the picture (optional, like #fde68a; empty uses the button colour)",
+				placeholder: "#fde68a",
+				initial_value: typed(state, "panel", popup.panel),
+				condition: { field: "design", eq: "top" },
+			},
+		);
 	}
 	if (!bar && state.admin) {
 		fields.push({
@@ -992,6 +1065,15 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 			},
 		);
 	}
+	if (!bar)
+		fields.push({
+			type: "text_input",
+			action_id: "note",
+			label: short
+				? `Small note under the button (optional, up to ${MAX_NOTE} letters)`
+				: `Small note under the button (optional, up to ${MAX_NOTE} letters), such as "Takes less than a minute"`,
+			initial_value: typed(state, "note", popup.note),
+		});
 	if (!bar && !inline) {
 		fields.push({
 			type: "select",
@@ -1702,7 +1784,11 @@ const has = (values: Record<string, unknown>, key: string) => Object.hasOwn(valu
 const text = (values: Record<string, unknown>, key: string, saved: string) =>
 	has(values, key) && typeof values[key] === "string" ? (values[key] as string).trim() : saved;
 
-function pictureFrom(state: PageState, value: unknown, saved: Picture | null): Picture | null {
+export function pictureFrom(
+	state: PageState,
+	value: unknown,
+	saved: Picture | null,
+): Picture | null {
 	if (value === undefined) return saved;
 	if (value === "none" || value === "" || value === null) return null;
 	if (saved && value === saved.id) return saved;
@@ -2040,38 +2126,7 @@ export async function handleInteraction(
 				: refuse(existing, 1, errors);
 		if (!existing && store.popups.length >= MAX_POPUPS)
 			return only(`A site can have ${MAX_POPUPS} popups.`);
-		const base: Popup =
-			existing ??
-			({
-				id: newId(),
-				handle: "",
-				name,
-				kind: kind!,
-				heading: "",
-				text: "",
-				picture: null,
-				contains: "button",
-				buttonLabel: "",
-				buttonUrl: "",
-				buttonNewTab: false,
-				form: "",
-				thanks: "",
-				decline: "no-thanks",
-				trigger: kind === "bar" ? "load" : "read",
-				where: "all",
-				prefixes: [],
-				collections: [],
-				exclude: [],
-				devices: "all",
-				again: "month",
-				firstPage: false,
-				start: null,
-				end: null,
-				on: false,
-				step: 1,
-				formNote: "",
-				createdAt: new Date(state.now).toISOString(),
-			} satisfies Popup);
+		const base: Popup = existing ?? blankPopup(name, kind!, state.now);
 		const handle =
 			existing?.handle ||
 			uniqueHandle(
@@ -2132,8 +2187,48 @@ export async function handleInteraction(
 	return { response: renderPage(state) };
 }
 
+/** A new popup of a kind, turned off, with nothing said yet: "New popup" step 1 and the AI tools. */
+export function blankPopup(name: string, kind: Kind, now: number): Popup {
+	return {
+		id: newId(),
+		handle: "",
+		name,
+		kind,
+		heading: "",
+		text: "",
+		picture: null,
+		design: "plain",
+		panel: "",
+		label: "",
+		note: "",
+		highlight: "",
+		highlightColor: "",
+		contains: "button",
+		buttonLabel: "",
+		buttonUrl: "",
+		buttonNewTab: false,
+		form: "",
+		thanks: "",
+		decline: "no-thanks",
+		trigger: kind === "bar" ? "load" : "read",
+		where: "all",
+		prefixes: [],
+		collections: [],
+		exclude: [],
+		devices: "all",
+		again: "month",
+		firstPage: false,
+		start: null,
+		end: null,
+		on: false,
+		step: 1,
+		formNote: "",
+		createdAt: new Date(now).toISOString(),
+	};
+}
+
 /** What one part of a popup's form changes, or why it cannot be saved. */
-interface Part {
+export interface Part {
 	popup: Popup;
 	errors: string[];
 	notes?: string[];
@@ -2141,7 +2236,7 @@ interface Part {
 }
 
 /** What it says: words, picture, button or form. */
-async function wordsPart(
+export async function wordsPart(
 	popup: Popup,
 	values: Record<string, unknown>,
 	state: PageState,
@@ -2157,6 +2252,51 @@ async function wordsPart(
 		);
 	if (words.length > MAX_TEXT)
 		errors.push(`The text is ${words.length} letters; keep it to ${MAX_TEXT}.`);
+	const bar = popup.kind === "bar";
+	const label = bar ? "" : text(values, "label", popup.label);
+	const note = bar ? "" : text(values, "note", popup.note);
+	// Words typed into the heading's box keep their spacing; the check is on the saved heading.
+	const highlight = bar ? "" : text(values, "highlight", popup.highlight);
+	if (label.length > MAX_LABEL)
+		errors.push(`The label is ${label.length} letters; keep it to ${MAX_LABEL}.`);
+	if (note.length > MAX_NOTE)
+		errors.push(`The note is ${note.length} letters; keep it to ${MAX_NOTE}.`);
+	if (highlight && !heading.includes(highlight))
+		errors.push(
+			`The words to highlight, "${highlight}", are not in the heading. Copy them from the heading exactly, or leave the box empty.`,
+		);
+	const colourText =
+		state.admin && !bar
+			? text(values, "highlight_colour", popup.highlightColor)
+			: popup.highlightColor;
+	const highlightColor = cleanColor(colourText);
+	const main = highlightLooks(state.store.settings).main;
+	if (colourText && !highlightColor)
+		errors.push(
+			"Write the highlight colour like #e8457a, or leave it empty to use the button colour.",
+		);
+	// Checked when an Admin saves it (an Editor cannot change it, so is never stopped by it).
+	else if (state.admin && highlightColor && main && contrast(highlightColor, main.background) < 4.5)
+		errors.push(
+			`The highlight colour is hard to read on the background (contrast ${contrast(highlightColor, main.background).toFixed(1)} to 1; it needs at least 4.5). Choose a darker or lighter colour, or leave it empty to use the button colour.`,
+		);
+	else if (highlight && !highlightColor) {
+		const { light, dark } = lookColours(state.store.settings);
+		const hard = highlightProblem(
+			[light, dark].filter((c) => !!c) as Array<NonNullable<typeof light>>,
+		);
+		if (hard) errors.push(hard);
+	}
+	const design =
+		state.admin && !bar && has(values, "design")
+			? values.design === "top"
+				? "top"
+				: "plain"
+			: popup.design;
+	const panelText = state.admin && !bar ? text(values, "panel", popup.panel) : popup.panel;
+	const panel = cleanColor(panelText);
+	if (panelText && !panel)
+		errors.push("Write the panel colour like #fde68a, or leave it empty to use the button colour.");
 	const contains =
 		state.admin && popup.kind !== "bar" && has(values, "contains")
 			? values.contains === "form"
@@ -2227,6 +2367,12 @@ async function wordsPart(
 			heading,
 			text: words,
 			picture,
+			design,
+			panel,
+			label,
+			note,
+			highlight,
+			highlightColor,
 			contains,
 			form,
 			thanks: state.admin
@@ -2246,7 +2392,7 @@ async function wordsPart(
 }
 
 /** When and where: Admins only; the callers check. */
-function placesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
+export function placesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
 	const where = has(values, "where") ? (values.where as Popup["where"]) : popup.where;
 	const prefixes = has(values, "prefixes") ? parsePaths(values.prefixes) : popup.prefixes;
 	const collections = Array.isArray(values.collections)
@@ -2284,7 +2430,7 @@ function placesPart(popup: Popup, values: Record<string, unknown>, state: PageSt
 }
 
 /** Dates and on or off. */
-function datesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
+export function datesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
 	const moment = (dateKey: string, timeKey: string, saved: number | null) => {
 		if (!has(values, dateKey)) return { ok: true, ms: saved };
 		const date =

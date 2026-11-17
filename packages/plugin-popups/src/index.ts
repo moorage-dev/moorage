@@ -25,6 +25,7 @@ import {
 import type { PreviewAnswer } from "./client/types.js";
 import {
 	isLive,
+	MAX_POPUPS,
 	normalizeStore,
 	PROBLEMS_KEY,
 	STORE_KEY,
@@ -34,8 +35,17 @@ import {
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, listForms, type FormCheck } from "./forms.js";
-import { boxColours, isPopupPreview, opensNewTab, pageFragments, previewItem } from "./fragment.js";
+import {
+	boxColours,
+	isPopupPreview,
+	opensNewTab,
+	pageFragments,
+	previewItem,
+	highlightLook,
+} from "./fragment.js";
 import { withHelpLine } from "./help-line.js";
+import { MCP_PERMISSION, MCP_ROUTES, mcpTools, runTool, type ToolName } from "./mcp.js";
+import { storedFileUrl } from "./media-file.js";
 import { fetchOwnSite } from "./self-fetch.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
 import {
@@ -275,6 +285,131 @@ export function boxOptions(popups: Popup[]): Array<{ id: string; name: string }>
 	return [{ id: "", name }];
 }
 
+/** The public address of a picture: read in-process, else asked of the site as the signed-in person. */
+async function pictureUrl(
+	ctx: RouteContext,
+	origin: string | undefined,
+	mediaId: string,
+): Promise<string | null> {
+	return (await storedFileUrl(mediaId, ctx.log)) ?? (await publicMediaUrl(ctx, origin, mediaId));
+}
+
+/** One picture from the media library, by id, as the admin's picture list gives it. */
+async function mediaById(ctx: PluginContext, id: string): Promise<MediaOption | null> {
+	if (!ctx.media || !/^[A-Za-z0-9_-]{1,60}$/.test(id)) return null;
+	try {
+		const item = await ctx.media.get(id);
+		if (!item || !item.mimeType?.startsWith("image/")) return null;
+		return {
+			id: item.id,
+			url: item.url,
+			alt: item.alt ?? "",
+			filename: item.filename,
+			width: item.width ?? null,
+			height: item.height ?? null,
+		};
+	} catch {
+		return null;
+	}
+}
+
+/** Read, change and write one key with a compare-and-set, trying again when someone wrote between. */
+async function updateKv(
+	ctx: PluginContext,
+	key: string,
+	change: (raw: unknown) => unknown,
+): Promise<void> {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const stored = await ctx.kv.getVersioned<unknown>(key);
+		const written = await ctx.kv.compareAndSet(
+			key,
+			stored?.revision ?? null,
+			change(stored?.value ?? null),
+		);
+		if (written.applied) return;
+	}
+	throw PluginRouteError.conflict("Popups were being changed at the same time. Please try again.");
+}
+
+/** An MCP tool's route: private, JSON, POST, with its permission. */
+function toolRoute(name: ToolName) {
+	return {
+		permission: MCP_PERMISSION[name],
+		handler: async (ctx: RouteContext) => {
+			const origin = originOf(ctx);
+			const writes = name !== "list" && name !== "get";
+			const [store, problems, zone, collections] = await Promise.all([
+				readStore(ctx),
+				readProblems(ctx),
+				siteZone(),
+				// Only a change of where it shows needs the site's collections.
+				writes ? listCollections(ctx) : [],
+			]);
+			const state: PageState = {
+				store,
+				admin: (ctx.user?.role ?? 0) >= ADMIN_ROLE,
+				zone,
+				now: Date.now(),
+				origin,
+				pluginId: PLUGIN_ID,
+				problems,
+				media: [],
+				forms: null,
+				collections,
+				emailReady: !!ctx.email,
+			};
+			const outcome = await runTool(name, ctx.input, {
+				state,
+				helpers: {
+					checkForm: (form, overlay) => checkForm(origin, form, overlay),
+					// A key has no cookie to ask the site with: only the in-process read.
+					publicUrl: (mediaId) => storedFileUrl(mediaId, ctx.log),
+				},
+				picture: (id) => mediaById(ctx, id),
+				rows: (query) => readRows(ctx, query).catch(() => []),
+			});
+			if (outcome.save && outcome.changed) {
+				// Put back only this popup over what is stored now, with a compare-and-set, so two
+				// tools writing at once (two popups turned off together) both keep their change.
+				const { id, created } = outcome.changed;
+				const mine = outcome.save.popups.find((p) => p.id === id);
+				await updateKv(ctx, STORE_KEY, (raw) => {
+					const now = normalizeStore(raw);
+					if (created && now.popups.length >= MAX_POPUPS)
+						throw PluginRouteError.badRequest(`A site can have ${MAX_POPUPS} popups.`);
+					// A popup deleted on the admin page meanwhile stays deleted.
+					const popups = !mine
+						? now.popups
+						: created
+							? [...now.popups, mine]
+							: now.popups.map((p) => (p.id === id ? mine : p));
+					return normalizeStore({ popups, settings: now.settings });
+				});
+				// After the write, so a page view in between cannot keep the old popups.
+				forgetSettings(PLUGIN_ID);
+			}
+			if (outcome.problems && outcome.changed) {
+				// Only this popup's problem, over what is stored now.
+				const { id } = outcome.changed;
+				const mine = outcome.problems[id];
+				await updateKv(ctx, PROBLEMS_KEY, (raw) => {
+					const next = { ...(raw && typeof raw === "object" ? (raw as Problems) : {}) };
+					if (mine) next[id] = mine;
+					else delete next[id];
+					return next;
+				});
+			}
+			return outcome.answer;
+		},
+	};
+}
+
+function toolRoutes() {
+	return Object.fromEntries(
+		(Object.keys(MCP_ROUTES) as ToolName[]).map((name) => [MCP_ROUTES[name], toolRoute(name)]),
+	);
+}
+
 export function createPlugin() {
 	return definePlugin({
 		id: PLUGIN_ID,
@@ -342,7 +477,10 @@ export function createPlugin() {
 				if (removed > 0) ctx.log.info("Removed popup counts older than 400 days", { removed });
 			},
 		},
+		// Tools for an AI assistant (EmDash's MCP server), off until an Admin switches them on.
+		mcp: { tools: mcpTools() },
 		routes: {
+			...toolRoutes(),
 			// The admin page. Editors may change words, pictures, dates and on/off; Admins everything.
 			admin: {
 				permission: "plugins:read",
@@ -380,7 +518,7 @@ export function createPlugin() {
 					};
 					const outcome = await handleInteraction(input, state, {
 						checkForm: (form, overlay) => checkForm(origin, form, overlay),
-						publicUrl: (mediaId) => publicMediaUrl(ctx, origin, mediaId),
+						publicUrl: (mediaId) => pictureUrl(ctx, origin, mediaId),
 					});
 					if (outcome.save) {
 						await ctx.kv.set(STORE_KEY, outcome.save);
@@ -478,7 +616,7 @@ export function createPlugin() {
 					const store = await readStore(ctx);
 					const popup = store.popups.find((p) => p.id === id);
 					if (!popup) throw PluginRouteError.notFound("No such popup");
-					const item = previewItem(popup, originOf(ctx) ?? "");
+					const item = previewItem(popup, originOf(ctx) ?? "", store.settings);
 					const zone = await siteZone();
 					const now = Date.now();
 					return {
@@ -567,6 +705,20 @@ export function createPlugin() {
 							handle: popup.handle,
 							heading: popup.heading,
 							text: popup.text,
+							// Picture on top only with a picture; new fields only when set.
+							...(popup.design === "top" && popup.picture
+								? { design: "top", ...(popup.panel ? { panel: popup.panel } : {}) }
+								: {}),
+							...(popup.label ? { label: popup.label } : {}),
+							...(popup.note ? { note: popup.note } : {}),
+							...((look) =>
+								look.words
+									? {
+											highlight: look.words,
+											...(look.colour ? { highlightColor: look.colour } : {}),
+											...(look.dark ? { highlightDark: true } : {}),
+										}
+									: {})(highlightLook(popup, store.settings)),
 							picture: popup.picture
 								? {
 										url: popup.picture.url,

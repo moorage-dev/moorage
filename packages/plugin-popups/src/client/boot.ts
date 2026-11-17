@@ -1,7 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { barInner } from "./bar.js";
-import { styles } from "./css.js";
+import { DARK_HIGHLIGHT, styles } from "./css.js";
 import { CLOSE } from "./icons.js";
 import type { ClientConfig, ClientItem, PreviewAnswer } from "./types.js";
 
@@ -446,9 +446,15 @@ export function boot(c: ClientConfig): void {
 		const sheet = modal && phone() && !clicked;
 		const hid = "ph" + item.i;
 		const content = item.c;
+		// "Picture on top": the whole picture on its panel, above everything, in every kind.
+		const top = !!content.ds && !!content.img;
+		const above = modal || inline || top;
 		const picture = content.img
-			? '<img class="' +
-				(modal || inline ? "pic" : "thumb") +
+			? (top
+					? '<div class="pan"' + (content.pn ? ' style="--pn:' + esc(content.pn) + '"' : "") + ">"
+					: "") +
+				'<img class="' +
+				(top ? "tp" : modal || inline ? "pic" : "thumb") +
 				'" src="' +
 				esc(content.img.u) +
 				'" alt="' +
@@ -456,8 +462,23 @@ export function boot(c: ClientConfig): void {
 				'"' +
 				(content.img.w ? ' width="' + content.img.w + '"' : "") +
 				(content.img.h ? ' height="' + content.img.h + '"' : "") +
-				">"
+				">" +
+				(top ? "</div>" : "")
 			: "";
+		const note = content.nt ? '<p class="nt">' + esc(content.nt) + "</p>" : "";
+		const hlAt = content.hl ? content.h.indexOf(content.hl) : -1;
+		const heading =
+			hlAt < 0
+				? esc(content.h)
+				: esc(content.h.slice(0, hlAt)) +
+					'<span class="hl' +
+					(content.hd ? " hd" : "") +
+					'"' +
+					(content.hc ? ' style="--hc:' + esc(content.hc) + '"' : "") +
+					">" +
+					esc(content.hl!) +
+					"</span>" +
+					esc(content.h.slice(hlAt + content.hl!.length));
 		const no = content.no
 			? '<button type="button" class="q" data-pp-close>' + esc(content.no) + "</button>"
 			: "";
@@ -473,6 +494,7 @@ export function boot(c: ClientConfig): void {
 				'<p class="msg" role="alert"></p><div class="r"><button type="submit" class="p">' +
 				esc(form.settings.submitLabel || "Submit") +
 				"</button>" +
+				note +
 				no +
 				"</div></form>"
 			: '<div class="r">' +
@@ -485,37 +507,43 @@ export function boot(c: ClientConfig): void {
 						esc(content.b.l) +
 						"</a>"
 					: "") +
+				note +
 				no +
 				"</div>";
 		const inner =
 			(inline
 				? ""
 				: '<button type="button" class="x' +
-					(modal && content.img && !sheet ? " on-pic" : "") +
+					((modal || top) && content.img && !sheet ? " on-pic" : "") +
 					'" data-pp-close aria-label="' +
 					esc(c.t.close) +
 					'">' +
 					CLOSE +
 					"</button>") +
-			(modal || inline ? picture : "") +
+			(above ? picture : "") +
 			(tag ? '<p class="pv">' + esc(tag) + "</p>" : "") +
-			(modal || inline ? "" : picture) +
+			(above ? "" : picture) +
+			(content.lb ? '<p class="lb" id="' + hid + 'l">' + esc(content.lb) + "</p>" : "") +
 			'<h2 id="' +
 			hid +
 			'" tabindex="-1">' +
-			esc(content.h) +
+			heading +
 			"</h2>" +
 			(content.x ? "<p>" + esc(content.x) + "</p>" : "") +
 			action;
-		const theme = "<style>" + styles(look, c.col, c.colDark) + "</style>";
+		const theme =
+			"<style>" + styles(look, c.col, c.colDark) + (content.hd ? DARK_HIGHLIGHT : "") + "</style>";
 		if (modal) {
 			root.innerHTML =
 				theme +
 				'<dialog class="pp modal' +
+				(top ? " top" : "") +
 				(sheet ? " sheet" : "") +
 				(form ? " hf" : "") +
 				'" aria-labelledby="' +
 				hid +
+				// The label is heard as the description; the heading stays the name and takes focus.
+				(content.lb ? '" aria-describedby="' + hid + "l" : "") +
 				'">' +
 				inner +
 				"</dialog>";
@@ -524,13 +552,18 @@ export function boot(c: ClientConfig): void {
 				theme +
 				'<div class="pp ' +
 				(inline ? "box" : "slide" + (c.left ? " l" : "")) +
+				(top ? " top" : "") +
 				'" role="region" aria-labelledby="' +
 				hid +
+				(content.lb ? '" aria-describedby="' + hid + "l" : "") +
 				'">' +
 				inner +
 				'</div><p class="sr" role="status"></p>';
 		}
 		const box = root.querySelector<HTMLElement>(".pp")!;
+		// The page's own heading font (the text takes the page's font by itself).
+		const pageHeading = d.querySelector("h1") || d.querySelector("h2");
+		if (pageHeading) host.style.setProperty("--ph", getComputedStyle(pageHeading).fontFamily);
 		if (inline) {
 			// At the top of the page's content, lined up with the page's text as a visitor sees
 			// the block in a text column: the left edge and width of the first paragraph wide
@@ -715,7 +748,7 @@ export function boot(c: ClientConfig): void {
 			box.querySelector<HTMLElement>("h2#" + hid)?.remove();
 			box.querySelector(".ok h2")!.id = hid;
 			box
-				.querySelectorAll(":scope > p:not(.pv),:scope > .pic,:scope > .thumb")
+				.querySelectorAll(":scope > p:not(.pv),:scope > .pic,:scope > .thumb,:scope > .pan")
 				.forEach((el) => el.remove());
 			box.querySelector<HTMLElement>(".ok h2")?.focus();
 		});
