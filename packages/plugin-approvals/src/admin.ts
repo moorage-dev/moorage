@@ -15,16 +15,19 @@ import {
 	type Config,
 } from "./config.js";
 import { hiddenFrom, hideField, withHelpLine } from "./help-line.js";
-import type { Meter } from "./meter.js";
+import { CALLS_PER_RUN_1_5, type Meter } from "./meter.js";
 import type { CollectionInfo, Draft, UserInfo } from "./requests.js";
 import {
 	ago,
 	approvers,
 	collectionInfo,
+	entryName,
 	mayApprove,
 	personName,
 	readDraft,
 	requests,
+	titleOf,
+	UNNAMED,
 	versions,
 	when,
 	type ApprovalRequest,
@@ -295,6 +298,43 @@ async function historyRows(ctx: PluginContext, list: ApprovalRequest[]): Promise
 	return blocks;
 }
 
+/** Requests stored as "Untitled" by an earlier release, named again per page load. */
+const RENAMED_PER_LOAD = 5;
+
+/**
+ * Name the requests an earlier release stored as "Untitled" (an entry whose content type has no
+ * `title` field): two calls each, the entry and the request's name, while the run has calls to
+ * spare under EmDash 1.5's limit. Only the name is written, so a decision made meanwhile is kept.
+ * The rows shown are renamed in place.
+ */
+async function nameUnnamed(
+	m: Meter,
+	shown: ApprovalRequest[],
+	titleFields: Map<string, string | null>,
+): Promise<void> {
+	const ctx = m.ctx;
+	if (!ctx.content) return;
+	const unnamed = shown.filter((r) => r.title === UNNAMED).slice(0, RENAMED_PER_LOAD);
+	for (const request of unnamed) {
+		if (m.left(CALLS_PER_RUN_1_5) < 3) return;
+		try {
+			const item = await ctx.content.get(request.collection, request.entryId);
+			if (!item) continue;
+			const title = entryName(
+				titleFields.get(request.collection),
+				item.data ?? {},
+				item.slug,
+				request.entryId,
+			);
+			if (title === UNNAMED) continue;
+			await requests(ctx).updateIf(key(request), { where: {}, set: { title } });
+			request.title = title;
+		} catch {
+			// Shown as before; tried again on the next load.
+		}
+	}
+}
+
 /** Content types read for pages already scheduled: one call each. */
 const SCHEDULED_TYPES = 3;
 const SCHEDULED_NAMED = 5;
@@ -341,8 +381,7 @@ async function scheduledPages(
 		});
 		for (const item of result.items) {
 			if (!item.scheduledAt || cleared.has(`${type.slug}:${item.id}`)) continue;
-			const value = item.data?.[type.titleField ?? "title"] ?? item.data?.title;
-			const title = typeof value === "string" && value.trim() ? value.trim() : "Untitled";
+			const title = entryName(type.titleField, item.data ?? {}, item.slug, item.id);
 			pages.push({ title, type: type.label, at: item.scheduledAt });
 		}
 	}
@@ -565,6 +604,7 @@ async function draftRows(
 	user: UserInfo | undefined,
 	all: ApprovalRequest[],
 	names: Map<string, string>,
+	titleFields: Map<string, string | null>,
 ): Promise<Block[]> {
 	if (!config || !user || user.role >= ROLE.author || !ctx.content) return [];
 	const open = new Set(all.filter((r) => r.status === "waiting").map((r) => key(r)));
@@ -579,10 +619,7 @@ async function draftRows(
 		for (const item of result.items) {
 			if (item.authorId !== user.id || item.status === "published") continue;
 			if (open.has(`${collection}:${item.id}`)) continue;
-			const title =
-				typeof item.data?.title === "string" && item.data.title.trim()
-					? item.data.title.trim()
-					: "Untitled";
+			const title = entryName(titleFields.get(collection), item.data ?? {}, item.slug, item.id);
 			rows.push(
 				{
 					type: "section",
@@ -639,6 +676,14 @@ async function listPage(
 	const waiting = visible(config, user, lists.waiting);
 	const sentBack = visible(config, user, lists.sentBack);
 	const done = visible(config, user, lists.done);
+	const titleFields = new Map(collections.map((c) => [c.slug, c.titleField]));
+	// On opening the page: requests an earlier release could not name get their name now.
+	if (scheduledWith)
+		await nameUnnamed(
+			scheduledWith,
+			[...waiting, ...sentBack, ...done.slice(0, HISTORY_ROWS)],
+			titleFields,
+		);
 	// Nobody decides on their own request: an approver's own requests are listed apart.
 	const forYou = config ? waiting.filter((r) => canDecide(config, r, user)) : [];
 	const yours = waiting.filter((r) => !forYou.includes(r));
@@ -696,7 +741,7 @@ async function listPage(
 
 	// Short labels, no counts: four tabs with counts ran off a 390 px phone's screen.
 	// The numbers at the top of Waiting carry the counts.
-	const drafts = await draftRows(ctx, config, user, lists.all, names);
+	const drafts = await draftRows(ctx, config, user, lists.all, names, titleFields);
 	const history = await historyRows(ctx, done);
 	// Last, so it uses only the calls left over.
 	const scheduled =
@@ -749,7 +794,13 @@ async function detailPage(
 			type: "actions",
 			elements: [{ type: "button", action_id: ACTION.back, label: "‹ Back to the list" }],
 		},
-		{ type: "header", text: request.title },
+		{
+			type: "header",
+			text:
+				request.title === UNNAMED
+					? titleOf(info, draft.data, draft.slug, request.entryId)
+					: request.title,
+		},
 		{
 			type: "fields",
 			fields: [

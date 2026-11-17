@@ -9,6 +9,8 @@ import type { UserInfo } from "./requests.js";
 import {
 	collectionInfo,
 	readDraft,
+	titleOf,
+	UNNAMED,
 	requestKey,
 	requests,
 	type ApprovalRequest,
@@ -160,7 +162,11 @@ export async function statusTool(ctx: PluginContext, user: UserInfo | undefined,
 
 	const typeHeld = Boolean(config?.collections.includes(collection));
 	const youHeld = typeHeld && isHeldRole(config!.preset, user.role);
-	const title = request?.title ?? (typeof draft.data.title === "string" ? draft.data.title : id);
+	// A request an earlier release stored as "Untitled" is named as the page names it now.
+	const title =
+		request && request.title !== UNNAMED
+			? request.title
+			: titleOf(info, draft.data, draft.slug, id);
 	const base = {
 		collection,
 		collectionLabel: info.label,

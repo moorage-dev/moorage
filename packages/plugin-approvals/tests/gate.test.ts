@@ -852,3 +852,146 @@ describe("your own request", () => {
 		expect(text(other)).toContain("Approve without review (admins)");
 	});
 });
+
+/**
+ * A content type like a site's Releases, with no `title` field at all. (Its declared title field,
+ * `release_version` on the real site, cannot be set through the test host's fixtures: the
+ * declared field is covered by entryName's own test and by the demo site's.) `Notes` has no field
+ * named title or name either; `People` has `name`.
+ */
+async function releases(s: Site): Promise<void> {
+	await s.host.fixtures.collection({
+		slug: "releases",
+		label: "Releases",
+		supports: ["drafts", "revisions"],
+		fields: [
+			{ slug: "plugin", label: "Plugin", type: "string" },
+			{ slug: "release_version", label: "Version", type: "string" },
+			{ slug: "summary", label: "Summary", type: "text" },
+			{ slug: "line", label: "Line", type: "string" },
+		],
+	});
+	await s.host.fixtures.collection({
+		slug: "notes",
+		label: "Notes",
+		supports: ["drafts", "revisions"],
+		fields: [{ slug: "body", label: "Body", type: "text" }],
+	});
+	await s.host.fixtures.collection({
+		slug: "people",
+		label: "People",
+		supports: ["drafts", "revisions"],
+		fields: [{ slug: "name", label: "Name", type: "string" }],
+	});
+}
+
+async function entry(
+	s: Site,
+	collection: string,
+	data: Record<string, unknown>,
+	slug: string | null,
+	by: User = s.editor,
+): Promise<string> {
+	const created = await s.host.actions.content.create(collection, {
+		data,
+		...(slug ? { slug } : {}),
+		authorId: by.id,
+		actor: { id: by.id, role: by.role },
+	});
+	if (!created.success) throw new Error(created.error.message);
+	return created.data.item.id;
+}
+
+const NAMED = { ...HELD, collections: ["pages", "releases", "notes", "people"] };
+
+describe("naming a request for an entry without a title field", () => {
+	it("names a release by its address name, not Untitled", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const id = await entry(
+			s,
+			"releases",
+			{ plugin: "analytics", release_version: "0.4.3", summary: "HubSpot visits.", line: "x" },
+			"analytics-0-4-3",
+		);
+		const result = await s.host.actions.content.publish("releases", id, actor(s.editor));
+		expect(result.success).toBe(false);
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `releases:${id}`);
+		expect(stored?.title).toBe("analytics-0-4-3");
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"text":"analytics-0-4-3"');
+		expect(list).not.toContain("Untitled");
+	});
+
+	it("falls back to a field named name, then the slug, then the id: never Untitled", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const person = await entry(s, "people", { name: "Ada Baker" }, "ada");
+		const note = await entry(s, "notes", { body: "Closed on Monday" }, "monday-closing");
+		// The declared title field left empty: the slug names it.
+		const blank = await entry(
+			s,
+			"releases",
+			{ plugin: "seo", release_version: "", summary: "s" },
+			"seo-next",
+		);
+		for (const [collection, id] of [
+			["people", person],
+			["notes", note],
+			["releases", blank],
+		] as const) {
+			await s.host.actions.content.publish(collection, id, actor(s.editor));
+		}
+		const title = async (collection: string, id: string) =>
+			(await s.host.inspect.storage.get<ApprovalRequest>("requests", `${collection}:${id}`))?.title;
+		expect(await title("people", person)).toBe("Ada Baker");
+		expect(await title("notes", note)).toBe("monday-closing");
+		expect(await title("releases", blank)).toBe("seo-next");
+	});
+
+	it("names it the same when asked from the toolbar, and in the review, panel and email", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const id = await entry(
+			s,
+			"releases",
+			{ plugin: "seo", release_version: "0.3.1", summary: "Fixes." },
+			"seo-0-3-1",
+		);
+		await s.host.admin.invokeEditorAction("ask", "releases", id, { user: s.editor });
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `releases:${id}`);
+		expect(stored?.title).toBe("seo-0-3-1");
+		const panel = text(
+			await s.host.admin.loadEditorPanel("approval", "releases", id, { user: s.admin }),
+		);
+		expect(panel).not.toContain("Untitled");
+		const review = text(
+			await s.host.admin.act("/overview", "review", {
+				user: s.admin,
+				value: { key: `releases:${id}` },
+			}),
+		);
+		expect(review).toContain('"text":"seo-0-3-1"');
+	});
+
+	it("repairs a request stored as Untitled by an earlier release when the list opens", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const id = await entry(
+			s,
+			"releases",
+			{ plugin: "seo", release_version: "0.3.1", summary: "Fixes." },
+			"seo-0-3-1",
+		);
+		await s.host.actions.content.publish("releases", id, actor(s.editor));
+		const key = `releases:${id}`;
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", key);
+		await s.host.fixtures.plugin.storage("requests", key, { ...stored, title: "Untitled" });
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"text":"seo-0-3-1"');
+		expect(list).not.toContain("Untitled");
+		expect((await s.host.inspect.storage.get<ApprovalRequest>("requests", key))?.title).toBe(
+			"seo-0-3-1",
+		);
+	});
+});

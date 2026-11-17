@@ -188,12 +188,12 @@ export async function approve(
 			requestKey: key,
 			at: now,
 			by: by.name,
-			title: titleOf(info, draft.data, request.title),
+			title: titleOf(info, draft.data, draft.slug, request.entryId),
 			fields: copyOf(info, draft.data),
 		});
 	const approved: ApprovalRequest = {
 		...request,
-		title: titleOf(info, draft.data, request.title),
+		title: titleOf(info, draft.data, draft.slug, request.entryId),
 		status: "approved",
 		fingerprint: draft.fingerprint,
 		approval: {
@@ -445,7 +445,7 @@ export async function ask(
 		{
 			collection,
 			entryId: id,
-			title: titleOf(info, draft.data, existing?.title ?? "Untitled"),
+			title: titleOf(info, draft.data, draft.slug, id),
 			fingerprint: draft.fingerprint,
 			fields: fieldHashes(draft.data),
 			requestedBy: personFromUser(user),

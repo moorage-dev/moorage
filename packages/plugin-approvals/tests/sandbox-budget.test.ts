@@ -27,6 +27,11 @@ import {
 
 /** The plugin's own ceiling per invocation: one call below Cloudflare's limit. */
 const BUDGET = SANDBOX_SUBREQUESTS - 1;
+/**
+ * Paths added from 0.5.0, with this plugin's floor at EmDash 1.5.0 (30 calls per invocation,
+ * emdash-cms/emdash#4712), keep to 25.
+ */
+const NEW_BUDGET = 25;
 
 // Host calls a test can make fail, to reach the plugin's error paths (a failed email, a failed
 // publish, a failed write). Patched before bridge-budget installs its counter, so the failing
@@ -302,6 +307,8 @@ function text(value: unknown): string {
 	return JSON.stringify(value);
 }
 
+// A new request reads its content type once (schemaGetCollection) to name the entry by its
+// declared title field (0.5.0): one call more than before on each path that makes a request.
 describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 	it("lets everything through until the settings are saved", async () => {
 		const s = await site({ settings: "none" });
@@ -344,7 +351,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await cold(s);
 		// A refused publish runs only this one hook of the plugin.
 		const m = await measure(() => s.host.actions.content.publish("pages", id, actor(s.editor)));
-		pin("beforePublish, held, new request (action)", m, 6);
+		pin("beforePublish, held, new request (action)", m, 7);
 		expect(m.result?.success).toBe(false);
 		expect((await request(s, id))?.status).toBe("waiting");
 	});
@@ -355,7 +362,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await cold(s);
 		const event = await policyEvent(s, id, s.editor);
 		const m = await measure(() => s.host.transport.invokeHook("content:beforePublish", event));
-		pin("beforePublish, held, new request (hook)", m, 6);
+		pin("beforePublish, held, new request (hook)", m, 7);
 		expect(text(m.result)).toContain("Sent for approval");
 	});
 
@@ -365,7 +372,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await toLegacy(s);
 		await cold(s);
 		const m = await measure(() => s.host.actions.content.publish("pages", id, actor(s.editor)));
-		pin("beforePublish, held, new request, migrated settings", m, 6);
+		pin("beforePublish, held, new request, migrated settings", m, 7);
 		expect(m.result?.success).toBe(false);
 		expect((await request(s, id))?.status).toBe("waiting");
 		// One kv.list() reads both places; the copy forward is left to the Approvals page.
@@ -379,7 +386,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		const m = await measure(() =>
 			s.host.actions.content.publish("pages", id, actor(admin(s), "mcp")),
 		);
-		pin("beforePublish, held, AI tool", m, 6);
+		pin("beforePublish, held, AI tool", m, 7);
 		expect(m.result?.success).toBe(false);
 	});
 
@@ -399,7 +406,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		await cold(s);
 		const event = await policyEvent(s, id, null, "scheduler");
 		const m = await measure(() => s.host.transport.invokeHook("content:beforePublish", event));
-		pin("beforePublish, scheduled run held", m, 4);
+		pin("beforePublish, scheduled run held", m, 5);
 		expect(text(m.result)).toContain("needs approval first");
 		expect((await request(s, id))?.status).toBe("waiting");
 	});
@@ -414,7 +421,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		});
 		await cold(s);
 		const m = await measure(() => s.host.actions.content.publish("pages", id, actor(s.editor)));
-		pin("beforePublish, broken request, logs", m, 4);
+		pin("beforePublish, broken request, logs", m, 5);
 		expect(m.result?.success).toBe(false);
 		expect(m.calls.at(-1)).toBe("log");
 	});
@@ -426,7 +433,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		const at = new Date(Date.now() + 3_600_000).toISOString();
 		const event = await policyEvent(s, id, admin(s), "api", "pages", { scheduledAt: at });
 		const m = await measure(() => s.host.transport.invokeHook("content:beforeSchedule", event));
-		pin("beforeSchedule, admin cleared", m, 4);
+		pin("beforeSchedule, admin cleared", m, 5);
 		expect(m.result ?? undefined).toBeUndefined();
 		expect((await request(s, id))?.status).toBe("approved");
 	});
@@ -439,7 +446,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		const at = new Date(Date.now() + 3_600_000).toISOString();
 		const event = await policyEvent(s, id, admin(s), "api", "pages", { scheduledAt: at });
 		const m = await measure(() => s.host.transport.invokeHook("content:beforeSchedule", event));
-		pin("beforeSchedule, admin cleared, migrated settings", m, 4);
+		pin("beforeSchedule, admin cleared, migrated settings", m, 5);
 		expect((await request(s, id))?.status).toBe("approved");
 	});
 
@@ -450,7 +457,7 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		const at = new Date(Date.now() + 3_600_000).toISOString();
 		const event = await policyEvent(s, id, s.editor, "api", "pages", { scheduledAt: at });
 		const m = await measure(() => s.host.transport.invokeHook("content:beforeSchedule", event));
-		pin("beforeSchedule, editor held", m, 6);
+		pin("beforeSchedule, editor held", m, 7);
 		expect(text(m.result)).toContain("Sent for approval");
 		expect((await request(s, id))?.wants).toBe("schedule");
 	});
@@ -818,6 +825,32 @@ describe("the Approvals page (route admin)", () => {
 			expect(text(m.result)).toContain(`"label":"Waiting for you","value":${count}`);
 		});
 	}
+
+	// Requests an earlier release stored as "Untitled" are named on opening: contentGet and
+	// storageUpdateIf each, 5 at most per load, within EmDash 1.5's limit (a new path: <= 25).
+	it("names 6 requests stored as Untitled, 5 per load", async () => {
+		const s = await site();
+		const ids: string[] = [];
+		for (let i = 0; i < 6; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		for (const id of ids) {
+			const stored = await request(s, id);
+			await s.host.fixtures.plugin.storage("requests", `pages:${id}`, {
+				...stored,
+				title: "Untitled",
+			});
+		}
+		await cold(s);
+		const m = await measure(() => s.host.admin.loadPage("/overview", { user: admin(s) }));
+		console.info(describeCalls("page load, admin, 6 stored as Untitled", m));
+		expect(m.calls.length).toBe(14);
+		expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+		const named = await Promise.all(ids.map(async (id) => (await request(s, id))?.title));
+		expect(named.filter((t) => t === "Untitled")).toHaveLength(1);
+		await s.host.admin.loadPage("/overview", { user: admin(s) });
+		expect(
+			(await Promise.all(ids.map(async (id) => (await request(s, id))?.title))).sort(),
+		).toEqual(["Page 1", "Page 2", "Page 3", "Page 4", "Page 5", "Page 6"]);
+	});
 
 	it("lists one waiting page with one decision in History", async () => {
 		const s = await site();

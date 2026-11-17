@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { publishFailedMessage } from "../src/actions.js";
 import { emailFailureHint } from "../src/notify.js";
-import { when } from "../src/requests.js";
+import { entryName, when } from "../src/requests.js";
 import {
 	cleanReason,
 	describeChanges,
@@ -164,5 +164,22 @@ describe("times on screen and in emails", () => {
 	it("says the time is UTC: EmDash does not tell plugins the site's time zone", () => {
 		expect(when("2026-10-16T10:42:00.000Z")).toBe("16 Oct, 10:42 UTC");
 		expect(when("2026-01-02T09:05:00Z")).toBe("2 Jan, 09:05 UTC");
+	});
+});
+
+describe("an entry's name", () => {
+	it("takes the content type's declared title field: a release by its version", () => {
+		const data = { plugin: "analytics", release_version: "0.4.3", summary: "HubSpot visits." };
+		expect(entryName("release_version", data, "analytics-0-4-3", "01J")).toBe("0.4.3");
+	});
+
+	it("then a field named title or name, then the slug, then the id; never Untitled", () => {
+		expect(entryName("release_version", { release_version: " ", title: "Menu" }, "m", "1")).toBe(
+			"Menu",
+		);
+		expect(entryName(null, { name: "Ada Baker" }, "ada", "1")).toBe("Ada Baker");
+		expect(entryName(null, { body: "Closed Monday" }, "monday", "1")).toBe("monday");
+		expect(entryName(null, { body: "Closed Monday" }, null, "01JABC")).toBe("01JABC");
+		expect(entryName("missing", {}, "", "01JABC")).toBe("01JABC");
 	});
 });

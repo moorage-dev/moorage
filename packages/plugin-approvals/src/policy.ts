@@ -7,6 +7,8 @@ import { EMAIL_EVERY_MS, REMIND_AFTER_MS } from "./notify.js";
 import {
 	addHistory,
 	approvers,
+	collectionInfo,
+	entryName,
 	personName,
 	requestKey,
 	requests,
@@ -234,14 +236,11 @@ async function clearForSchedule(
 		const user = await ctx.users?.get(actor.id).catch(() => null);
 		const by = { id: actor.id, name: personName(user) };
 		const now = new Date().toISOString();
-		const titleValue = data.title;
+		const info = await collectionInfo(ctx, event.collection);
 		const request: ApprovalRequest = {
 			collection: event.collection,
 			entryId: id,
-			title:
-				typeof titleValue === "string" && titleValue.trim() !== ""
-					? titleValue.trim()
-					: (existing?.title ?? "Untitled"),
+			title: entryName(info.title?.slug, data, slug, id),
 			status: "approved",
 			requestedBy: existing?.requestedBy ?? by,
 			requestedAt: existing?.requestedAt ?? now,
@@ -306,11 +305,11 @@ export async function gate(
 		if (existing?.status === "approved" && existing.approval?.fingerprint === version) return;
 
 		const now = new Date().toISOString();
-		const titleValue = data.title;
-		const title =
-			typeof titleValue === "string" && titleValue.trim() !== ""
-				? titleValue.trim()
-				: (existing?.title ?? "Untitled");
+		// The same version already waiting keeps its request as it is: no content type to read.
+		const again = existing?.status === "waiting" && existing.fingerprint === version;
+		const title = again
+			? existing.title
+			: entryName((await collectionInfo(ctx, event.collection)).title?.slug, data, slug, id);
 		let requestedBy: ApprovalRequest["requestedBy"] = null;
 		if (event.actor) {
 			const user = await ctx.users?.get(event.actor.id).catch(() => null);

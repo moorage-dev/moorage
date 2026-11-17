@@ -211,14 +211,45 @@ export async function collectionInfo(ctx: PluginContext, slug: string): Promise<
 	};
 }
 
-export function titleOf(
-	info: CollectionInfo,
-	data: Record<string, unknown>,
-	fallback: string,
-): string {
-	const value = info.title ? data[info.title.slug] : data.title;
-	return typeof value === "string" && value.trim() !== "" ? value.trim() : fallback;
+/** Text a field holds that can name an entry: a non-empty string, or a number. */
+function nameText(value: unknown): string | null {
+	if (typeof value === "string") return value.trim() || null;
+	if (typeof value === "number" && Number.isFinite(value)) return String(value);
+	return null;
 }
+
+/**
+ * What an entry is called in lists, reviews and emails: its content type's declared title
+ * field, else a field named title or name, else its slug, else its id. Never "Untitled": a
+ * content type such as Releases may name its entries by a version and have no title at all.
+ */
+export function entryName(
+	titleField: string | null | undefined,
+	data: Record<string, unknown>,
+	slug: string | null | undefined,
+	id: string,
+): string {
+	return (
+		(titleField ? nameText(data[titleField]) : null) ??
+		nameText(data.title) ??
+		nameText(data.name) ??
+		(slug?.trim() || null) ??
+		id
+	);
+}
+
+/** An entry's name from its content type's info (see entryName). */
+export function titleOf(
+	info: Pick<CollectionInfo, "title">,
+	data: Record<string, unknown>,
+	slug: string | null | undefined,
+	id: string,
+): string {
+	return entryName(info.title?.slug, data, slug, id);
+}
+
+/** The name an earlier release stored for an entry it could not name. */
+export const UNNAMED = "Untitled";
 
 export function copyOf(info: CollectionInfo, data: Record<string, unknown>): FieldText[] {
 	return textCopy(info.fields, data, info.title);

@@ -9,13 +9,19 @@ import type { PluginContext } from "emdash";
  */
 export const CALLS_PER_RUN = 9;
 
+/**
+ * From EmDash 1.5.0 (this plugin's floor) the limit is 30 (emdash-cms/emdash#4712). Paths added
+ * since keep to 25; the paths that kept to 9 before still do.
+ */
+export const CALLS_PER_RUN_1_5 = 25;
+
 export interface Meter {
 	/** The same context; every call through it is counted. */
 	ctx: PluginContext;
 	/** Calls made so far. */
 	used(): number;
-	/** Calls left before CALLS_PER_RUN. */
-	left(): number;
+	/** Calls left before CALLS_PER_RUN, or before `limit` on a path allowed more. */
+	left(limit?: number): number;
 }
 
 /**
@@ -43,7 +49,7 @@ export function meter(ctx: PluginContext): Meter {
 	return {
 		ctx: wrap(ctx, 0),
 		used: () => calls,
-		left: () => CALLS_PER_RUN - calls,
+		left: (limit = CALLS_PER_RUN) => limit - calls,
 	};
 }
 
