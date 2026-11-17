@@ -8,20 +8,26 @@ import { ago, requestKey, when, type ApprovalRequest } from "./requests.js";
 import { canDecide } from "./views.js";
 
 /**
- * Deciding several waiting requests at once, from the Waiting tab.
+ * Deciding from the Waiting list without opening each review.
  *
- * Block Kit has no tick box per row and no table selection, so the Waiting tab keeps its rows
- * (each with Review) and adds one form under them: "Only the ones I tick" or "All N waiting for
- * you", one tick box group with an option per request, what to do and, for Send back, one shared
- * note. Check selection shows the list and stores it; the button there starts the background
- * run that decides them (runs.ts, rows.ts), with the same checks as a single decision: who may
- * decide, still waiting, and unchanged since the list was shown.
+ * - Each row: "Approve and publish" (EmDash's confirm dialog first) and Review.
+ * - Above the rows, for two or more: "Approve and publish all N", one press and one confirm.
+ *   The button carries the requests it was drawn with (key and version), so the press decides
+ *   exactly those: one added in another tab since is not included, one changed is skipped.
+ * - Under the rows: tick boxes and a note in one form. Block Kit gives a form one submit button
+ *   and no confirm dialog, so Continue shows the ticked ones once, with "Approve and publish N"
+ *   and, when a note was written, "Send back N".
+ * The press decides what fits at once and sends the rest to the background (runs.ts, rows.ts),
+ * with the same checks as a single decision: who may decide, still waiting, and unchanged since
+ * the list was shown.
  */
 
 export const BULK = {
 	review: "bulk_review",
 	go: "bulk_go",
 	back: "bulk_back",
+	all: "bulk_all",
+	row: "row_approve",
 } as const;
 
 export type BulkDo = "publish" | "send_back";
@@ -36,7 +42,6 @@ export interface BulkItem {
 /** The Waiting tab's form as it should open: what is ticked, and the choice made. */
 export interface BulkState {
 	ticked: Set<string>;
-	which?: "ticked" | "all";
 	do?: BulkDo;
 	reason?: string;
 }
@@ -130,78 +135,126 @@ function optionLabel(request: ApprovalRequest, names: Names): string {
 
 let stamp = 0;
 
+/** What the row's button says: a request to schedule is approved, not published. */
+function rowVerb(request: ApprovalRequest): string {
+	return request.wants === "schedule" ? "Approve" : "Approve and publish";
+}
+
+/** A row's buttons, for a request this person may decide: Approve and publish, and Review. */
+export function rowActions(request: ApprovalRequest, reviewAction: string): Block {
+	const key = requestKey(request.collection, request.entryId);
+	const verb = rowVerb(request);
+	return {
+		type: "actions",
+		elements: [
+			{
+				type: "button",
+				action_id: BULK.row,
+				label: verb,
+				style: "primary",
+				value: { key, seen: request.fingerprint },
+				confirm: {
+					title: `${verb} "${request.title}"?`,
+					text:
+						request.wants === "schedule"
+							? "It is approved, not published: its writer then schedules it."
+							: "It goes live now. If it changed since this list was drawn, nothing happens and you can review it again.",
+					confirm: verb,
+					deny: "Cancel",
+				},
+			},
+			{ type: "button", action_id: reviewAction, label: "Review", value: { key } },
+		],
+	};
+}
+
+/**
+ * "Approve and publish all N", above the rows, for two or more waiting for this person. `cap`:
+ * the most one press can decide when nothing can follow in the background (a site without
+ * scheduled tasks); the button then offers the oldest `cap` and says so.
+ */
+export function allBlocks(all: ApprovalRequest[], cap = Number.POSITIVE_INFINITY): Block[] {
+	if (all.length < 2) return [];
+	const forYou = all.slice(0, Math.max(1, cap));
+	const n = forYou.length;
+	const capped = n < all.length;
+	const schedules = forYou.filter((r) => r.wants === "schedule").length;
+	const live = n - schedules;
+	const every = (k: number) => (k === n && !capped ? `All ${n}` : `${k}`);
+	const text = [
+		live > 0
+			? `${every(live)} ${live === 1 ? "page goes" : "pages go"} live now, oldest first.`
+			: "",
+		schedules > 0
+			? `${every(schedules)} ${schedules === 1 ? "is a request" : "are requests"} to schedule: approved, not published; ${schedules === 1 ? "its writer then schedules it" : "their writers then schedule them"}.`
+			: "",
+		capped
+			? `This site runs no scheduled tasks, so a press decides ${n} at most: the other ${all.length - n} stay here for the next press.`
+			: "",
+		"A page that changed since this list was drawn is skipped and stays here.",
+	]
+		.filter(Boolean)
+		.join(" ");
+	const label = capped ? `Approve and publish the oldest ${n}` : `Approve and publish all ${n}`;
+	return [
+		{
+			type: "actions",
+			elements: [
+				{
+					type: "button",
+					action_id: BULK.all,
+					label,
+					value: { rows: forYou.map((r) => optionValue(r)) },
+					confirm: {
+						title: `${label}?`,
+						text,
+						confirm: `Approve and publish ${n}`,
+						deny: "Cancel",
+					},
+				},
+			],
+		},
+	];
+}
+
 /**
  * The form under the Waiting rows, for two or more requests this person may decide (or one
- * left ticked after a bulk decision that could not decide it). Its id
- * changes with each drawing: EmDash keeps a form's values while its id stays, so a list drawn
- * again with every box ticked must be a new form to submit what it shows.
+ * left ticked after a decision on several that could not decide it). Its id changes with each
+ * drawing: EmDash keeps a form's values while its id stays, so a list drawn again with every
+ * box ticked must be a new form to submit what it shows.
  */
 export function bulkBlocks(
 	forYou: ApprovalRequest[],
 	names: Names,
 	state: BulkState | undefined,
 ): Block[] {
-	// One request is decided from its row, unless it is one left ticked after a bulk decision.
+	// One request is decided from its row, unless it is one left ticked after a decision.
 	if (forYou.length === 0 || (forYou.length === 1 && !state?.ticked.size)) return [];
 	const values = forYou.map((r) => optionValue(r));
 	const ticked = values.filter((v) => state?.ticked.has(readOption(v)!.key));
 	stamp = (stamp + 1) % 1_000_000;
 	return [
+		{ type: "header", text: "Choose several" },
 		{
-			type: "accordion",
-			label: "Decide several at once",
-			...(state ? { default_open: true } : {}),
-			blocks: [
+			type: "form",
+			block_id: `bulk-${Date.now().toString(36)}-${stamp}`,
+			fields: [
 				{
-					type: "context",
-					text: "Choose the pages and what to do, then press Check selection. You see the list before anything happens.",
+					type: "checkbox",
+					action_id: "pick",
+					label: "Tick the pages, oldest first",
+					options: forYou.map((r, i) => ({ label: optionLabel(r, names), value: values[i]! })),
+					initial_value: ticked,
 				},
 				{
-					type: "form",
-					block_id: `bulk-${Date.now().toString(36)}-${stamp}`,
-					fields: [
-						// "Select all" as a choice inside the form: a button would draw the form again
-						// and lose the action and the note typed so far.
-						{
-							type: "radio",
-							action_id: "which",
-							label: "Which pages",
-							options: [
-								{ label: "Only the ones I tick", value: "ticked" },
-								{ label: `All ${values.length} waiting for you`, value: "all" },
-							],
-							initial_value: state?.which ?? "ticked",
-						},
-						{
-							type: "checkbox",
-							action_id: "pick",
-							label: "Pages waiting for you, oldest first",
-							options: forYou.map((r, i) => ({ label: optionLabel(r, names), value: values[i]! })),
-							initial_value: ticked,
-							condition: { field: "which", eq: "ticked" },
-						},
-						{
-							type: "radio",
-							action_id: "do",
-							label: "What to do",
-							options: [
-								{ label: "Approve and publish selected", value: "publish" },
-								{ label: "Send back selected", value: "send_back" },
-							],
-							initial_value: state?.do ?? "publish",
-						},
-						{
-							type: "text_input",
-							action_id: "reason",
-							label: "What should change? The same note goes to each writer.",
-							multiline: true,
-							...(state?.reason ? { initial_value: state.reason } : {}),
-							condition: { field: "do", eq: "send_back" },
-						},
-					],
-					submit: { label: "Check selection", action_id: BULK.review },
+					type: "text_input",
+					action_id: "reason",
+					label: "Note to the writers, to send them back (the same note to each)",
+					multiline: true,
+					...(state?.reason ? { initial_value: state.reason } : {}),
 				},
 			],
+			submit: { label: "Continue with the ticked pages", action_id: BULK.review },
 		},
 	];
 }
@@ -224,8 +277,11 @@ export function confirmView(input: {
 	items: BulkItem[];
 	waiting: ApprovalRequest[];
 	names: Names;
-	do: BulkDo;
 	reason: string;
+	/** Whether what does not fit in the press can follow in the background (scheduled tasks). */
+	background: boolean;
+	/** The most one press decides, said when there is no background. */
+	cap?: number;
 	/** When this selection is stored: the button starts it and nothing else. */
 	at: string;
 }): { response: BlockResponse; rows: BulkItem[] } {
@@ -253,9 +309,12 @@ export function confirmView(input: {
 		);
 		return { response: { blocks }, rows: [] };
 	}
-	blocks.push({ type: "header", text: `${VERB[input.do]} ${these(chosen.length)}?` });
-	if (input.do === "send_back")
-		blocks.push({ type: "section", text: `Your note to each writer: "${input.reason}"` });
+	blocks.push({ type: "header", text: `Decide ${these(chosen.length)}?` });
+	if (input.reason !== "")
+		blocks.push({
+			type: "section",
+			text: `Your note, if you send them back: "${input.reason}"`,
+		});
 	for (const { request } of chosen) {
 		blocks.push(
 			{ type: "section", text: request.title },
@@ -277,15 +336,16 @@ export function confirmView(input: {
 		notes.push(
 			`${gone} of those ${gone === 1 ? "is" : "are"} no longer waiting for you, so ${gone === 1 ? "it is" : "they are"} left out.`,
 		);
-	if (input.do === "publish") {
-		notes.push("Oldest first.");
-		if (chosen.some((row) => row.request.wants === "schedule"))
-			notes.push("A request to schedule is approved, not published: its writer then schedules it.");
-	}
-	notes.push("Any page that changed since this list was drawn is skipped and stays in Waiting.");
+	if (chosen.some((row) => row.request.wants === "schedule"))
+		notes.push("A request to schedule is approved, not published: its writer then schedules it.");
+	notes.push("Oldest first. A page that changed since this list was drawn is skipped.");
 	notes.push(
-		"They are decided in the background: you can leave this page, and Waiting shows how far it is.",
+		input.background
+			? "A few are decided at once; any more follow in the background, and Waiting shows how far it is."
+			: `This site runs no scheduled tasks, so a press decides ${input.cap ?? "a few"} at most; the rest stay in Waiting.`,
 	);
+	if (input.reason === "") notes.push("To send them back instead, go back and write a note.");
+	const n = chosen.length;
 	blocks.push(
 		{ type: "context", text: notes.join(" ") },
 		{
@@ -294,10 +354,20 @@ export function confirmView(input: {
 				{
 					type: "button",
 					action_id: BULK.go,
-					label: `${VERB[input.do]} ${chosen.length}`,
+					label: `${VERB.publish} ${n}`,
 					style: "primary",
-					value: { pick: input.at },
+					value: { pick: input.at, do: "publish" },
 				},
+				...(input.reason !== ""
+					? [
+							{
+								type: "button" as const,
+								action_id: BULK.go,
+								label: `${VERB.send_back} ${n}`,
+								value: { pick: input.at, do: "send_back" },
+							},
+						]
+					: []),
 				{ type: "button", action_id: BULK.back, label: "‹ Back to the list" },
 			],
 		},

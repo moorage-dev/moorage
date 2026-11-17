@@ -88,7 +88,11 @@ export interface ApprovalRequest {
 	 * "Approve and publish" pressed: the publish that follows records "Published by" and sends
 	 * these emails (content:afterPublish), so the button itself stays within its calls.
 	 */
-	publishing?: { by: Person; at: string; jobs: MailJob[] };
+	/**
+	 * Left by "Approve and publish" until its publish is recorded. `run`: the decision on several
+	 * pages that wrote it, so only that run's later turn publishes it (a cut-off turn's retry).
+	 */
+	publishing?: { by: Person; at: string; jobs: MailJob[]; run?: string };
 	history: HistoryEvent[];
 	updatedAt: string;
 }

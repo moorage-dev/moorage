@@ -475,7 +475,7 @@ test.describe.serial("Content Approval", () => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto(APPROVALS);
 		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible({ timeout: 60_000 });
-		await expect(page.getByText(/Pages · asked by Sam Reyes/)).toBeVisible();
+		await expect(page.getByText(/^Pages · asked by Sam Reyes/)).toBeVisible();
 		const review = page.getByRole("button", { name: "Review", exact: true });
 		const box = await review.boundingBox();
 		expect(box).not.toBeNull();
@@ -610,7 +610,9 @@ test.describe.serial("Content Approval", () => {
 
 		await front(ellen);
 		await ellen.page.goto(APPROVALS);
-		await expect(ellen.page.getByText(/Pages · asked by Jo Park/)).toBeVisible({ timeout: 60_000 });
+		await expect(ellen.page.getByText(/^Pages · asked by Jo Park/)).toBeVisible({
+			timeout: 60_000,
+		});
 	});
 
 	test("an AI assistant reads the queue and a page's approval through MCP, once Ellen switches the tools on", async () => {
@@ -718,7 +720,7 @@ test.describe.serial("Content Approval", () => {
 		await page.goto(APPROVALS);
 		await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible({ timeout: 60_000 });
 		await expect(helpLinks(page)).toHaveCount(0);
-		await expect(page.getByText(/Pages · asked by Jo Park/)).toBeVisible();
+		await expect(page.getByText(/^Pages · asked by Jo Park/)).toBeVisible();
 
 		await page.getByRole("tab", { name: "Settings" }).click();
 		await setHidden(page, false);
@@ -777,80 +779,117 @@ test.describe.serial("Content Approval", () => {
 			await leave(jo);
 		}
 	});
-	let batch: string[] = [];
-
-	test("Ellen approves and publishes three pages at once from the Waiting list", async () => {
-		batch = [];
-		for (const [title, headline] of [
-			["Bread prices", "Sourdough 4.50"],
-			["Cake of the week", "Lemon drizzle"],
-			["Holiday hours", "Closed on the 25th"],
-		] as const) {
-			const id = await createPage(sam, title, headline);
-			created.push(id);
-			batch.push(id);
-			expect((await publishByApi(sam, id)).ok).toBe(false);
-		}
-		const page = await front(ellen);
+	/** Wait for the Waiting tab's blocks, drawn after the page loads. */
+	async function waitingTab(page: Page): Promise<void> {
 		await page.goto(APPROVALS);
 		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible({
 			timeout: 60_000,
 		});
-		// Each row says what it is and what it changes.
+	}
+
+	async function heldPages(titles: Array<[string, string]>): Promise<string[]> {
+		const ids: string[] = [];
+		for (const [title, headline] of titles) {
+			const id = await createPage(sam, title, headline);
+			created.push(id);
+			ids.push(id);
+			expect((await publishByApi(sam, id)).ok).toBe(false);
+		}
+		return ids;
+	}
+
+	test("Ellen approves and publishes one page from its row, with EmDash's confirm, without opening it", async () => {
+		const [bread] = await heldPages([["Bread prices", "Sourdough 4.50"]]);
+		const page = await front(ellen);
+		await waitingTab(page);
 		await expect(
 			page.getByText(/Pages · asked by Sam Reyes · .* · new page/).first(),
 		).toBeVisible();
-		await page.getByText("Decide several at once").click();
-		// "All N waiting for you" is a choice in the form; the boxes show for "Only the ones I tick".
-		await expect(page.getByRole("radio", { name: /^All \d+ waiting for you$/ })).toBeVisible();
-		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
+		// Rows are oldest first: Bread prices is the last.
+		const pressed = Date.now();
+		await page.getByRole("button", { name: "Approve and publish", exact: true }).last().click();
+		const dialog = page.getByRole("dialog", { name: 'Approve and publish "Bread prices"?' });
+		await expect(dialog).toBeVisible();
+		await dialog.getByRole("button", { name: "Approve and publish", exact: true }).click();
+		await expect(page.getByText(/^Approved and published\. It's live now\./).first()).toBeVisible();
+		expect(await status(ellen, bread!)).toBe("published");
+		console.info(`row approve: live ${Date.now() - pressed} ms after the press`);
+		await expect(page.getByText("Bread prices", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible();
+	});
+
+	test("Ellen ticks two pages and sends them back with one note", async () => {
+		const ids = await heldPages([
+			["Cake of the week", "Lemon drizzle"],
+			["Holiday hours", "Closed on the 25th"],
+		]);
+		const page = await front(ellen);
+		await waitingTab(page);
+		for (const title of ["Cake of the week", "Holiday hours"])
 			await page.getByRole("checkbox", { name: new RegExp(`^${title} · Pages`) }).click();
 		await expect(page.getByRole("checkbox", { name: /^Summer menu · Pages/ })).not.toBeChecked();
-		await page.getByRole("button", { name: "Check selection", exact: true }).click();
-		await expect(page.getByRole("heading", { name: "Approve and publish these 3?" })).toBeVisible();
-		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
-			await expect(page.getByText(title, { exact: true })).toBeVisible();
+		await page
+			.getByRole("textbox", { name: /^Note to the writers/ })
+			.fill("Please add this week's prices.");
+		await page.getByRole("button", { name: "Continue with the ticked pages", exact: true }).click();
+		await expect(page.getByRole("heading", { name: "Decide these 2?" })).toBeVisible();
 		await expect(page.getByText("Summer menu", { exact: true })).toHaveCount(0);
-		const pressed = Date.now();
-		await page.getByRole("button", { name: "Approve and publish 3" }).click();
-		// The press starts background runs (one-shot tasks) and shows the list with a banner.
-		await expect(
-			page.getByText("Approving and publishing 3 pages. You can leave this page."),
-		).toBeVisible();
-		// The run publishes from a cron invocation, as Ellen's decision: measured here.
-		for (const id of batch)
-			await expect.poll(() => status(ellen, id), { timeout: 120_000 }).toBe("published");
-		console.info(`bulk background run: 3 pages live ${Date.now() - pressed} ms after the press`);
-		await expect
-			.poll(
-				async () => {
-					await page.reload();
-					// The page draws its blocks after it loads: wait for them.
-					await page
-						.getByRole("heading", { name: "For you to approve" })
-						.waitFor({ timeout: 30_000 });
-					return (await page.getByText("Approved 3 of 3 pages.").count()) > 0;
-				},
-				{ timeout: 60_000 },
-			)
-			.toBe(true);
-		console.info(`bulk background run: results shown ${Date.now() - pressed} ms after the press`);
+		await page.getByRole("button", { name: "Send back 2", exact: true }).click();
+		await expect(page.getByText("Sent back 2 of 2 pages.")).toBeVisible();
 		await page.getByText("Each page").click();
-		await expect(page.getByText(/^Approved and published\. It's live now\./).first()).toBeVisible();
+		await expect(page.getByText("Sent back to Sam with your note.").first()).toBeVisible();
 		await page.getByRole("button", { name: "Dismiss" }).click();
-		await expect(page.getByText("Approved 3 of 3 pages.")).toHaveCount(0);
-		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible();
-		// Recorded as Ellen's decision, though a background run published it.
-		await openPanel(ellen, batch[0]!);
+		await expect(page.getByText("Sent back 2 of 2 pages.")).toHaveCount(0);
+		for (const id of ids) expect(await status(ellen, id)).toBe("draft");
+		await page.getByRole("tab", { name: "Sent back" }).click();
+		await expect(page.getByText("Cake of the week", { exact: true })).toBeVisible();
+	});
+
+	test("Ellen approves and publishes all waiting with one press and one confirm, live at once", async () => {
+		const ids = await heldPages([
+			["Late opening", "Open until 6pm"],
+			["Gift cards", "Now in store"],
+		]);
+		const page = await front(ellen);
+		await waitingTab(page);
+		const all = page.getByRole("button", { name: /^Approve and publish all \d+$/ });
+		await expect(all).toBeVisible();
+		const n = Number((await all.textContent())?.match(/\d+$/)?.[0]);
+		expect(n).toBeGreaterThanOrEqual(3);
+		// The Waiting tab as the owner sees it, on a desktop and on a phone.
+		await page.setViewportSize({ width: 1440, height: 1000 });
+		await page.waitForTimeout(500);
+		await page.screenshot({ path: "/tmp/approvals-rework-desktop.png", fullPage: true });
+		await page.setViewportSize({ width: 390, height: 844 });
+		await page.waitForTimeout(500);
+		await page.screenshot({ path: "/tmp/approvals-rework-phone.png", fullPage: true });
+		// On a phone every row's two buttons stay on screen.
+		const offScreen = await page
+			.getByRole("button", { name: /^(Approve and publish|Review)$/ })
+			.evaluateAll(
+				(list) => list.filter((b) => b.getBoundingClientRect().right > window.innerWidth).length,
+			);
+		expect(offScreen).toBe(0);
+		await page.setViewportSize({ width: 1280, height: 900 });
+		const pressed = Date.now();
+		await all.click();
+		const dialog = page.getByRole("dialog", { name: `Approve and publish all ${n}?` });
+		await expect(dialog).toContainText("go live now, oldest first");
+		await dialog.getByRole("button", { name: `Approve and publish ${n}`, exact: true }).click();
+		if (n <= 4) {
+			// Decided during the press: no wait for a scheduled task.
+			await expect(page.getByText(`Approved ${n} of ${n} pages.`)).toBeVisible();
+			for (const id of ids) expect(await status(ellen, id)).toBe("published");
+		} else {
+			for (const id of ids)
+				await expect.poll(() => status(ellen, id), { timeout: 120_000 }).toBe("published");
+		}
+		console.info(`approve all ${n}: live ${Date.now() - pressed} ms after the press`);
+		await expect(page.getByText("Summer menu", { exact: true })).toHaveCount(0);
+		// Recorded as Ellen's decision.
+		await openPanel(ellen, ids[0]!);
 		await expect(page.getByText(/Approved by Ellen Marsh/).first()).toBeVisible();
 		await leave(ellen);
-		await page.goto(APPROVALS);
-		// The page draws its blocks after it loads: wait for them.
-		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible({
-			timeout: 60_000,
-		});
-		// Summer menu, left unticked, still waits.
-		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible();
 	});
 
 	test("a content type without a title field, like Releases, is named by its declared title field, never Untitled", async () => {

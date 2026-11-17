@@ -42,8 +42,18 @@ import {
 	requests,
 	type ApprovalRequest,
 } from "./requests.js";
-import { RUN_TASK, runLane } from "./runs.js";
+import { CRON_TIMEOUT_MS, RUN_TASK, runLane } from "./runs.js";
 import { changedFields, fieldHashes } from "./text.js";
+
+/**
+ * Time limits for the hooks that do real work. EmDash gives a hook 5 seconds unless it says
+ * otherwise (emdash 1.5.0: hook.timeout ?? 5e3), then reports it failed and stops waiting for
+ * it; on a slow site (each call to the database a long round trip) a save, a publish or a
+ * turn of a bulk decision can take longer. A sandboxed plugin stops at its runner's 30 seconds
+ * whatever this says (wallTimeMs in @emdash-cms/cloudflare 1.5.0), so these stay under that.
+ * The plugin CLI writes each into the manifest, which is where a sandboxed site reads it.
+ */
+const HOOK_TIMEOUT_MS = 15_000;
 
 // "Approve and publish" leaves a note on the request; the publish hook that follows finishes
 // it. A note older than this is stale (its publish failed) and ignored.
@@ -143,97 +153,117 @@ async function afterSave(
 
 const plugin: SandboxedPlugin = {
 	hooks: {
-		"content:beforePublish": async (event, ctx) => gate(event, ctx, "publish"),
-		"content:beforeSchedule": async (event, ctx) => gate(event, ctx, "schedule", event.scheduledAt),
+		// A timed-out gate fails the publish (errorPolicy "abort"): give it time to hold the page.
+		"content:beforePublish": {
+			timeout: HOOK_TIMEOUT_MS,
+			handler: async (event, ctx) => gate(event, ctx, "publish"),
+		},
+		"content:beforeSchedule": {
+			timeout: HOOK_TIMEOUT_MS,
+			handler: async (event, ctx) => gate(event, ctx, "schedule", event.scheduledAt),
+		},
 
 		// Never fails the save.
-		"content:afterSave": async (event, ctx) => {
-			try {
-				await afterSave(ctx, event.collection, event.content, event.actor, event.editedBy);
-			} catch (error) {
-				ctx.log.warn("could not update the approval after a save", { error: String(error) });
-			}
+		"content:afterSave": {
+			timeout: HOOK_TIMEOUT_MS,
+			handler: async (event, ctx) => {
+				try {
+					await afterSave(ctx, event.collection, event.content, event.actor, event.editedBy);
+				} catch (error) {
+					ctx.log.warn("could not update the approval after a save", { error: String(error) });
+				}
+			},
 		},
-		"content:afterPublish": async (event, ctx) => {
-			try {
-				const id = entryId(event.content);
-				if (!id) return;
-				const store = requests(ctx);
-				const key = requestKey(event.collection, id);
-				const request = await store.get(key);
-				if (!request) return;
-				const now = new Date().toISOString();
-				const recent = (at: string | undefined) =>
-					Boolean(at) && Date.parse(now) - Date.parse(at!) < SAME_PUBLISH_MS;
-				// Marked published by the action itself (releases up to 0.1.6).
-				if (request.status === "published" && recent(request.publishedAt)) return;
-				const pending = request.publishing;
-				if (request.status === "approved" && pending && recent(pending.at)) {
-					// "Approve and publish": queue its emails first, so none is lost if the
-					// write after it fails, then record who published.
-					if (pending.jobs.length > 0) await queueMail(ctx, pending.jobs);
-					const updated: ApprovalRequest = {
-						...request,
-						status: "published",
-						publishedAt: now,
-						approval: request.approval
-							? { ...request.approval, published: true }
-							: request.approval,
-					};
+		"content:afterPublish": {
+			timeout: HOOK_TIMEOUT_MS,
+			handler: async (event, ctx) => {
+				try {
+					const id = entryId(event.content);
+					if (!id) return;
+					const store = requests(ctx);
+					const key = requestKey(event.collection, id);
+					const request = await store.get(key);
+					if (!request) return;
+					const now = new Date().toISOString();
+					const recent = (at: string | undefined) =>
+						Boolean(at) && Date.parse(now) - Date.parse(at!) < SAME_PUBLISH_MS;
+					// Marked published by the action itself (releases up to 0.1.6).
+					if (request.status === "published" && recent(request.publishedAt)) return;
+					const pending = request.publishing;
+					if (request.status === "approved" && pending && recent(pending.at)) {
+						// "Approve and publish": queue its emails first, so none is lost if the
+						// write after it fails, then record who published.
+						if (pending.jobs.length > 0) await queueMail(ctx, pending.jobs);
+						const updated: ApprovalRequest = {
+							...request,
+							status: "published",
+							publishedAt: now,
+							approval: request.approval
+								? { ...request.approval, published: true }
+								: request.approval,
+						};
+						delete updated.publishing;
+						addHistory(updated, now, `Published by ${inSentence(pending.by.name)}`);
+						await store.put(key, updated);
+						return;
+					}
+					const updated: ApprovalRequest = { ...request, status: "published", publishedAt: now };
 					delete updated.publishing;
-					addHistory(updated, now, `Published by ${inSentence(pending.by.name)}`);
+					addHistory(
+						updated,
+						now,
+						request.status === "approved" ? "Published" : "Published without approval",
+					);
 					await store.put(key, updated);
+				} catch (error) {
+					ctx.log.warn("could not record a publish", { error: String(error) });
+				}
+			},
+		},
+		"content:afterDelete": {
+			timeout: HOOK_TIMEOUT_MS,
+			handler: async (event, ctx) => {
+				try {
+					const store = requests(ctx);
+					const key = requestKey(event.collection, event.id);
+					const request = await store.get(key);
+					if (!request || request.status === "closed" || request.status === "published") return;
+					const now = new Date().toISOString();
+					const updated: ApprovalRequest = { ...request, status: "closed" };
+					addHistory(updated, now, "This page was deleted.");
+					await store.put(key, updated);
+				} catch (error) {
+					ctx.log.warn("could not close a request", { error: String(error) });
+				}
+			},
+		},
+		// Emails: each run sends what fits in its calls and queues the rest (notify.ts). A bulk
+		// decision's turn also keeps to its own time (runs.ts), well inside this limit.
+		cron: {
+			timeout: CRON_TIMEOUT_MS,
+			handler: async (event, raw) => {
+				const m = meter(raw);
+				const data = event.data ?? {};
+				if (event.name.startsWith(`${SEND_TASK}-`)) {
+					await deliver(m, readJobs(data.jobs));
 					return;
 				}
-				const updated: ApprovalRequest = { ...request, status: "published", publishedAt: now };
-				delete updated.publishing;
-				addHistory(
-					updated,
-					now,
-					request.status === "approved" ? "Published" : "Published without approval",
-				);
-				await store.put(key, updated);
-			} catch (error) {
-				ctx.log.warn("could not record a publish", { error: String(error) });
-			}
-		},
-		"content:afterDelete": async (event, ctx) => {
-			try {
-				const store = requests(ctx);
-				const key = requestKey(event.collection, event.id);
-				const request = await store.get(key);
-				if (!request || request.status === "closed" || request.status === "published") return;
-				const now = new Date().toISOString();
-				const updated: ApprovalRequest = { ...request, status: "closed" };
-				addHistory(updated, now, "This page was deleted.");
-				await store.put(key, updated);
-			} catch (error) {
-				ctx.log.warn("could not close a request", { error: String(error) });
-			}
-		},
-		// Emails: each run sends what fits in its calls and queues the rest (notify.ts).
-		cron: async (event, raw) => {
-			const m = meter(raw);
-			const data = event.data ?? {};
-			if (event.name.startsWith(`${SEND_TASK}-`)) {
-				await deliver(m, readJobs(data.jobs));
-				return;
-			}
-			// A bulk decision's background run (runs.ts).
-			if (event.name.startsWith(`${RUN_TASK}-`)) {
-				await runLane(m, data, (ctx) => loadConfigWith(ctx));
-				return;
-			}
-			const key = typeof data.key === "string" ? data.key : null;
-			if (!key) return;
-			const config = await loadConfig(m.ctx);
-			if (event.name.startsWith(`${MAIL_TASK}-`)) {
-				await runMailTask(m, config, key, data);
-				return;
-			}
-			if (event.name.startsWith(`${REMIND_TASK}-`)) {
-				await runRemindTask(m, config, key, data.requestedAt);
-			}
+				// A bulk decision's background run (runs.ts).
+				if (event.name.startsWith(`${RUN_TASK}-`)) {
+					await runLane(m, data, (ctx) => loadConfigWith(ctx));
+					return;
+				}
+				const key = typeof data.key === "string" ? data.key : null;
+				if (!key) return;
+				const config = await loadConfig(m.ctx);
+				if (event.name.startsWith(`${MAIL_TASK}-`)) {
+					await runMailTask(m, config, key, data);
+					return;
+				}
+				if (event.name.startsWith(`${REMIND_TASK}-`)) {
+					await runRemindTask(m, config, key, data.requestedAt);
+				}
+			},
 		},
 	},
 	routes: {

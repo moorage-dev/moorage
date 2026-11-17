@@ -5,12 +5,14 @@ import type { PluginContext } from "emdash";
 
 import { approve, ask, sendBack, withdraw, type Decision, type Outcome } from "./actions.js";
 import {
+	allBlocks,
 	BULK,
 	bulkBlocks,
 	changedText,
 	confirmView,
 	readDo,
 	readItems,
+	rowActions,
 	type BulkState,
 	type Names,
 	wantsText,
@@ -47,16 +49,20 @@ import {
 	type ApprovedVersion,
 } from "./requests.js";
 import {
+	decidedKeys,
+	decideNow,
 	dismissRun,
+	endIfStalled,
 	needsLook,
 	pickOf,
 	RUN_ACTION,
+	pressCap,
 	runBlocks,
 	runOf,
-	startRun,
 	stopRun,
 	staleKeys,
 	storePick,
+	type RunState,
 } from "./runs.js";
 import { writeSettings } from "./settings-store.js";
 import { nameList, readableDates } from "./text.js";
@@ -157,8 +163,16 @@ function openLink(request: ApprovalRequest) {
 	};
 }
 
-/** Requests this person may decide on. */
-function forYouRows(list: ApprovalRequest[], names: Names, config: Config | null): Block[] {
+/**
+ * Requests this person may decide on, the first `limit` drawn in full (oldest first); the rest
+ * are counted, and reached with the tick boxes or "Approve and publish all".
+ */
+function forYouRows(
+	list: ApprovalRequest[],
+	names: Names,
+	config: Config | null,
+	limit = list.length,
+): Block[] {
 	if (list.length === 0) {
 		return [
 			{
@@ -169,22 +183,13 @@ function forYouRows(list: ApprovalRequest[], names: Names, config: Config | null
 		];
 	}
 	const blocks: Block[] = [];
-	for (const request of list) {
+	for (const request of list.slice(0, limit)) {
 		const checks = checkCount(config, request);
 		const asker = request.ai
 			? `from an AI tool (${request.requestedBy?.name ?? "someone"}'s key)`
 			: `asked by ${request.requestedBy?.name ?? "a scheduled publish"}`;
 		blocks.push(
-			{
-				type: "section",
-				text: request.title,
-				accessory: {
-					type: "button",
-					action_id: ACTION.review,
-					label: "Review",
-					value: { key: key(request) },
-				},
-			},
+			{ type: "section", text: request.title },
 			{
 				type: "context",
 				text: [
@@ -198,10 +203,30 @@ function forYouRows(list: ApprovalRequest[], names: Names, config: Config | null
 					.filter(Boolean)
 					.join(" · "),
 			},
+			rowActions(request, ACTION.review),
 			{ type: "divider" },
 		);
 	}
+	const more = list.length - Math.min(limit, list.length);
+	if (more > 0)
+		blocks.push({
+			type: "context",
+			text: `${more} more waiting for you ${more === 1 ? "is" : "are"} not listed here, to keep this page small. Tick them below, or use Approve and publish all.`,
+		});
 	return blocks;
+}
+
+/** "N more are not listed here", under a list cut to keep the page within EmDash's limit. */
+function moreLine(total: number, shown: number): Block[] {
+	const more = total - Math.min(total, shown);
+	return more > 0
+		? [
+				{
+					type: "context",
+					text: `${more} more ${more === 1 ? "is" : "are"} not listed here, to keep this page small.`,
+				},
+			]
+		: [];
 }
 
 /** This person's own requests, each with why it waits. An admin may open theirs to publish it without review. */
@@ -211,6 +236,7 @@ function yoursRows(
 	user: UserInfo | undefined,
 	names: Map<string, string>,
 	others: UserInfo[],
+	limit = list.length,
 ): Block[] {
 	if (list.length === 0) {
 		return [
@@ -226,7 +252,7 @@ function yoursRows(
 		? "needs a second person: nobody else on this site can approve it"
 		: `waiting for ${peopleList(others)}`;
 	const blocks: Block[] = [];
-	for (const request of list) {
+	for (const request of list.slice(0, limit)) {
 		const open = config ? canReview(config, request, user) : false;
 		blocks.push(
 			{
@@ -255,12 +281,18 @@ function yoursRows(
 			{ type: "divider" },
 		);
 	}
+	blocks.push(...moreLine(list.length, limit));
 	return blocks;
 }
 
-function sentBackRows(list: ApprovalRequest[], names: Map<string, string>): Block[] {
-	if (list.length === 0) return [{ type: "empty", title: "Nothing sent back" }];
+function sentBackRows(
+	all: ApprovalRequest[],
+	names: Map<string, string>,
+	limit = all.length,
+): Block[] {
+	if (all.length === 0) return [{ type: "empty", title: "Nothing sent back" }];
 	const blocks: Block[] = [];
+	const list = all.slice(0, limit);
 	for (const request of list) {
 		blocks.push(
 			{ type: "section", text: request.title, accessory: openLink(request) },
@@ -271,6 +303,7 @@ function sentBackRows(list: ApprovalRequest[], names: Map<string, string>): Bloc
 			{ type: "divider" },
 		);
 	}
+	blocks.push(...moreLine(all.length, limit));
 	return blocks;
 }
 
@@ -309,7 +342,12 @@ async function approvedCopies(
 	return ids.length > 0 ? await versions(ctx).getMany(ids) : new Map();
 }
 
-function historyRows(rows: ApprovalRequest[], copies: Map<string, ApprovedVersion>): Block[] {
+function historyRows(
+	all: ApprovalRequest[],
+	copies: Map<string, ApprovedVersion>,
+	limit = all.length,
+): Block[] {
+	const rows = all.slice(0, limit);
 	if (rows.length === 0)
 		return [
 			{
@@ -339,6 +377,7 @@ function historyRows(rows: ApprovalRequest[], copies: Map<string, ApprovedVersio
 		}
 		blocks.push({ type: "divider" });
 	}
+	blocks.push(...moreLine(all.length, limit));
 	return blocks;
 }
 
@@ -733,9 +772,14 @@ async function listPage(
 	bulk?: BulkState,
 	/** The plugin's KV as read with the settings: a bulk run's progress for the banner. */
 	entries?: ReadonlyMap<string, unknown>,
+	/** What this request already has: results to show that were not stored, the content types. */
+	known: { shown?: RunState; collections?: CollectionList } = {},
 ): Promise<BlockResponse> {
 	const lists = await loadLists(ctx);
-	const collections = (await ctx.schema?.listCollections()) ?? [];
+	const collections =
+		known.collections && known.collections.length > 0
+			? known.collections
+			: ((await ctx.schema?.listCollections()) ?? []);
 	const names = new Map(collections.map((c) => [c.slug, c.label]));
 	const labels = namesOf(collections);
 	const approver = isApprover(config, user);
@@ -771,78 +815,110 @@ async function listPage(
 	if (scheduledWith)
 		await nameUnnamed(scheduledWith, [...waiting, ...sentBack, ...historyShown], titleFields);
 
-	const waitingBlocks: Block[] = [
-		{
-			type: "stats",
-			items: approver
-				? [
-						{ label: "Waiting for you", value: forYou.length },
-						{ label: "Yours waiting", value: yours.length },
-						{ label: "Sent back", value: sentBack.length },
-					]
-				: [
-						{ label: "Yours waiting", value: yours.length },
-						{ label: "Sent back", value: sentBack.length },
-					],
-		},
-	];
-	if (onlyApprover) {
-		waitingBlocks.push({
-			type: "banner",
-			title: "Only you can approve on this site",
-			description: admin
-				? "Your own pages wait for a second person, an editor or another admin. Until there is one, open yours below and use Publish without review."
-				: "Your own pages wait for a second person. Until there is one, an admin can publish them without review.",
-		});
-	}
-	// A bulk decision of this person's: its banner, and what needs a look left ticked.
-	const run = entries && user ? runOf(entries, user.id) : null;
-	const look = needsLook(run);
-	const stillWaiting = forYou.filter((r) => look.has(key(r))).length;
-	waitingBlocks.push(...runBlocks(run, ctx.cron ? stillWaiting : 0));
-	const form: BulkState | undefined = bulk ?? (look.size > 0 ? { ticked: look } : undefined);
-	if (approver) {
-		waitingBlocks.push(
-			{ type: "header", text: "For you to approve" },
-			...forYouRows(forYou, labels, config),
-			// Decided in background runs (cron): no form while one of theirs runs, or without cron.
-			...(ctx.cron && !run?.running ? bulkBlocks(forYou, labels, form) : []),
-		);
-		if (yours.length > 0)
+	// EmDash refuses a page of more than 2,000 values (BLOCK_RESPONSE_LIMITS.maxNodes in
+	// @emdash-cms/blocks 1.5.0): with many waiting, fewer rows are drawn in full (see below).
+	const draw = (rowsShown: number): BlockResponse => {
+		const waitingBlocks: Block[] = [
+			{
+				type: "stats",
+				items: approver
+					? [
+							{ label: "Waiting for you", value: forYou.length },
+							{ label: "Yours waiting", value: yours.length },
+							{ label: "Sent back", value: sentBack.length },
+						]
+					: [
+							{ label: "Yours waiting", value: yours.length },
+							{ label: "Sent back", value: sentBack.length },
+						],
+			},
+		];
+		if (onlyApprover) {
+			waitingBlocks.push({
+				type: "banner",
+				title: "Only you can approve on this site",
+				description: admin
+					? "Your own pages wait for a second person, an editor or another admin. Until there is one, open yours below and use Publish without review."
+					: "Your own pages wait for a second person. Until there is one, an admin can publish them without review.",
+			});
+		}
+		// A bulk decision of this person's: its banner, and what needs a look left ticked.
+		const run = known.shown ?? (entries && user ? runOf(entries, user.id) : null);
+		const look = needsLook(run);
+		const stillWaiting = forYou.filter((r) => look.has(key(r))).length;
+		const decided = user ? decidedKeys(run, lists.all, user.id) : new Set<string>();
+		waitingBlocks.push(...runBlocks(run, stillWaiting, decided));
+		const form: BulkState | undefined = bulk ?? (look.size > 0 ? { ticked: look } : undefined);
+		if (approver) {
+			// While a decision on several of theirs goes, its rows may be decided any moment: no
+			// "all" button and no tick boxes until it ends.
+			const several = !run?.running;
+			waitingBlocks.push(
+				{ type: "header", text: "For you to approve" },
+				...(several && config
+					? allBlocks(forYou, ctx.cron ? undefined : pressCap("publish", config))
+					: []),
+				...forYouRows(forYou, labels, config, rowsShown),
+				...(several ? bulkBlocks(forYou, labels, form) : []),
+			);
+			if (yours.length > 0)
+				waitingBlocks.push(
+					{ type: "header", text: "Yours, waiting" },
+					...yoursRows(yours, config, user, names, others, rowsShown),
+				);
+		} else {
 			waitingBlocks.push(
 				{ type: "header", text: "Yours, waiting" },
-				...yoursRows(yours, config, user, names, others),
+				...yoursRows(yours, config, user, names, others, rowsShown),
 			);
-	} else {
-		waitingBlocks.push(
-			{ type: "header", text: "Yours, waiting" },
-			...yoursRows(yours, config, user, names, others),
-		);
-	}
+		}
 
-	// Short labels, no counts: four tabs with counts ran off a 390 px phone's screen.
-	// The numbers at the top of Waiting carry the counts.
-	const history = historyRows(historyShown, copies);
-	const panels = [
-		{ label: "Waiting", blocks: [...waitingBlocks, ...drafts] },
-		{ label: "Sent back", blocks: sentBackRows(sentBack, names) },
-		{ label: "History", blocks: history },
-		...(admin
-			? [
-					{
-						label: "Settings",
-						blocks: settingsBlocks(ctx, config, user, lists.all, collections, people, scheduled),
-					},
-				]
-			: []),
-	];
-	return {
-		blocks: [
-			{ type: "header", text: "Approvals" },
-			{ type: "tab", panels, default_tab: Math.min(tab, panels.length - 1) },
-		],
-		...(toast ? { toast } : {}),
+		// Short labels, no counts: four tabs with counts ran off a 390 px phone's screen.
+		// The numbers at the top of Waiting carry the counts.
+		const history = historyRows(historyShown, copies, rowsShown);
+		const panels = [
+			{ label: "Waiting", blocks: [...waitingBlocks, ...drafts] },
+			{ label: "Sent back", blocks: sentBackRows(sentBack, names, rowsShown) },
+			{ label: "History", blocks: history },
+			...(admin
+				? [
+						{
+							label: "Settings",
+							blocks: settingsBlocks(ctx, config, user, lists.all, collections, people, scheduled),
+						},
+					]
+				: []),
+		];
+		return {
+			blocks: [
+				{ type: "header", text: "Approvals" },
+				{ type: "tab", panels, default_tab: Math.min(tab, panels.length - 1) },
+			],
+			...(toast ? { toast } : {}),
+		};
 	};
+	// Every list cut to the same length, longest first, until the page fits.
+	let shown = Math.max(forYou.length, yours.length, sentBack.length, historyShown.length);
+	let response = draw(shown);
+	for (let n = countNodes(response); n > MAX_NODES && shown > 0; n = countNodes(response)) {
+		shown = Math.max(0, Math.min(shown - 1, shown - Math.ceil((n - MAX_NODES) / 40)));
+		response = draw(shown);
+	}
+	return response;
+}
+
+/**
+ * Most values a page may hold, with room for the help line: EmDash refuses more than 2,000
+ * (BLOCK_RESPONSE_LIMITS.maxNodes in @emdash-cms/blocks 1.5.0).
+ */
+const MAX_NODES = 1_900;
+
+/** Values in a response, counted as EmDash counts them: every object, array and value. */
+export function countNodes(value: unknown): number {
+	if (Array.isArray(value)) return 1 + value.reduce((n: number, v) => n + countNodes(v), 0);
+	if (typeof value === "object" && value !== null)
+		return 1 + Object.values(value).reduce((n: number, v) => n + countNodes(v), 0);
+	return 1;
 }
 
 /**
@@ -1076,6 +1152,12 @@ async function adminScreen(
 		}
 	}
 
+	// On opening (or refreshing) the list: end this person's run if EmDash stopped running it.
+	const listShown =
+		(interaction.type === "page_load" && interaction.page !== WIDGET_PAGE) ||
+		(interaction.type === "block_action" && action === ACTION.back);
+	if (listShown && user) await endIfStalled(ctx, user.id, entries).catch(() => false);
+
 	if (interaction.type === "page_load" && interaction.page === WIDGET_PAGE)
 		return widget(ctx, config, user);
 
@@ -1131,21 +1213,84 @@ async function adminScreen(
 			// Back from the confirm step: the stored selection stays ticked.
 			const pick = user ? pickOf(entries, user.id) : null;
 			const ticked = new Set((pick?.rows ?? []).map((row) => row.key));
-			const state: BulkState = { ticked, ...(pick ? { do: pick.do, reason: pick.reason } : {}) };
+			const state: BulkState = { ticked, ...(pick?.reason ? { reason: pick.reason } : {}) };
 			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, state, entries);
 		}
-		if (action === BULK.go && user) {
+		// One request from its row: as the review's Approve and publish, except that a request
+		// to schedule is approved for its writer to schedule.
+		if (action === BULK.row && user) {
+			const value = buttonValue(interaction.value);
+			if (value) {
+				const decision = await approve(
+					ctx,
+					config,
+					user,
+					value.key,
+					{ seen: value.seen ?? "", publish: true, keepSchedule: true },
+					{ meter: m },
+				);
+				return listPage(
+					ctx,
+					config,
+					user,
+					TABS.waiting,
+					toastOf(decision),
+					undefined,
+					undefined,
+					entries,
+				);
+			}
+		}
+		// "Approve and publish all N" and the confirm step's buttons: decided now, as many as fit.
+		if ((action === BULK.all || action === BULK.go) && user) {
 			const value = isRecord(interaction.value) ? interaction.value : {};
-			const started = await startRun(ctx, user, entries, value.pick);
+			let rows: Array<{ key: string; seen: string; title?: string }>;
+			let what: "publish" | "send_back" = "publish";
+			let reason = "";
+			if (action === BULK.all) {
+				// Exactly the requests the button was drawn with.
+				rows = readItems(value.rows);
+			} else {
+				const pick = pickOf(entries, user.id);
+				// Only the selection this button showed: another tab may have stored a newer one.
+				if (!pick || pick.at !== value.pick) {
+					return listPage(
+						ctx,
+						config,
+						user,
+						TABS.waiting,
+						{ type: "error", message: "Tick the pages again, then press Continue." },
+						undefined,
+						undefined,
+						entries,
+					);
+				}
+				rows = pick.rows;
+				what = readDo(value.do);
+				reason = pick.reason;
+				if (what === "send_back" && reason === "") {
+					const state: BulkState = { ticked: new Set(rows.map((row) => row.key)) };
+					const toast = {
+						type: "error" as const,
+						message: "Write a note to send them back, then press Continue.",
+					};
+					return listPage(ctx, config, user, TABS.waiting, toast, undefined, state, entries);
+				}
+			}
+			const done = await decideNow(m, config, user, entries, what, reason, rows);
 			return listPage(
 				ctx,
 				config,
 				user,
 				TABS.waiting,
-				{ type: started.ok ? "success" : "error", message: started.message },
+				{ type: done.ok ? "success" : "error", message: done.message },
 				undefined,
 				undefined,
-				await loadConfigWith(ctx).then((r) => r.entries),
+				done.entries ?? entries,
+				{
+					...(done.shown ? { shown: done.shown } : {}),
+					...(done.collections ? { collections: done.collections } : {}),
+				},
 			);
 		}
 		if (action === RUN_ACTION.stop && user) {
@@ -1173,54 +1318,37 @@ async function adminScreen(
 	}
 	if (config && interaction.type === "form_submit" && action === BULK.review) {
 		const values = isRecord(interaction.values) ? interaction.values : {};
-		const all = values.which === "all";
 		const ticked = readItems(values.pick);
-		const what = readDo(values.do);
 		const reason = typeof values.reason === "string" ? values.reason.trim() : "";
 		const state: BulkState = {
 			ticked: new Set(ticked.map((item) => item.key)),
-			which: all ? "all" : "ticked",
-			do: what,
 			...(reason ? { reason } : {}),
 		};
-		const problem =
-			!all && ticked.length === 0
-				? "Tick at least one page, or choose all, then press Check selection."
-				: what === "send_back" && reason === ""
-					? "Write what should change, then press Check selection."
-					: null;
-		if (problem) {
-			const toast = { type: "error" as const, message: problem };
+		if (ticked.length === 0) {
+			const toast = {
+				type: "error" as const,
+				message: "Tick at least one page, then press Continue.",
+			};
 			return listPage(ctx, config, user, TABS.waiting, toast, undefined, state, entries);
 		}
 		const lists = await loadLists(ctx);
 		const collections = (await ctx.schema?.listCollections()) ?? [];
-		// "All waiting for you": every request this person may decide, as the list stands now.
-		const items = all
-			? lists.waiting
-					.filter((r) => canDecide(config, r, user))
-					.map((r) => ({ key: key(r), seen: r.fingerprint }))
-			: ticked;
-		// The button carries this time: it starts this selection and no later one (another tab).
+		// The buttons carry this time: they decide this selection and no later one (another tab).
 		const at = new Date().toISOString();
 		const confirm = confirmView({
+			background: Boolean(ctx.cron),
+			cap: pressCap("publish", config),
 			config,
 			user,
-			items,
+			items: ticked,
 			waiting: lists.waiting,
 			names: namesOf(collections),
-			do: what,
 			reason,
 			at,
 		});
 		// Stored now, so the press that follows takes nothing from the browser.
 		if (user && confirm.rows.length > 0)
-			await storePick(ctx, user.id, {
-				do: what,
-				reason,
-				rows: confirm.rows,
-				at,
-			});
+			await storePick(ctx, user.id, { do: "publish", reason, rows: confirm.rows, at });
 		return confirm.response;
 	}
 	if (config && interaction.type === "block_action") {
