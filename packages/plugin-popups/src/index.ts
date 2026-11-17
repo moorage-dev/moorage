@@ -25,6 +25,7 @@ import {
 import type { PreviewAnswer } from "./client/types.js";
 import {
 	isLive,
+	MAX_POPUPS,
 	normalizeStore,
 	PROBLEMS_KEY,
 	STORE_KEY,
@@ -40,7 +41,7 @@ import {
 	opensNewTab,
 	pageFragments,
 	previewItem,
-	readableHighlight,
+	highlightLook,
 } from "./fragment.js";
 import { withHelpLine } from "./help-line.js";
 import { MCP_PERMISSION, MCP_ROUTES, mcpTools, runTool, type ToolName } from "./mcp.js";
@@ -290,7 +291,7 @@ async function pictureUrl(
 	origin: string | undefined,
 	mediaId: string,
 ): Promise<string | null> {
-	return (await storedFileUrl(mediaId)) ?? (await publicMediaUrl(ctx, origin, mediaId));
+	return (await storedFileUrl(mediaId, ctx.log)) ?? (await publicMediaUrl(ctx, origin, mediaId));
 }
 
 /** One picture from the media library, by id, as the admin's picture list gives it. */
@@ -298,7 +299,7 @@ async function mediaById(ctx: PluginContext, id: string): Promise<MediaOption | 
 	if (!ctx.media || !/^[A-Za-z0-9_-]{1,60}$/.test(id)) return null;
 	try {
 		const item = await ctx.media.get(id);
-		if (!item || (item.mimeType && !item.mimeType.startsWith("image/"))) return null;
+		if (!item || !item.mimeType?.startsWith("image/")) return null;
 		return {
 			id: item.id,
 			url: item.url,
@@ -310,6 +311,24 @@ async function mediaById(ctx: PluginContext, id: string): Promise<MediaOption | 
 	} catch {
 		return null;
 	}
+}
+
+/** Read, change and write one key with a compare-and-set, trying again when someone wrote between. */
+async function updateKv(
+	ctx: PluginContext,
+	key: string,
+	change: (raw: unknown) => unknown,
+): Promise<void> {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const stored = await ctx.kv.getVersioned<unknown>(key);
+		const written = await ctx.kv.compareAndSet(
+			key,
+			stored?.revision ?? null,
+			change(stored?.value ?? null),
+		);
+		if (written.applied) return;
+	}
+	throw PluginRouteError.conflict("Popups were being changed at the same time. Please try again.");
 }
 
 /** An MCP tool's route: private, JSON, POST, with its permission. */
@@ -343,17 +362,43 @@ function toolRoute(name: ToolName) {
 				state,
 				helpers: {
 					checkForm: (form, overlay) => checkForm(origin, form, overlay),
-					publicUrl: (mediaId) => pictureUrl(ctx, origin, mediaId),
+					// A key has no cookie to ask the site with: only the in-process read.
+					publicUrl: (mediaId) => storedFileUrl(mediaId, ctx.log),
 				},
 				picture: (id) => mediaById(ctx, id),
 				rows: (query) => readRows(ctx, query).catch(() => []),
 			});
-			if (outcome.save) {
-				await ctx.kv.set(STORE_KEY, outcome.save);
+			if (outcome.save && outcome.changed) {
+				// Put back only this popup over what is stored now, with a compare-and-set, so two
+				// tools writing at once (two popups turned off together) both keep their change.
+				const { id, created } = outcome.changed;
+				const mine = outcome.save.popups.find((p) => p.id === id);
+				await updateKv(ctx, STORE_KEY, (raw) => {
+					const now = normalizeStore(raw);
+					if (created && now.popups.length >= MAX_POPUPS)
+						throw PluginRouteError.badRequest(`A site can have ${MAX_POPUPS} popups.`);
+					// A popup deleted on the admin page meanwhile stays deleted.
+					const popups = !mine
+						? now.popups
+						: created
+							? [...now.popups, mine]
+							: now.popups.map((p) => (p.id === id ? mine : p));
+					return normalizeStore({ popups, settings: now.settings });
+				});
 				// After the write, so a page view in between cannot keep the old popups.
 				forgetSettings(PLUGIN_ID);
 			}
-			if (outcome.problems) await ctx.kv.set(PROBLEMS_KEY, outcome.problems);
+			if (outcome.problems && outcome.changed) {
+				// Only this popup's problem, over what is stored now.
+				const { id } = outcome.changed;
+				const mine = outcome.problems[id];
+				await updateKv(ctx, PROBLEMS_KEY, (raw) => {
+					const next = { ...(raw && typeof raw === "object" ? (raw as Problems) : {}) };
+					if (mine) next[id] = mine;
+					else delete next[id];
+					return next;
+				});
+			}
 			return outcome.answer;
 		},
 	};
@@ -666,9 +711,14 @@ export function createPlugin() {
 								: {}),
 							...(popup.label ? { label: popup.label } : {}),
 							...(popup.note ? { note: popup.note } : {}),
-							...(readableHighlight(popup, store.settings)
-								? { highlight: readableHighlight(popup, store.settings) }
-								: {}),
+							...((look) =>
+								look.words
+									? {
+											highlight: look.words,
+											...(look.colour ? { highlightColor: look.colour } : {}),
+											...(look.dark ? { highlightDark: true } : {}),
+										}
+									: {})(highlightLook(popup, store.settings)),
 							picture: popup.picture
 								? {
 										url: popup.picture.url,

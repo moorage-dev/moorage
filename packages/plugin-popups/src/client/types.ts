@@ -22,6 +22,9 @@ export interface ClientContent {
 	/** A short label above the heading, words of the heading to highlight, a note under the button. */
 	lb?: string;
 	hl?: string;
+	/** The highlighted words' own colour, and 1 when a dark device uses the button colour instead. */
+	hc?: string;
+	hd?: 1;
 	nt?: string;
 	/** The quiet way out's words; empty for "only the close button". */
 	no: string;

@@ -1919,6 +1919,13 @@ test.describe("Picture on top", () => {
 			.click();
 		const dialog = page.getByRole("dialog", { name: REPORT_WORDS.heading });
 		await expect(dialog).toBeVisible();
+		// The picture's shape is known once it has loaded.
+		await page.waitForFunction(() => {
+			const img = document
+				.querySelector("#popups")
+				?.shadowRoot?.querySelector<HTMLImageElement>(".pan img");
+			return !!img && img.complete && img.naturalWidth > 0;
+		});
 		const drawn = await page.evaluate(() => {
 			const root = document.querySelector("#popups")!.shadowRoot!;
 			const img = root.querySelector<HTMLImageElement>(".pan img")!;
@@ -2080,7 +2087,8 @@ test.describe("tools for an AI assistant (MCP)", () => {
 			);
 			const id = String(created.id);
 			made.push(id);
-			expect(created).toMatchObject({ on: false, status: "Off", kind: "slide-in", design: "top" });
+			expect(created).toMatchObject({ on: false, status: "Off", kind: "slide-in" });
+			expect(created.settings).toMatchObject({ design: "top" });
 			const refused = await call(token.token, "create", {
 				name: "Bad",
 				kind: "popup",
@@ -2096,11 +2104,14 @@ test.describe("tools for an AI assistant (MCP)", () => {
 				expect.arrayContaining([expect.objectContaining({ id, name: "AI offer", on: false })]),
 			);
 			const got = data(await call(token.token, "get", { id }));
-			expect(got).toMatchObject({ heading: "Fresh rye, this week only", note: "Order by Friday" });
+			expect(got.settings).toMatchObject({
+				heading: "Fresh rye, this week only",
+				note: "Order by Friday",
+			});
 			expect(String(got.results)).toMatch(/^Since /);
 
 			const updated = data(await call(token.token, "update", { id, text: "Baked at dawn." }));
-			expect(updated).toMatchObject({
+			expect(updated.settings).toMatchObject({
 				text: "Baked at dawn.",
 				heading: "Fresh rye, this week only",
 			});
@@ -2120,6 +2131,106 @@ test.describe("tools for an AI assistant (MCP)", () => {
 		} finally {
 			await switchTools(false);
 			await admin.delete(`/_emdash/api/admin/api-tokens/${token.info.id}`, { headers: H });
+		}
+	});
+});
+
+test.describe("tools for an AI assistant, with an Editor's key", () => {
+	const API_ROOT = "/_emdash/api";
+	async function me(request: APIRequestContext): Promise<string> {
+		const response = await request.get(`${API_ROOT}/auth/me`, { headers: H });
+		expect(response.ok()).toBe(true);
+		return ((await response.json()) as { data: { id: string } }).data.id;
+	}
+	async function updateUser(request: APIRequestContext, id: string, data: Record<string, unknown>) {
+		const response = await request.put(`${API_ROOT}/admin/users/${id}`, { headers: H, data });
+		expect(response.ok(), await response.text()).toBe(true);
+	}
+	async function rpc(token: string, name: string, args: Record<string, unknown>) {
+		const response = await fetch(new URL(`${API_ROOT}/mcp`, test.info().project.use.baseURL), {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: { name: `popups__${name}`, arguments: args },
+			}),
+		});
+		const text = await response.text();
+		const line = text.split("\n").find((l) => l.startsWith("data: "));
+		const message = JSON.parse(line ? line.slice(6) : text) as {
+			result: { isError?: boolean; content: Array<{ text: string }> };
+		};
+		return { error: message.result.isError === true, text: message.result.content[0]!.text };
+	}
+
+	test("changes words, is refused Admin-only fields in plain words, and cannot turn on a half-made popup", async ({
+		browser,
+	}) => {
+		// Dev sign-in makes the dev Admin; with that address free, a new sign-in is a new person,
+		// who then gets the Editor role. The Admin takes the address back after.
+		const adminId = await me(admin);
+		await updateUser(admin, adminId, { email: "owner@bakery.test" });
+		const context = await browser.newContext();
+		let editorToken = "";
+		try {
+			const page = await context.newPage();
+			await page.goto("/_emdash/api/setup/dev-bypass?redirect=/");
+			const editorId = await me(context.request);
+			expect(editorId).not.toBe(adminId);
+			await updateUser(context.request, editorId, { name: "Sam Reyes", email: "sam@bakery.test" });
+			// Tokens are made by Admins, so the key first, then the Editor role; a call through the
+			// key acts with the person's role at the time of the call.
+			const token = await context.request.post(`${API_ROOT}/admin/api-tokens`, {
+				headers: H,
+				data: { name: `popups editor ${Date.now()}`, scopes: ["mcp:tools:popups"] },
+			});
+			expect(token.ok(), await token.text()).toBe(true);
+			editorToken = ((await token.json()) as { data: { token: string } }).data.token;
+			await updateUser(admin, editorId, { role: 40 });
+		} finally {
+			await updateUser(admin, adminId, { email: "dev@emdash.local" });
+		}
+		const tools = await admin.put(`${API_ROOT}/admin/plugins/popups/mcp`, {
+			headers: H,
+			data: { enabled: true },
+		});
+		expect(tools.ok()).toBe(true);
+		try {
+			const id = await make(FORM_POPUP);
+			const changed = await rpc(editorToken, "update", { id, text: "A new loaf every month." });
+			expect(changed.error, changed.text).toBe(false);
+			expect(JSON.parse(changed.text).settings.text).toBe("A new loaf every month.");
+			const refused = await rpc(editorToken, "update", { id, where: "prefix", design: "top" });
+			expect(refused.error).toBe(true);
+			expect(refused.text).toContain(
+				"Only an administrator can change these: design, where. Leave them out, or ask an administrator.",
+			);
+			// A popup an Admin started but never finished.
+			const first = await adminPost(`${API}/admin`, {
+				type: "form_submit",
+				action_id: "save_s1",
+				block_id: "s1:new:x",
+				values: { name: "Half made", kind: "modal" },
+			});
+			const half = [
+				...JSON.stringify(first.data.blocks).matchAll(/"block_id":"s2:([a-z0-9]+):/g),
+			][0]![1]!;
+			made.push(half);
+			const off = await rpc(editorToken, "turn_on", { id: half });
+			expect(off.error).toBe(true);
+			expect(off.text).toContain("not finished");
+		} finally {
+			await admin.put(`${API_ROOT}/admin/plugins/popups/mcp`, {
+				headers: H,
+				data: { enabled: false },
+			});
+			await context.close();
 		}
 	});
 });

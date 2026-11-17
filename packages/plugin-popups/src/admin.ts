@@ -6,6 +6,7 @@ import { cleanColourChoice, COLOUR_OPTIONS, OWN_COLOURS } from "./colour-sets.js
 import {
 	colorProblems,
 	cleanColor,
+	contrast,
 	DECLINE_LABEL,
 	isLive,
 	highlightProblem,
@@ -29,7 +30,7 @@ import {
 } from "./config.js";
 import type { ExportRange } from "./export-link.js";
 import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
-import { lookColours } from "./fragment.js";
+import { highlightLooks, lookColours } from "./fragment.js";
 import { hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import {
 	compare,
@@ -939,6 +940,17 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 							: "Highlight these words (optional): copy a few words from the heading to show them in the button colour",
 						initial_value: typed(state, "highlight", popup.highlight),
 					},
+					...(state.admin
+						? [
+								{
+									type: "text_input",
+									action_id: "highlight_colour",
+									label: "Highlight colour (optional, like #e8457a; empty uses the button colour)",
+									placeholder: "#e8457a",
+									initial_value: typed(state, "highlight_colour", popup.highlightColor),
+								},
+							]
+						: []),
 				]),
 		{
 			type: "text_input",
@@ -2190,6 +2202,7 @@ export function blankPopup(name: string, kind: Kind, now: number): Popup {
 		label: "",
 		note: "",
 		highlight: "",
+		highlightColor: "",
 		contains: "button",
 		buttonLabel: "",
 		buttonUrl: "",
@@ -2252,7 +2265,22 @@ export async function wordsPart(
 		errors.push(
 			`The words to highlight, "${highlight}", are not in the heading. Copy them from the heading exactly, or leave the box empty.`,
 		);
-	else if (highlight) {
+	const colourText =
+		state.admin && !bar
+			? text(values, "highlight_colour", popup.highlightColor)
+			: popup.highlightColor;
+	const highlightColor = cleanColor(colourText);
+	const main = highlightLooks(state.store.settings).main;
+	if (colourText && !highlightColor)
+		errors.push(
+			"Write the highlight colour like #e8457a, or leave it empty to use the button colour.",
+		);
+	// Checked when an Admin saves it (an Editor cannot change it, so is never stopped by it).
+	else if (state.admin && highlightColor && main && contrast(highlightColor, main.background) < 4.5)
+		errors.push(
+			`The highlight colour is hard to read on the background (contrast ${contrast(highlightColor, main.background).toFixed(1)} to 1; it needs at least 4.5). Choose a darker or lighter colour, or leave it empty to use the button colour.`,
+		);
+	else if (highlight && !highlightColor) {
 		const { light, dark } = lookColours(state.store.settings);
 		const hard = highlightProblem(
 			[light, dark].filter((c) => !!c) as Array<NonNullable<typeof light>>,
@@ -2344,6 +2372,7 @@ export async function wordsPart(
 			label,
 			note,
 			highlight,
+			highlightColor,
 			contains,
 			form,
 			thanks: state.admin

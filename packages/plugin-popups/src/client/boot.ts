@@ -1,7 +1,7 @@
 // Copyright 2026 GoSi Tech. Licensed under the MIT License; see LICENSE.
 
 import { barInner } from "./bar.js";
-import { styles } from "./css.js";
+import { DARK_HIGHLIGHT, styles } from "./css.js";
 import { CLOSE } from "./icons.js";
 import type { ClientConfig, ClientItem, PreviewAnswer } from "./types.js";
 
@@ -471,7 +471,11 @@ export function boot(c: ClientConfig): void {
 			hlAt < 0
 				? esc(content.h)
 				: esc(content.h.slice(0, hlAt)) +
-					'<span class="hl">' +
+					'<span class="hl' +
+					(content.hd ? " hd" : "") +
+					'"' +
+					(content.hc ? ' style="--hc:' + esc(content.hc) + '"' : "") +
+					">" +
 					esc(content.hl!) +
 					"</span>" +
 					esc(content.h.slice(hlAt + content.hl!.length));
@@ -519,7 +523,7 @@ export function boot(c: ClientConfig): void {
 			(above ? picture : "") +
 			(tag ? '<p class="pv">' + esc(tag) + "</p>" : "") +
 			(above ? "" : picture) +
-			(content.lb ? '<p class="lb">' + esc(content.lb) + "</p>" : "") +
+			(content.lb ? '<p class="lb" id="' + hid + 'l">' + esc(content.lb) + "</p>" : "") +
 			'<h2 id="' +
 			hid +
 			'" tabindex="-1">' +
@@ -527,7 +531,8 @@ export function boot(c: ClientConfig): void {
 			"</h2>" +
 			(content.x ? "<p>" + esc(content.x) + "</p>" : "") +
 			action;
-		const theme = "<style>" + styles(look, c.col, c.colDark) + "</style>";
+		const theme =
+			"<style>" + styles(look, c.col, c.colDark) + (content.hd ? DARK_HIGHLIGHT : "") + "</style>";
 		if (modal) {
 			root.innerHTML =
 				theme +
@@ -537,6 +542,8 @@ export function boot(c: ClientConfig): void {
 				(form ? " hf" : "") +
 				'" aria-labelledby="' +
 				hid +
+				// The label is heard as the description; the heading stays the name and takes focus.
+				(content.lb ? '" aria-describedby="' + hid + "l" : "") +
 				'">' +
 				inner +
 				"</dialog>";
@@ -548,13 +555,14 @@ export function boot(c: ClientConfig): void {
 				(top ? " top" : "") +
 				'" role="region" aria-labelledby="' +
 				hid +
+				(content.lb ? '" aria-describedby="' + hid + "l" : "") +
 				'">' +
 				inner +
 				'</div><p class="sr" role="status"></p>';
 		}
 		const box = root.querySelector<HTMLElement>(".pp")!;
 		// The page's own heading font (the text takes the page's font by itself).
-		const pageHeading = d.querySelector("h1,h2");
+		const pageHeading = d.querySelector("h1") || d.querySelector("h2");
 		if (pageHeading) host.style.setProperty("--ph", getComputedStyle(pageHeading).fontFamily);
 		if (inline) {
 			// At the top of the page's content, lined up with the page's text as a visitor sees

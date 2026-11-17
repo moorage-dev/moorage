@@ -52,6 +52,8 @@ export interface Popup {
 	note: string;
 	/** Words from the heading drawn in the button colour; empty for none. */
 	highlight: string;
+	/** The highlighted words' own colour (#rrggbb); empty uses the button colour. A look, not words. */
+	highlightColor: string;
 	contains: Contains;
 	buttonLabel: string;
 	buttonUrl: string;
@@ -201,6 +203,7 @@ export function normalizePopup(raw: unknown): Popup | null {
 		label: kind === "bar" ? "" : str(p.label, MAX_LABEL),
 		note: kind === "bar" ? "" : str(p.note, MAX_NOTE),
 		highlight: kind === "bar" ? "" : cleanHighlight(p.highlight, str(p.heading, MAX_HEADING)),
+		highlightColor: kind === "bar" ? "" : cleanColor(p.highlightColor),
 		contains: pick(p.contains, ["button", "form"] as const, "button"),
 		buttonLabel: str(p.buttonLabel, 40),
 		buttonUrl: str(p.buttonUrl, 1000),

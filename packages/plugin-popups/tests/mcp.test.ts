@@ -118,24 +118,27 @@ describe("reading", () => {
 
 	it("gives one popup's full settings and its results line", async () => {
 		const fake = fakeContext({ popups: { popups: [popup({ label: "New", note: "Quick" })] } });
-		const answer = await tool(fake, "get", { id: "abcd1234" }, EDITOR);
+		const answer = await tool(fake, "get", { id: "abcd1234" });
 		expect(answer).toMatchObject({
 			id: "abcd1234",
 			kind: "popup",
-			heading: "Fresh from the oven, once a month",
-			label: "New",
-			note: "Quick",
-			design: "plain",
-			buttonLabel: "Order a cake",
-			buttonUrl: "/cakes",
-			closingWords: "no-thanks",
-			opens: "read",
-			where: "all",
-			devices: "all",
-			showAgain: "month",
-			start: null,
-			end: null,
 			timeZone: "UTC",
+			settings: {
+				heading: "Fresh from the oven, once a month",
+				label: "New",
+				note: "Quick",
+				design: "plain",
+				highlightColour: "",
+				buttonLabel: "Order a cake",
+				buttonUrl: "/cakes",
+				decline: "no-thanks",
+				opens: "read",
+				where: "all",
+				devices: "all",
+				showAgain: "month",
+				start: "",
+				end: "",
+			},
 		});
 		expect(answer.results).toMatch(/^Since .*: seen 0 times, 0 button clicks/);
 		expect(await refused(tool(fake, "get", { id: "nope0000" }))).toBe(
@@ -277,5 +280,99 @@ describe("making and changing", () => {
 		expect(stored(fake).popups[0]!.on).toBe(false);
 		const half = fakeContext({ popups: { popups: [popup({ step: 2, on: false })] } });
 		expect(await refused(tool(half, "turn_on", { id: "abcd1234" }))).toContain("not finished");
+	});
+});
+
+describe("fix round", () => {
+	it("gives back settings that update takes as they are, for every kind and both roles", async () => {
+		const popups = [
+			popup({ id: "modal001", label: "New", end: Date.UTC(2026, 11, 24, 18) }),
+			popup({ id: "slide001", kind: "slide", where: "prefix", prefixes: ["/journal/"] }),
+			popup({ id: "barbar01", kind: "bar", text: "", trigger: "load" }),
+			popup({
+				id: "inline01",
+				kind: "inline",
+				contains: "form",
+				form: "newsletter",
+				thanks: "Thanks",
+			}),
+		];
+		for (const role of [ADMIN, EDITOR]) {
+			const fake = fakeContext({ popups: { popups } });
+			for (const p of popups) {
+				const before = stored(fake).popups.find((x) => x.id === p.id);
+				const got = await tool(fake, "get", { id: p.id }, role);
+				const settings = got.settings as Record<string, unknown>;
+				if (role === EDITOR) expect(Object.keys(settings)).not.toContain("where");
+				await tool(fake, "update", { id: p.id, ...settings }, role);
+				expect(stored(fake).popups.find((x) => x.id === p.id)).toEqual(before);
+			}
+		}
+	});
+
+	it("keeps both changes when two tools write at once", async () => {
+		const fake = fakeContext({
+			popups: { popups: [popup({ id: "aaaa0001" }), popup({ id: "bbbb0001", name: "Other" })] },
+		});
+		await Promise.all([
+			tool(fake, "turn_off", { id: "aaaa0001" }, EDITOR),
+			tool(fake, "turn_off", { id: "bbbb0001" }, EDITOR),
+		]);
+		expect(stored(fake).popups.map((p) => p.on)).toEqual([false, false]);
+		await Promise.all([
+			tool(fake, "create", {
+				name: "One",
+				kind: "popup",
+				heading: "One",
+				buttonLabel: "Go",
+				buttonUrl: "/a",
+			}),
+			tool(fake, "create", {
+				name: "Two",
+				kind: "popup",
+				heading: "Two",
+				buttonLabel: "Go",
+				buttonUrl: "/b",
+			}),
+		]);
+		expect(stored(fake).popups.map((p) => p.name)).toEqual([
+			"Monthly letter",
+			"Other",
+			"One",
+			"Two",
+		]);
+	});
+
+	it("refuses a media item that is not a picture, and says plainly when a key cannot set a picture", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const media = (fake.ctx as unknown as { media: Record<string, unknown> }).media;
+		media.get = async (id: string) =>
+			({
+				m2: { id: "m2", filename: "menu.pdf", mimeType: "application/pdf", url: "/x" },
+				m3: { id: "m3", filename: "odd", mimeType: "", url: "/x" },
+				m4: { id: "m4", filename: "lost.png", mimeType: "image/png", url: "/x" },
+			})[id] ?? null;
+		for (const id of ["m2", "m3"])
+			expect(await refused(tool(fake, "update", { id: "abcd1234", picture: id }))).toBe(
+				`There is no picture with the id "${id}" in the media library.`,
+			);
+		// The file cannot be read in-process (the mock knows only m1): no "save again in a moment".
+		expect(await refused(tool(fake, "update", { id: "abcd1234", picture: "m4" }))).toBe(
+			"This site could not read that picture for an AI tool's key. Set the picture on the popup's page in the admin.",
+		);
+	});
+
+	it("takes a highlight colour from an Admin, as looks", async () => {
+		const fake = fakeContext({ popups: { popups: [popup()] } });
+		const answer = await tool(fake, "update", {
+			id: "abcd1234",
+			highlight: "once a month",
+			highlightColour: "#E8457A",
+		});
+		expect(stored(fake).popups[0]!.highlightColor).toBe("#e8457a");
+		expect((answer.settings as Record<string, unknown>).highlightColour).toBe("#e8457a");
+		expect(
+			await refused(tool(fake, "update", { id: "abcd1234", highlightColour: "#000000" }, EDITOR)),
+		).toContain("highlightColour");
 	});
 });

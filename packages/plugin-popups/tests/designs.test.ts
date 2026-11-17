@@ -326,3 +326,85 @@ describe("saving what it says", () => {
 		});
 	});
 });
+
+describe("fix round", () => {
+	const own = (accent: string) =>
+		normalizeSettings({
+			colourSet: "own",
+			colors: { background: "#ffffff", text: "#111111", accent },
+		});
+
+	it("draws highlighted words in their own colour when it reads well, else falls back", () => {
+		const p = popup({ ...REPORT, highlightColor: "#C2185B" } as Partial<Popup>);
+		expect(p.highlightColor).toBe("#c2185b");
+		const c = clientItem(p, "", own("#5b21b6"))!.c;
+		expect(c.hl).toBe("Losing to Missed Calls");
+		expect(c.hc).toBe("#c2185b");
+		// Own colours are the same on every device: no dark fallback needed.
+		expect(c.hd).toBeUndefined();
+		// The theme's colours, following the device: unknown in dark mode, so dark uses the button colour.
+		expect(clientItem(p, "", normalizeSettings({}))!.c.hd).toBe(1);
+		// A colour change that makes it hard to read: the button colour instead.
+		const pale = popup({ ...REPORT, highlightColor: "#ffe0ef" } as Partial<Popup>);
+		expect(clientItem(pale, "", own("#5b21b6"))!.c.hc).toBeUndefined();
+		expect(clientItem(pale, "", own("#5b21b6"))!.c.hl).toBe("Losing to Missed Calls");
+		// Looks, not words.
+		expect(contentPrint(p)).toBe(contentPrint(popup(REPORT)));
+	});
+
+	it("names the label for screen readers and keeps focus on the heading", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "Date"] });
+		document.body.innerHTML =
+			'<h2 style="font-family: Arial">Second</h2><h1 style="font-family: Georgia">Main</h1><a id=a href="#popup-p0">Open</a>';
+		sessionStorage.setItem(VISIT_KEY, JSON.stringify({ n: 3 }));
+		const item = clientItem(
+			popup({ ...REPORT, id: "pop00000", handle: "p0", trigger: "click" }),
+			"",
+		)!;
+		boot(clientConfig(normalizeSettings({}), [item], "popups"));
+		for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(1);
+		document.querySelector<HTMLElement>("#a")!.click();
+		for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(1);
+		const host = document.querySelector<HTMLElement>("#popups")!;
+		const root = host.shadowRoot!;
+		const dialog = root.querySelector("dialog")!;
+		const label = root.querySelector(".lb")!;
+		expect(label.id).toBeTruthy();
+		expect(dialog.getAttribute("aria-describedby")).toBe(label.id);
+		expect(root.activeElement?.tagName).toBe("H2");
+		// The page's main heading (h1) before any other heading.
+		expect(host.style.getPropertyValue("--ph")).toContain("Georgia");
+		host.remove();
+		vi.useRealTimers();
+	});
+
+	it("keeps a slide-in's picture small on a phone, and the button rounder in Picture on top", () => {
+		const phone = CSS.split("@media(max-width:600px){")[1]!;
+		expect(phone).toContain(".slide .tp{max-height:88px}");
+		expect(CSS).toContain(".top .p{border-radius:12px}");
+	});
+
+	it("refuses a highlight colour that is not a colour or is hard to read, for Admins only", async () => {
+		const fake = fakeContext({
+			popups: {
+				popups: [popup()],
+				settings: {
+					colourSet: "own",
+					colors: { background: "#ffffff", text: "#111111", accent: "#5b21b6" },
+				},
+			},
+		});
+		expect(
+			errors(await save(fake, { highlight: "once a month", highlight_colour: "pink" })),
+		).toContain(
+			"Write the highlight colour like #e8457a, or leave it empty to use the button colour.",
+		);
+		expect(
+			errors(await save(fake, { highlight: "once a month", highlight_colour: "#ffe0ef" })),
+		).toContain("The highlight colour is hard to read on the background");
+		await save(fake, { highlight: "once a month", highlight_colour: "#c2185b" });
+		expect(stored(fake).highlightColor).toBe("#c2185b");
+		await save(fake, { highlight_colour: "#000000" }, EDITOR);
+		expect(stored(fake).highlightColor).toBe("#c2185b");
+	});
+});

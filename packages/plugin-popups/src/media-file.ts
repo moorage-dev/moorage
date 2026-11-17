@@ -11,7 +11,10 @@
  * plugins run inside the site, where both are available. Loaded on first use, so the
  * plugin's other code (and its tests) never pull in the site's runtime.
  */
-export async function storedFileUrl(mediaId: string): Promise<string | null> {
+export async function storedFileUrl(
+	mediaId: string,
+	log?: { warn(message: string, data?: unknown): void },
+): Promise<string | null> {
 	if (!/^[A-Za-z0-9_-]{1,60}$/.test(mediaId)) return null;
 	try {
 		const [{ getDb }, { MediaRepository }] = await Promise.all([
@@ -19,10 +22,14 @@ export async function storedFileUrl(mediaId: string): Promise<string | null> {
 			import("emdash"),
 		]);
 		const item = await new MediaRepository(await getDb()).findById(mediaId);
-		if (!item || item.status !== "ready") return null;
+		if (!item || item.status !== "ready" || !item.mimeType?.startsWith("image/")) return null;
 		const url = `/_emdash/api/media/file/${item.storageKey}`;
-		return /^\/_emdash\/api\/media\/file\/[A-Za-z0-9._/-]+$/.test(url) ? url : null;
-	} catch {
+		return /^\/_emdash\/api\/media\/file\/[A-Za-z0-9._/-]+$/.test(url) && !url.includes("..")
+			? url
+			: null;
+	} catch (error) {
+		// The error's own words only: no request, no key.
+		log?.warn("could not read a picture's file address", { error: String(error) });
 		return null;
 	}
 }

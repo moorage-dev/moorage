@@ -106,6 +106,11 @@ const FIELDS = {
 		.describe(
 			"plain: the picture as a strip across the top, words on the left; top: the whole picture on a coloured panel, words centred, a full-width button. Admins only.",
 		),
+	highlightColour: z
+		.string()
+		.describe(
+			'The highlighted words\' own colour, like #e8457a; "" uses the button colour. Admins only.',
+		),
 	panelColour: z
 		.string()
 		.describe(
@@ -174,6 +179,7 @@ const ADMIN_ONLY: FieldName[] = [
 	"kind",
 	"design",
 	"panelColour",
+	"highlightColour",
 	"contains",
 	"form",
 	"thanks",
@@ -283,15 +289,21 @@ function summary(popup: Popup, state: PageState) {
 	};
 }
 
-function details(popup: Popup, state: PageState) {
-	return {
-		...summary(popup, state),
+/**
+ * What update takes, as update takes it: the same names and values, so a get's settings
+ * can be sent back unchanged. Only the fields this person may change.
+ */
+function settingsOf(popup: Popup, state: PageState): Record<string, unknown> {
+	const all: Record<FieldName, unknown> = {
+		name: popup.name,
+		kind: KIND_NAME[popup.kind],
 		heading: popup.heading,
 		text: popup.text,
 		label: popup.label,
 		highlight: popup.highlight,
+		highlightColour: popup.highlightColor,
 		note: popup.note,
-		picture: popup.picture ? { id: popup.picture.id, alt: popup.picture.alt } : null,
+		picture: popup.picture ? popup.picture.id : "none",
 		design: popup.design,
 		panelColour: popup.panel,
 		contains: popup.contains,
@@ -300,9 +312,9 @@ function details(popup: Popup, state: PageState) {
 		buttonNewTab: popup.buttonNewTab,
 		form: popup.form,
 		thanks: popup.thanks,
-		closingWords: popup.decline,
-		closingWordsText: popup.decline === "none" ? "" : DECLINE_LABEL[popup.decline],
-		opens: popup.kind === "bar" ? "load" : popup.trigger,
+		decline: popup.decline,
+		// A top bar opens as the page opens; it has no choice to give back.
+		opens: popup.kind === "bar" ? undefined : popup.trigger,
 		where: popup.where,
 		pages: popup.prefixes,
 		collections: popup.collections,
@@ -310,10 +322,25 @@ function details(popup: Popup, state: PageState) {
 		devices: popup.devices,
 		showAgain: popup.again,
 		firstPage: popup.firstPage,
-		start: momentText(popup.start, state.zone),
-		end: momentText(popup.end, state.zone),
+		start: momentText(popup.start, state.zone) ?? "",
+		end: momentText(popup.end, state.zone) ?? "",
+	};
+	return Object.fromEntries(
+		Object.entries(all).filter(
+			([key, value]) =>
+				value !== undefined && (state.admin || !ADMIN_ONLY.includes(key as FieldName)),
+		),
+	);
+}
+
+function details(popup: Popup, state: PageState) {
+	return {
+		...summary(popup, state),
+		pictureAlt: popup.picture?.alt ?? "",
+		closingWordsText: popup.decline === "none" ? "" : DECLINE_LABEL[popup.decline],
 		dates: datesText(popup, state),
 		timeZone: state.zone,
+		settings: settingsOf(popup, state),
 	};
 }
 
@@ -349,6 +376,8 @@ export interface ToolDeps {
 
 export interface ToolOutcome {
 	save?: Store;
+	/** The one popup a write changed, and whether it is new: the route merges only it. */
+	changed?: { id: string; created?: boolean };
 	problems?: Problems;
 	answer: Record<string, unknown>;
 }
@@ -379,6 +408,7 @@ async function toValues(
 		["note", "note"],
 		["design", "design"],
 		["panelColour", "panel"],
+		["highlightColour", "highlight_colour"],
 		["contains", "contains"],
 		["form", "form"],
 		["thanks", "thanks"],
@@ -428,6 +458,13 @@ async function toValues(
 		else {
 			const found = await deps.picture(id);
 			if (!found) refuse(`There is no picture with the id "${id}" in the media library.`);
+			// Only the in-process read works for a key (there is no cookie to ask the site with),
+			// and trying again cannot change that: say where it can be done instead.
+			const url = await deps.helpers.publicUrl(id);
+			if (!url)
+				refuse(
+					"This site could not read that picture for an AI tool's key. Set the picture on the popup's page in the admin.",
+				);
 			media.push(found!);
 			values.picture = id;
 		}
@@ -493,6 +530,7 @@ export async function runTool(name: ToolName, raw: unknown, deps: ToolDeps): Pro
 		const view = { ...state, store: save };
 		return {
 			save,
+			changed: { id: saved.id },
 			answer: {
 				...summary(saved, view),
 				message:
@@ -530,6 +568,7 @@ export async function runTool(name: ToolName, raw: unknown, deps: ToolDeps): Pro
 		const view = { ...state, store: save };
 		return {
 			save,
+			changed: { id: saved.id, created: true },
 			problems: made.problems,
 			answer: {
 				...details(saved, view),
@@ -566,6 +605,7 @@ export async function runTool(name: ToolName, raw: unknown, deps: ToolDeps): Pro
 	const visible = isLive(popup, state.now) || isLive(saved, state.now);
 	return {
 		save,
+		changed: { id: saved.id },
 		problems: changed.problems,
 		answer: {
 			...details(saved, view),

@@ -10,6 +10,7 @@ import { colourSet, OWN_COLOURS } from "./colour-sets.js";
 import {
 	AGAIN_DAYS,
 	buttonText,
+	contrast,
 	DECLINE_LABEL,
 	highlightProblem,
 	isLive,
@@ -113,9 +114,53 @@ export function clientItem(
  * drawn like the rest of the heading.
  */
 export function readableHighlight(popup: Popup, settings?: Settings): string {
-	if (!popup.highlight || !settings) return popup.highlight;
+	return highlightLook(popup, settings).words;
+}
+
+/**
+ * The colours a visitor's device may show, for checking highlighted words: `main` (the one
+ * version of a light or dark look, or the light one when it follows the device) and `dark`
+ * (a set's dark version when it follows the device). `darkUnknown`: the theme's own
+ * colours following the device, which the server cannot know. Popups sit on a surface of
+ * the background colour whenever the colours are known (`ownColors` in client/css.ts).
+ */
+export function highlightLooks(settings: Settings): {
+	main?: Colors;
+	dark?: Colors;
+	darkUnknown?: boolean;
+} {
 	const { light, dark } = lookColours(settings);
-	return highlightProblem([light, dark].filter((c): c is Colors => !!c)) ? "" : popup.highlight;
+	if (!light) return settings.scheme === "auto" ? { darkUnknown: true } : {};
+	if (settings.scheme === "dark") return { main: dark ?? light };
+	if (settings.scheme === "light" || !dark) return { main: light };
+	return { main: light, dark };
+}
+
+/** Whether a colour reads at 4.5 to 1 on a look's surface. */
+const readsOn = (colour: string, look: Colors) => contrast(colour, look.background) >= 4.5;
+
+/**
+ * What a visitor's page draws for highlighted words: the words, their own colour when it
+ * reads well on the known surface, and `dark` when a dark device should fall back to the
+ * button colour (the own colour fails there, or the theme's dark colours are unknown).
+ * Without an own colour the button colour must read well on every known version, else
+ * the words are drawn like the rest of the heading.
+ */
+export function highlightLook(
+	popup: Popup,
+	settings?: Settings,
+): { words: string; colour?: string; dark?: boolean } {
+	if (!popup.highlight || !settings) return { words: popup.highlight };
+	const looks = highlightLooks(settings);
+	const own = popup.highlightColor;
+	if (own && (!looks.main || readsOn(own, looks.main))) {
+		const dark = !!looks.darkUnknown || (!!looks.dark && !readsOn(own, looks.dark));
+		return { words: popup.highlight, colour: own, ...(dark ? { dark: true } : {}) };
+	}
+	const { light, dark } = lookColours(settings);
+	return highlightProblem([light, dark].filter((c): c is Colors => !!c))
+		? { words: "" }
+		: { words: popup.highlight };
 }
 
 /** The same for any kind, a box in a page included: what "Preview on your site" draws. */
@@ -139,8 +184,12 @@ export function previewItem(popup: Popup, siteOrigin: string, settings?: Setting
 	}
 	if (popup.label) c.lb = popup.label;
 	if (popup.note) c.nt = popup.note;
-	const hl = readableHighlight(popup, settings);
-	if (hl) c.hl = hl;
+	const hl = highlightLook(popup, settings);
+	if (hl.words) {
+		c.hl = hl.words;
+		if (hl.colour) c.hc = hl.colour;
+		if (hl.dark) c.hd = 1;
+	}
 	if (popup.contains === "form" && popup.form && popup.kind !== "bar") {
 		c.form = popup.form;
 		c.ty = popup.thanks || "Thank you";

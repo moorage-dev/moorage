@@ -21,6 +21,9 @@ interface Box {
 	label?: string;
 	note?: string;
 	highlight?: string;
+	/** The highlighted words' own colour, and whether a dark device uses the button colour instead. */
+	highlightColor?: string;
+	highlightDark?: boolean;
 	picture: { url: string; alt: string; width: number | null; height: number | null } | null;
 	form: string;
 	/** `newTab`: open the link in a new tab (older servers leave it out). */
@@ -74,7 +77,9 @@ const css = `
 .popups-box{--pb-text:var(--popups-text,var(--cookie-consent-text,currentColor));position:relative;max-width:640px;margin:28px 0;padding:24px;color:var(--pb-text);background:var(--popups-surface,var(--cookie-consent-surface,color-mix(in srgb,currentColor 6%,transparent)));border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:10px;font-family:var(--popups-font,var(--cookie-consent-font))}
 .popups-box h2{margin:0;font-weight:600;font-size:22px;line-height:1.25;font-family:var(--popups-heading-font,var(--cookie-consent-heading-font,var(--pb-h)))}
 .popups-box .popups-box-label{display:inline-block;margin:0 0 10px;padding:2px 12px;font-size:13px;border:1px solid var(--popups-rule,var(--cookie-consent-rule,color-mix(in srgb,currentColor 32%,transparent)));border-radius:99px}
-.popups-box .popups-box-hl{color:var(--popups-accent,var(--cookie-consent-accent,inherit))}
+.popups-box .popups-box-hl{color:var(--pb-hc,var(--popups-accent,var(--cookie-consent-accent,inherit)))}
+@media (prefers-color-scheme:dark){.popups-box .popups-box-hd{color:var(--popups-accent,var(--cookie-consent-accent,inherit))}}
+.popups-box-top .popups-box-button,.popups-box-top :where(.ec-form) button:where(.ec-form-submit){border-radius:12px}
 .popups-box .popups-box-note{margin:8px 0 0;font-size:13px;opacity:.85}
 .popups-box-top{text-align:center;border-radius:20px;overflow:hidden}
 .popups-box-top .popups-box-pan{display:grid;place-items:center;margin:-24px -24px 18px;padding:24px;background:var(--pb-pn,var(--popups-accent,var(--cookie-consent-accent,#141414)))}
@@ -103,11 +108,16 @@ const parts =
 	box && at >= 0
 		? [box.heading.slice(0, at), box.highlight!, box.heading.slice(at + box.highlight!.length)]
 		: null;
+// The page's main heading font (its h1, else its first h2) for the box's heading, set by a tiny
+// script right after the box, before it is painted, so the heading never changes font in view.
+const HEADING_FONT =
+	'(function(b,h){if(b&&h)b.style.setProperty("--pb-h",getComputedStyle(h).fontFamily)})(document.currentScript.previousElementSibling,document.querySelector("h1")||document.querySelector("h2"))';
 const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice(2, 7)}` : "";
 ---
 
 {
 	box && (
+		<>
 		<section
 			class={top ? "popups-box popups-box-top" : "popups-box"}
 			data-popups-box={box.id}
@@ -144,7 +154,12 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 				{parts ? (
 					<>
 						{parts[0]}
-						<span class="popups-box-hl">{parts[1]}</span>
+						<span
+							class={box.highlightDark ? "popups-box-hl popups-box-hd" : "popups-box-hl"}
+							style={box.highlightColor ? `--pb-hc:${box.highlightColor}` : undefined}
+						>
+							{parts[1]}
+						</span>
 						{parts[2]}
 					</>
 				) : (
@@ -171,6 +186,8 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 			)}
 			{box.note && <p class="popups-box-note">{box.note}</p>}
 		</section>
+		<script is:inline set:html={HEADING_FONT} />
+		</>
 	)
 }
 
@@ -195,12 +212,9 @@ const headingId = box ? `popups-box-${box.id}-${Math.random().toString(36).slice
 			}),
 		);
 	};
-	// The page's own heading font for the box's heading, unless a theme sets one.
-	const pageHeading = document.querySelector("h1");
 	for (const box of document.querySelectorAll<HTMLElement>("[data-popups-box]")) {
 		if (box.dataset.popupsWired) continue;
 		box.dataset.popupsWired = "1";
-		if (pageHeading) box.style.setProperty("--pb-h", getComputedStyle(pageHeading).fontFamily);
 		const id = box.dataset.popupsBox!;
 		// The form's own hidden campaign fields, if it has them and they are empty: Forms then
 		// shows which box a sign-up came from. Filled again just before it sends (capture runs
