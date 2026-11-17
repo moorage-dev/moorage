@@ -1874,3 +1874,212 @@ test.describe("colours", () => {
 		}
 	});
 });
+
+/** A real picture of a known size, uploaded the way the media library does it. */
+async function uploadPicture(browser: Browser): Promise<string> {
+	const page = await visitor(browser);
+	await page.goto("/");
+	const buffer = await page.screenshot({ clip: { x: 0, y: 0, width: 480, height: 300 } });
+	await page.context().close();
+	const upload = await admin.post("/_emdash/api/media", {
+		headers: H,
+		multipart: { file: { name: "offer.png", mimeType: "image/png", buffer } },
+	});
+	expect(upload.ok(), await upload.text()).toBe(true);
+	return ((await upload.json()) as { data: { item: { id: string } } }).data.item.id;
+}
+
+const REPORT_WORDS = {
+	label: "Free Revenue Report",
+	heading: "Check How Much Revenue Your Salon Is Losing to Missed Calls",
+	highlight: "Losing to Missed Calls",
+	text: "Get your free report and uncover lost revenue.",
+	button_label: "See What I'm Losing",
+	button_url: "/contact",
+	note: "Takes less than 30 seconds",
+	decline: "not-interested",
+};
+
+test.describe("Picture on top", () => {
+	test("shows the whole picture on its panel, the label, the highlighted words and the note", async ({
+		browser,
+	}) => {
+		const picture = await uploadPicture(browser);
+		await make({
+			name: "Revenue report",
+			kind: "modal",
+			s2: { ...REPORT_WORDS, picture, design: "top", panel: "#f7cb45", contains: "button" },
+			s3: { trigger: "click" },
+		});
+		const page = await visitor(browser);
+		await page.goto("/popups-test?opener=revenue-report");
+		await page
+			.locator("[data-popup='revenue-report'],a[href*='#popup-revenue-report']")
+			.first()
+			.click();
+		const dialog = page.getByRole("dialog", { name: REPORT_WORDS.heading });
+		await expect(dialog).toBeVisible();
+		const seen = await page.evaluate(() => {
+			const root = document.querySelector("#popups")!.shadowRoot!;
+			const img = root.querySelector<HTMLImageElement>(".pan img")!;
+			const close = root.querySelector(".x")!.getBoundingClientRect();
+			const panel = getComputedStyle(root.querySelector(".pan")!).backgroundColor;
+			return {
+				top: root.querySelector("dialog")!.classList.contains("top"),
+				src: img.getAttribute("src"),
+				// The whole picture: never cropped, its shape kept.
+				shape: Math.abs(img.naturalWidth / img.naturalHeight - img.width / img.height) < 0.02,
+				panel,
+				label: root.querySelector(".lb")!.textContent,
+				highlight: root.querySelector("h2 .hl")!.textContent,
+				note: root.querySelector(".nt")!.textContent,
+				no: root.querySelector(".q")!.textContent,
+				centred: getComputedStyle(root.querySelector("h2")!).textAlign,
+				close: [Math.round(close.width), Math.round(close.height)],
+			};
+		});
+		expect(seen).toMatchObject({
+			top: true,
+			shape: true,
+			panel: "rgb(247, 203, 69)",
+			label: REPORT_WORDS.label,
+			highlight: REPORT_WORDS.highlight,
+			note: REPORT_WORDS.note,
+			no: "Thanks, I'm not interested",
+			centred: "center",
+			close: [44, 44],
+		});
+		// The public file address, which visitors can load.
+		expect(seen.src).toMatch(/^\/_emdash\/api\/media\/file\//);
+		await page.keyboard.press("Escape");
+		await expect(dialog).toBeHidden();
+		await page.context().close();
+	});
+});
+
+test.describe("tools for an AI assistant (MCP)", () => {
+	/** One JSON-RPC call to EmDash's MCP endpoint, which takes tokens only; it answers in one event. */
+	async function mcp(token: string, method: string, params: unknown = {}): Promise<unknown> {
+		const response = await fetch(new URL("/_emdash/api/mcp", test.info().project.use.baseURL), {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+		});
+		const text = await response.text();
+		expect(response.ok, text).toBe(true);
+		const line = text.split("\n").find((l) => l.startsWith("data: "));
+		const message = JSON.parse(line ? line.slice(6) : text) as {
+			result?: unknown;
+			error?: unknown;
+		};
+		expect(message.error, text).toBeUndefined();
+		return message.result;
+	}
+	const call = async (token: string, name: string, args: Record<string, unknown>) => {
+		const r = (await mcp(token, "tools/call", { name: `popups__${name}`, arguments: args })) as {
+			isError?: boolean;
+			content: Array<{ text: string }>;
+		};
+		return { error: r.isError === true, text: r.content[0]!.text };
+	};
+	const data = (r: { error: boolean; text: string }) => {
+		expect(r.error, r.text).toBe(false);
+		return JSON.parse(r.text) as Record<string, unknown>;
+	};
+	const switchTools = async (enabled: boolean) => {
+		const response = await admin.put("/_emdash/api/admin/plugins/popups/mcp", {
+			headers: H,
+			data: { enabled },
+		});
+		expect(response.ok(), await response.text()).toBe(true);
+	};
+
+	test("are off until an Admin switches them on; then list, get, create, update, turn on and off work with a key", async ({
+		browser,
+	}) => {
+		const picture = await uploadPicture(browser);
+		const tokenResponse = await admin.post("/_emdash/api/admin/api-tokens", {
+			headers: H,
+			data: { name: `popups e2e ${Date.now()}`, scopes: ["mcp:tools:popups"] },
+		});
+		expect(tokenResponse.ok(), await tokenResponse.text()).toBe(true);
+		const token = (
+			(await tokenResponse.json()) as { data: { token: string; info: { id: string } } }
+		).data;
+		try {
+			const names = async () =>
+				((await mcp(token.token, "tools/list")) as { tools: Array<{ name: string }> }).tools
+					.map((t) => t.name)
+					.filter((n) => n.startsWith("popups__"));
+			expect(await names()).toEqual([]);
+			await switchTools(true);
+			expect(new Set(await names())).toEqual(
+				new Set(
+					["create", "get", "list", "turn_off", "turn_on", "update"].map((n) => `popups__${n}`),
+				),
+			);
+
+			// create: finished and off, with a picture set through the key alone (no cookie).
+			const created = data(
+				await call(token.token, "create", {
+					name: "AI offer",
+					kind: "slide-in",
+					design: "top",
+					picture,
+					label: "This week",
+					heading: "Fresh rye, this week only",
+					highlight: "this week only",
+					buttonLabel: "See the bread",
+					buttonUrl: "/contact",
+					note: "Order by Friday",
+				}),
+			);
+			const id = String(created.id);
+			made.push(id);
+			expect(created).toMatchObject({ on: false, status: "Off", kind: "slide-in", design: "top" });
+			const refused = await call(token.token, "create", {
+				name: "Bad",
+				kind: "popup",
+				heading: "Hello",
+				buttonLabel: "Go",
+				buttonUrl: "javascript:alert(1)",
+			});
+			expect(refused.error).toBe(true);
+			expect(refused.text).toContain("The link must be a page on this site");
+
+			const list = data(await call(token.token, "list", {}));
+			expect(list.popups).toEqual(
+				expect.arrayContaining([expect.objectContaining({ id, name: "AI offer", on: false })]),
+			);
+			const got = data(await call(token.token, "get", { id }));
+			expect(got).toMatchObject({ heading: "Fresh rye, this week only", note: "Order by Friday" });
+			expect(String(got.results)).toMatch(/^Since /);
+
+			const updated = data(await call(token.token, "update", { id, text: "Baked at dawn." }));
+			expect(updated).toMatchObject({
+				text: "Baked at dawn.",
+				heading: "Fresh rye, this week only",
+			});
+
+			expect(data(await call(token.token, "turn_on", { id }))).toMatchObject({
+				on: true,
+				status: "On",
+			});
+			// The page shows it with the picture's public address.
+			const page = await visitor(browser);
+			await page.goto("/popups-test?opener=ai-offer");
+			const html = await page.content();
+			expect(html).toContain("Fresh rye, this week only");
+			expect(html).toMatch(/\/_emdash\/api\/media\/file\/[A-Za-z0-9]+\.png/);
+			await page.context().close();
+			expect(data(await call(token.token, "turn_off", { id }))).toMatchObject({ on: false });
+		} finally {
+			await switchTools(false);
+			await admin.delete(`/_emdash/api/admin/api-tokens/${token.info.id}`, { headers: H });
+		}
+	});
+});
