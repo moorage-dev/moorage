@@ -77,7 +77,7 @@ describe("what reaches the page", () => {
 		expect(contentPrint(popup())).toBe("ikrp4y");
 		expect(contentPrint(popup({ kind: "bar", start: 5 }))).toBe("1n71mpn");
 		const c = clientItem(popup({ picture: PICTURE }), "")!.c;
-		expect(Object.keys(c).toSorted()).toEqual(["b", "h", "img", "no", "x"]);
+		expect(new Set(Object.keys(c))).toEqual(new Set(["b", "h", "img", "no", "x"]));
 	});
 
 	it("counts the label and the note as words, the design and highlight as looks", () => {

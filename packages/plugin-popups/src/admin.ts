@@ -138,14 +138,14 @@ const TRIGGER_SHORT: Record<keyof typeof TRIGGER_CHOICE, string> = {
 	exit: "When they are about to leave (computers only)",
 };
 
-function kindLine(popup: Popup): string {
+export function kindLine(popup: Popup): string {
 	if (popup.contains === "form" && popup.form && popup.kind !== "bar") {
 		return `${KIND_LABEL[popup.kind]} with a form`;
 	}
 	return KIND_LABEL[popup.kind];
 }
 
-function datesText(popup: Popup, state: PageState): string {
+export function datesText(popup: Popup, state: PageState): string {
 	const when = (ms: number) => describeMoment(ms, state.zone, state.now);
 	if (popup.start && popup.end) return `${when(popup.start)} to ${when(popup.end)}`;
 	if (popup.start) return `From ${when(popup.start)}`;
@@ -168,7 +168,7 @@ export function statusOf(popup: Popup, state: PageState): string {
 	return "On";
 }
 
-function showsOnText(popup: Popup, state: PageState): string {
+export function showsOnText(popup: Popup, state: PageState): string {
 	if (popup.kind === "inline") return "Where it is placed";
 	let where = "Every page";
 	if (popup.where === "prefix")
@@ -525,23 +525,25 @@ function errorBlocks(state: PageState): Block[] {
 
 // ── The list ────────────────────────────────────────────────
 
-const PROBLEM_TEXT: Record<ProblemKind, (popup: Popup) => { title: string; description: string }> =
-	{
-		missing: (p) => ({
-			title: `"${p.name}" cannot open: there is no form called "${p.form}" any more`,
-			description:
-				"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit (Form). Visitors see nothing broken in the meantime; the popup simply stays closed.",
-		}),
-		unsupported: (p) => ({
-			title: `"${p.name}" cannot open: its form uses Turnstile or a file upload`,
-			description:
-				"Those only work in a box in a page for now. Choose another form under Edit (Form), or make a box in a page with this form.",
-		}),
-		paused: (p) => ({
-			title: `"${p.name}" is waiting: its form "${p.form}" is paused under Forms`,
-			description: "It opens again by itself once the form is turned back on under Forms.",
-		}),
-	};
+export const PROBLEM_TEXT: Record<
+	ProblemKind,
+	(popup: Popup) => { title: string; description: string }
+> = {
+	missing: (p) => ({
+		title: `"${p.name}" cannot open: there is no form called "${p.form}" any more`,
+		description:
+			"Open Forms, copy the short name of the form you want, then paste it in this popup under Edit (Form). Visitors see nothing broken in the meantime; the popup simply stays closed.",
+	}),
+	unsupported: (p) => ({
+		title: `"${p.name}" cannot open: its form uses Turnstile or a file upload`,
+		description:
+			"Those only work in a box in a page for now. Choose another form under Edit (Form), or make a box in a page with this form.",
+	}),
+	paused: (p) => ({
+		title: `"${p.name}" is waiting: its form "${p.form}" is paused under Forms`,
+		description: "It opens again by itself once the form is turned back on under Forms.",
+	}),
+};
 
 /** Why a live popup with a form cannot open or is waiting, and the fix; the list and its page alike. */
 function problemBanner(state: PageState, popup: Popup): Block[] {
@@ -1770,7 +1772,11 @@ const has = (values: Record<string, unknown>, key: string) => Object.hasOwn(valu
 const text = (values: Record<string, unknown>, key: string, saved: string) =>
 	has(values, key) && typeof values[key] === "string" ? (values[key] as string).trim() : saved;
 
-function pictureFrom(state: PageState, value: unknown, saved: Picture | null): Picture | null {
+export function pictureFrom(
+	state: PageState,
+	value: unknown,
+	saved: Picture | null,
+): Picture | null {
 	if (value === undefined) return saved;
 	if (value === "none" || value === "" || value === null) return null;
 	if (saved && value === saved.id) return saved;
@@ -2108,43 +2114,7 @@ export async function handleInteraction(
 				: refuse(existing, 1, errors);
 		if (!existing && store.popups.length >= MAX_POPUPS)
 			return only(`A site can have ${MAX_POPUPS} popups.`);
-		const base: Popup =
-			existing ??
-			({
-				id: newId(),
-				handle: "",
-				name,
-				kind: kind!,
-				heading: "",
-				text: "",
-				picture: null,
-				design: "plain",
-				panel: "",
-				label: "",
-				note: "",
-				highlight: "",
-				contains: "button",
-				buttonLabel: "",
-				buttonUrl: "",
-				buttonNewTab: false,
-				form: "",
-				thanks: "",
-				decline: "no-thanks",
-				trigger: kind === "bar" ? "load" : "read",
-				where: "all",
-				prefixes: [],
-				collections: [],
-				exclude: [],
-				devices: "all",
-				again: "month",
-				firstPage: false,
-				start: null,
-				end: null,
-				on: false,
-				step: 1,
-				formNote: "",
-				createdAt: new Date(state.now).toISOString(),
-			} satisfies Popup);
+		const base: Popup = existing ?? blankPopup(name, kind!, state.now);
 		const handle =
 			existing?.handle ||
 			uniqueHandle(
@@ -2205,8 +2175,47 @@ export async function handleInteraction(
 	return { response: renderPage(state) };
 }
 
+/** A new popup of a kind, turned off, with nothing said yet: "New popup" step 1 and the AI tools. */
+export function blankPopup(name: string, kind: Kind, now: number): Popup {
+	return {
+		id: newId(),
+		handle: "",
+		name,
+		kind,
+		heading: "",
+		text: "",
+		picture: null,
+		design: "plain",
+		panel: "",
+		label: "",
+		note: "",
+		highlight: "",
+		contains: "button",
+		buttonLabel: "",
+		buttonUrl: "",
+		buttonNewTab: false,
+		form: "",
+		thanks: "",
+		decline: "no-thanks",
+		trigger: kind === "bar" ? "load" : "read",
+		where: "all",
+		prefixes: [],
+		collections: [],
+		exclude: [],
+		devices: "all",
+		again: "month",
+		firstPage: false,
+		start: null,
+		end: null,
+		on: false,
+		step: 1,
+		formNote: "",
+		createdAt: new Date(now).toISOString(),
+	};
+}
+
 /** What one part of a popup's form changes, or why it cannot be saved. */
-interface Part {
+export interface Part {
 	popup: Popup;
 	errors: string[];
 	notes?: string[];
@@ -2214,7 +2223,7 @@ interface Part {
 }
 
 /** What it says: words, picture, button or form. */
-async function wordsPart(
+export async function wordsPart(
 	popup: Popup,
 	values: Record<string, unknown>,
 	state: PageState,
@@ -2354,7 +2363,7 @@ async function wordsPart(
 }
 
 /** When and where: Admins only; the callers check. */
-function placesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
+export function placesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
 	const where = has(values, "where") ? (values.where as Popup["where"]) : popup.where;
 	const prefixes = has(values, "prefixes") ? parsePaths(values.prefixes) : popup.prefixes;
 	const collections = Array.isArray(values.collections)
@@ -2392,7 +2401,7 @@ function placesPart(popup: Popup, values: Record<string, unknown>, state: PageSt
 }
 
 /** Dates and on or off. */
-function datesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
+export function datesPart(popup: Popup, values: Record<string, unknown>, state: PageState): Part {
 	const moment = (dateKey: string, timeKey: string, saved: number | null) => {
 		if (!has(values, dateKey)) return { ok: true, ms: saved };
 		const date =
