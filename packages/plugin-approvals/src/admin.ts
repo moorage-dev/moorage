@@ -11,8 +11,6 @@ import {
 	confirmView,
 	readDo,
 	readItems,
-	resultView,
-	runBulk,
 	type BulkState,
 	type Names,
 	wantsText,
@@ -22,7 +20,7 @@ import {
 	CONFIG,
 	DEFAULT_CONFIG,
 	isHeldRole,
-	loadConfig,
+	loadConfigWith,
 	normalizeConfig,
 	ROLE,
 	type Config,
@@ -48,6 +46,17 @@ import {
 	type ApprovalRequest,
 	type ApprovedVersion,
 } from "./requests.js";
+import {
+	dismissRun,
+	needsLook,
+	pickOf,
+	RUN_ACTION,
+	runBlocks,
+	runOf,
+	startRun,
+	stopRun,
+	storePick,
+} from "./runs.js";
 import { writeSettings } from "./settings-store.js";
 import { nameList, readableDates } from "./text.js";
 import {
@@ -719,6 +728,8 @@ async function listPage(
 	scheduledWith?: Meter,
 	/** The "Decide several at once" form as it should open (ticked, open). */
 	bulk?: BulkState,
+	/** The plugin's KV as read with the settings: a bulk run's progress for the banner. */
+	entries?: ReadonlyMap<string, unknown>,
 ): Promise<BlockResponse> {
 	const lists = await loadLists(ctx);
 	const collections = (await ctx.schema?.listCollections()) ?? [];
@@ -781,11 +792,17 @@ async function listPage(
 				: "Your own pages wait for a second person. Until there is one, an admin can publish them without review.",
 		});
 	}
+	// A bulk decision of this person's: its banner, and what needs a look left ticked.
+	const run = entries && user ? runOf(entries, user.id) : null;
+	waitingBlocks.push(...runBlocks(run));
+	const look = needsLook(run);
+	const form: BulkState | undefined = bulk ?? (look.size > 0 ? { ticked: look } : undefined);
 	if (approver) {
 		waitingBlocks.push(
 			{ type: "header", text: "For you to approve" },
 			...forYouRows(forYou, labels, config),
-			...bulkBlocks(forYou, labels, bulk),
+			// Decided in background runs (cron): no form while one of theirs runs, or without cron.
+			...(ctx.cron && !run?.running ? bulkBlocks(forYou, labels, form) : []),
 		);
 		if (yours.length > 0)
 			waitingBlocks.push(
@@ -1044,7 +1061,7 @@ async function adminScreen(
 		interaction.type === "page_load" &&
 		interaction.page !== WIDGET_PAGE &&
 		(user?.role ?? 0) >= ROLE.admin;
-	const config = await loadConfig(ctx, { copy: opening });
+	const { config, entries } = await loadConfigWith(ctx, { copy: opening });
 	seen.config = config;
 
 	if (interaction.type === "page_load" && interaction.page === WIDGET_PAGE)
@@ -1052,10 +1069,19 @@ async function adminScreen(
 
 	if (interaction.type === "form_submit" && action === ACTION.saveSettings) {
 		if ((user?.role ?? 0) < ROLE.admin) {
-			return listPage(ctx, config, user, TABS.waiting, {
-				type: "error",
-				message: "Only admins can change these settings.",
-			});
+			return listPage(
+				ctx,
+				config,
+				user,
+				TABS.waiting,
+				{
+					type: "error",
+					message: "Only admins can change these settings.",
+				},
+				undefined,
+				undefined,
+				entries,
+			);
 		}
 		const values = isRecord(interaction.values) ? interaction.values : {};
 		const next = normalizeConfig({
@@ -1069,7 +1095,16 @@ async function adminScreen(
 			next.collections.length === 0 && !next.ai
 				? "Saved. Nothing needs approval."
 				: "Saved. Publishing now asks for approval where you chose.";
-		return listPage(ctx, next, user, TABS.settings, { type: "success", message }, m);
+		return listPage(
+			ctx,
+			next,
+			user,
+			TABS.settings,
+			{ type: "success", message },
+			m,
+			undefined,
+			entries,
+		);
 	}
 
 	if (config && interaction.type === "block_action" && action === ACTION.ask) {
@@ -1080,16 +1115,47 @@ async function adminScreen(
 		}
 	}
 	if (config && interaction.type === "block_action") {
-		const raw = isRecord(interaction.value) ? interaction.value : {};
 		if (action === BULK.back) {
-			const ticked = new Set(readItems(raw.items).map((item) => item.key));
-			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, { ticked });
+			// Back from the confirm step: the stored selection stays ticked.
+			const pick = user ? pickOf(entries, user.id) : null;
+			const ticked = new Set((pick?.rows ?? []).map((row) => row.key));
+			const state: BulkState = { ticked, ...(pick ? { do: pick.do, reason: pick.reason } : {}) };
+			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, state, entries);
 		}
-		if (action === BULK.go) {
-			const what = readDo(raw.do);
-			const reason = typeof raw.reason === "string" ? raw.reason.trim() : "";
-			const { results, rest } = await runBulk(m, config, user, what, reason, readItems(raw.items));
-			return resultView(what, reason, results, rest);
+		if (action === BULK.go && user) {
+			const started = await startRun(ctx, user, entries);
+			return listPage(
+				ctx,
+				config,
+				user,
+				TABS.waiting,
+				{ type: started.ok ? "success" : "error", message: started.message },
+				undefined,
+				undefined,
+				await loadConfigWith(ctx).then((r) => r.entries),
+			);
+		}
+		if (action === RUN_ACTION.stop && user) {
+			const stopped = await stopRun(ctx, user.id, entries);
+			return listPage(
+				ctx,
+				config,
+				user,
+				TABS.waiting,
+				{
+					type: "info",
+					message: stopped
+						? "Stopping. What is already decided stays decided; the rest stays in Waiting."
+						: "Nothing of yours is running.",
+				},
+				undefined,
+				undefined,
+				await loadConfigWith(ctx).then((r) => r.entries),
+			);
+		}
+		if (action === RUN_ACTION.dismiss && user) {
+			await dismissRun(ctx, user.id, entries);
+			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, undefined, new Map());
 		}
 	}
 	if (config && interaction.type === "form_submit" && action === BULK.review) {
@@ -1112,7 +1178,7 @@ async function adminScreen(
 					: null;
 		if (problem) {
 			const toast = { type: "error" as const, message: problem };
-			return listPage(ctx, config, user, TABS.waiting, toast, undefined, state);
+			return listPage(ctx, config, user, TABS.waiting, toast, undefined, state, entries);
 		}
 		const lists = await loadLists(ctx);
 		const collections = (await ctx.schema?.listCollections()) ?? [];
@@ -1122,7 +1188,7 @@ async function adminScreen(
 					.filter((r) => canDecide(config, r, user))
 					.map((r) => ({ key: key(r), seen: r.fingerprint }))
 			: ticked;
-		return confirmView({
+		const confirm = confirmView({
 			config,
 			user,
 			items,
@@ -1131,6 +1197,15 @@ async function adminScreen(
 			do: what,
 			reason,
 		});
+		// Stored now, so the press that follows takes nothing from the browser.
+		if (user && confirm.rows.length > 0)
+			await storePick(ctx, user.id, {
+				do: what,
+				reason,
+				rows: confirm.rows,
+				at: new Date().toISOString(),
+			});
+		return confirm.response;
 	}
 	if (config && interaction.type === "block_action") {
 		const value = buttonValue(interaction.value);
@@ -1141,10 +1216,19 @@ async function adminScreen(
 		if (action === ACTION.review && value) {
 			const detail = await detailPage(ctx, config, user, value.key);
 			if (detail) return detail;
-			return listPage(ctx, config, user, TABS.waiting, {
-				type: "info",
-				message: "This request has already been decided.",
-			});
+			return listPage(
+				ctx,
+				config,
+				user,
+				TABS.waiting,
+				{
+					type: "info",
+					message: "This request has already been decided.",
+				},
+				undefined,
+				undefined,
+				entries,
+			);
 		}
 		if ((action === ACTION.approve || action === ACTION.approvePublish) && value) {
 			const decision = await approve(
@@ -1169,7 +1253,16 @@ async function adminScreen(
 				const detail = await detailPage(ctx, config, user, back, toastOf(decision), decision);
 				if (detail) return detail;
 			}
-			return listPage(ctx, config, user, TABS.waiting, toastOf(decision));
+			return listPage(
+				ctx,
+				config,
+				user,
+				TABS.waiting,
+				toastOf(decision),
+				undefined,
+				undefined,
+				entries,
+			);
 		}
 		if ((action === ACTION.override || action === ACTION.overridePublish) && override) {
 			const reason = typeof values.reason === "string" ? values.reason : "";
@@ -1194,6 +1287,8 @@ async function adminScreen(
 		firstRun ? TABS.settings : TABS.waiting,
 		undefined,
 		opened ? m : undefined,
+		undefined,
+		entries,
 	);
 }
 

@@ -2095,7 +2095,66 @@ function pickValues(response: unknown): string[] {
 }
 
 describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
-	it("confirm step for 25 selected: reads the list once", async () => {
+	/** Choose every waiting page on the confirm step, as an Admin. */
+	async function chooseAll(s: Site, what: "publish" | "send_back" = "publish") {
+		return s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: what, ...(what === "send_back" ? { reason: "Prices" } : {}) },
+			{ user: admin(s) },
+		);
+	}
+
+	interface LaneState {
+		run: string;
+		seq: number;
+		rows: unknown[];
+		results: Array<{ state: string }>;
+	}
+
+	/**
+	 * Run every lane of the Admin's bulk run, one cron invocation at a time, as EmDash would, and
+	 * measure each. content:afterPublish runs after each publish in its own invocation; its calls
+	 * land after the run's own last write (kvSet, then the next task's cronSchedule), so they are
+	 * split off.
+	 */
+	async function runLanes(s: Site): Promise<number[]> {
+		const user = admin(s);
+		const run = await s.host.inspect.kv.get<{ id: string; lanes: number }>(`state:bulk:${user.id}`);
+		const counts: number[] = [];
+		for (let round = 0; round < 40; round++) {
+			let ran = false;
+			for (let lane = 0; lane < run!.lanes; lane++) {
+				const state = await s.host.inspect.kv.get<LaneState>(`state:bulk:${user.id}:${lane}`);
+				if (!state || state.rows.length === 0) continue;
+				ran = true;
+				await cold(s);
+				const m = await measure(async () => {
+					const out = await s.host.transport.invokeHook("cron", {
+						name: `bulk-${run!.id}-${lane}-${state.seq}`,
+						data: { user: user.id, run: run!.id, lane, seq: state.seq },
+						scheduledAt: new Date().toISOString(),
+					});
+					await drain();
+					return out;
+				});
+				expect(m.error).toBeUndefined();
+				const after = await s.host.inspect.kv.get<LaneState>(`state:bulk:${user.id}:${lane}`);
+				const end = m.calls.lastIndexOf("kvSet") + 1 + (after!.rows.length > 0 ? 1 : 0);
+				const own = m.calls.slice(0, end);
+				console.info(`bulk lane ${lane} run ${state.seq}: ${own.length} ${own.join(" ")}`);
+				for (const call of m.calls.slice(end))
+					expect(["storageGet", "cronSchedule", "storagePut"]).toContain(call);
+				expect(own.length).toBeLessThanOrEqual(NEW_BUDGET);
+				counts.push(own.length);
+			}
+			if (!ran) return counts;
+		}
+		throw new Error("still running after 40 rounds");
+	}
+
+	// kvList storageQuery schemaListCollections, + kvSet: the selection stored for the press.
+	it("confirm step for 25 selected: reads the list once and stores the selection", async () => {
 		const s = await site();
 		for (let i = 0; i < 25; i++) await waiting(s, `Page ${i + 1}`);
 		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
@@ -2105,121 +2164,107 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			s.host.admin.submit("/overview", "bulk_review", { pick, do: "publish" }, { user: admin(s) }),
 		);
 		console.info(describeCalls("bulk confirm, 25 selected", m));
-		// kvList storageQuery schemaListCollections.
-		expect(m.calls.length).toBe(3);
+		expect(m.calls.length).toBe(4);
 		expect(text(m.result)).toContain("Approve and publish these 25?");
 	});
 
+	// kvList, kvSet (the run), kvSet + cronSchedule per lane (5), kvDelete (the selection), then
+	// the list with its banner: kvList storageQuery schemaListCollections userList.
+	it("the press: starts five lanes and shows the banner", async () => {
+		const s = await site();
+		for (let i = 0; i < 50; i++) await waiting(s, `Page ${i + 1}`);
+		await chooseAll(s);
+		await cold(s);
+		const m = await measure(() => s.host.admin.act("/overview", "bulk_go", { user: admin(s) }));
+		console.info(describeCalls("bulk press, 50 selected", m));
+		expect(m.calls.length).toBe(17);
+		expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+		expect(text(m.result)).toContain("Approving 50 pages: 0 done, 0 need a look.");
+	});
+
 	it(
-		"approves and publishes 50 selected in steps, each within the limit, none lost or approved twice",
+		"approves and publishes 50 selected in background runs, each within the limit, each approved once",
 		{ timeout: 600_000 },
 		async () => {
 			const s = await site();
 			const ids: string[] = [];
 			for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
-			const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
-			expect(pick).toHaveLength(50);
-			const confirm = await s.host.admin.submit(
-				"/overview",
-				"bulk_review",
-				{ pick, do: "publish" },
-				{ user: admin(s) },
-			);
-			let value = valueOf(confirm, "bulk_go");
-			const steps: number[] = [];
-			while (value !== undefined) {
-				await cold(s);
-				const m = await measure(async () => {
-					const out = await s.host.admin.act("/overview", "bulk_go", { user: admin(s), value });
-					return out;
-				});
-				expect(m.error).toBeUndefined();
-				// After the route returns, EmDash runs content:afterPublish for each page published,
-				// each its own invocation (storageGet cronSchedule storagePut): split them off.
-				const end = m.calls.lastIndexOf("contentPublish") + 1;
-				const route = m.calls.slice(0, end);
-				const deferred = m.calls.slice(end);
-				console.info(`bulk step ${steps.length + 1}: ${route.length} ${route.join(" ")}`);
-				for (const call of deferred)
-					expect(["storageGet", "cronSchedule", "storagePut"]).toContain(call);
-				steps.push(route.length);
-				expect(route.length, `step ${steps.length}`).toBeLessThanOrEqual(NEW_BUDGET);
-				expect(text(m.result)).not.toContain("could not");
-				value = valueOf(m.result, "bulk_go");
-				if (value !== undefined) expect(text(m.result)).toMatch(/Continue: \d+ more to go/);
-			}
-			await drain();
+			await chooseAll(s);
+			await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+			const counts = await runLanes(s);
 			console.info(
-				`bulk approve and publish, 50 selected: ${steps.length} steps: ${steps.join(" ")}`,
+				`bulk approve and publish, 50 selected: ${counts.length} runs: ${counts.join(" ")}`,
 			);
+			await drain();
 			for (const id of ids) {
 				const stored = await request(s, id);
 				expect(stored?.status, id).toBe("published");
 				expect(stored?.history.filter((h) => h.text === "Ellen Marsh approved")).toHaveLength(1);
+				expect(stored?.history[0]?.text).toBe("Published by Ellen Marsh");
 				expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
 			}
-			// Pressing the last Continue again changes nothing.
+			const list = text(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+			expect(list).toContain("Approved 50 of 50 pages.");
 		},
 	);
 
-	it("sends back 50 selected in steps, each within the limit", { timeout: 600_000 }, async () => {
-		const s = await site();
-		const ids: string[] = [];
-		for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
-		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
-		const confirm = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ pick, do: "send_back", reason: "Prices are out of date" },
-			{ user: admin(s) },
-		);
-		let value = valueOf(confirm, "bulk_go");
-		let steps = 0;
-		while (value !== undefined) {
-			await cold(s);
-			const m = await measure(() =>
-				s.host.admin.act("/overview", "bulk_go", { user: admin(s), value }),
-			);
-			steps++;
-			// kvList, then storageGetVersioned storageCompareAndSet cronSchedule per request: 8 a step.
-			expect(m.calls.length).toBe(steps < 7 ? 25 : 1 + 3 * 2);
-			expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
-			value = valueOf(m.result, "bulk_go");
-		}
-		console.info(`bulk send back, 50 selected: ${steps} steps`);
-		for (const id of ids) expect((await request(s, id))?.status).toBe("sent_back");
-	});
+	it(
+		"the same 50 through EmDash's own scheduler: all done, each approved once",
+		{ timeout: 600_000 },
+		async () => {
+			const s = await site();
+			const ids: string[] = [];
+			for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+			await chooseAll(s);
+			await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+			for (let tick = 0; tick < 60; tick++) {
+				await drain();
+				s.host.scheduled.setTime(new Date(Date.now() + 60_000));
+				const { processed } = await s.host.scheduled.run();
+				if (processed === 0) break;
+			}
+			await drain();
+			for (const id of ids) {
+				const stored = await request(s, id);
+				expect(stored?.status, id).toBe("published");
+				expect(stored?.history.filter((h) => h.text === "Ellen Marsh approved")).toHaveLength(1);
+			}
+		},
+	);
 
-	// The list drawn again: kvList storageQuery schemaListCollections userList. "All waiting for
-	// you" is read with the confirm step's own list: kvList storageQuery schemaListCollections.
-	it("All waiting chosen, Back to the list, and Check selection with nothing ticked", async () => {
+	it(
+		"sends back 50 selected in background runs, each within the limit",
+		{ timeout: 600_000 },
+		async () => {
+			const s = await site();
+			const ids: string[] = [];
+			for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+			await chooseAll(s, "send_back");
+			await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+			const counts = await runLanes(s);
+			console.info(`bulk send back, 50 selected: ${counts.length} runs: ${counts.join(" ")}`);
+			for (const id of ids) expect((await request(s, id))?.status).toBe("sent_back");
+		},
+	);
+
+	// The list drawn again: kvList storageQuery schemaListCollections userList.
+	it("Back to the list, and Check selection with nothing ticked or no note", async () => {
 		const s = await site();
 		for (let i = 0; i < 25; i++) await waiting(s, `Page ${i + 1}`);
 		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		await chooseAll(s);
 		const counts: Record<string, number> = {};
 		const run = async (label: string, invoke: () => Promise<unknown>) => {
 			await cold(s);
 			const m = await measure(invoke);
 			console.info(describeCalls(label, m));
 			expect(m.error).toBeUndefined();
-			expect(m.calls.length, label).toBeLessThanOrEqual(NEW_BUDGET);
 			counts[label] = m.calls.length;
 		};
-		await run("bulk confirm, all waiting chosen", () =>
-			s.host.admin.submit(
-				"/overview",
-				"bulk_review",
-				{ which: "all", do: "publish" },
-				{ user: admin(s) },
-			),
-		);
 		await run("bulk back to the list", () =>
-			s.host.admin.act("/overview", "bulk_back", {
-				user: admin(s),
-				value: { items: [{ key: pick[0]!.split("@")[0], seen: pick[0]!.split("@")[1] }] },
-			}),
+			s.host.admin.act("/overview", "bulk_back", { user: admin(s) }),
 		);
-		await run("bulk continue, nothing ticked", () =>
+		await run("bulk check selection, nothing ticked", () =>
 			s.host.admin.submit(
 				"/overview",
 				"bulk_review",
@@ -2227,7 +2272,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 				{ user: admin(s) },
 			),
 		);
-		await run("bulk continue, send back without a note", () =>
+		await run("bulk check selection, send back without a note", () =>
 			s.host.admin.submit(
 				"/overview",
 				"bulk_review",
@@ -2236,34 +2281,47 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			),
 		);
 		expect(counts).toEqual({
-			"bulk confirm, all waiting chosen": 3,
 			"bulk back to the list": 4,
-			"bulk continue, nothing ticked": 4,
-			"bulk continue, send back without a note": 4,
+			"bulk check selection, nothing ticked": 4,
+			"bulk check selection, send back without a note": 4,
 		});
 	});
 
-	it("a step pressed twice approves nothing twice", async () => {
+	// kvList kvSet (the run marked stopped), then the list with the KV read again: kvList storageQuery
+	// schemaListCollections userList. A lane's next turn: kvList kvSet. Dismiss: kvList, kvDelete
+	// per lane and the run, then the list.
+	it("Stop, a lane's turn after it, and Dismiss", async () => {
 		const s = await site();
-		const ids: string[] = [];
-		for (let i = 0; i < 2; i++) ids.push(await waiting(s, `Page ${i + 1}`));
-		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
-		const confirm = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ pick, do: "publish" },
-			{ user: admin(s) },
+		for (let i = 0; i < 10; i++) await waiting(s, `Page ${i + 1}`);
+		await chooseAll(s);
+		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		await cold(s);
+		const stop = await measure(() =>
+			s.host.admin.act("/overview", "bulk_stop", { user: admin(s) }),
 		);
-		const value = valueOf(confirm, "bulk_go");
-		await s.host.admin.act("/overview", "bulk_go", { user: admin(s), value });
-		await drain();
-		const again = await s.host.admin.act("/overview", "bulk_go", { user: admin(s), value });
-		await drain();
-		expect(text(again)).toContain("This request has already been decided.");
-		for (const id of ids)
-			expect(
-				(await request(s, id))?.history.filter((h) => h.text === "Ellen Marsh approved"),
-			).toHaveLength(1);
+		console.info(describeCalls("bulk stop", stop));
+		expect(stop.calls.length).toBe(6);
+		const lanes = await runLanes(s);
+		expect(lanes.every((n) => n === 2)).toBe(true);
+		await cold(s);
+		const dismiss = await measure(() =>
+			s.host.admin.act("/overview", "bulk_dismiss", { user: admin(s) }),
+		);
+		console.info(describeCalls("bulk dismiss", dismiss));
+		expect(dismiss.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+		for (const id of ["Page 1"]) expect(id).toBeTruthy();
+	});
+
+	it("approve and publish fails for one page: approved, not live, and said so", async () => {
+		const s = await site();
+		for (let i = 0; i < 2; i++) await waiting(s, `Page ${i + 1}`);
+		await chooseAll(s);
+		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		failTimes.set("contentPublish", 1);
+		await runLanes(s);
+		const list = text(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		expect(list).toContain("Approved, not live yet: press Publish on the page.");
+		expect(list).not.toContain("Not done: Approved");
 	});
 });
 

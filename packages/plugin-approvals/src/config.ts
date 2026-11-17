@@ -78,9 +78,20 @@ export async function loadConfig(
 	ctx: PluginContext,
 	{ copy = false }: { copy?: boolean } = {},
 ): Promise<Config | null> {
+	return (await loadConfigWith(ctx, { copy })).config;
+}
+
+/** The same one call, with everything else in the plugin's KV (a bulk run's progress among it). */
+export async function loadConfigWith(
+	ctx: PluginContext,
+	{ copy = false }: { copy?: boolean } = {},
+): Promise<{ config: Config | null; entries: Map<string, unknown> }> {
 	const entries = new Map((await ctx.kv.list()).map((entry) => [entry.key, entry.value]));
 	const stored = await pickSettings(ctx, entries, CONFIG, { copy });
-	return stored === null || stored === undefined ? null : normalizeConfig(stored);
+	return {
+		config: stored === null || stored === undefined ? null : normalizeConfig(stored),
+		entries,
+	};
 }
 
 /** The lowest role that approves under a preset. */

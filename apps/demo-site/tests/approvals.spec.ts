@@ -811,11 +811,40 @@ test.describe.serial("Content Approval", () => {
 		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
 			await expect(page.getByText(title, { exact: true })).toBeVisible();
 		await expect(page.getByText("Summer menu", { exact: true })).toHaveCount(0);
+		const pressed = Date.now();
 		await page.getByRole("button", { name: "Approve and publish 3" }).click();
-		await expect(page.getByText("Approved and published 3.")).toBeVisible({ timeout: 60_000 });
-		for (const id of batch) await expect.poll(() => status(ellen, id)).toBe("published");
-		await page.getByRole("button", { name: "‹ Back to the list" }).click();
+		// The press starts background runs (one-shot tasks) and shows the list with a banner.
+		await expect(
+			page.getByText("Approving and publishing 3 pages. You can leave this page."),
+		).toBeVisible();
+		// The run publishes from a cron invocation, as Ellen's decision: measured here.
+		for (const id of batch)
+			await expect.poll(() => status(ellen, id), { timeout: 120_000 }).toBe("published");
+		console.info(`bulk background run: 3 pages live ${Date.now() - pressed} ms after the press`);
+		await expect
+			.poll(
+				async () => {
+					await page.reload();
+					// The page draws its blocks after it loads: wait for them.
+					await page
+						.getByRole("heading", { name: "For you to approve" })
+						.waitFor({ timeout: 30_000 });
+					return (await page.getByText("Approved 3 of 3 pages.").count()) > 0;
+				},
+				{ timeout: 60_000 },
+			)
+			.toBe(true);
+		console.info(`bulk background run: results shown ${Date.now() - pressed} ms after the press`);
+		await page.getByText("Each page").click();
+		await expect(page.getByText(/^Approved and published\. It's live now\./).first()).toBeVisible();
+		await page.getByRole("button", { name: "Dismiss" }).click();
+		await expect(page.getByText("Approved 3 of 3 pages.")).toHaveCount(0);
 		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible();
+		// Recorded as Ellen's decision, though a background run published it.
+		await openPanel(ellen, batch[0]!);
+		await expect(page.getByText(/Approved by Ellen Marsh/).first()).toBeVisible();
+		await leave(ellen);
+		await page.goto(APPROVALS);
 		// Summer menu, left unticked, still waits.
 		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible();
 	});

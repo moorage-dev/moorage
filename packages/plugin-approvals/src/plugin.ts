@@ -12,7 +12,7 @@ import {
 	runRemindTask,
 } from "./actions.js";
 import { handleAdmin } from "./admin.js";
-import { approverRole, isHeldRole, loadConfig } from "./config.js";
+import { approverRole, isHeldRole, loadConfig, loadConfigWith } from "./config.js";
 import {
 	APPROVE_ROUTE,
 	ASK_ROUTE,
@@ -42,6 +42,7 @@ import {
 	requests,
 	type ApprovalRequest,
 } from "./requests.js";
+import { RUN_TASK, runLane } from "./runs.js";
 import { changedFields, fieldHashes } from "./text.js";
 
 // "Approve and publish" leaves a note on the request; the publish hook that follows finishes
@@ -216,6 +217,11 @@ const plugin: SandboxedPlugin = {
 			const data = event.data ?? {};
 			if (event.name.startsWith(`${SEND_TASK}-`)) {
 				await deliver(m, readJobs(data.jobs));
+				return;
+			}
+			// A bulk decision's background run (runs.ts).
+			if (event.name.startsWith(`${RUN_TASK}-`)) {
+				await runLane(m, data, (ctx) => loadConfigWith(ctx));
 				return;
 			}
 			const key = typeof data.key === "string" ? data.key : null;
