@@ -475,7 +475,7 @@ test.describe.serial("Content Approval", () => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto(APPROVALS);
 		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible({ timeout: 60_000 });
-		await expect(page.getByText(/Pages · asked by Sam Reyes/)).toBeVisible();
+		await expect(page.getByText(/^Pages · asked by Sam Reyes/)).toBeVisible();
 		const review = page.getByRole("button", { name: "Review", exact: true });
 		const box = await review.boundingBox();
 		expect(box).not.toBeNull();
@@ -610,7 +610,9 @@ test.describe.serial("Content Approval", () => {
 
 		await front(ellen);
 		await ellen.page.goto(APPROVALS);
-		await expect(ellen.page.getByText(/Pages · asked by Jo Park/)).toBeVisible({ timeout: 60_000 });
+		await expect(ellen.page.getByText(/^Pages · asked by Jo Park/)).toBeVisible({
+			timeout: 60_000,
+		});
 	});
 
 	test("an AI assistant reads the queue and a page's approval through MCP, once Ellen switches the tools on", async () => {
@@ -718,7 +720,7 @@ test.describe.serial("Content Approval", () => {
 		await page.goto(APPROVALS);
 		await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible({ timeout: 60_000 });
 		await expect(helpLinks(page)).toHaveCount(0);
-		await expect(page.getByText(/Pages · asked by Jo Park/)).toBeVisible();
+		await expect(page.getByText(/^Pages · asked by Jo Park/)).toBeVisible();
 
 		await page.getByRole("tab", { name: "Settings" }).click();
 		await setHidden(page, false);
@@ -845,7 +847,7 @@ test.describe.serial("Content Approval", () => {
 
 	test("Ellen approves and publishes all waiting with one press and one confirm, live at once", async () => {
 		const ids = await heldPages([
-			["Opening hours", "Open until 6pm"],
+			["Late opening", "Open until 6pm"],
 			["Gift cards", "Now in store"],
 		]);
 		const page = await front(ellen);
