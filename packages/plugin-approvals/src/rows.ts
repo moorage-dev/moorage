@@ -62,6 +62,22 @@ export interface RowResult {
 /** Calls every run makes besides its rows: the requests, the content types, the copies, the emails. */
 export const ROWS_FIXED = 4;
 
+/**
+ * An "approve and publish" whose publish happens later than this after the approval (a turn run
+ * again after it was cut off) gets its note refreshed first: content:afterPublish trusts the
+ * note for 5 minutes only (SAME_PUBLISH_MS in plugin.ts), and without it the writer's email and
+ * "Published by" would be lost.
+ */
+const PUBLISH_NOTE_FRESH_MS = 4 * 60_000;
+
+/** How long a turn may take, and its clock. */
+export interface TurnTime {
+	/** Milliseconds from `startedAt` after which no new request is started. */
+	allowanceMs: number;
+	startedAt: number;
+	now?: () => number;
+}
+
 /** Worst case per request. */
 export function rowCost(what: RowDo, config: Config): number {
 	return what === "send_back" ? 1 : config.checks === "require" ? 5 : 4;
@@ -91,7 +107,15 @@ function infoOf(
 
 /**
  * Decide `rows` in order while a whole request still fits under the run's 25 calls, keeping
- * `reserve` calls for the caller. Returns each request's outcome and the rows left for later.
+ * `reserve` calls for the caller, and while it still fits in the turn's time: before each
+ * request after the first, the time so far plus one and a half times the slowest request yet
+ * (or the cost of a request at the average call time, if more) plus the closing writes must
+ * stay under `time.allowanceMs`. A slow site then decides fewer per turn instead of being cut
+ * off by EmDash's hook timeout. The first request is always started, so every turn moves on.
+ *
+ * Returns each request's outcome, the rows left for later, the content types read, and
+ * `finish`: the text copies and the emails, for the caller to write after it has stored what
+ * was decided (what was decided matters more than a copy if the turn is cut off).
  */
 export async function decideRows(
 	m: Meter,
@@ -103,29 +127,38 @@ export async function decideRows(
 	reserve: number,
 	/** When the run started: only a decision this person made since then counts as this run's. */
 	since: string,
-): Promise<{ results: RowResult[]; rest: Row[] }> {
+	time?: TurnTime,
+): Promise<Decided> {
 	const ctx = m.ctx;
 	const results: RowResult[] = [];
-	if (rows.length === 0) return { results, rest: [] };
+	if (rows.length === 0) return { results, rest: [], collections: [], finish: async () => {} };
+	const clock = time?.now ?? Date.now;
 	const store = requests(ctx);
 	// Only the rows this turn can reach: the cheapest possible decision each, after the reads.
 	const room = m.left(CALLS_PER_RUN_1_5) - 2 - 2 - reserve;
 	const reach = Math.max(1, Math.floor(room / (what === "send_back" ? 1 : 3)));
 	const stored = await store.getMany(rows.slice(0, reach).map((r) => r.key));
-	const types = new Map(
-		((await ctx.schema?.listCollections()) ?? []).map((t) => [t.slug, infoOf(t)]),
-	);
+	const collections = (await ctx.schema?.listCollections()) ?? [];
+	const types = new Map(collections.map((t) => [t.slug, infoOf(t)]));
 	const by = personFromUser(user);
 	const copies: Array<{ id: string; data: ApprovedVersion }> = [];
 	const mails: MailJob[] = [];
 	// The copies and the emails, written once at the end.
 	const tail = 2;
 	let next = 0;
+	let slowest = 0;
 	for (; next < Math.min(rows.length, reach); next++) {
 		const row = rows[next]!;
 		const request = stored.get(row.key);
 		const cost = what === "send_back" && request?.title === UNNAMED ? 2 : rowCost(what, config);
 		if (m.left(CALLS_PER_RUN_1_5) < cost + tail + reserve) break;
+		const rowStart = clock();
+		if (time && next > 0) {
+			const elapsed = rowStart - time.startedAt;
+			const perCall = elapsed / Math.max(1, m.used());
+			const rowTime = Math.max(slowest, perCall * cost);
+			if (elapsed + 1.5 * rowTime + perCall * (tail + reserve) > time.allowanceMs) break;
+		}
 		try {
 			const fail = (text: string, title = request?.title ?? row.key) =>
 				results.push({ key: row.key, title, state: "failed", text });
@@ -161,6 +194,15 @@ export async function decideRows(
 					});
 					try {
 						if (!draft?.rev || draft.fingerprint !== row.seen) throw new Error("changed");
+						// Approved in a turn that was cut off minutes ago: renew the note the publish
+						// hook reads, so the writer is still told and "Published by" still recorded.
+						const pending = request.publishing;
+						if (pending && Date.now() - Date.parse(pending.at) > PUBLISH_NOTE_FRESH_MS) {
+							await store.updateIf(row.key, {
+								where: { status: "approved", updatedAt: request.updatedAt },
+								set: { publishing: { ...pending, at: new Date().toISOString() } },
+							});
+						}
 						await ctx.content.publish(request.collection, request.entryId, { _rev: draft.rev });
 					} catch {
 						results.push({
@@ -349,21 +391,36 @@ export async function decideRows(
 				state: "failed",
 				text: "Could not be decided just now. Try it again from the list.",
 			});
+		} finally {
+			slowest = Math.max(slowest, clock() - rowStart);
 		}
 	}
-	if (copies.length > 0) {
-		try {
-			await versions(ctx).putMany(copies);
-		} catch {
-			// The approvals stand; only History's text copy is missing.
+	const finish = async () => {
+		if (mails.length > 0) {
+			try {
+				await queueMail(ctx, mails);
+			} catch {
+				// The decisions stand; the writers see them on the page.
+			}
 		}
-	}
-	if (mails.length > 0) {
-		try {
-			await queueMail(ctx, mails);
-		} catch {
-			// The decisions stand; the writers see them on the page.
+		if (copies.length > 0) {
+			try {
+				await versions(ctx).putMany(copies);
+			} catch {
+				// The approvals stand; only History's text copy is missing.
+			}
 		}
-	}
-	return { results, rest: rows.slice(next) };
+	};
+	return { results, rest: rows.slice(next), collections, finish };
+}
+
+export interface Decided {
+	results: RowResult[];
+	rest: Row[];
+	/** The content types, as read for the rows (none when there were no rows). */
+	collections: NonNullable<
+		Awaited<ReturnType<NonNullable<PluginContext["schema"]>["listCollections"]>>
+	>;
+	/** Write the text copies and queue the emails: two calls at most. */
+	finish: () => Promise<void>;
 }

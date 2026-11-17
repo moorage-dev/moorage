@@ -6,35 +6,50 @@ import type { PluginContext } from "emdash";
 import { approverRole, type Config } from "./config.js";
 import { CALLS_PER_RUN_1_5, type Meter } from "./meter.js";
 import type { UserInfo } from "./requests.js";
-import { decideRows, rowCost, ROWS_FIXED, type Row, type RowDo, type RowResult } from "./rows.js";
+import { decideRows, rowCost, type Decided, type Row, type RowDo, type RowResult } from "./rows.js";
 
 /**
- * "Approve and publish selected" and "Send back selected" as one press: the press stores the
- * decision and starts background runs (one-shot cron tasks); each run decides as many requests as
- * fit in its calls and starts the next run for the rest. Nothing of the list travels through the
- * browser after the confirm step: the selection is stored when it is shown, and the press only
- * says "go".
+ * Deciding several requests with one press ("Approve and publish all", or the ticked ones). The
+ * press itself decides as many as fit in its calls and its time (decideNow); what is left goes
+ * to background turns (one-shot cron tasks), each deciding what fits in its own calls and time
+ * and starting the next turn for the rest (runLane).
  *
  * Kept in the plugin's KV, which the Approvals page reads anyway (one kv.list() with the
  * settings), so the progress banner costs no call:
- * - `state:bulk-pick:<user>`: what the confirm step showed, until the press.
+ * - `state:bulk-pick:<user>`: what the confirm step showed for the ticked ones, until the press.
  * - `state:bulk:<user>`: the run: what to do, the note, how many, when, stopped or not.
- * - `state:bulk:<user>:<lane>`: each lane's requests still to decide and its results so far.
- * Several lanes run side by side (each its own task, with its own calls), so a long list does
- * not wait for one task after another. One run at a time per person.
+ * - `state:bulk:<user>:<run>:<lane>`: the requests still to decide and the results so far.
+ * One run at a time per person. "How many done" on the banner is counted from the requests the
+ * page reads anyway (decided by this person since the run started), so a turn cut off before it
+ * stored its lane still shows what it decided.
  */
+
+/**
+ * The cron hook's time limit, set in plugin.ts. EmDash gives a hook 5 seconds unless it says
+ * otherwise (hook.timeout ?? 5e3 in emdash 1.5.0); a sandboxed plugin also stops at the
+ * runner's 30 seconds (wallTimeMs in @emdash-cms/cloudflare's sandbox), so it stays under that.
+ */
+export const CRON_TIMEOUT_MS = 25_000;
+/** A background turn starts no new request after this long: well inside CRON_TIMEOUT_MS. */
+export const TURN_MS = 15_000;
+/** The press starts no new request after this long: the person is waiting for the page. */
+export const PRESS_MS = 8_000;
+/**
+ * A run whose lane has not moved for this long, and that has no task left, has been dropped
+ * by EmDash (a one-shot task is deleted after 5 failed tries, 1 + 2 + 4 + 8 + 16 = 31 minutes
+ * of waiting). Short enough to end it soon after; long enough never to race a turn in flight.
+ */
+export const STALL_MS = 3 * 60_000;
+/** Whatever the tasks say, a lane that has not moved for this long is over. */
+export const STALL_MAX_MS = 40 * 60_000;
 
 export const PICK_PREFIX = "state:bulk-pick:";
 export const RUN_PREFIX = "state:bulk:";
 export const RUN_TASK = "bulk";
 
-/**
- * Lanes side by side, at most. One: EmDash runs a tick's tasks one after another, so lanes side
- * by side would interleave and "oldest first" would not hold (an owner may rely on it: plugin
- * pages before release entries). More lanes make Cloudflare faster (a tick runs up to 10 tasks)
- * at the cost of that order.
- */
-const LANES = 1;
+// One lane per run: EmDash runs a tick's tasks one after another, so lanes side by side would
+// interleave and "oldest first" would not hold (an owner may rely on it: plugin pages before
+// release entries). Earlier releases' runs may say how many lanes they had; they are read as such.
 /** A finished run's results are shown this long unless dismissed. */
 const KEEP_MS = 7 * 86_400_000;
 /** A selection shown on the confirm step stays good this long. */
@@ -55,6 +70,8 @@ export interface Run {
 	lanes: number;
 	at: string;
 	stopped?: string;
+	/** Ended on a page load because its turns stopped coming (the site was too slow). */
+	stalled?: boolean;
 }
 
 export interface Lane {
@@ -64,6 +81,8 @@ export interface Lane {
 	results: RowResult[];
 	/** When its last row was decided. */
 	endedAt?: string;
+	/** When it was last written. */
+	movedAt?: string;
 }
 
 export interface RunState {
@@ -146,69 +165,110 @@ export async function storePick(ctx: PluginContext, userId: string, pick: Pick):
 
 /** A run's task: with the person and a random run id, so two approvers' tasks never share a name. */
 function taskName(userId: string, run: string, lane: number, seq: number): string {
-	return `${RUN_TASK}-${userId}-${run}-${lane}-${seq}`
-		.replace(/[^a-zA-Z0-9_-]/g, "_")
-		.slice(0, 128);
+	return `${taskPrefix(userId, run)}${lane}-${seq}`;
 }
 
+function taskPrefix(userId: string, run: string): string {
+	return `${RUN_TASK}-${userId}-${run}-`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 100);
+}
+
+/** Calls the list after a press needs: the requests, the approvers, the text copies. */
+export const LIST_CALLS = 3;
+
 /**
- * Start the background run for this person's stored selection. 2 + one call per lane: the run,
- * the lanes and their first tasks, the selection removed. Refused while one of theirs runs.
+ * The press: decide `rows` (oldest first) now, as many as fit in this request's calls and in
+ * PRESS_MS, and send the rest to background turns. Its calls: the settings (1, the caller's),
+ * the requests and the content types (2), each request (see rows.ts), the copies and the
+ * emails (2), then either nothing more (all done) or the run, its lane and its first task (3),
+ * and the list drawn after it (LIST_CALLS). Refused while one of this person's runs goes.
  */
-export async function startRun(
-	ctx: PluginContext,
+export async function decideNow(
+	m: Meter,
+	config: Config,
 	user: UserInfo,
 	entries: ReadonlyMap<string, unknown>,
-	/** The selection the pressed button belongs to (its confirm step's time). */
-	token: unknown,
-): Promise<{ ok: boolean; message: string }> {
+	what: RowDo,
+	reason: string,
+	rows: Row[],
+	now: () => number = Date.now,
+): Promise<{
+	ok: boolean;
+	message: string;
+	/** What to show on the banner when nothing was stored (everything decided now). */
+	shown?: RunState;
+	collections?: Decided["collections"];
+}> {
+	const ctx = m.ctx;
+	const startedAt = now();
 	const current = runOf(entries, user.id);
 	if (current?.running)
 		return {
 			ok: false,
-			message:
-				"Your earlier bulk decision is still running. Wait for it to finish, or stop it, then try again.",
+			message: "Your earlier decision on several pages is still going. Wait for it, or stop it.",
 		};
-	const pick = pickOf(entries, user.id);
-	// Only the selection this button showed: another tab may have stored a newer one since.
-	if (!pick || pick.at !== token || pick.rows.length === 0 || !ctx.cron)
-		return { ok: false, message: "Choose the pages again, then press Check selection." };
-	const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-	const lanes = Math.min(LANES, Math.ceil(pick.rows.length / 4));
-	const split: Row[][] = Array.from({ length: lanes }, () => []);
-	// Round robin keeps each lane oldest first.
-	pick.rows.forEach((row, i) => split[i % lanes]!.push(row));
-	const run: Run = {
-		id,
-		do: pick.do,
-		reason: pick.reason,
-		total: pick.rows.length,
-		lanes,
-		at: new Date().toISOString(),
-	};
-	await ctx.kv.set(`${RUN_PREFIX}${user.id}`, run);
-	for (let lane = 0; lane < lanes; lane++) {
-		const state: Lane = { run: id, seq: 0, rows: split[lane]!, results: [] };
-		await ctx.kv.set(laneKey(user.id, id, lane), state);
-	}
-	const now = new Date().toISOString();
-	for (let lane = 0; lane < lanes; lane++) {
-		await ctx.cron.schedule(taskName(user.id, id, lane, 0), {
-			schedule: now,
-			data: { user: user.id, run: id, lane, seq: 0 },
+	if (rows.length === 0)
+		return { ok: false, message: "None of those is waiting for you any more." };
+	const at = new Date(startedAt).toISOString();
+	// All of them now, if they fit: then nothing is stored. If not, the run, its lane and its task.
+	const fixed = 2 + 2 + LIST_CALLS;
+	const fitAll = Math.floor((m.left(CALLS_PER_RUN_1_5) - fixed) / rowCost(what, config));
+	const reserve = LIST_CALLS + (rows.length <= fitAll ? 0 : 3);
+	const decided = await decideRows(m, config, user, what, reason, rows, reserve, at, {
+		allowanceMs: PRESS_MS,
+		startedAt,
+		now,
+	});
+	const { results, rest } = decided;
+	const id = `${startedAt.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+	const run: Run = { id, do: what, reason, total: rows.length, lanes: 1, at };
+	if (rest.length > 0 && ctx.cron) {
+		const lane: Lane = { run: id, seq: 0, rows: rest, results, movedAt: at };
+		// The run's record replaces any earlier one of this person's; its lanes are deleted
+		// when the page next opens (staleKeys).
+		await ctx.kv.set(`${RUN_PREFIX}${user.id}`, run);
+		await ctx.kv.set(laneKey(user.id, id, 0), lane);
+		await ctx.cron.schedule(taskName(user.id, id, 0, 0), {
+			schedule: new Date().toISOString(),
+			data: { user: user.id, run: id, lane: 0, seq: 0 },
 		});
+		await decided.finish();
+		const done = results.filter((r) => r.state !== "failed").length;
+		return {
+			ok: true,
+			message: `${done} done. The other ${rest.length} ${rest.length === 1 ? "follows" : "follow"} in the background; you can leave this page.`,
+			collections: decided.collections,
+		};
 	}
-	await ctx.kv.delete(`${PICK_PREFIX}${user.id}`);
+	await decided.finish();
+	const endedAt = new Date().toISOString();
+	// Nothing stored: what was decided shows on the list just drawn, and in History.
+	const leftOut = rest.map((r) => notDone(r, "Not done: try it again from the list."));
+	const all = [...results, ...leftOut];
+	const shown: RunState = {
+		run,
+		endedAt,
+		lanes: [{ run: id, seq: 1, rows: [], results: all, endedAt }],
+		results: all,
+		left: 0,
+		running: false,
+	};
+	const done = all.filter((r) => r.state === "done").length;
 	return {
 		ok: true,
-		message: `${pick.do === "publish" ? "Approving and publishing" : "Sending back"} ${run.total} ${run.total === 1 ? "page" : "pages"}. You can leave this page.`,
+		message:
+			what === "publish"
+				? `Approved ${done} of ${rows.length}.`
+				: `Sent back ${done} of ${rows.length}.`,
+		shown,
+		collections: decided.collections,
 	};
 }
 
 /**
- * One lane's run: re-read who decides (their role may have changed), decide what fits, store
- * the results and what is left, and start the next run for the rest. At most 25 calls: the KV
- * (settings and the run, 1), the person (1), the rows (see rows.ts), the lane (1), the next task (1).
+ * One lane's turn: re-read who decides (their role may have changed), decide what fits in the
+ * calls and in TURN_MS, store the results and what is left, start the next turn for the rest,
+ * then write the text copies and queue the emails. At most 25 calls: the KV (settings and the
+ * run, 1), the person (1), the rows (see rows.ts), the lane (1), the next task (1).
  */
 export async function runLane(
 	m: Meter,
@@ -216,7 +276,10 @@ export async function runLane(
 	loadEntries: (
 		ctx: PluginContext,
 	) => Promise<{ config: Config | null; entries: Map<string, unknown> }>,
+	clock: { now?: () => number; allowanceMs?: number } = {},
 ): Promise<void> {
+	const now = clock.now ?? Date.now;
+	const startedAt = now();
 	const ctx = m.ctx;
 	const userId = typeof data.user === "string" ? data.user : "";
 	const runId = typeof data.run === "string" ? data.run : "";
@@ -239,18 +302,21 @@ export async function runLane(
 	}
 	// A task already done (run twice, or an older run's): nothing to do.
 	if (lane.seq !== seq || lane.rows.length === 0) return;
-	const store = (rows: Row[], results: RowResult[]) =>
-		ctx.kv.set(key, {
+	const store = (rows: Row[], results: RowResult[]) => {
+		const at = new Date().toISOString();
+		return ctx.kv.set(key, {
 			run: runId,
 			seq: seq + 1,
 			rows,
 			results,
-			...(rows.length === 0 ? { endedAt: new Date().toISOString() } : {}),
+			movedAt: at,
+			...(rows.length === 0 ? { endedAt: at } : {}),
 		} satisfies Lane);
+	};
 	if (run.stopped || !config) {
 		const text = run.stopped
-			? "Not done: you stopped the run."
-			: "Not done: the approval settings could not be read, so the run stopped. Decide it from the list.";
+			? "Not done: you stopped it."
+			: "Not done: the approval settings could not be read, so it stopped. Decide it from the list.";
 		await store([], [...lane.results, ...lane.rows.map((r) => notDone(r, text))]);
 		return;
 	}
@@ -271,22 +337,20 @@ export async function runLane(
 		);
 		return;
 	}
-	const { results, rest } = await decideRows(
-		m,
-		config,
-		user,
-		run.do,
-		run.reason,
-		lane.rows,
-		2,
-		run.at,
-	);
+	const decided = await decideRows(m, config, user, run.do, run.reason, lane.rows, 2, run.at, {
+		allowanceMs: clock.allowanceMs ?? TURN_MS,
+		startedAt,
+		now,
+	});
+	const { results, rest } = decided;
+	// What was decided first, then the next turn, then the copies and the emails.
 	await store(rest, [...lane.results, ...results]);
 	if (rest.length > 0 && ctx.cron)
 		await ctx.cron.schedule(taskName(userId, runId, laneNo, seq + 1), {
 			schedule: new Date().toISOString(),
 			data: { user: userId, run: runId, lane: laneNo, seq: seq + 1 },
 		});
+	await decided.finish();
 }
 
 function notDone(row: Row, text: string): RowResult {
@@ -305,6 +369,38 @@ export async function stopRun(
 	return true;
 }
 
+/**
+ * On opening the Approvals page: end this person's run if its turns stopped coming. EmDash
+ * drops a one-shot task after 5 failed tries; the run would then show "running" for ever.
+ * Only when its lane has not moved for STALL_MS: one call to list this plugin's tasks, and one
+ * to mark the run stopped when none of them is this run's (or it has not moved for
+ * STALL_MAX_MS). Returns whether it ended the run.
+ */
+export async function endIfStalled(
+	ctx: PluginContext,
+	userId: string,
+	entries: Map<string, unknown>,
+	now = Date.now(),
+): Promise<boolean> {
+	const state = runOf(entries, userId);
+	if (!state?.running) return false;
+	const moved = Math.max(
+		Date.parse(state.run.at),
+		...state.lanes.map((l) => (l.movedAt ? Date.parse(l.movedAt) : 0)),
+	);
+	const idle = now - moved;
+	if (idle < STALL_MS) return false;
+	if (idle < STALL_MAX_MS && ctx.cron) {
+		const prefix = taskPrefix(userId, state.run.id);
+		const tasks = await ctx.cron.list();
+		if (tasks.some((t) => t.name.startsWith(prefix))) return false;
+	}
+	const ended: Run = { ...state.run, stopped: new Date(now).toISOString(), stalled: true };
+	await ctx.kv.set(`${RUN_PREFIX}${userId}`, ended);
+	entries.set(`${RUN_PREFIX}${userId}`, ended);
+	return true;
+}
+
 /** Remove a finished run's results from the page. One call per lane, plus one. */
 export async function dismissRun(
 	ctx: PluginContext,
@@ -317,18 +413,57 @@ export async function dismissRun(
 	await ctx.kv.delete(`${RUN_PREFIX}${userId}`);
 }
 
-/** Requests a lane run decides at most, for the words on the button. */
-export function perRun(what: RowDo, config: Config): number {
-	return Math.max(1, Math.floor((CALLS_PER_RUN_1_5 - 4 - ROWS_FIXED) / rowCost(what, config)));
-}
-
 export const RUN_ACTION = { stop: "bulk_stop", dismiss: "bulk_dismiss", refresh: "back" } as const;
 
+/**
+ * The keys of this run's requests that this person decided since it started, as the requests
+ * read for the page say: the count on the banner, right even when a turn was cut off before it
+ * stored its lane.
+ */
+export function decidedKeys(
+	state: RunState | null,
+	all: ReadonlyArray<{
+		collection: string;
+		entryId: string;
+		status: string;
+		approval?: { by: { id: string }; at: string };
+		sentBack?: { by: { id: string }; at: string };
+	}>,
+	userId: string,
+): Set<string> {
+	const keys = new Set<string>();
+	if (!state) return keys;
+	const mine = new Set([
+		...state.lanes.flatMap((l) => (l.rows ?? []).map((r) => r.key)),
+		...state.results.map((r) => r.key),
+	]);
+	const since = state.run.at;
+	for (const request of all) {
+		const k = `${request.collection}:${request.entryId}`;
+		if (!mine.has(k)) continue;
+		const by =
+			state.run.do === "send_back"
+				? request.status === "sent_back"
+					? request.sentBack
+					: undefined
+				: request.status === "approved" || request.status === "published"
+					? request.approval
+					: undefined;
+		if (by && by.by.id === userId && by.at >= since) keys.add(k);
+	}
+	for (const r of state.results) if (r.state !== "failed") keys.add(r.key);
+	return keys;
+}
+
 /** The banner at the top of Waiting while a run goes, and its results when it is done. */
-export function runBlocks(state: RunState | null, ticked = 0): Block[] {
+export function runBlocks(
+	state: RunState | null,
+	ticked = 0,
+	decided = new Set<string>(),
+): Block[] {
 	if (!state) return [];
 	const { run, results } = state;
-	const done = results.filter((r) => r.state === "done").length;
+	const done = Math.max(results.filter((r) => r.state === "done").length, decided.size);
 	const look = results.filter((r) => r.state !== "done");
 	const pages = `${run.total} ${run.total === 1 ? "page" : "pages"}`;
 	const doing = run.do === "publish" ? "Approving" : "Sending back";
@@ -336,9 +471,9 @@ export function runBlocks(state: RunState | null, ticked = 0): Block[] {
 		return [
 			{
 				type: "banner",
-				title: `${doing} ${pages}: ${done} done, ${look.length} need a look. You can leave this page.`,
+				title: `${doing} ${pages}: ${done} done${look.length > 0 ? `, ${look.length} need a look` : ""}. You can leave this page.`,
 				description:
-					"A few are done at a time in the background, oldest first. Refresh to see how far it is. If the numbers do not move for a few minutes, this site's scheduled tasks may not be running: press Stop, then Dismiss, and decide from the list.",
+					"The rest are decided in the background, a few at a time, oldest first. Refresh to see how far it is.",
 			},
 			{
 				type: "actions",
@@ -350,7 +485,7 @@ export function runBlocks(state: RunState | null, ticked = 0): Block[] {
 						label: "Stop",
 						style: "danger",
 						confirm: {
-							title: "Stop this run?",
+							title: "Stop deciding the rest?",
 							text: "The pages being decided right now finish first. What is decided stays decided; the rest stays in Waiting.",
 							confirm: "Stop",
 							deny: "Keep going",
@@ -360,23 +495,29 @@ export function runBlocks(state: RunState | null, ticked = 0): Block[] {
 			},
 		];
 	}
-	const finished =
-		run.do === "publish" ? `Approved ${done} of ${pages}.` : `Sent back ${done} of ${pages}.`;
+	const finished = run.stalled
+		? `Stopped: this site was too slow to finish. ${done} decided; the rest are still waiting.`
+		: `${run.stopped ? "Stopped. " : ""}${run.do === "publish" ? `Approved ${done} of ${pages}.` : `Sent back ${done} of ${pages}.`}`;
+	const failed = look.length > 0 && !run.stalled;
 	return [
 		{
 			type: "banner",
-			variant: look.length > 0 ? "alert" : "default",
-			title: `${run.stopped ? "Stopped. " : ""}${finished}${look.length > 0 ? ` ${look.length} need a look${ticked > 0 ? `; ${ticked === look.length ? "they are" : `${ticked} still waiting are`} ticked below` : ""}.` : ""}`,
+			variant: failed || run.stalled ? "alert" : "default",
+			title: `${finished}${failed ? ` ${look.length} need a look${ticked > 0 ? `; ${ticked === look.length ? "they are" : `${ticked} still waiting are`} ticked below` : ""}.` : ""}`,
 		},
-		{
-			type: "accordion",
-			label: "Each page",
-			...(look.length > 0 ? { default_open: true } : {}),
-			blocks: results.flatMap((r) => [
-				{ type: "section" as const, text: r.title },
-				{ type: "context" as const, text: r.text },
-			]),
-		},
+		...(results.length > 0
+			? [
+					{
+						type: "accordion" as const,
+						label: "Each page",
+						...(look.length > 0 ? { default_open: true } : {}),
+						blocks: results.flatMap((r) => [
+							{ type: "section" as const, text: r.title },
+							{ type: "context" as const, text: r.text },
+						]),
+					},
+				]
+			: []),
 		{
 			type: "actions",
 			elements: [{ type: "button", action_id: RUN_ACTION.dismiss, label: "Dismiss" }],

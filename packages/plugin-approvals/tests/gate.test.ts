@@ -1034,21 +1034,52 @@ function bulkForm(response: unknown): {
 }
 
 /** The confirm step's button value for this person's stored selection. */
-async function pickValue(s: Site, by: User): Promise<unknown> {
+async function pickValue(
+	s: Site,
+	by: User,
+	what: "publish" | "send_back" = "publish",
+): Promise<unknown> {
 	const pick = await s.host.inspect.kv.get<{ at: string }>(`state:bulk-pick:${by.id}`);
-	return { pick: pick?.at };
+	return { pick: pick?.at, do: what };
 }
 
-/** Press the confirm step's button, let the background runs finish, and open the list again. */
-async function press(s: Site, by: User): Promise<unknown> {
-	const pick = await s.host.inspect.kv.get<{ at: string }>(`state:bulk-pick:${by.id}`);
+/** Press a confirm step's button, let the background turns finish, and open the list again. */
+async function press(
+	s: Site,
+	by: User,
+	what: "publish" | "send_back" = "publish",
+): Promise<{ started: Awaited<ReturnType<Site["host"]["admin"]["act"]>>; list: unknown }> {
 	const started = await s.host.admin.act("/overview", "bulk_go", {
 		user: by,
-		value: { pick: pick?.at },
+		value: await pickValue(s, by, what),
 	});
 	await runAll(s);
 	const list = await s.host.admin.loadPage("/overview", { user: by });
 	return { started, list };
+}
+
+/** The value of a button in a response, by its action and (optionally) its label. */
+function buttonOf(
+	response: unknown,
+	action: string,
+	label?: string,
+): Record<string, unknown> | null {
+	let found: Record<string, unknown> | null = null;
+	const walk = (node: unknown) => {
+		if (found || typeof node !== "object" || node === null) return;
+		const record = node as Record<string, unknown>;
+		if (
+			record.type === "button" &&
+			record.action_id === action &&
+			(!label || record.label === label)
+		) {
+			found = record;
+			return;
+		}
+		for (const value of Object.values(record)) walk(value);
+	};
+	walk(response);
+	return found;
 }
 
 /** Run the due one-shot tasks (the bulk runs and their emails) until none are left. */
@@ -1074,8 +1105,8 @@ async function held(s: Site, title: string, by: User = s.editor): Promise<string
 	return id.data.item.id;
 }
 
-describe("deciding several at once from the Waiting list", () => {
-	it("lists each request the approver may decide as a tick box, with what it is and what changed", async () => {
+describe("deciding from the Waiting list", () => {
+	it("gives each row Approve and publish and Review, two or more an all button, and tick boxes saying what each is", async () => {
 		const s = await site(HELD);
 		await held(s, "Summer menu");
 		const live = await held(s, "Opening hours");
@@ -1094,113 +1125,213 @@ describe("deciding several at once from the Waiting list", () => {
 			/^Summer menu · Pages · asked by Sam Reyes, just now · to publish · new page$/,
 		);
 		expect(form?.options[1]?.label).toMatch(/^Opening hours · .* · changed: Content$/);
-		expect(text(list)).toContain("Approve and publish selected");
-		expect(text(list)).toContain("Send back selected");
-		// Single-row Review stays.
-		expect(text(list)).toContain('"action_id":"review"');
+		const body = text(list);
+		expect(body).toContain('"label":"Continue with the ticked pages"');
+		expect(body).not.toContain("Which pages");
+		expect(body).toContain('"action_id":"review"');
+		const row = buttonOf(list, "row_approve");
+		expect(row?.label).toBe("Approve and publish");
+		expect(row?.confirm).toMatchObject({ title: 'Approve and publish "Summer menu"?' });
+		const all = buttonOf(list, "bulk_all");
+		expect(all?.label).toBe("Approve and publish all 2");
+		expect(all?.confirm).toMatchObject({
+			title: "Approve and publish all 2?",
+			text: "All 2 pages go live now, oldest first. A page that changed since this list was drawn is skipped and stays here.",
+		});
 	});
 
-	it("selects all with one choice, and never offers someone their own request", async () => {
-		const s = await site({ ...HELD, preset: "me" });
+	it("shows writers no new controls", async () => {
+		const s = await site(HELD);
 		await held(s, "Summer menu");
 		await held(s, "Bake sale");
-		await held(s, "Ellen's own", s.admin);
-		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(form?.options.map((o) => o.label.split(" · ")[0])).toEqual(["Summer menu", "Bake sale"]);
-		const confirm = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", do: "publish" },
-			{ user: s.admin },
-		);
-		expect(text(confirm)).toContain("Approve and publish these 2?");
-		expect(text(confirm)).not.toContain("Ellen's own");
-	});
-
-	it("asks to confirm, listing what is selected, then approves and publishes them oldest first", async () => {
-		const s = await site(HELD);
-		const first = await held(s, "Summer menu");
-		const second = await held(s, "Bake sale");
-		await held(s, "Not this one");
-		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
-		const confirm = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ pick: [form.options[1]!.value, form.options[0]!.value], do: "publish" },
-			{ user: s.admin },
-		);
-		const body = text(confirm);
-		expect(body).toContain("Approve and publish these 2?");
-		expect(body).toContain('"text":"Summer menu"');
-		expect(body).toContain('"text":"Bake sale"');
-		expect(body).not.toContain("Not this one");
-		const done = (await press(s, s.admin)) as { started: { toast?: unknown }; list: unknown };
-		expect(done.started.toast).toEqual({
-			type: "success",
-			message: "Approving and publishing 2 pages. You can leave this page.",
-		});
-		expect(text(done.list)).toContain("Approved 2 of 2 pages.");
-		expect(text(done.list)).toContain("Approved and published. It's live now.");
-		for (const id of [first, second]) {
-			expect((await request(s, id))?.status).toBe("published");
-			expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+		for (const who of [s.editor, s.contributor]) {
+			const body = text(await s.host.admin.loadPage("/overview", { user: who }));
+			for (const action of ["row_approve", "bulk_all", "bulk_review"])
+				expect(body, `${who.name}: ${action}`).not.toContain(`"action_id":"${action}"`);
 		}
 	});
 
-	it("sends back the selected with one shared reason, which is required", async () => {
+	it("approves and publishes one from its row, in place", async () => {
 		const s = await site(HELD);
-		const first = await held(s, "Summer menu");
-		const second = await held(s, "Bake sale");
-		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
-		const pick = form.options.map((o) => o.value);
-		const empty = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ pick, do: "send_back", reason: " " },
-			{ user: s.admin },
-		);
-		expect(empty.toast).toEqual({
+		const id = await held(s, "Summer menu");
+		await held(s, "Bake sale");
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
+		const done = await s.host.admin.act("/overview", "row_approve", {
+			user: s.admin,
+			value: buttonOf(list, "row_approve")!.value,
+		});
+		await settled();
+		expect(done.toast?.type).toBe("success");
+		expect(text(done)).toContain('"text":"For you to approve"');
+		expect((await request(s, id))?.status).toBe("published");
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+	});
+
+	it("refuses a row's Approve for a page edited after the list was drawn", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu");
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
+		await edit(s, id, { title: "Summer menu", content: "Iced coffee £3.40" });
+		await settled();
+		const done = await s.host.admin.act("/overview", "row_approve", {
+			user: s.admin,
+			value: buttonOf(list, "row_approve")!.value,
+		});
+		expect(done.toast).toEqual({
 			type: "error",
-			message: "Write what should change, then press Check selection.",
+			message: "This page changed while you were looking. Check the new version, then decide.",
 		});
-		expect(bulkForm(empty)?.ticked).toEqual(pick);
-		const confirm = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ pick, do: "send_back", reason: "Prices are out of date" },
-			{ user: s.admin },
-		);
-		expect(text(confirm)).toContain("Send back these 2?");
-		const done = ((await press(s, s.admin)) as { list: unknown }).list;
-		expect(text(done)).toContain("Sent back 2 of 2 pages.");
-		for (const id of [first, second]) {
-			expect((await request(s, id))?.sentBack?.note).toBe("Prices are out of date");
-		}
+		expect((await request(s, id))?.status).toBe("waiting");
 	});
 
-	it("reports a request that changed since the list was shown, and leaves it selected", async () => {
+	it("approves a request to schedule from its row without publishing it", async () => {
+		const s = await site(HELD);
+		const id = await heldSchedule(s, "Autumn menu");
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
+		const row = buttonOf(list, "row_approve")!;
+		expect(row.label).toBe("Approve");
+		expect(text(row.confirm)).toContain("approved, not published");
+		await s.host.admin.act("/overview", "row_approve", { user: s.admin, value: row.value });
+		await settled();
+		expect((await request(s, id))?.status).toBe("approved");
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+	});
+
+	it("refuses a row's Approve from someone who may not approve, and someone's own request", async () => {
+		const s = await site({ ...HELD, preset: "me" });
+		const own = await held(s, "Ellen's own", s.admin);
+		const other = await held(s, "Summer menu", s.contributor);
+		const mine = await s.host.admin.act("/overview", "row_approve", {
+			user: s.admin,
+			value: { key: `pages:${own}`, seen: (await request(s, own))!.fingerprint },
+		});
+		expect(mine.toast).toEqual({
+			type: "error",
+			message: "You asked for this approval, so someone else needs to approve it.",
+		});
+		const writer = await s.host.admin.act("/overview", "row_approve", {
+			user: s.contributor,
+			value: { key: `pages:${other}`, seen: (await request(s, other))!.fingerprint },
+		});
+		expect(writer.toast?.type).toBe("error");
+		expect((await request(s, own))?.status).toBe("waiting");
+		expect((await request(s, other))?.status).toBe("waiting");
+	});
+
+	it("Approve and publish all: decides at once exactly what the button was drawn with", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
+		// Another tab: a third request arrives after this list was drawn.
+		const later = await held(s, "Arrived later");
+		const done = await s.host.admin.act("/overview", "bulk_all", {
+			user: s.admin,
+			value: buttonOf(list, "bulk_all")!.value,
+		});
+		await settled();
+		expect(done.toast).toEqual({ type: "success", message: "Approved 2 of 2." });
+		expect(text(done)).toContain("Approved 2 of 2 pages.");
+		for (const id of [first, second]) expect((await request(s, id))?.status).toBe("published");
+		expect((await request(s, later))?.status).toBe("waiting");
+		// Nothing left for the background.
+		expect(
+			(await s.host.inspect.scheduledTasks()).some((t) => String(t.name).startsWith("bulk-")),
+		).toBe(false);
+	});
+
+	it("Approve and publish all skips a page edited since the list was drawn, and leaves it ticked", async () => {
 		const s = await site(HELD);
 		const changed = await held(s, "Summer menu");
 		const fine = await held(s, "Bake sale");
-		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
-		const confirm = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ pick: form.options.map((o) => o.value), do: "publish" },
-			{ user: s.admin },
-		);
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
 		await edit(s, changed, { title: "Summer menu", content: "Iced coffee £3.40" });
 		await settled();
-		const done = ((await press(s, s.admin)) as { list: unknown }).list;
+		const done = await s.host.admin.act("/overview", "bulk_all", {
+			user: s.admin,
+			value: buttonOf(list, "bulk_all")!.value,
+		});
 		await settled();
 		expect(text(done)).toContain("Approved 1 of 2 pages. 1 need a look; they are ticked below.");
 		expect(text(done)).toContain("This page changed while you were looking");
 		expect((await request(s, fine))?.status).toBe("published");
 		expect((await request(s, changed))?.status).toBe("waiting");
-		// Left ticked on the list, until the results are dismissed.
 		const ticked = bulkForm(done)?.ticked ?? [];
 		expect(ticked).toHaveLength(1);
 		expect(ticked[0]).toContain(`pages:${changed}@`);
+	});
+
+	it("the ticked ones: Continue lists them, and Approve and publish N decides them at once, oldest first", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		const not = await held(s, "Not this one");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick: [form.options[1]!.value, form.options[0]!.value] },
+			{ user: s.admin },
+		);
+		const body = text(confirm);
+		expect(body).toContain("Decide these 2?");
+		expect(body).toContain('"label":"Approve and publish 2"');
+		expect(body).not.toContain('"label":"Send back 2"');
+		expect(body).toContain("To send them back instead, go back and write a note.");
+		expect(body).not.toContain("Not this one");
+		const done = await press(s, s.admin);
+		expect(done.started.toast).toEqual({ type: "success", message: "Approved 2 of 2." });
+		expect(text(done.started)).toContain("Approved and published. It's live now.");
+		for (const id of [first, second]) {
+			expect((await request(s, id))?.status).toBe("published");
+			expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+		}
+		expect((await request(s, not))?.status).toBe("waiting");
+	});
+
+	it("sends back the ticked ones with one note, which is required", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const pick = form.options.map((o) => o.value);
+		await s.host.admin.submit("/overview", "bulk_review", { pick, reason: " " }, { user: s.admin });
+		const refused = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin, "send_back"),
+		});
+		expect(refused.toast).toEqual({
+			type: "error",
+			message: "Write a note to send them back, then press Continue.",
+		});
+		expect(bulkForm(refused)?.ticked).toEqual(pick);
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick, reason: "Prices are out of date" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain('"label":"Send back 2"');
+		const done = await press(s, s.admin, "send_back");
+		expect(done.started.toast).toEqual({ type: "success", message: "Sent back 2 of 2." });
+		for (const id of [first, second])
+			expect((await request(s, id))?.sentBack?.note).toBe("Prices are out of date");
+	});
+
+	it("Continue with nothing ticked asks to tick", async () => {
+		const s = await site(HELD);
+		await held(s, "Summer menu");
+		await held(s, "Bake sale");
+		const done = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick: [] },
+			{ user: s.admin },
+		);
+		expect(done.toast).toEqual({
+			type: "error",
+			message: "Tick at least one page, then press Continue.",
+		});
 	});
 });
 
@@ -1226,7 +1357,7 @@ async function heldSchedule(s: Site, title: string): Promise<string> {
 	return id;
 }
 
-/** The radio "Which pages" and the tick boxes, values as the form would submit them. */
+/** The tick boxes' values, as the form would submit them. */
 function allValues(response: unknown): string[] {
 	return bulkForm(response)?.options.map((o) => o.value) ?? [];
 }
@@ -1240,37 +1371,34 @@ describe("deciding several at once: the audit's findings", () => {
 		const confirm = await s.host.admin.submit(
 			"/overview",
 			"bulk_review",
-			{ which: "ticked", pick, do: "publish" },
+			{ pick },
 			{ user: s.admin },
 		);
 		expect(text(confirm)).toContain(
 			"A request to schedule is approved, not published: its writer then schedules it.",
 		);
-		const done = ((await press(s, s.admin)) as { list: unknown }).list;
+		const done = await press(s, s.admin);
 		await settled();
-		expect(text(done)).toContain("Approved. Sam can schedule it now.");
+		expect(text(done.started)).toContain("Approved. Sam can schedule it now.");
 		expect((await request(s, now))?.status).toBe("published");
 		expect((await request(s, later))?.status).toBe("approved");
 		expect((await s.host.inspect.content.get("pages", later))?.status).toBe("draft");
 	});
 
-	it("uses the audit's words: Check selection, the confirm note, approved but not live, a request that is gone", async () => {
+	it("reports a request gone between the confirm step and the press", async () => {
 		const s = await site(HELD);
 		await held(s, "Summer menu");
 		await held(s, "Bake sale");
-		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(list).toContain('"label":"Check selection"');
 		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
 		const confirm = await s.host.admin.submit(
 			"/overview",
 			"bulk_review",
-			{ which: "ticked", pick, do: "publish" },
+			{ pick },
 			{ user: s.admin },
 		);
 		expect(text(confirm)).toContain(
-			"Any page that changed since this list was drawn is skipped and stays in Waiting.",
+			"Oldest first. A page that changed since this list was drawn is skipped.",
 		);
-		// A request gone between the confirm step and the run.
 		const stored = await s.host.inspect.kv.get<{ rows: Array<{ key: string; seen: string }> }>(
 			`state:bulk-pick:${s.admin.id}`,
 		);
@@ -1278,26 +1406,8 @@ describe("deciding several at once: the audit's findings", () => {
 			...stored,
 			rows: [...stored!.rows, { key: "pages:gone", seen: "x" }],
 		});
-		const after = (await press(s, s.admin)) as { list: unknown };
-		expect(text(after.list)).toContain("This request no longer exists.");
-	});
-
-	it("selects every waiting page with one choice in the form, keeping the action and the note", async () => {
-		const s = await site(HELD);
-		const first = await held(s, "Summer menu");
-		const second = await held(s, "Bake sale");
-		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(list).toContain('"label":"All 2 waiting for you"');
-		const confirm = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", pick: [], do: "send_back", reason: "Prices are out of date" },
-			{ user: s.admin },
-		);
-		expect(text(confirm)).toContain("Send back these 2?");
-		await press(s, s.admin);
-		for (const id of [first, second])
-			expect((await request(s, id))?.sentBack?.note).toBe("Prices are out of date");
+		const after = await press(s, s.admin);
+		expect(text(after.started)).toContain("This request no longer exists.");
 	});
 
 	it("refuses every row of a forged selection from someone who does not approve", async () => {
@@ -1310,43 +1420,35 @@ describe("deciding several at once: the audit's findings", () => {
 			rows: [{ key: `pages:${id}`, seen: (await request(s, id))!.fingerprint }],
 			at: new Date().toISOString(),
 		});
-		const { list } = (await press(s, s.editor)) as { list: unknown };
-		expect(JSON.stringify(await s.host.inspect.kv.list())).toContain(
-			"You can't approve on this site any more, so this was not decided.",
-		);
-		expect(text(list)).not.toContain("Approved and published");
+		const { started } = await press(s, s.editor);
+		expect(text(started)).toContain("You can't approve on this site.");
+		expect(text(started)).not.toContain("Approved and published");
 		expect((await request(s, id))?.status).toBe("waiting");
 	});
 
-	it("refuses a second run while one runs, and two approvers' runs approve each page once", async () => {
+	it("refuses a second while one goes on, and two approvers' decisions approve each page once", async () => {
 		const s = await site(HELD);
-		const ids = [await held(s, "Summer menu"), await held(s, "Bake sale")];
-		for (const by of [s.admin, s.admin2])
-			await s.host.admin.submit(
-				"/overview",
-				"bulk_review",
-				{ which: "all", do: "publish" },
-				{ user: by },
-			);
+		const ids: string[] = [];
+		for (let i = 0; i < 8; i++) ids.push(await held(s, `Page ${i + 1}`));
+		for (const by of [s.admin, s.admin2]) {
+			const pick = allValues(await s.host.admin.loadPage("/overview", { user: by }));
+			await s.host.admin.submit("/overview", "bulk_review", { pick }, { user: by });
+		}
 		const first = await s.host.admin.act("/overview", "bulk_go", {
 			user: s.admin,
 			value: await pickValue(s, s.admin),
 		});
 		expect(first.toast?.type).toBe("success");
-		await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", do: "publish" },
-			{ user: s.admin },
-		);
-		const again = await s.host.admin.act("/overview", "bulk_go", {
+		expect(first.toast?.message).toMatch(/^\d done\. The other \d follow in the background/);
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(pick).toEqual([]);
+		const again = await s.host.admin.act("/overview", "bulk_all", {
 			user: s.admin,
-			value: await pickValue(s, s.admin),
+			value: { rows: ids.map((id) => `pages:${id}@x`) },
 		});
 		expect(again.toast).toEqual({
 			type: "error",
-			message:
-				"Your earlier bulk decision is still running. Wait for it to finish, or stop it, then try again.",
+			message: "Your earlier decision on several pages is still going. Wait for it, or stop it.",
 		});
 		const other = await s.host.admin.act("/overview", "bulk_go", {
 			user: s.admin2,
@@ -1361,29 +1463,28 @@ describe("deciding several at once: the audit's findings", () => {
 		}
 	});
 
-	it("stops a run, and dismisses its results", async () => {
+	it("stops the background part, and dismisses its results", async () => {
 		const s = await site(HELD);
-		for (let i = 0; i < 6; i++) await held(s, `Page ${i + 1}`);
-		await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", do: "publish" },
-			{ user: s.admin },
-		);
+		for (let i = 0; i < 8; i++) await held(s, `Page ${i + 1}`);
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		await s.host.admin.submit("/overview", "bulk_review", { pick }, { user: s.admin });
 		await s.host.admin.act("/overview", "bulk_go", {
 			user: s.admin,
 			value: await pickValue(s, s.admin),
 		});
+		await settled();
 		const running = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(running).toContain("Approving 6 pages: 0 done, 0 need a look. You can leave this page.");
+		expect(running).toMatch(/Approving 8 pages: \d done\. You can leave this page\./);
 		expect(running).not.toContain('"action_id":"pick"');
+		expect(running).not.toContain('"action_id":"bulk_all"');
 		const stopped = await s.host.admin.act("/overview", "bulk_stop", { user: s.admin });
 		expect(stopped.toast?.message).toBe(
 			"Stopping. What is already decided stays decided; the rest stays in Waiting.",
 		);
 		await runAll(s);
 		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(list).toContain("Stopped. Approved 0 of 6 pages.");
+		expect(list).toMatch(/Stopped\. Approved \d of 8 pages\./);
+		expect(list).toContain("Not done: you stopped it.");
 		const dismissed = text(await s.host.admin.act("/overview", "bulk_dismiss", { user: s.admin }));
 		expect(dismissed).not.toContain("Stopped.");
 	});
@@ -1479,29 +1580,25 @@ describe("the audit's naming and wording findings", () => {
 });
 
 describe("the second audit of bulk runs", () => {
-	it("a confirm step's button starts only the selection it showed (two tabs)", async () => {
+	/** Tick every waiting page and press Continue. */
+	async function tickAll(s: Site, by: User, reason = "") {
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: by }));
+		return s.host.admin.submit("/overview", "bulk_review", { pick, reason }, { user: by });
+	}
+
+	it("a confirm step's button decides only the selection it showed (two tabs)", async () => {
 		const s = await site(HELD);
 		const ids = [await held(s, "Summer menu"), await held(s, "Bake sale")];
-		const sendBack = await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", do: "send_back", reason: "Prices" },
-			{ user: s.admin },
-		);
-		// Another tab: a new selection, to publish.
-		await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", do: "publish" },
-			{ user: s.admin },
-		);
+		const sendBack = await tickAll(s, s.admin, "Prices");
+		// Another tab: a new selection.
+		await tickAll(s, s.admin);
 		const stale = await s.host.admin.act("/overview", "bulk_go", {
 			user: s.admin,
 			value: buttonValue(sendBack, "bulk_go"),
 		});
 		expect(stale.toast).toEqual({
 			type: "error",
-			message: "Choose the pages again, then press Check selection.",
+			message: "Tick the pages again, then press Continue.",
 		});
 		await runAll(s);
 		for (const id of ids) expect((await request(s, id))?.status).toBe("waiting");
@@ -1509,41 +1606,33 @@ describe("the second audit of bulk runs", () => {
 
 	it("the Stop dialog says the pages being decided now finish first", async () => {
 		const s = await site(HELD);
-		for (let i = 0; i < 6; i++) await held(s, `Page ${i + 1}`);
-		await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", do: "publish" },
-			{ user: s.admin },
-		);
+		for (let i = 0; i < 8; i++) await held(s, `Page ${i + 1}`);
+		await tickAll(s, s.admin);
 		await s.host.admin.act("/overview", "bulk_go", {
 			user: s.admin,
 			value: await pickValue(s, s.admin),
 		});
+		await settled();
 		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
 		expect(body).toContain(
 			"The pages being decided right now finish first. What is decided stays decided; the rest stays in Waiting.",
 		);
 	});
 
-	it("says what happened when the settings could not be read during a run", async () => {
+	it("says what happened when the settings could not be read during a background turn", async () => {
 		const s = await site(HELD);
-		await held(s, "Summer menu");
-		await s.host.admin.submit(
-			"/overview",
-			"bulk_review",
-			{ which: "all", do: "publish" },
-			{ user: s.admin },
-		);
+		for (let i = 0; i < 8; i++) await held(s, `Page ${i + 1}`);
+		await tickAll(s, s.admin);
 		await s.host.admin.act("/overview", "bulk_go", {
 			user: s.admin,
 			value: await pickValue(s, s.admin),
 		});
+		await settled();
 		await s.host.fixtures.plugin.setting("config", null);
 		await runAll(s);
 		const lanes = JSON.stringify(await s.host.inspect.kv.list());
 		expect(lanes).toContain(
-			"Not done: the approval settings could not be read, so the run stopped. Decide it from the list.",
+			"Not done: the approval settings could not be read, so it stopped. Decide it from the list.",
 		);
 	});
 });
