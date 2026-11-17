@@ -2,9 +2,10 @@
 
 import type { PluginContext } from "emdash";
 
-import { ROLE, type Config } from "./config.js";
+import { approverRole, ROLE, type Config } from "./config.js";
 import { warnIfRoom, type Meter } from "./meter.js";
 import {
+	AI_PREFIX,
 	askedJob,
 	deliver,
 	overrideJob,
@@ -29,7 +30,9 @@ import {
 	approvers,
 	collectionInfo,
 	copyOf,
+	liveChange,
 	mayApprove,
+	nameNow,
 	personName,
 	readDraft,
 	requestKey,
@@ -95,6 +98,16 @@ export function missingChecks(draft: Draft, hasSeo: boolean): Checks {
 	return seoGaps(hasSeo ? draft.item.seo : null, draft.data);
 }
 
+/** Who an AI tool's decision is recorded as: "An AI tool acting for Ellen Marsh". */
+export function agentFor(user: UserInfo) {
+	return { id: user.id, name: `${AI_PREFIX}${personName(user)}` };
+}
+
+/** An AI tool may decide for anyone who approves on this site, on any request, theirs too. */
+export function mayApproveAsAgent(config: Config, user: { role: number } | undefined): boolean {
+	return Boolean(config.aiApprove && user && user.role >= approverRole(config.preset));
+}
+
 export function firstName(name: string): string {
 	return name.split(" ")[0] || name;
 }
@@ -123,7 +136,15 @@ export async function approve(
 	config: Config,
 	user: UserInfo | undefined,
 	key: string,
-	options: { seen: unknown; publish: boolean; override?: string },
+	options: {
+		seen: unknown;
+		publish: boolean;
+		override?: string;
+		/** An AI tool decides, acting for `user`: their own requests too (setting "AI tools may approve"). */
+		agent?: boolean;
+		/** Publish, except a request to schedule: that one is approved for its writer to schedule. */
+		keepSchedule?: boolean;
+	},
 	known: { info?: CollectionInfo; meter?: Meter } = {},
 ): Promise<Decision> {
 	const store = requests(ctx);
@@ -136,15 +157,21 @@ export async function approve(
 		if (user.role < ROLE.admin) return fail("Only admins can approve without review.", { request });
 		if (request.ai) return fail("Work from an AI tool always needs a review.", { request });
 		if (options.override.trim() === "") return fail("Write the reason first.", { request });
-	} else if (!mayApprove(config, request, user)) {
+	} else if (
+		options.agent ? !mayApproveAsAgent(config, user) : !mayApprove(config, request, user)
+	) {
 		return fail(
-			request.requestedBy?.id === user.id
+			!options.agent && request.requestedBy?.id === user.id
 				? "You asked for this approval, so someone else needs to approve it."
 				: "You can't approve on this site.",
 			{ request },
 		);
 	}
-	const publishing = options.publish && user.role >= ROLE.editor && Boolean(ctx.content?.publish);
+	const publishing =
+		options.publish &&
+		!(options.keepSchedule && request.wants === "schedule") &&
+		user.role >= ROLE.editor &&
+		Boolean(ctx.content?.publish);
 	const draft = await readDraft(ctx, request.collection, request.entryId, {
 		forPublish: publishing,
 	});
@@ -179,7 +206,7 @@ export async function approve(
 	}
 
 	const now = new Date().toISOString();
-	const by = personFromUser(user);
+	const by = options.agent ? agentFor(user) : personFromUser(user);
 	const versionId = `${key}#${now}`;
 	// The text copy is written after the request, so a request withdrawn or decided meanwhile
 	// leaves no copy of an approval that did not happen.
@@ -188,12 +215,12 @@ export async function approve(
 			requestKey: key,
 			at: now,
 			by: by.name,
-			title: titleOf(info, draft.data, request.title),
+			title: titleOf(info, draft.data, draft.slug, request.entryId),
 			fields: copyOf(info, draft.data),
 		});
 	const approved: ApprovalRequest = {
 		...request,
-		title: titleOf(info, draft.data, request.title),
+		title: titleOf(info, draft.data, draft.slug, request.entryId),
 		status: "approved",
 		fingerprint: draft.fingerprint,
 		approval: {
@@ -212,8 +239,8 @@ export async function approve(
 			? `${by.name} approved without review: "${options.override.trim()}"`
 			: `${by.name} approved`,
 	);
-	// Nobody is emailed about their own decision.
-	const ownRequest = approved.requestedBy?.id === user.id;
+	// Nobody is emailed about their own decision; an AI tool's decision is told to the writer.
+	const ownRequest = !options.agent && approved.requestedBy?.id === user.id;
 	const override = options.override !== undefined;
 	const writer = approved.requestedBy?.name;
 
@@ -303,20 +330,24 @@ export async function sendBack(
 	key: string,
 	note: unknown,
 	meter?: Meter,
+	/** An AI tool decides, acting for `user` (see approve). */
+	agent = false,
 ): Promise<Decision> {
 	const store = requests(ctx);
 	const stored = await store.getVersioned(key);
 	const request = stored?.value ?? null;
 	if (!stored || !request || request.status !== "waiting")
 		return fail("This request has already been decided.", request ? { request } : {});
-	if (!mayApprove(config, request, user) || !user)
+	if (!user || (agent ? !mayApproveAsAgent(config, user) : !mayApprove(config, request, user)))
 		return fail("You can't decide on this request.", { request });
 	const text = typeof note === "string" ? note.trim() : "";
 	if (text === "") return fail("Write what should change, then press Send back.", { request });
 	const now = new Date().toISOString();
-	const by = personFromUser(user);
+	const by = agent ? agentFor(user) : personFromUser(user);
 	const sent: ApprovalRequest = {
 		...request,
+		// An earlier release's "Untitled", named for the writer's email (two reads, those rows only).
+		title: await nameNow(ctx, request),
 		status: "sent_back",
 		sentBack: { by, at: now, note: text.slice(0, 2000) },
 	};
@@ -407,6 +438,8 @@ export async function ask(
 	user: UserInfo | undefined,
 	collection: string,
 	id: string,
+	/** Asked by an AI tool on `user`'s key (MCP ask_approval). */
+	fromAi = false,
 ): Promise<{ type: "success" | "info" | "error"; message: string }> {
 	if (!config)
 		return {
@@ -414,7 +447,9 @@ export async function ask(
 			message: "Approval is off until an admin saves the Approvals settings.",
 		};
 	const info = await collectionInfo(ctx, collection);
-	if (!config.collections.includes(collection))
+	// An AI tool may ask on any content type while what AI tools publish is held: its publish
+	// would be held there too.
+	if (!config.collections.includes(collection) && !(fromAi && config.ai))
 		return { type: "info", message: `Approval is off for ${info.label}.` };
 	if (!user) return { type: "error", message: "Sign in again to ask for approval." };
 	const key = requestKey(collection, id);
@@ -445,17 +480,18 @@ export async function ask(
 		{
 			collection,
 			entryId: id,
-			title: titleOf(info, draft.data, existing?.title ?? "Untitled"),
+			title: titleOf(info, draft.data, draft.slug, id),
 			fingerprint: draft.fingerprint,
 			fields: fieldHashes(draft.data),
 			requestedBy: personFromUser(user),
-			ai: false,
+			ai: fromAi,
 			wants: "publish",
-			how: "pressed Ask for approval",
+			how: fromAi ? "asked from an AI tool" : "pressed Ask for approval",
 		},
 		now,
 	);
 	result.request.checks = missingChecks(draft, info.hasSeo);
+	if (!result.again) result.request.changed = liveChange(draft.live?.data ?? null, draft.data);
 	if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
 	await store.put(key, result.request);
 	if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);
@@ -512,6 +548,7 @@ export async function runMailTask(
 	}
 	const request = stored?.value;
 	if (request?.status !== "waiting") return;
+	request.title = await nameNow(ctx, request);
 	const remind = typeof data.remind === "string" ? data.remind : null;
 	if (remind && config.remind && ctx.cron) {
 		// Same name as before for the same request, so running this again changes nothing.
@@ -533,6 +570,7 @@ export async function runRemindTask(
 	if (!config?.remind) return;
 	const request = await requests(m.ctx).get(key);
 	if (request?.status !== "waiting" || request.requestedAt !== requestedAt) return;
+	request.title = await nameNow(m.ctx, request);
 	await deliver(m, [reminderJob(m.ctx, config, request)]);
 }
 

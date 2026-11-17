@@ -16,6 +16,9 @@ export function emailFailureHint(errors: string[]): string | undefined {
 	return "On Cloudflare, plugins installed from the EmDash registry can send email from EmDash 1.4.0 on: update EmDash.";
 }
 
+/** How a decision by an AI tool names who made it (actions.ts agentFor). */
+export const AI_PREFIX = "An AI tool acting for ";
+
 /** A request email is sent at most once a day per page, however often Publish is pressed. */
 export const EMAIL_EVERY_MS = 24 * 60 * 60 * 1000;
 export const REMIND_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
@@ -186,12 +189,16 @@ export function writerJob(
 	});
 	if (kind === "sent_back") {
 		if (!request.sentBack) return null;
-		const first = request.sentBack.by.name.split(" ")[0];
+		const name = request.sentBack.by.name;
+		// "An AI tool acting for Ellen Marsh" has no first name to use.
+		const whose = name.startsWith(AI_PREFIX)
+			? `The note from ${name.charAt(0).toLowerCase()}${name.slice(1)}`
+			: `${name.split(" ")[0]}'s note`;
 		return job({
-			subject: `${request.sentBack.by.name} sent back "${request.title}"`,
+			subject: `${name} sent back "${request.title}"`,
 			heading: `"${request.title}" needs changes`,
 			lines: [
-				`${first}'s note: "${request.sentBack.note}"`,
+				`${whose}: "${request.sentBack.note}"`,
 				"Make the changes, save, and press Publish again.",
 			],
 			button: { label: "Open the page", url: page },

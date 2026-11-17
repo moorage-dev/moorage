@@ -203,6 +203,17 @@ describe("the publish gate", () => {
 		expect(result.error.message).toContain("Do not try again");
 	});
 
+	it("tells a publishing AI tool that an approver will decide, when AI approval is on", async () => {
+		const s = await site({ ...HELD, aiApprove: true });
+		const id = await page(s, {}, s.admin);
+		const result = await s.host.actions.content.publish("pages", id, actor(s.admin, "mcp"));
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error.message).toMatch(
+			/^Sent for approval\. Not live yet\. On this site what AI tools publish waits for approval; .*Do not publish it again: an approver will decide\.$/,
+		);
+	});
+
 	it("does not email or create a second request when Publish is pressed again", async () => {
 		const s = await site(HELD);
 		const id = await page(s);
@@ -538,7 +549,9 @@ describe("the Approvals page", () => {
 		const id = created.data.item.id;
 		await s.host.actions.content.publish("articles", id, actor(s.editor));
 		const before = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(before).toContain("Articles · asked by Sam Reyes · just now · 2 things to check");
+		expect(before).toContain(
+			"Articles · asked by Sam Reyes · just now · new page · 2 things to check",
+		);
 
 		const updated = await s.host.actions.content.update("articles", id, {
 			seo: { description: "When the bakery is open" },
@@ -547,7 +560,9 @@ describe("the Approvals page", () => {
 		if (!updated.success) throw new Error(updated.error.message);
 		await settled();
 		const after = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(after).toContain("Articles · asked by Sam Reyes · just now · 1 thing to check");
+		expect(after).toContain(
+			"Articles · asked by Sam Reyes · just now · new page · 1 thing to check",
+		);
 	});
 
 	it("keeps a text copy on the History tab", async () => {
@@ -850,5 +865,685 @@ describe("your own request", () => {
 		});
 		expect(buttonValue(other, "approve_publish")).toBeDefined();
 		expect(text(other)).toContain("Approve without review (admins)");
+	});
+});
+
+/**
+ * A content type like a site's Releases, with no `title` field at all. (Its declared title field,
+ * `release_version` on the real site, cannot be set through the test host's fixtures: the
+ * declared field is covered by entryName's own test and by the demo site's.) `Notes` has no field
+ * named title or name either; `People` has `name`.
+ */
+async function releases(s: Site): Promise<void> {
+	await s.host.fixtures.collection({
+		slug: "releases",
+		label: "Releases",
+		supports: ["drafts", "revisions"],
+		fields: [
+			{ slug: "plugin", label: "Plugin", type: "string" },
+			{ slug: "release_version", label: "Version", type: "string" },
+			{ slug: "summary", label: "Summary", type: "text" },
+			{ slug: "line", label: "Line", type: "string" },
+		],
+	});
+	await s.host.fixtures.collection({
+		slug: "notes",
+		label: "Notes",
+		supports: ["drafts", "revisions"],
+		fields: [{ slug: "body", label: "Body", type: "text" }],
+	});
+	await s.host.fixtures.collection({
+		slug: "people",
+		label: "People",
+		supports: ["drafts", "revisions"],
+		fields: [{ slug: "name", label: "Name", type: "string" }],
+	});
+}
+
+async function entry(
+	s: Site,
+	collection: string,
+	data: Record<string, unknown>,
+	slug: string | null,
+	by: User = s.editor,
+): Promise<string> {
+	const created = await s.host.actions.content.create(collection, {
+		data,
+		...(slug ? { slug } : {}),
+		authorId: by.id,
+		actor: { id: by.id, role: by.role },
+	});
+	if (!created.success) throw new Error(created.error.message);
+	return created.data.item.id;
+}
+
+const NAMED = { ...HELD, collections: ["pages", "releases", "notes", "people"] };
+
+describe("naming a request for an entry without a title field", () => {
+	it("names a release by its address name, not Untitled", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const id = await entry(
+			s,
+			"releases",
+			{ plugin: "analytics", release_version: "0.4.3", summary: "HubSpot visits.", line: "x" },
+			"analytics-0-4-3",
+		);
+		const result = await s.host.actions.content.publish("releases", id, actor(s.editor));
+		expect(result.success).toBe(false);
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `releases:${id}`);
+		expect(stored?.title).toBe("analytics-0-4-3");
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"text":"analytics-0-4-3"');
+		expect(list).not.toContain("Untitled");
+	});
+
+	it("falls back to a field named name, then the slug, then the id: never Untitled", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const person = await entry(s, "people", { name: "Ada Baker" }, "ada");
+		const note = await entry(s, "notes", { body: "Closed on Monday" }, "monday-closing");
+		// The declared title field left empty: the slug names it.
+		const blank = await entry(
+			s,
+			"releases",
+			{ plugin: "seo", release_version: "", summary: "s" },
+			"seo-next",
+		);
+		for (const [collection, id] of [
+			["people", person],
+			["notes", note],
+			["releases", blank],
+		] as const) {
+			await s.host.actions.content.publish(collection, id, actor(s.editor));
+		}
+		const title = async (collection: string, id: string) =>
+			(await s.host.inspect.storage.get<ApprovalRequest>("requests", `${collection}:${id}`))?.title;
+		expect(await title("people", person)).toBe("Ada Baker");
+		expect(await title("notes", note)).toBe("monday-closing");
+		expect(await title("releases", blank)).toBe("seo-next");
+	});
+
+	it("names it the same when asked from the toolbar, and in the review, panel and email", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const id = await entry(
+			s,
+			"releases",
+			{ plugin: "seo", release_version: "0.3.1", summary: "Fixes." },
+			"seo-0-3-1",
+		);
+		await s.host.admin.invokeEditorAction("ask", "releases", id, { user: s.editor });
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `releases:${id}`);
+		expect(stored?.title).toBe("seo-0-3-1");
+		const panel = text(
+			await s.host.admin.loadEditorPanel("approval", "releases", id, { user: s.admin }),
+		);
+		expect(panel).not.toContain("Untitled");
+		const review = text(
+			await s.host.admin.act("/overview", "review", {
+				user: s.admin,
+				value: { key: `releases:${id}` },
+			}),
+		);
+		expect(review).toContain('"text":"seo-0-3-1"');
+	});
+
+	it("repairs a request stored as Untitled by an earlier release when the list opens", async () => {
+		const s = await site(NAMED);
+		await releases(s);
+		const id = await entry(
+			s,
+			"releases",
+			{ plugin: "seo", release_version: "0.3.1", summary: "Fixes." },
+			"seo-0-3-1",
+		);
+		await s.host.actions.content.publish("releases", id, actor(s.editor));
+		const key = `releases:${id}`;
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", key);
+		await s.host.fixtures.plugin.storage("requests", key, { ...stored, title: "Untitled" });
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"text":"seo-0-3-1"');
+		expect(list).not.toContain("Untitled");
+		expect((await s.host.inspect.storage.get<ApprovalRequest>("requests", key))?.title).toBe(
+			"seo-0-3-1",
+		);
+	});
+});
+
+/** The bulk form on the Waiting tab: its tick boxes and their values. */
+function bulkForm(response: unknown): {
+	options: Array<{ label: string; value: string }>;
+	ticked: string[];
+} | null {
+	let found: { options: Array<{ label: string; value: string }>; ticked: string[] } | null = null;
+	const walk = (node: unknown) => {
+		if (found || typeof node !== "object" || node === null) return;
+		const record = node as Record<string, unknown>;
+		if (record.type === "checkbox" && record.action_id === "pick") {
+			found = {
+				options: record.options as Array<{ label: string; value: string }>,
+				ticked: (record.initial_value as string[] | undefined) ?? [],
+			};
+			return;
+		}
+		for (const value of Object.values(record)) walk(value);
+	};
+	walk(response);
+	return found;
+}
+
+/** The confirm step's button value for this person's stored selection. */
+async function pickValue(s: Site, by: User): Promise<unknown> {
+	const pick = await s.host.inspect.kv.get<{ at: string }>(`state:bulk-pick:${by.id}`);
+	return { pick: pick?.at };
+}
+
+/** Press the confirm step's button, let the background runs finish, and open the list again. */
+async function press(s: Site, by: User): Promise<unknown> {
+	const pick = await s.host.inspect.kv.get<{ at: string }>(`state:bulk-pick:${by.id}`);
+	const started = await s.host.admin.act("/overview", "bulk_go", {
+		user: by,
+		value: { pick: pick?.at },
+	});
+	await runAll(s);
+	const list = await s.host.admin.loadPage("/overview", { user: by });
+	return { started, list };
+}
+
+/** Run the due one-shot tasks (the bulk runs and their emails) until none are left. */
+async function runAll(s: Site): Promise<void> {
+	for (let i = 0; i < 30; i++) {
+		await settled();
+		s.host.scheduled.setTime(new Date(Date.now() + 60_000));
+		const { processed } = await s.host.scheduled.run();
+		if (processed === 0) return;
+	}
+}
+
+async function held(s: Site, title: string, by: User = s.editor): Promise<string> {
+	const id = await s.host.actions.content.create("pages", {
+		data: { title, content: "Iced coffee £3.20 and lemon tart" },
+		slug: title.toLowerCase().replace(/\s+/g, "-"),
+		authorId: by.id,
+		actor: { id: by.id, role: by.role },
+	});
+	if (!id.success) throw new Error(id.error.message);
+	const result = await s.host.actions.content.publish("pages", id.data.item.id, actor(by));
+	if (result.success) throw new Error("expected the publish to be held");
+	return id.data.item.id;
+}
+
+describe("deciding several at once from the Waiting list", () => {
+	it("lists each request the approver may decide as a tick box, with what it is and what changed", async () => {
+		const s = await site(HELD);
+		await held(s, "Summer menu");
+		const live = await held(s, "Opening hours");
+		await s.host.admin.act("/overview", "approve_publish", {
+			user: s.admin,
+			value: { key: `pages:${live}` },
+		});
+		await settled();
+		await edit(s, live, { title: "Opening hours", content: "Open until 9pm" });
+		await s.host.actions.content.publish("pages", live, actor(s.editor));
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
+		const form = bulkForm(list);
+		expect(form?.options).toHaveLength(2);
+		expect(form?.ticked).toEqual([]);
+		expect(form?.options[0]?.label).toMatch(
+			/^Summer menu · Pages · asked by Sam Reyes, just now · to publish · new page$/,
+		);
+		expect(form?.options[1]?.label).toMatch(/^Opening hours · .* · changed: Content$/);
+		expect(text(list)).toContain("Approve and publish selected");
+		expect(text(list)).toContain("Send back selected");
+		// Single-row Review stays.
+		expect(text(list)).toContain('"action_id":"review"');
+	});
+
+	it("selects all with one choice, and never offers someone their own request", async () => {
+		const s = await site({ ...HELD, preset: "me" });
+		await held(s, "Summer menu");
+		await held(s, "Bake sale");
+		await held(s, "Ellen's own", s.admin);
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(form?.options.map((o) => o.label.split(" · ")[0])).toEqual(["Summer menu", "Bake sale"]);
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain("Approve and publish these 2?");
+		expect(text(confirm)).not.toContain("Ellen's own");
+	});
+
+	it("asks to confirm, listing what is selected, then approves and publishes them oldest first", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		await held(s, "Not this one");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick: [form.options[1]!.value, form.options[0]!.value], do: "publish" },
+			{ user: s.admin },
+		);
+		const body = text(confirm);
+		expect(body).toContain("Approve and publish these 2?");
+		expect(body).toContain('"text":"Summer menu"');
+		expect(body).toContain('"text":"Bake sale"');
+		expect(body).not.toContain("Not this one");
+		const done = (await press(s, s.admin)) as { started: { toast?: unknown }; list: unknown };
+		expect(done.started.toast).toEqual({
+			type: "success",
+			message: "Approving and publishing 2 pages. You can leave this page.",
+		});
+		expect(text(done.list)).toContain("Approved 2 of 2 pages.");
+		expect(text(done.list)).toContain("Approved and published. It's live now.");
+		for (const id of [first, second]) {
+			expect((await request(s, id))?.status).toBe("published");
+			expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+		}
+	});
+
+	it("sends back the selected with one shared reason, which is required", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const pick = form.options.map((o) => o.value);
+		const empty = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick, do: "send_back", reason: " " },
+			{ user: s.admin },
+		);
+		expect(empty.toast).toEqual({
+			type: "error",
+			message: "Write what should change, then press Check selection.",
+		});
+		expect(bulkForm(empty)?.ticked).toEqual(pick);
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick, do: "send_back", reason: "Prices are out of date" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain("Send back these 2?");
+		const done = ((await press(s, s.admin)) as { list: unknown }).list;
+		expect(text(done)).toContain("Sent back 2 of 2 pages.");
+		for (const id of [first, second]) {
+			expect((await request(s, id))?.sentBack?.note).toBe("Prices are out of date");
+		}
+	});
+
+	it("reports a request that changed since the list was shown, and leaves it selected", async () => {
+		const s = await site(HELD);
+		const changed = await held(s, "Summer menu");
+		const fine = await held(s, "Bake sale");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick: form.options.map((o) => o.value), do: "publish" },
+			{ user: s.admin },
+		);
+		await edit(s, changed, { title: "Summer menu", content: "Iced coffee £3.40" });
+		await settled();
+		const done = ((await press(s, s.admin)) as { list: unknown }).list;
+		await settled();
+		expect(text(done)).toContain("Approved 1 of 2 pages. 1 need a look; they are ticked below.");
+		expect(text(done)).toContain("This page changed while you were looking");
+		expect((await request(s, fine))?.status).toBe("published");
+		expect((await request(s, changed))?.status).toBe("waiting");
+		// Left ticked on the list, until the results are dismissed.
+		const ticked = bulkForm(done)?.ticked ?? [];
+		expect(ticked).toHaveLength(1);
+		expect(ticked[0]).toContain(`pages:${changed}@`);
+	});
+});
+
+/** A page Sam asked to schedule (held). */
+async function heldSchedule(s: Site, title: string): Promise<string> {
+	const created = await s.host.actions.content.create("pages", {
+		data: { title, content: "Iced coffee £3.20" },
+		slug: title.toLowerCase().replace(/\s+/g, "-"),
+		authorId: s.editor.id,
+		actor: { id: s.editor.id, role: s.editor.role },
+	});
+	if (!created.success) throw new Error(created.error.message);
+	const id = created.data.item.id;
+	const held = await s.host.actions.content.schedule(
+		"pages",
+		id,
+		new Date(Date.now() + 86_400_000).toISOString(),
+		{
+			...actor(s.editor),
+		},
+	);
+	if (held.success) throw new Error("expected the schedule to be held");
+	return id;
+}
+
+/** The radio "Which pages" and the tick boxes, values as the form would submit them. */
+function allValues(response: unknown): string[] {
+	return bulkForm(response)?.options.map((o) => o.value) ?? [];
+}
+
+describe("deciding several at once: the audit's findings", () => {
+	it("approves a request to schedule without publishing it, and says so before and after", async () => {
+		const s = await site(HELD);
+		const now = await held(s, "Summer menu");
+		const later = await heldSchedule(s, "Autumn menu");
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "ticked", pick, do: "publish" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain(
+			"A request to schedule is approved, not published: its writer then schedules it.",
+		);
+		const done = ((await press(s, s.admin)) as { list: unknown }).list;
+		await settled();
+		expect(text(done)).toContain("Approved. Sam can schedule it now.");
+		expect((await request(s, now))?.status).toBe("published");
+		expect((await request(s, later))?.status).toBe("approved");
+		expect((await s.host.inspect.content.get("pages", later))?.status).toBe("draft");
+	});
+
+	it("uses the audit's words: Check selection, the confirm note, approved but not live, a request that is gone", async () => {
+		const s = await site(HELD);
+		await held(s, "Summer menu");
+		await held(s, "Bake sale");
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"label":"Check selection"');
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "ticked", pick, do: "publish" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain(
+			"Any page that changed since this list was drawn is skipped and stays in Waiting.",
+		);
+		// A request gone between the confirm step and the run.
+		const stored = await s.host.inspect.kv.get<{ rows: Array<{ key: string; seen: string }> }>(
+			`state:bulk-pick:${s.admin.id}`,
+		);
+		await s.host.fixtures.plugin.kv(`state:bulk-pick:${s.admin.id}`, {
+			...stored,
+			rows: [...stored!.rows, { key: "pages:gone", seen: "x" }],
+		});
+		const after = (await press(s, s.admin)) as { list: unknown };
+		expect(text(after.list)).toContain("This request no longer exists.");
+	});
+
+	it("selects every waiting page with one choice in the form, keeping the action and the note", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain('"label":"All 2 waiting for you"');
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", pick: [], do: "send_back", reason: "Prices are out of date" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain("Send back these 2?");
+		await press(s, s.admin);
+		for (const id of [first, second])
+			expect((await request(s, id))?.sentBack?.note).toBe("Prices are out of date");
+	});
+
+	it("refuses every row of a forged selection from someone who does not approve", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu", s.contributor);
+		// The selection lives on the server; even one written there for an Editor is refused.
+		await s.host.fixtures.plugin.kv(`state:bulk-pick:${s.editor.id}`, {
+			do: "publish",
+			reason: "",
+			rows: [{ key: `pages:${id}`, seen: (await request(s, id))!.fingerprint }],
+			at: new Date().toISOString(),
+		});
+		const { list } = (await press(s, s.editor)) as { list: unknown };
+		expect(JSON.stringify(await s.host.inspect.kv.list())).toContain(
+			"You can't approve on this site any more, so this was not decided.",
+		);
+		expect(text(list)).not.toContain("Approved and published");
+		expect((await request(s, id))?.status).toBe("waiting");
+	});
+
+	it("refuses a second run while one runs, and two approvers' runs approve each page once", async () => {
+		const s = await site(HELD);
+		const ids = [await held(s, "Summer menu"), await held(s, "Bake sale")];
+		for (const by of [s.admin, s.admin2])
+			await s.host.admin.submit(
+				"/overview",
+				"bulk_review",
+				{ which: "all", do: "publish" },
+				{ user: by },
+			);
+		const first = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		expect(first.toast?.type).toBe("success");
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		const again = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		expect(again.toast).toEqual({
+			type: "error",
+			message:
+				"Your earlier bulk decision is still running. Wait for it to finish, or stop it, then try again.",
+		});
+		const other = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin2,
+			value: await pickValue(s, s.admin2),
+		});
+		expect(other.toast?.type).toBe("success");
+		await runAll(s);
+		for (const id of ids) {
+			const stored = await request(s, id);
+			expect(stored?.status).toBe("published");
+			expect(stored?.history.filter((h) => h.text.endsWith(" approved"))).toHaveLength(1);
+		}
+	});
+
+	it("stops a run, and dismisses its results", async () => {
+		const s = await site(HELD);
+		for (let i = 0; i < 6; i++) await held(s, `Page ${i + 1}`);
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		const running = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(running).toContain("Approving 6 pages: 0 done, 0 need a look. You can leave this page.");
+		expect(running).not.toContain('"action_id":"pick"');
+		const stopped = await s.host.admin.act("/overview", "bulk_stop", { user: s.admin });
+		expect(stopped.toast?.message).toBe(
+			"Stopping. What is already decided stays decided; the rest stays in Waiting.",
+		);
+		await runAll(s);
+		const list = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(list).toContain("Stopped. Approved 0 of 6 pages.");
+		const dismissed = text(await s.host.admin.act("/overview", "bulk_dismiss", { user: s.admin }));
+		expect(dismissed).not.toContain("Stopped.");
+	});
+});
+
+describe("the audit's naming and wording findings", () => {
+	it("calls the first AI switch what it does, and warns on the second", async () => {
+		const s = await site(HELD);
+		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(body).toContain('"label":"Hold what AI tools publish for approval"');
+		expect(body).not.toContain("always need a person's OK");
+		expect(body).toContain(
+			"This includes pages the AI tool itself wrote or published: with this on, an AI tool can put its own work live without a person.",
+		);
+	});
+
+	it("names old Untitled rows in the widget and on a repeat Publish", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu");
+		const key = `pages:${id}`;
+		await s.host.fixtures.plugin.storage("requests", key, {
+			...(await request(s, id)),
+			title: "Untitled",
+		});
+		const widget = text(await s.host.admin.loadWidget("approvals", { user: s.admin }));
+		expect(widget).toContain('"text":"Summer menu"');
+		await s.host.actions.content.publish("pages", id, actor(s.editor));
+		expect((await request(s, id))?.title).toBe("Summer menu");
+	});
+
+	it("names an old Untitled row in the send-back email", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu");
+		const key = `pages:${id}`;
+		await s.host.fixtures.plugin.storage("requests", key, {
+			...(await request(s, id)),
+			title: "Untitled",
+		});
+		await s.host.admin.submit(
+			"/overview",
+			"send_back",
+			{ note: "Prices" },
+			{
+				user: s.admin,
+				blockId: `sb:${key}`,
+			},
+		);
+		const stored = await request(s, id);
+		expect(stored?.status).toBe("sent_back");
+		expect(stored?.title).toBe("Summer menu");
+	});
+
+	it("back-fill skips closed rows and moves past rows it cannot name", async () => {
+		const s = await site(HELD);
+		const ids: string[] = [];
+		for (let i = 0; i < 6; i++) ids.push(await held(s, `Page ${i + 1}`));
+		// Five rows whose entries are gone (an earlier version kept them waiting), then one that exists.
+		for (let i = 0; i < 5; i++) {
+			const stored = await request(s, ids[i]!);
+			await s.host.fixtures.plugin.storage("requests", `pages:gone${i}`, {
+				...stored,
+				entryId: `gone${i}`,
+				title: "Untitled",
+				requestedAt: `2026-01-0${i + 1}T00:00:00.000Z`,
+			});
+		}
+		await s.host.fixtures.plugin.storage("requests", `pages:${ids[5]}`, {
+			...(await request(s, ids[5]!)),
+			title: "Untitled",
+		});
+		await s.host.admin.loadPage("/overview", { user: s.admin });
+		await s.host.admin.loadPage("/overview", { user: s.admin });
+		expect((await request(s, ids[5]!))?.title).toBe("Page 6");
+	});
+
+	it("writes an AI tool in lower case mid-sentence", async () => {
+		const s = await site({ ...HELD, aiApprove: true });
+		const id = await held(s, "Summer menu");
+		await s.host.fixtures.plugin.storage("requests", `pages:${id}`, {
+			...(await request(s, id)),
+			status: "approved",
+			approval: {
+				by: { id: s.admin.id, name: "An AI tool acting for Ellen Marsh" },
+				at: new Date().toISOString(),
+				fingerprint: "x",
+				versionId: "",
+			},
+		});
+		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(body).toContain("Approved by an AI tool acting for Ellen Marsh");
+		expect(body).not.toContain("by An AI tool");
+	});
+});
+
+describe("the second audit of bulk runs", () => {
+	it("a confirm step's button starts only the selection it showed (two tabs)", async () => {
+		const s = await site(HELD);
+		const ids = [await held(s, "Summer menu"), await held(s, "Bake sale")];
+		const sendBack = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "send_back", reason: "Prices" },
+			{ user: s.admin },
+		);
+		// Another tab: a new selection, to publish.
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		const stale = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: buttonValue(sendBack, "bulk_go"),
+		});
+		expect(stale.toast).toEqual({
+			type: "error",
+			message: "Choose the pages again, then press Check selection.",
+		});
+		await runAll(s);
+		for (const id of ids) expect((await request(s, id))?.status).toBe("waiting");
+	});
+
+	it("the Stop dialog says the pages being decided now finish first", async () => {
+		const s = await site(HELD);
+		for (let i = 0; i < 6; i++) await held(s, `Page ${i + 1}`);
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(body).toContain(
+			"The pages being decided right now finish first. What is decided stays decided; the rest stays in Waiting.",
+		);
+	});
+
+	it("says what happened when the settings could not be read during a run", async () => {
+		const s = await site(HELD);
+		await held(s, "Summer menu");
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		await s.host.fixtures.plugin.setting("config", null);
+		await runAll(s);
+		const lanes = JSON.stringify(await s.host.inspect.kv.list());
+		expect(lanes).toContain(
+			"Not done: the approval settings could not be read, so the run stopped. Decide it from the list.",
+		);
 	});
 });

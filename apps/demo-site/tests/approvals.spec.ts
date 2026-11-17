@@ -301,9 +301,7 @@ test.describe.serial("Content Approval", () => {
 			page.getByText("Others need my OK before publishing (recommended for agencies)"),
 		).toBeVisible();
 		await expect(page.getByText("I need someone else's OK before publishing")).toBeVisible();
-		await expect(
-			page.getByText("AI tools connected to your site always need a person's OK"),
-		).toBeVisible();
+		await expect(page.getByText("Hold what AI tools publish for approval")).toBeVisible();
 		await expect(page.getByRole("heading", { name: "What approval can't hold" })).toBeVisible();
 		await expect(
 			page.getByText(/The SEO panel, categories, tags and bylines of a page that is already live/),
@@ -777,6 +775,228 @@ test.describe.serial("Content Approval", () => {
 			await expect(page.getByText("Plugin panel unavailable.")).toBeVisible();
 		} finally {
 			await leave(jo);
+		}
+	});
+	let batch: string[] = [];
+
+	test("Ellen approves and publishes three pages at once from the Waiting list", async () => {
+		batch = [];
+		for (const [title, headline] of [
+			["Bread prices", "Sourdough 4.50"],
+			["Cake of the week", "Lemon drizzle"],
+			["Holiday hours", "Closed on the 25th"],
+		] as const) {
+			const id = await createPage(sam, title, headline);
+			created.push(id);
+			batch.push(id);
+			expect((await publishByApi(sam, id)).ok).toBe(false);
+		}
+		const page = await front(ellen);
+		await page.goto(APPROVALS);
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible({
+			timeout: 60_000,
+		});
+		// Each row says what it is and what it changes.
+		await expect(
+			page.getByText(/Pages · asked by Sam Reyes · .* · new page/).first(),
+		).toBeVisible();
+		await page.getByText("Decide several at once").click();
+		// "All N waiting for you" is a choice in the form; the boxes show for "Only the ones I tick".
+		await expect(page.getByRole("radio", { name: /^All \d+ waiting for you$/ })).toBeVisible();
+		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
+			await page.getByRole("checkbox", { name: new RegExp(`^${title} · Pages`) }).click();
+		await expect(page.getByRole("checkbox", { name: /^Summer menu · Pages/ })).not.toBeChecked();
+		await page.getByRole("button", { name: "Check selection", exact: true }).click();
+		await expect(page.getByRole("heading", { name: "Approve and publish these 3?" })).toBeVisible();
+		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
+			await expect(page.getByText(title, { exact: true })).toBeVisible();
+		await expect(page.getByText("Summer menu", { exact: true })).toHaveCount(0);
+		const pressed = Date.now();
+		await page.getByRole("button", { name: "Approve and publish 3" }).click();
+		// The press starts background runs (one-shot tasks) and shows the list with a banner.
+		await expect(
+			page.getByText("Approving and publishing 3 pages. You can leave this page."),
+		).toBeVisible();
+		// The run publishes from a cron invocation, as Ellen's decision: measured here.
+		for (const id of batch)
+			await expect.poll(() => status(ellen, id), { timeout: 120_000 }).toBe("published");
+		console.info(`bulk background run: 3 pages live ${Date.now() - pressed} ms after the press`);
+		await expect
+			.poll(
+				async () => {
+					await page.reload();
+					// The page draws its blocks after it loads: wait for them.
+					await page
+						.getByRole("heading", { name: "For you to approve" })
+						.waitFor({ timeout: 30_000 });
+					return (await page.getByText("Approved 3 of 3 pages.").count()) > 0;
+				},
+				{ timeout: 60_000 },
+			)
+			.toBe(true);
+		console.info(`bulk background run: results shown ${Date.now() - pressed} ms after the press`);
+		await page.getByText("Each page").click();
+		await expect(page.getByText(/^Approved and published\. It's live now\./).first()).toBeVisible();
+		await page.getByRole("button", { name: "Dismiss" }).click();
+		await expect(page.getByText("Approved 3 of 3 pages.")).toHaveCount(0);
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible();
+		// Recorded as Ellen's decision, though a background run published it.
+		await openPanel(ellen, batch[0]!);
+		await expect(page.getByText(/Approved by Ellen Marsh/).first()).toBeVisible();
+		await leave(ellen);
+		await page.goto(APPROVALS);
+		// The page draws its blocks after it loads: wait for them.
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible({
+			timeout: 60_000,
+		});
+		// Summer menu, left unticked, still waits.
+		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible();
+	});
+
+	test("a content type without a title field, like Releases, is named by its declared title field, never Untitled", async () => {
+		const schema = async (method: "post" | "put", path: string, data: unknown) => {
+			const response = await ellen.page.request[method](`${API}/schema/collections${path}`, {
+				headers: HEADERS,
+				data,
+			});
+			expect(response.ok(), await response.text()).toBe(true);
+		};
+		await schema("post", "", {
+			slug: "releases",
+			label: "Releases",
+			labelSingular: "Release",
+			supports: ["drafts", "revisions"],
+		});
+		try {
+			for (const [slug, label, type] of [
+				["plugin", "Plugin", "string"],
+				["release_version", "Version", "string"],
+				["summary", "Summary", "text"],
+			] as const)
+				await schema("post", "/releases/fields", { slug, label, type });
+			await schema("put", "/releases", { titleField: "release_version" });
+			await saveSettings({
+				collections: ["pages", "releases"],
+				preset: "others",
+				ai: true,
+				checks: "remind",
+				remind: true,
+			});
+			const made = await sam.page.request.post(`${API}/content/releases`, {
+				headers: HEADERS,
+				data: {
+					slug: "seo-0-3-1",
+					data: { plugin: "seo", release_version: "0.3.1", summary: "Fixes." },
+				},
+			});
+			expect(made.ok(), await made.text()).toBe(true);
+			const id = ((await made.json()) as { data: { item: { id: string } } }).data.item.id;
+			const held = await sam.page.request.post(`${API}/content/releases/${id}/publish`, {
+				headers: HEADERS,
+			});
+			expect(held.ok()).toBe(false);
+			const page = await front(ellen);
+			await page.goto(APPROVALS);
+			await expect(page.getByText("0.3.1", { exact: true })).toBeVisible({ timeout: 60_000 });
+			await expect(page.getByText(/Releases · asked by Sam Reyes/).first()).toBeVisible();
+			await expect(page.locator("main")).not.toContainText("Untitled");
+			const trashed = await ellen.page.request.delete(`${API}/content/releases/${id}`, {
+				headers: HEADERS,
+			});
+			expect(trashed.ok(), await trashed.text()).toBe(true);
+			await ellen.page.request.delete(`${API}/content/releases/${id}/permanent`, {
+				headers: HEADERS,
+			});
+		} finally {
+			await saveSettings({
+				collections: ["pages"],
+				preset: "others",
+				ai: true,
+				checks: "remind",
+				remind: true,
+			});
+			await ellen.page.request.delete(`${API}/schema/collections/releases?force=true`, {
+				headers: HEADERS,
+			});
+		}
+	});
+	test("an AI reviewer reads what changed, is refused while AI approval is off, then approves and sends back once Ellen allows it", async () => {
+		const first = await createPage(sam, "Scones", "Fresh scones daily");
+		const second = await createPage(sam, "Jam", "Strawberry jam");
+		created.push(first, second);
+		for (const id of [first, second]) expect((await publishByApi(sam, id)).ok).toBe(false);
+		const settings = {
+			collections: ["pages"],
+			preset: "others",
+			ai: true,
+			checks: "remind",
+			remind: true,
+		};
+		const token = await apiToken(ellen, ["mcp:tools:approvals"]);
+		try {
+			await mcpTools(ellen, true);
+			const listed = toolNames(await mcp(token.token, "tools/list"));
+			expect(listed).toEqual(
+				expect.arrayContaining([
+					"approvals__changes",
+					"approvals__approve",
+					"approvals__send_back",
+					"approvals__ask_approval",
+				]),
+			);
+			const changes = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__changes",
+					arguments: { collection: "pages", id: first },
+				}),
+			);
+			expect(changes).toMatchObject({ title: "Scones", state: "waiting", liveNow: false });
+			expect(changes.fields).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ field: "title", before: null, after: "Scones" }),
+				]),
+			);
+			const refused = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__approve",
+					arguments: { collection: "pages", id: first, version: changes.version },
+				}),
+			);
+			expect(refused.error).toBe(
+				"AI tools may not approve or send back on this site. An Admin can switch this on in Approvals > Settings: AI tools may approve.",
+			);
+			expect(await status(ellen, first)).toBe("draft");
+
+			await saveSettings({ ...settings, aiApprove: true });
+			const approved = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__approve",
+					arguments: { collection: "pages", id: first, version: changes.version },
+				}),
+			);
+			expect(approved).toMatchObject({
+				ok: true,
+				state: "published",
+				published: true,
+				title: "Scones",
+			});
+			await expect.poll(() => status(ellen, first)).toBe("published");
+			const sent = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__send_back",
+					arguments: { request: `pages:${second}`, reason: "Say which fruit" },
+				}),
+			);
+			expect(sent).toMatchObject({ ok: true, state: "sent_back" });
+			await openPanel(sam, second);
+			await expect(
+				sam.page.getByText(/^Sent back by an AI tool acting for Ellen Marsh/),
+			).toBeVisible();
+			await leave(sam);
+		} finally {
+			await saveSettings(settings);
+			await mcpTools(ellen, false);
+			await removeToken(ellen, token.id);
 		}
 	});
 });

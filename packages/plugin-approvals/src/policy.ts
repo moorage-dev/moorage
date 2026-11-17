@@ -7,11 +7,15 @@ import { EMAIL_EVERY_MS, REMIND_AFTER_MS } from "./notify.js";
 import {
 	addHistory,
 	approvers,
+	collectionInfo,
+	entryName,
+	liveChange,
 	personName,
 	requestKey,
 	requests,
 	seoGaps,
 	when,
+	UNNAMED,
 	type ApprovalRequest,
 } from "./requests.js";
 import { cleanReason, fieldHashes, fingerprint, nameList, secondPerson } from "./text.js";
@@ -186,10 +190,18 @@ export function heldMessage(
 	email: boolean,
 	ai: boolean,
 	admin = false,
+	/** "AI tools may approve" is on: an AI tool may decide it too. */
+	aiApprove = false,
 ): string {
 	const names = asked ?? "";
 	if (ai) {
-		return `Sent for approval. Not live yet. On this site a person must OK what AI tools publish; ${names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked` : "the approvers have been asked"}. Do not try again: a person will approve and publish it.`;
+		const next = aiApprove
+			? "Do not publish it again: an approver will decide."
+			: "Do not try again: a person will approve and publish it.";
+		const rule = aiApprove
+			? "On this site what AI tools publish waits for approval"
+			: "On this site a person must OK what AI tools publish";
+		return `Sent for approval. Not live yet. ${rule}; ${names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked` : "the approvers have been asked"}. ${next}`;
 	}
 	if (asked === "") {
 		const lead = result.again
@@ -234,14 +246,11 @@ async function clearForSchedule(
 		const user = await ctx.users?.get(actor.id).catch(() => null);
 		const by = { id: actor.id, name: personName(user) };
 		const now = new Date().toISOString();
-		const titleValue = data.title;
+		const info = await collectionInfo(ctx, event.collection);
 		const request: ApprovalRequest = {
 			collection: event.collection,
 			entryId: id,
-			title:
-				typeof titleValue === "string" && titleValue.trim() !== ""
-					? titleValue.trim()
-					: (existing?.title ?? "Untitled"),
+			title: entryName(info.title?.slug, data, slug, id),
 			status: "approved",
 			requestedBy: existing?.requestedBy ?? by,
 			requestedAt: existing?.requestedAt ?? now,
@@ -306,11 +315,15 @@ export async function gate(
 		if (existing?.status === "approved" && existing.approval?.fingerprint === version) return;
 
 		const now = new Date().toISOString();
-		const titleValue = data.title;
+		// The same version already waiting keeps its request as it is: no content type to read.
+		const again = existing?.status === "waiting" && existing.fingerprint === version;
+		// An earlier release's "Untitled" is named again, with one read of the content type.
+		const renamed = again && existing.title === UNNAMED;
 		const title =
-			typeof titleValue === "string" && titleValue.trim() !== ""
-				? titleValue.trim()
-				: (existing?.title ?? "Untitled");
+			again && !renamed
+				? existing.title
+				: entryName((await collectionInfo(ctx, event.collection)).title?.slug, data, slug, id);
+		if (renamed && existing) existing.title = title;
 		let requestedBy: ApprovalRequest["requestedBy"] = null;
 		if (event.actor) {
 			const user = await ctx.users?.get(event.actor.id).catch(() => null);
@@ -348,8 +361,19 @@ export async function gate(
 			result.request.checks?.description !== checks.description ||
 			result.request.checks?.picture !== checks.picture;
 		result.request.checks = checks;
+		if (!result.again) {
+			// What it changes, for the Waiting list: a page that is live is read once for its live
+			// text (one call); a page that is not live is new. Never refuses over this.
+			let live: Record<string, unknown> | null = null;
+			if (content.status === "published") {
+				const item = await ctx.content?.get(event.collection, id).catch(() => null);
+				live = item && isRecord(item.data) ? item.data : null;
+			}
+			if (content.status !== "published" || live) result.request.changed = liveChange(live, data);
+		}
 		if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
-		if (!result.again || result.notify || checksChanged) await store.put(key, result.request);
+		if (!result.again || result.notify || checksChanged || renamed)
+			await store.put(key, result.request);
 		// Email is sent by a one-shot task, so a slow email never delays the publish; that task
 		// also sets the two-day reminder.
 		if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);
@@ -364,7 +388,14 @@ export async function gate(
 		const names = await askedNames(ctx, config, result.request);
 		const admin = (event.actor?.role ?? 0) >= ROLE.admin;
 		return refuse(
-			heldMessage(result, names, Boolean(ctx.email), event.origin.source === "mcp", admin),
+			heldMessage(
+				result,
+				names,
+				Boolean(ctx.email),
+				event.origin.source === "mcp",
+				admin,
+				config.aiApprove,
+			),
 		);
 	} catch (error) {
 		ctx.log.error("approval check failed; the publish was refused", { error: String(error) });

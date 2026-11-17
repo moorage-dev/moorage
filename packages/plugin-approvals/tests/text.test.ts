@@ -3,8 +3,8 @@
 import { describe, expect, it } from "vitest";
 
 import { publishFailedMessage } from "../src/actions.js";
-import { emailFailureHint } from "../src/notify.js";
-import { when } from "../src/requests.js";
+import { emailFailureHint, writerJob } from "../src/notify.js";
+import { entryName, when } from "../src/requests.js";
 import {
 	cleanReason,
 	describeChanges,
@@ -164,5 +164,61 @@ describe("times on screen and in emails", () => {
 	it("says the time is UTC: EmDash does not tell plugins the site's time zone", () => {
 		expect(when("2026-10-16T10:42:00.000Z")).toBe("16 Oct, 10:42 UTC");
 		expect(when("2026-01-02T09:05:00Z")).toBe("2 Jan, 09:05 UTC");
+	});
+});
+
+describe("an entry's name", () => {
+	it("takes the content type's declared title field: a release by its version", () => {
+		const data = { plugin: "analytics", release_version: "0.4.3", summary: "HubSpot visits." };
+		expect(entryName("release_version", data, "analytics-0-4-3", "01J")).toBe("0.4.3");
+	});
+
+	it("then a field named title or name, then the slug, then the id; never Untitled", () => {
+		expect(entryName("release_version", { release_version: " ", title: "Menu" }, "m", "1")).toBe(
+			"Menu",
+		);
+		expect(entryName(null, { name: "Ada Baker" }, "ada", "1")).toBe("Ada Baker");
+		expect(entryName(null, { body: "Closed Monday" }, "monday", "1")).toBe("monday");
+		expect(entryName(null, { body: "Closed Monday" }, null, "01JABC")).toBe("01JABC");
+		expect(entryName("missing", {}, "", "01JABC")).toBe("01JABC");
+	});
+});
+
+describe("the writer's email after a send back", () => {
+	const ctx = {
+		site: { name: "Harbour Street Bakery", url: "https://bakery.test", locale: "en" },
+		plugin: { id: "approvals" },
+	} as unknown as Parameters<typeof writerJob>[0];
+	const request = (by: string) =>
+		({
+			collection: "pages",
+			entryId: "01J",
+			title: "Summer menu",
+			status: "sent_back",
+			requestedBy: { id: "u1", name: "Sam Reyes" },
+			requestedAt: "2026-11-17T08:00:00.000Z",
+			ai: false,
+			wants: "publish",
+			fingerprint: "f",
+			sentBack: { by: { id: "u2", name: by }, at: "2026-11-17T09:00:00.000Z", note: "Prices" },
+			history: [],
+			updatedAt: "2026-11-17T09:00:00.000Z",
+		}) as Parameters<typeof writerJob>[1];
+
+	it("names a person's note by their first name", () => {
+		expect(writerJob(ctx, request("Ellen Marsh"), "sent_back")?.message.text).toContain(
+			'Ellen\'s note: "Prices"',
+		);
+	});
+
+	it("says an AI tool's note in full words, never \"An's note\"", () => {
+		const job = writerJob(ctx, request("An AI tool acting for Ellen Marsh"), "sent_back");
+		expect(job?.message.subject).toBe(
+			'Harbour Street Bakery: An AI tool acting for Ellen Marsh sent back "Summer menu"',
+		);
+		expect(job?.message.text).toContain(
+			'The note from an AI tool acting for Ellen Marsh: "Prices"',
+		);
+		expect(job?.message.text).not.toContain("An's note");
 	});
 });
