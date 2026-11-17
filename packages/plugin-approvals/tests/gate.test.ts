@@ -203,6 +203,17 @@ describe("the publish gate", () => {
 		expect(result.error.message).toContain("Do not try again");
 	});
 
+	it("tells an AI tool that an allowed AI tool may decide, when AI approval is on", async () => {
+		const s = await site({ ...HELD, aiApprove: true });
+		const id = await page(s, {}, s.admin);
+		const result = await s.host.actions.content.publish("pages", id, actor(s.admin, "mcp"));
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error.message).toMatch(
+			/^Sent for approval\. Not live yet\. On this site what AI tools publish waits for approval; .*Do not publish it again: an approver, or an AI tool allowed to approve on this site, will decide\.$/,
+		);
+	});
+
 	it("does not email or create a second request when Publish is pressed again", async () => {
 		const s = await site(HELD);
 		const id = await page(s);

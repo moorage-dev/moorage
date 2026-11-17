@@ -189,10 +189,18 @@ export function heldMessage(
 	email: boolean,
 	ai: boolean,
 	admin = false,
+	/** "AI tools may approve" is on: an AI tool may decide it too. */
+	aiApprove = false,
 ): string {
 	const names = asked ?? "";
 	if (ai) {
-		return `Sent for approval. Not live yet. On this site a person must OK what AI tools publish; ${names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked` : "the approvers have been asked"}. Do not try again: a person will approve and publish it.`;
+		const next = aiApprove
+			? "Do not publish it again: an approver, or an AI tool allowed to approve on this site, will decide."
+			: "Do not try again: a person will approve and publish it.";
+		const rule = aiApprove
+			? "On this site what AI tools publish waits for approval"
+			: "On this site a person must OK what AI tools publish";
+		return `Sent for approval. Not live yet. ${rule}; ${names ? `${names} ${names.includes(" and ") ? "have" : "has"} been asked` : "the approvers have been asked"}. ${next}`;
 	}
 	if (asked === "") {
 		const lead = result.again
@@ -374,7 +382,14 @@ export async function gate(
 		const names = await askedNames(ctx, config, result.request);
 		const admin = (event.actor?.role ?? 0) >= ROLE.admin;
 		return refuse(
-			heldMessage(result, names, Boolean(ctx.email), event.origin.source === "mcp", admin),
+			heldMessage(
+				result,
+				names,
+				Boolean(ctx.email),
+				event.origin.source === "mcp",
+				admin,
+				config.aiApprove,
+			),
 		);
 	} catch (error) {
 		ctx.log.error("approval check failed; the publish was refused", { error: String(error) });

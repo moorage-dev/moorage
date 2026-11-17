@@ -5,6 +5,7 @@ import type { PluginContext } from "emdash";
 import { approverRole, ROLE, type Config } from "./config.js";
 import { warnIfRoom, type Meter } from "./meter.js";
 import {
+	AI_PREFIX,
 	askedJob,
 	deliver,
 	overrideJob,
@@ -98,7 +99,7 @@ export function missingChecks(draft: Draft, hasSeo: boolean): Checks {
 
 /** Who an AI tool's decision is recorded as: "An AI tool acting for Ellen Marsh". */
 export function agentFor(user: UserInfo) {
-	return { id: user.id, name: `An AI tool acting for ${personName(user)}` };
+	return { id: user.id, name: `${AI_PREFIX}${personName(user)}` };
 }
 
 /** An AI tool may decide for anyone who approves on this site, on any request, theirs too. */

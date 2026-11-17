@@ -8,8 +8,7 @@ A second person OKs a page before it goes live. Writers keep pressing Publish; w
 - **A text copy of what was approved**: the History tab shows the text of each page's latest approval, so nobody can say they never saw it.
 - **Approvers can fix a typo**: edit, save, approve. The history says so.
 - **Two plain choices**: "Others need my OK before publishing" or "I need someone else's OK before publishing". Nobody approves their own request.
-- **AI tools connected to your site always need a person's OK**, on every content type, unless you switch on "AI tools may approve": then an AI tool can review, approve or send back for the person whose key it uses, and the history says so.
-- **Decide several at once** from the Waiting list: tick, check the list, approve and publish or send back with one note.
+- **AI tools connected to your site need a person's OK**, unless you switch on "AI tools may approve".
 - **An Approvals page and a dashboard widget**: what waits, what was sent back, every decision.
 - **Email**, when your site can send it: to approvers when someone asks, to the writer when they decide, one reminder after two days.
 

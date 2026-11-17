@@ -2147,11 +2147,65 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 				s.host.admin.act("/overview", "bulk_go", { user: admin(s), value }),
 			);
 			steps++;
+			// kvList, then storageGetVersioned storageCompareAndSet cronSchedule per request: 8 a step.
+			expect(m.calls.length).toBe(steps < 7 ? 25 : 1 + 3 * 2);
 			expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
 			value = valueOf(m.result, "bulk_go");
 		}
 		console.info(`bulk send back, 50 selected: ${steps} steps`);
 		for (const id of ids) expect((await request(s, id))?.status).toBe("sent_back");
+	});
+
+	// The list drawn again (kvList storageQuery schemaListCollections userList); "Select all"
+	// reads the requests once more to tick every one.
+	it("Select all, Clear all, Back to the list, and Continue with nothing ticked", async () => {
+		const s = await site();
+		for (let i = 0; i < 25; i++) await waiting(s, `Page ${i + 1}`);
+		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		const counts: Record<string, number> = {};
+		const run = async (label: string, invoke: () => Promise<unknown>) => {
+			await cold(s);
+			const m = await measure(invoke);
+			console.info(describeCalls(label, m));
+			expect(m.error).toBeUndefined();
+			expect(m.calls.length, label).toBeLessThanOrEqual(NEW_BUDGET);
+			counts[label] = m.calls.length;
+		};
+		await run("bulk select all", () =>
+			s.host.admin.act("/overview", "bulk_all", { user: admin(s) }),
+		);
+		await run("bulk clear all", () =>
+			s.host.admin.act("/overview", "bulk_none", { user: admin(s) }),
+		);
+		await run("bulk back to the list", () =>
+			s.host.admin.act("/overview", "bulk_back", {
+				user: admin(s),
+				value: { items: [{ key: pick[0]!.split("@")[0], seen: pick[0]!.split("@")[1] }] },
+			}),
+		);
+		await run("bulk continue, nothing ticked", () =>
+			s.host.admin.submit(
+				"/overview",
+				"bulk_review",
+				{ pick: [], do: "publish" },
+				{ user: admin(s) },
+			),
+		);
+		await run("bulk continue, send back without a note", () =>
+			s.host.admin.submit(
+				"/overview",
+				"bulk_review",
+				{ pick, do: "send_back", reason: "" },
+				{ user: admin(s) },
+			),
+		);
+		expect(counts).toEqual({
+			"bulk select all": 5,
+			"bulk clear all": 4,
+			"bulk back to the list": 4,
+			"bulk continue, nothing ticked": 4,
+			"bulk continue, send back without a note": 4,
+		});
 	});
 
 	it("a step pressed twice approves nothing twice", async () => {

@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { publishFailedMessage } from "../src/actions.js";
-import { emailFailureHint } from "../src/notify.js";
+import { emailFailureHint, writerJob } from "../src/notify.js";
 import { entryName, when } from "../src/requests.js";
 import {
 	cleanReason,
@@ -181,5 +181,44 @@ describe("an entry's name", () => {
 		expect(entryName(null, { body: "Closed Monday" }, "monday", "1")).toBe("monday");
 		expect(entryName(null, { body: "Closed Monday" }, null, "01JABC")).toBe("01JABC");
 		expect(entryName("missing", {}, "", "01JABC")).toBe("01JABC");
+	});
+});
+
+describe("the writer's email after a send back", () => {
+	const ctx = {
+		site: { name: "Harbour Street Bakery", url: "https://bakery.test", locale: "en" },
+		plugin: { id: "approvals" },
+	} as unknown as Parameters<typeof writerJob>[0];
+	const request = (by: string) =>
+		({
+			collection: "pages",
+			entryId: "01J",
+			title: "Summer menu",
+			status: "sent_back",
+			requestedBy: { id: "u1", name: "Sam Reyes" },
+			requestedAt: "2026-11-17T08:00:00.000Z",
+			ai: false,
+			wants: "publish",
+			fingerprint: "f",
+			sentBack: { by: { id: "u2", name: by }, at: "2026-11-17T09:00:00.000Z", note: "Prices" },
+			history: [],
+			updatedAt: "2026-11-17T09:00:00.000Z",
+		}) as Parameters<typeof writerJob>[1];
+
+	it("names a person's note by their first name", () => {
+		expect(writerJob(ctx, request("Ellen Marsh"), "sent_back")?.message.text).toContain(
+			'Ellen\'s note: "Prices"',
+		);
+	});
+
+	it("says an AI tool's note in full words, never \"An's note\"", () => {
+		const job = writerJob(ctx, request("An AI tool acting for Ellen Marsh"), "sent_back");
+		expect(job?.message.subject).toBe(
+			'Harbour Street Bakery: An AI tool acting for Ellen Marsh sent back "Summer menu"',
+		);
+		expect(job?.message.text).toContain(
+			'The note from an AI tool acting for Ellen Marsh: "Prices"',
+		);
+		expect(job?.message.text).not.toContain("An's note");
 	});
 });
