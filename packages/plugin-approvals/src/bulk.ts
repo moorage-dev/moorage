@@ -226,6 +226,8 @@ export function confirmView(input: {
 	names: Names;
 	do: BulkDo;
 	reason: string;
+	/** When this selection is stored: the button starts it and nothing else. */
+	at: string;
 }): { response: BlockResponse; rows: BulkItem[] } {
 	const { config, user, names } = input;
 	const byKey = new Map(input.waiting.map((r) => [requestKey(r.collection, r.entryId), r]));
@@ -294,6 +296,7 @@ export function confirmView(input: {
 					action_id: BULK.go,
 					label: `${VERB[input.do]} ${chosen.length}`,
 					style: "primary",
+					value: { pick: input.at },
 				},
 				{ type: "button", action_id: BULK.back, label: "‹ Back to the list" },
 			],

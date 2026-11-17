@@ -55,6 +55,7 @@ import {
 	runOf,
 	startRun,
 	stopRun,
+	staleKeys,
 	storePick,
 } from "./runs.js";
 import { writeSettings } from "./settings-store.js";
@@ -74,6 +75,8 @@ import {
 } from "./views.js";
 
 export const WIDGET_PAGE = "widget:approvals";
+/** Old bulk-run keys deleted per page load at most. */
+const STALE_PER_LOAD = 6;
 const LIST_LIMIT = 200;
 const HISTORY_ROWS = 20;
 const OVERRIDE_WINDOW_MS = 30 * 86_400_000;
@@ -1064,6 +1067,14 @@ async function adminScreen(
 		(user?.role ?? 0) >= ROLE.admin;
 	const { config, entries } = await loadConfigWith(ctx, { copy: opening });
 	seen.config = config;
+	// On opening the page: this person's finished runs kept past their time, earlier runs'
+	// lanes and an old selection are deleted (one call each, a few at most).
+	if (interaction.type === "page_load" && interaction.page !== WIDGET_PAGE && user) {
+		for (const stale of staleKeys(entries, user.id).slice(0, STALE_PER_LOAD)) {
+			await ctx.kv.delete(stale).catch(() => false);
+			entries.delete(stale);
+		}
+	}
 
 	if (interaction.type === "page_load" && interaction.page === WIDGET_PAGE)
 		return widget(ctx, config, user);
@@ -1124,7 +1135,8 @@ async function adminScreen(
 			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, state, entries);
 		}
 		if (action === BULK.go && user) {
-			const started = await startRun(ctx, user, entries);
+			const value = isRecord(interaction.value) ? interaction.value : {};
+			const started = await startRun(ctx, user, entries, value.pick);
 			return listPage(
 				ctx,
 				config,
@@ -1189,6 +1201,8 @@ async function adminScreen(
 					.filter((r) => canDecide(config, r, user))
 					.map((r) => ({ key: key(r), seen: r.fingerprint }))
 			: ticked;
+		// The button carries this time: it starts this selection and no later one (another tab).
+		const at = new Date().toISOString();
 		const confirm = confirmView({
 			config,
 			user,
@@ -1197,6 +1211,7 @@ async function adminScreen(
 			names: namesOf(collections),
 			do: what,
 			reason,
+			at,
 		});
 		// Stored now, so the press that follows takes nothing from the browser.
 		if (user && confirm.rows.length > 0)
@@ -1204,7 +1219,7 @@ async function adminScreen(
 				do: what,
 				reason,
 				rows: confirm.rows,
-				at: new Date().toISOString(),
+				at,
 			});
 		return confirm.response;
 	}

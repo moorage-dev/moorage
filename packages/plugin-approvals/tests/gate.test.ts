@@ -1033,9 +1033,19 @@ function bulkForm(response: unknown): {
 	return found;
 }
 
+/** The confirm step's button value for this person's stored selection. */
+async function pickValue(s: Site, by: User): Promise<unknown> {
+	const pick = await s.host.inspect.kv.get<{ at: string }>(`state:bulk-pick:${by.id}`);
+	return { pick: pick?.at };
+}
+
 /** Press the confirm step's button, let the background runs finish, and open the list again. */
 async function press(s: Site, by: User): Promise<unknown> {
-	const started = await s.host.admin.act("/overview", "bulk_go", { user: by });
+	const pick = await s.host.inspect.kv.get<{ at: string }>(`state:bulk-pick:${by.id}`);
+	const started = await s.host.admin.act("/overview", "bulk_go", {
+		user: by,
+		value: { pick: pick?.at },
+	});
 	await runAll(s);
 	const list = await s.host.admin.loadPage("/overview", { user: by });
 	return { started, list };
@@ -1318,7 +1328,10 @@ describe("deciding several at once: the audit's findings", () => {
 				{ which: "all", do: "publish" },
 				{ user: by },
 			);
-		const first = await s.host.admin.act("/overview", "bulk_go", { user: s.admin });
+		const first = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
 		expect(first.toast?.type).toBe("success");
 		await s.host.admin.submit(
 			"/overview",
@@ -1326,13 +1339,19 @@ describe("deciding several at once: the audit's findings", () => {
 			{ which: "all", do: "publish" },
 			{ user: s.admin },
 		);
-		const again = await s.host.admin.act("/overview", "bulk_go", { user: s.admin });
+		const again = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
 		expect(again.toast).toEqual({
 			type: "error",
 			message:
 				"Your earlier bulk decision is still running. Wait for it to finish, or stop it, then try again.",
 		});
-		const other = await s.host.admin.act("/overview", "bulk_go", { user: s.admin2 });
+		const other = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin2,
+			value: await pickValue(s, s.admin2),
+		});
 		expect(other.toast?.type).toBe("success");
 		await runAll(s);
 		for (const id of ids) {
@@ -1351,7 +1370,10 @@ describe("deciding several at once: the audit's findings", () => {
 			{ which: "all", do: "publish" },
 			{ user: s.admin },
 		);
-		await s.host.admin.act("/overview", "bulk_go", { user: s.admin });
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
 		const running = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
 		expect(running).toContain("Approving 6 pages: 0 done, 0 need a look. You can leave this page.");
 		expect(running).not.toContain('"action_id":"pick"');
@@ -1453,5 +1475,75 @@ describe("the audit's naming and wording findings", () => {
 		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
 		expect(body).toContain("Approved by an AI tool acting for Ellen Marsh");
 		expect(body).not.toContain("by An AI tool");
+	});
+});
+
+describe("the second audit of bulk runs", () => {
+	it("a confirm step's button starts only the selection it showed (two tabs)", async () => {
+		const s = await site(HELD);
+		const ids = [await held(s, "Summer menu"), await held(s, "Bake sale")];
+		const sendBack = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "send_back", reason: "Prices" },
+			{ user: s.admin },
+		);
+		// Another tab: a new selection, to publish.
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		const stale = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: buttonValue(sendBack, "bulk_go"),
+		});
+		expect(stale.toast).toEqual({
+			type: "error",
+			message: "Choose the pages again, then press Check selection.",
+		});
+		await runAll(s);
+		for (const id of ids) expect((await request(s, id))?.status).toBe("waiting");
+	});
+
+	it("the Stop dialog says the pages being decided now finish first", async () => {
+		const s = await site(HELD);
+		for (let i = 0; i < 6; i++) await held(s, `Page ${i + 1}`);
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		const body = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(body).toContain(
+			"The pages being decided right now finish first. What is decided stays decided; the rest stays in Waiting.",
+		);
+	});
+
+	it("says what happened when the settings could not be read during a run", async () => {
+		const s = await site(HELD);
+		await held(s, "Summer menu");
+		await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ which: "all", do: "publish" },
+			{ user: s.admin },
+		);
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		await s.host.fixtures.plugin.setting("config", null);
+		await runAll(s);
+		const lanes = JSON.stringify(await s.host.inspect.kv.list());
+		expect(lanes).toContain(
+			"Not done: the approval settings could not be read, so the run stopped. Decide it from the list.",
+		);
 	});
 });

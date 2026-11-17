@@ -101,12 +101,17 @@ export async function decideRows(
 	reason: string,
 	rows: Row[],
 	reserve: number,
+	/** When the run started: only a decision this person made since then counts as this run's. */
+	since: string,
 ): Promise<{ results: RowResult[]; rest: Row[] }> {
 	const ctx = m.ctx;
 	const results: RowResult[] = [];
 	if (rows.length === 0) return { results, rest: [] };
 	const store = requests(ctx);
-	const stored = await store.getMany(rows.map((r) => r.key));
+	// Only the rows this turn can reach: the cheapest possible decision each, after the reads.
+	const room = m.left(CALLS_PER_RUN_1_5) - 2 - 2 - reserve;
+	const reach = Math.max(1, Math.floor(room / (what === "send_back" ? 1 : 3)));
+	const stored = await store.getMany(rows.slice(0, reach).map((r) => r.key));
 	const types = new Map(
 		((await ctx.schema?.listCollections()) ?? []).map((t) => [t.slug, infoOf(t)]),
 	);
@@ -116,211 +121,233 @@ export async function decideRows(
 	// The copies and the emails, written once at the end.
 	const tail = 2;
 	let next = 0;
-	for (; next < rows.length; next++) {
+	for (; next < Math.min(rows.length, reach); next++) {
 		const row = rows[next]!;
-		if (m.left(CALLS_PER_RUN_1_5) < rowCost(what, config) + tail + reserve) break;
 		const request = stored.get(row.key);
-		const fail = (text: string, title = request?.title ?? row.key) =>
-			results.push({ key: row.key, title, state: "failed", text });
-		if (!request) {
-			fail("This request no longer exists.");
-			continue;
-		}
-		if (request.status !== "waiting") {
-			// Run again after a run that stopped part-way (EmDash retries a failed task): what this
-			// person already decided at this version counts as done, and an approval whose publish
-			// did not happen is published now.
-			const mine =
-				what === "send_back"
-					? request.status === "sent_back" && request.sentBack?.by.id === user.id
-					: request.approval?.by.id === user.id && request.approval.fingerprint === row.seen;
-			if (!mine) {
-				fail("This request has already been decided.");
+		const cost = what === "send_back" && request?.title === UNNAMED ? 2 : rowCost(what, config);
+		if (m.left(CALLS_PER_RUN_1_5) < cost + tail + reserve) break;
+		try {
+			const fail = (text: string, title = request?.title ?? row.key) =>
+				results.push({ key: row.key, title, state: "failed", text });
+			if (!request) {
+				fail("This request no longer exists.");
 				continue;
 			}
-			if (
-				what === "publish" &&
-				request.status === "approved" &&
-				request.wants !== "schedule" &&
-				ctx.content?.publish
-			) {
-				const draft = await readDraft(ctx, request.collection, request.entryId, {
-					forPublish: true,
-				});
-				try {
-					if (!draft?.rev || draft.fingerprint !== row.seen) throw new Error("changed");
-					await ctx.content.publish(request.collection, request.entryId, { _rev: draft.rev });
-				} catch {
-					results.push({
-						key: row.key,
-						title: request.title,
-						state: "approved",
-						text: "Approved, not live yet: press Publish on the page.",
-					});
+			if (request.status !== "waiting") {
+				// Run again after a run that stopped part-way (EmDash retries a failed task): what this
+				// person already decided at this version counts as done, and an approval whose publish
+				// did not happen is published now.
+				const mine =
+					what === "send_back"
+						? request.status === "sent_back" &&
+							request.sentBack?.by.id === user.id &&
+							request.sentBack.at >= since
+						: (request.status === "approved" || request.status === "published") &&
+							request.approval?.by.id === user.id &&
+							request.approval.fingerprint === row.seen &&
+							request.approval.at >= since;
+				if (!mine) {
+					fail("This request has already been decided.");
 					continue;
 				}
-			}
-			results.push({
-				key: row.key,
-				title: request.title,
-				state: "done",
-				text:
-					what === "send_back"
-						? "Sent back with your note."
-						: request.wants === "schedule"
-							? "Approved. Its writer can schedule it now."
-							: "Approved and published. It's live now.",
-			});
-			continue;
-		}
-		if (!mayApprove(config, request, user)) {
-			fail(
-				request.requestedBy?.id === user.id
-					? "You asked for this approval, so someone else needs to approve it."
-					: "You can't approve on this site.",
-			);
-			continue;
-		}
-		if (request.fingerprint !== row.seen) {
-			fail(CHANGED);
-			continue;
-		}
-		const now = new Date().toISOString();
-		const guard = { status: "waiting", updatedAt: request.updatedAt };
-		const writer = request.requestedBy && !request.ai ? request.requestedBy.name : null;
-		const first = writer ? writer.split(" ")[0] : null;
-
-		if (what === "send_back") {
-			// An earlier release's "Untitled", named for the writer's email (one read, those rows only).
-			if (request.title === UNNAMED) {
-				const field = types.get(request.collection)?.title?.slug ?? null;
-				request.title = await nameNow(ctx, request, field);
-			}
-			const sent: ApprovalRequest = {
-				...request,
-				status: "sent_back",
-				sentBack: { by, at: now, note: reason.slice(0, 2000) },
-			};
-			addHistory(sent, now, `${by.name} sent it back: "${reason.slice(0, 120)}"`);
-			const written = await store.updateIf(row.key, {
-				where: guard,
-				set: {
-					title: sent.title,
-					status: sent.status,
-					sentBack: sent.sentBack,
-					history: sent.history,
-					updatedAt: sent.updatedAt,
-				},
-			});
-			if (!written.applied) {
-				fail(CHANGED_MEANWHILE);
+				if (
+					what === "publish" &&
+					request.status === "approved" &&
+					request.wants !== "schedule" &&
+					ctx.content?.publish
+				) {
+					const draft = await readDraft(ctx, request.collection, request.entryId, {
+						forPublish: true,
+					});
+					try {
+						if (!draft?.rev || draft.fingerprint !== row.seen) throw new Error("changed");
+						await ctx.content.publish(request.collection, request.entryId, { _rev: draft.rev });
+					} catch {
+						results.push({
+							key: row.key,
+							title: request.title,
+							state: "approved",
+							text: "Approved, not live yet: press Publish on the page.",
+						});
+						continue;
+					}
+				}
+				results.push({
+					key: row.key,
+					title: request.title,
+					state: "done",
+					text:
+						what === "send_back"
+							? "Sent back with your note."
+							: request.wants === "schedule"
+								? "Approved. Its writer can schedule it now."
+								: "Approved and published. It's live now.",
+				});
 				continue;
 			}
-			const job = writerJob(ctx, sent, "sent_back");
-			if (job) mails.push(job);
-			results.push({
-				key: row.key,
-				title: request.title,
-				state: "done",
-				text: first ? `Sent back to ${first} with your note.` : "Sent back with your note.",
-			});
-			continue;
-		}
-
-		const info = types.get(request.collection);
-		if (!info) {
-			fail("This content type no longer exists.");
-			continue;
-		}
-		// A request to schedule is approved for its writer to schedule; the rest are published.
-		const publishing =
-			request.wants !== "schedule" && user.role >= ROLE.editor && Boolean(ctx.content?.publish);
-		const draft = await readDraft(ctx, request.collection, request.entryId, {
-			forPublish: publishing,
-		});
-		if (!draft) {
-			fail("This page no longer exists.");
-			continue;
-		}
-		if (draft.fingerprint !== row.seen) {
-			fail(CHANGED);
-			continue;
-		}
-		if (config.checks === "require") {
-			const seo = publishing
-				? (await ctx.content?.get(request.collection, request.entryId))?.seo
-				: draft.item.seo;
-			const missing = seoGaps(info.hasSeo ? seo : null, draft.data);
-			if (missing.description || missing.picture) {
+			if (!mayApprove(config, request, user)) {
 				fail(
-					`Add ${[missing.description ? "a search description" : "", missing.picture ? "a sharing picture" : ""].filter(Boolean).join(" and ")} in the SEO panel first. This site requires them before approval.`,
+					request.requestedBy?.id === user.id
+						? "You asked for this approval, so someone else needs to approve it."
+						: "You can't approve on this site.",
 				);
 				continue;
 			}
-		}
-		const title = titleOf(info, draft.data, draft.slug, request.entryId);
-		const versionId = `${row.key}#${now}`;
-		const approved: ApprovalRequest = {
-			...request,
-			title,
-			status: "approved",
-			fingerprint: draft.fingerprint,
-			approval: { by, at: now, fingerprint: draft.fingerprint, versionId },
-		};
-		addHistory(approved, now, `${by.name} approved`);
-		const set: Partial<ApprovalRequest> = {
-			title,
-			status: "approved",
-			fingerprint: approved.fingerprint,
-			approval: approved.approval!,
-			history: approved.history,
-			updatedAt: approved.updatedAt,
-		};
-		// After the publish, content:afterPublish records "Published by" and sends these.
-		if (publishing) {
-			const jobs = ctx.email
-				? [writerJob(ctx, approved, "published")].filter((j): j is MailJob => j !== null)
-				: [];
-			set.publishing = { by, at: now, jobs };
-		}
-		const written = await store.updateIf(row.key, { where: guard, set });
-		if (!written.applied) {
-			fail(CHANGED_MEANWHILE, title);
-			continue;
-		}
-		copies.push({
-			id: versionId,
-			data: { requestKey: row.key, at: now, by: by.name, title, fields: copyOf(info, draft.data) },
-		});
-		if (!publishing) {
-			const job = writerJob(ctx, approved, "approved");
-			if (job) mails.push(job);
-			results.push({
-				key: row.key,
-				title,
-				state: "done",
-				text: `Approved. ${first ? `${first} can` : "Its writer can"} schedule it now.`,
+			if (request.fingerprint !== row.seen) {
+				fail(CHANGED);
+				continue;
+			}
+			const now = new Date().toISOString();
+			const guard = { status: "waiting", updatedAt: request.updatedAt };
+			const writer = request.requestedBy && !request.ai ? request.requestedBy.name : null;
+			const first = writer ? writer.split(" ")[0] : null;
+
+			if (what === "send_back") {
+				// An earlier release's "Untitled", named for the writer's email (one read, those rows only).
+				if (request.title === UNNAMED) {
+					const field = types.get(request.collection)?.title?.slug ?? null;
+					request.title = await nameNow(ctx, request, field);
+				}
+				const sent: ApprovalRequest = {
+					...request,
+					status: "sent_back",
+					sentBack: { by, at: now, note: reason.slice(0, 2000) },
+				};
+				addHistory(sent, now, `${by.name} sent it back: "${reason.slice(0, 120)}"`);
+				const written = await store.updateIf(row.key, {
+					where: guard,
+					set: {
+						title: sent.title,
+						status: sent.status,
+						sentBack: sent.sentBack,
+						history: sent.history,
+						updatedAt: sent.updatedAt,
+					},
+				});
+				if (!written.applied) {
+					fail(CHANGED_MEANWHILE);
+					continue;
+				}
+				const job = writerJob(ctx, sent, "sent_back");
+				if (job) mails.push(job);
+				results.push({
+					key: row.key,
+					title: request.title,
+					state: "done",
+					text: first ? `Sent back to ${first} with your note.` : "Sent back with your note.",
+				});
+				continue;
+			}
+
+			const info = types.get(request.collection);
+			if (!info) {
+				fail("This content type no longer exists.");
+				continue;
+			}
+			// A request to schedule is approved for its writer to schedule; the rest are published.
+			const publishing =
+				request.wants !== "schedule" && user.role >= ROLE.editor && Boolean(ctx.content?.publish);
+			const draft = await readDraft(ctx, request.collection, request.entryId, {
+				forPublish: publishing,
 			});
-			continue;
-		}
-		try {
-			if (!draft.rev || !ctx.content?.publish) throw new Error("publishing is not available");
-			await ctx.content.publish(request.collection, request.entryId, { _rev: draft.rev });
-			results.push({
-				key: row.key,
+			if (!draft) {
+				fail("This page no longer exists.");
+				continue;
+			}
+			if (draft.fingerprint !== row.seen) {
+				fail(CHANGED);
+				continue;
+			}
+			if (config.checks === "require") {
+				const seo = publishing
+					? (await ctx.content?.get(request.collection, request.entryId))?.seo
+					: draft.item.seo;
+				const missing = seoGaps(info.hasSeo ? seo : null, draft.data);
+				if (missing.description || missing.picture) {
+					fail(
+						`Add ${[missing.description ? "a search description" : "", missing.picture ? "a sharing picture" : ""].filter(Boolean).join(" and ")} in the SEO panel first. This site requires them before approval.`,
+					);
+					continue;
+				}
+			}
+			const title = titleOf(info, draft.data, draft.slug, request.entryId);
+			const versionId = `${row.key}#${now}`;
+			const approved: ApprovalRequest = {
+				...request,
 				title,
-				state: "done",
-				text: `Approved and published. It's live now.${first ? ` ${first} has been told.` : ""}`,
+				status: "approved",
+				fingerprint: draft.fingerprint,
+				approval: { by, at: now, fingerprint: draft.fingerprint, versionId },
+			};
+			addHistory(approved, now, `${by.name} approved`);
+			const set: Partial<ApprovalRequest> = {
+				title,
+				status: "approved",
+				fingerprint: approved.fingerprint,
+				approval: approved.approval!,
+				history: approved.history,
+				updatedAt: approved.updatedAt,
+			};
+			// After the publish, content:afterPublish records "Published by" and sends these.
+			if (publishing) {
+				const jobs = ctx.email
+					? [writerJob(ctx, approved, "published")].filter((j): j is MailJob => j !== null)
+					: [];
+				set.publishing = { by, at: now, jobs };
+			}
+			const written = await store.updateIf(row.key, { where: guard, set });
+			if (!written.applied) {
+				fail(CHANGED_MEANWHILE, title);
+				continue;
+			}
+			copies.push({
+				id: versionId,
+				data: {
+					requestKey: row.key,
+					at: now,
+					by: by.name,
+					title,
+					fields: copyOf(info, draft.data),
+				},
 			});
-		} catch (error) {
-			const message = publishFailedMessage(error);
+			if (!publishing) {
+				const job = writerJob(ctx, approved, "approved");
+				if (job) mails.push(job);
+				results.push({
+					key: row.key,
+					title,
+					state: "done",
+					text: `Approved. ${first ? `${first} can` : "Its writer can"} schedule it now.`,
+				});
+				continue;
+			}
+			try {
+				if (!draft.rev || !ctx.content?.publish) throw new Error("publishing is not available");
+				await ctx.content.publish(request.collection, request.entryId, { _rev: draft.rev });
+				results.push({
+					key: row.key,
+					title,
+					state: "done",
+					text: `Approved and published. It's live now.${first ? ` ${first} has been told.` : ""}`,
+				});
+			} catch (error) {
+				const message = publishFailedMessage(error);
+				results.push({
+					key: row.key,
+					title,
+					state: "approved",
+					text: message.startsWith("Approved. The page was still finishing")
+						? message
+						: "Approved, not live yet: press Publish on the page.",
+				});
+			}
+		} catch {
+			// A read or write that failed just now: this one stays in Waiting, the rest go on.
 			results.push({
 				key: row.key,
-				title,
-				state: "approved",
-				text: message.startsWith("Approved. The page was still finishing")
-					? message
-					: "Approved, not live yet: press Publish on the page.",
+				title: request?.title ?? row.title ?? row.key,
+				state: "failed",
+				text: "Could not be decided just now. Try it again from the list.",
 			});
 		}
 	}

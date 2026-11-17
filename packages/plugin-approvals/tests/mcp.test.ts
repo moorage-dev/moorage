@@ -658,3 +658,37 @@ describe("tool ask_approval", () => {
 		expect(stored?.history[0]?.text).toMatch(/^An AI tool \(Ana Lopes\) asked for approval/);
 	});
 });
+
+describe("the second audit: changes and an agent's own requests", () => {
+	it("changes shows a change to the page's address", async () => {
+		const s = await site();
+		const id = await page(s, s.editor, "Summer menu");
+		const live = await s.host.actions.content.publish("pages", id, {
+			actor: { id: s.admin.id, role: s.admin.role },
+			origin: { source: "api" },
+		});
+		expect(live.success).toBe(true);
+		await settled();
+		const updated = await s.host.actions.content.update("pages", id, {
+			data: { title: "Summer menu" },
+			slug: "summer",
+			actor: { id: s.editor.id, role: s.editor.role },
+		});
+		if (!updated.success) throw new Error(updated.error.message);
+		await s.host.actions.content.publish("pages", id, {
+			actor: { id: s.editor.id, role: s.editor.role },
+			origin: { source: "api" },
+		});
+		await settled();
+		const { data } = await call(s, "mcp/changes", s.admin, { collection: "pages", id });
+		expect(data.address).toEqual({ before: "summer-menu", after: "summer" });
+	});
+
+	it("queue marks an agent's own requests it may decide when AI approval is on", async () => {
+		const s = await site({ ...HELD, preset: "me", aiApprove: true });
+		await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/queue", s.editor);
+		const yours = data.yours as Array<Record<string, unknown>>;
+		expect(yours[0]).toMatchObject({ title: "Summer menu", aiToolMayDecide: true });
+	});
+});

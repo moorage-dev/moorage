@@ -44,7 +44,15 @@ const failTimes = new Map<string, number>();
 		string,
 		(...args: unknown[]) => unknown
 	>;
-	for (const name of ["emailSend", "contentPublish", "storagePut", "cronSchedule", "kvSet"]) {
+	for (const name of [
+		"emailSend",
+		"contentPublish",
+		"storagePut",
+		"cronSchedule",
+		"kvSet",
+		"storageUpdateIf",
+		"userGet",
+	]) {
 		const original = proto[name]!;
 		proto[name] = function (this: unknown, ...args: unknown[]) {
 			const times = failTimes.get(name) ?? 0;
@@ -2095,6 +2103,17 @@ function pickValues(response: unknown): string[] {
 }
 
 describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
+	/** The confirm step's button value: which stored selection it starts. */
+	async function goValue(s: Site): Promise<unknown> {
+		const pick = await s.host.inspect.kv.get<{ at: string }>(`state:bulk-pick:${admin(s).id}`);
+		return { pick: pick?.at };
+	}
+
+	/** The confirm step's button, as the Admin. */
+	async function press(s: Site) {
+		return s.host.admin.act("/overview", "bulk_go", { user: admin(s), value: await goValue(s) });
+	}
+
 	/** Choose every waiting page on the confirm step, as an Admin. */
 	async function chooseAll(s: Site, what: "publish" | "send_back" = "publish") {
 		return s.host.admin.submit(
@@ -2109,7 +2128,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		run: string;
 		seq: number;
 		rows: unknown[];
-		results: Array<{ state: string }>;
+		results: Array<{ state: string; text: string }>;
 	}
 
 	/**
@@ -2122,16 +2141,18 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		const user = admin(s);
 		const run = await s.host.inspect.kv.get<{ id: string; lanes: number }>(`state:bulk:${user.id}`);
 		const counts: number[] = [];
-		for (let round = 0; round < 40; round++) {
+		for (let round = 0; round < 80; round++) {
 			let ran = false;
 			for (let lane = 0; lane < run!.lanes; lane++) {
-				const state = await s.host.inspect.kv.get<LaneState>(`state:bulk:${user.id}:${lane}`);
+				const state = await s.host.inspect.kv.get<LaneState>(
+					`state:bulk:${user.id}:${run!.id}:${lane}`,
+				);
 				if (!state || state.rows.length === 0) continue;
 				ran = true;
 				await cold(s);
 				const m = await measure(async () => {
 					const out = await s.host.transport.invokeHook("cron", {
-						name: `bulk-${run!.id}-${lane}-${state.seq}`,
+						name: `bulk-${user.id}-${run!.id}-${lane}-${state.seq}`,
 						data: { user: user.id, run: run!.id, lane, seq: state.seq },
 						scheduledAt: new Date().toISOString(),
 					});
@@ -2139,7 +2160,9 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 					return out;
 				});
 				expect(m.error).toBeUndefined();
-				const after = await s.host.inspect.kv.get<LaneState>(`state:bulk:${user.id}:${lane}`);
+				const after = await s.host.inspect.kv.get<LaneState>(
+					`state:bulk:${user.id}:${run!.id}:${lane}`,
+				);
 				const end = m.calls.lastIndexOf("kvSet") + 1 + (after!.rows.length > 0 ? 1 : 0);
 				const own = m.calls.slice(0, end);
 				console.info(`bulk lane ${lane} run ${state.seq}: ${own.length} ${own.join(" ")}`);
@@ -2150,7 +2173,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			}
 			if (!ran) return counts;
 		}
-		throw new Error("still running after 40 rounds");
+		throw new Error("still running after 80 rounds");
 	}
 
 	// kvList storageQuery schemaListCollections, + kvSet: the selection stored for the press.
@@ -2175,7 +2198,10 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		for (let i = 0; i < 50; i++) await waiting(s, `Page ${i + 1}`);
 		await chooseAll(s);
 		await cold(s);
-		const m = await measure(() => s.host.admin.act("/overview", "bulk_go", { user: admin(s) }));
+		const value = await goValue(s);
+		const m = await measure(() =>
+			s.host.admin.act("/overview", "bulk_go", { user: admin(s), value }),
+		);
 		console.info(describeCalls("bulk press, 50 selected", m));
 		expect(m.calls.length).toBe(9);
 		expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
@@ -2190,7 +2216,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			const ids: string[] = [];
 			for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
 			await chooseAll(s);
-			await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+			await press(s);
 			const counts = await runLanes(s);
 			console.info(
 				`bulk approve and publish, 50 selected: ${counts.length} runs: ${counts.join(" ")}`,
@@ -2216,7 +2242,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			const ids: string[] = [];
 			for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
 			await chooseAll(s);
-			await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+			await press(s);
 			for (let tick = 0; tick < 60; tick++) {
 				await drain();
 				s.host.scheduled.setTime(new Date(Date.now() + 60_000));
@@ -2240,7 +2266,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			const ids: string[] = [];
 			for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
 			await chooseAll(s, "send_back");
-			await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+			await press(s);
 			const counts = await runLanes(s);
 			console.info(`bulk send back, 50 selected: ${counts.length} runs: ${counts.join(" ")}`);
 			for (const id of ids) expect((await request(s, id))?.status).toBe("sent_back");
@@ -2294,7 +2320,7 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		const s = await site();
 		for (let i = 0; i < 10; i++) await waiting(s, `Page ${i + 1}`);
 		await chooseAll(s);
-		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		await press(s);
 		await cold(s);
 		const stop = await measure(() =>
 			s.host.admin.act("/overview", "bulk_stop", { user: admin(s) }),
@@ -2319,11 +2345,11 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		const ids: string[] = [];
 		for (let i = 0; i < 6; i++) ids.push(await waiting(s, `Page ${i + 1}`));
 		await chooseAll(s);
-		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		await press(s);
 		const user = admin(s);
 		const run = await s.host.inspect.kv.get<{ id: string }>(`state:bulk:${user.id}`);
 		const event = {
-			name: `bulk-${run!.id}-0-0`,
+			name: `bulk-${user.id}-${run!.id}-0-0`,
 			data: { user: user.id, run: run!.id, lane: 0, seq: 0 },
 			scheduledAt: new Date().toISOString(),
 		};
@@ -2354,11 +2380,11 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		const s = await site();
 		for (let i = 0; i < 6; i++) await waiting(s, `Page ${i + 1}`);
 		await chooseAll(s);
-		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		await press(s);
 		const user = admin(s);
 		const run = await s.host.inspect.kv.get<{ id: string }>(`state:bulk:${user.id}`);
 		const event = {
-			name: `bulk-${run!.id}-0-0`,
+			name: `bulk-${user.id}-${run!.id}-0-0`,
 			data: { user: user.id, run: run!.id, lane: 0, seq: 0 },
 			scheduledAt: new Date().toISOString(),
 		};
@@ -2370,11 +2396,223 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		expect(m.calls).toEqual(["kvList", "cronSchedule"]);
 	});
 
+	/** The Admin's run and its lane 0, as stored. */
+	async function laneOf(s: Site) {
+		const user = admin(s);
+		const run = await s.host.inspect.kv.get<{ id: string }>(`state:bulk:${user.id}`);
+		const lane = await s.host.inspect.kv.get<LaneState>(`state:bulk:${user.id}:${run!.id}:0`);
+		return { run: run!, lane: lane! };
+	}
+
+	async function turn(s: Site, runId: string, seq: number) {
+		const user = admin(s);
+		return s.host.transport.invokeHook("cron", {
+			name: `bulk-${user.id}-${runId}-0-${seq}`,
+			data: { user: user.id, run: runId, lane: 0, seq },
+			scheduledAt: new Date().toISOString(),
+		});
+	}
+
+	// Audit 2: a stopped run's turn still in flight writes only its own lane.
+	it("a stopped run's late turn does not touch the next run", async () => {
+		const s = await site();
+		const ids: string[] = [];
+		for (let i = 0; i < 4; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		await chooseAll(s);
+		await press(s);
+		const first = await laneOf(s);
+		await s.host.admin.act("/overview", "bulk_stop", { user: admin(s) });
+		await chooseAll(s);
+		await press(s);
+		const second = await laneOf(s);
+		expect(second.run.id).not.toBe(first.run.id);
+		// Run A's turn, in flight when it was stopped, ends now.
+		await turn(s, first.run.id, 0);
+		await drain();
+		await runLanes(s);
+		await drain();
+		for (const id of ids) expect((await request(s, id))?.status).toBe("published");
+		const list = text(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		expect(list).toContain("Approved 4 of 4 pages.");
+	});
+
+	// Audit 3: a row that throws is recorded and the turn goes on.
+	for (const call of ["storageUpdateIf", "contentGetVersioned"]) {
+		it(`a row whose ${call} fails is recorded, and the rest are decided, copied and emailed`, async () => {
+			const s = await site();
+			const ids: string[] = [];
+			for (let i = 0; i < 4; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+			await chooseAll(s);
+			await press(s);
+			const { run } = await laneOf(s);
+			failTimes.set(call, 1);
+			await cold(s);
+			const m = await measure(() => turn(s, run.id, 0));
+			expect(m.error).toBeUndefined();
+			await drain();
+			const { lane } = await laneOf(s);
+			expect(lane.results.filter((r) => r.state === "failed")).toHaveLength(1);
+			expect(JSON.stringify(lane.results)).toContain(
+				"Could not be decided just now. Try it again from the list.",
+			);
+			expect(lane.results.filter((r) => r.state === "done")).toHaveLength(3);
+			const copies = await s.host.inspect.storage.list("versions");
+			expect(copies).toHaveLength(3);
+		});
+	}
+
+	// Audit 4: a failed read of the person is retried, not taken as "can't approve".
+	it("a failed read of the person fails the turn so EmDash runs it again", async () => {
+		const s = await site();
+		for (let i = 0; i < 2; i++) await waiting(s, `Page ${i + 1}`);
+		await chooseAll(s);
+		await press(s);
+		const { run } = await laneOf(s);
+		failTimes.set("userGet", 1);
+		await turn(s, run.id, 0).catch(() => undefined);
+		const { lane } = await laneOf(s);
+		expect(lane.results).toEqual([]);
+		expect(lane.rows).toHaveLength(2);
+	});
+
+	// Audit 5: an approval carried over from earlier is not this run's.
+	it("does not count an earlier approval at the same version as this run's", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await chooseAll(s);
+		const stored = await request(s, id);
+		await s.host.fixtures.plugin.storage("requests", `pages:${id}`, {
+			...stored,
+			status: "closed",
+			withdrawn: { by: { id: s.editor.id, name: "Sam Reyes" }, at: new Date().toISOString() },
+			approval: {
+				by: { id: admin(s).id, name: "Ellen Marsh" },
+				at: "2026-01-01T00:00:00.000Z",
+				fingerprint: stored!.fingerprint,
+				versionId: "",
+			},
+		});
+		await press(s);
+		await runLanes(s);
+		const { lane } = await laneOf(s);
+		expect(lane.results[0]?.text).toBe("This request has already been decided.");
+	});
+
+	// Audit 6: expired runs and stale selections are deleted when the page opens.
+	it("deletes a run kept past its time and a stale selection when the page opens", async () => {
+		const s = await site();
+		const user = admin(s);
+		const old = new Date(Date.now() - 9 * 86_400_000).toISOString();
+		await s.host.fixtures.plugin.kv(`state:bulk:${user.id}`, {
+			id: "old",
+			do: "publish",
+			reason: "",
+			total: 1,
+			lanes: 1,
+			at: old,
+		});
+		await s.host.fixtures.plugin.kv(`state:bulk:${user.id}:old:0`, {
+			run: "old",
+			seq: 1,
+			rows: [],
+			results: [{ key: "pages:x", title: "X", state: "done", text: "Approved." }],
+			endedAt: old,
+		});
+		await s.host.fixtures.plugin.kv(`state:bulk-pick:${user.id}`, {
+			do: "publish",
+			reason: "",
+			rows: [],
+			at: old,
+		});
+		await cold(s);
+		const m = await measure(() => s.host.admin.loadPage("/overview", { user }));
+		console.info(describeCalls("page load, expired run and stale selection", m));
+		expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+		const keys = (await s.host.inspect.kv.list()).map((e) => e.id);
+		expect(keys.filter((k) => k.startsWith("state:"))).toEqual([]);
+	});
+
+	// Audit 7: task names carry the person, so two approvers' runs never share one.
+	it("names each run's tasks with the person", async () => {
+		const s = await site();
+		await waiting(s);
+		await chooseAll(s);
+		await press(s);
+		const names = (await s.host.inspect.scheduledTasks()).map((t) => String(t.name));
+		expect(names.some((n) => n.startsWith(`bulk-${admin(s).id}-`))).toBe(true);
+		expect(names.every((n) => n.length <= 128)).toBe(true);
+	});
+
+	// Audit 8: the worst cases.
+	it("require checks: each turn within the limit", async () => {
+		const s = await site({ config: { ...HELD, checks: "require" } });
+		for (let i = 0; i < 10; i++) await waiting(s, `Page ${i + 1}`);
+		await chooseAll(s);
+		await press(s);
+		const counts = await runLanes(s);
+		console.info(`bulk require checks, 10 selected: ${counts.join(" ")}`);
+	});
+
+	it("send back of 20 stored as Untitled: each turn within the limit, each named", async () => {
+		const s = await site();
+		const ids: string[] = [];
+		for (let i = 0; i < 20; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		for (const id of ids)
+			await s.host.fixtures.plugin.storage("requests", `pages:${id}`, {
+				...(await request(s, id)),
+				title: "Untitled",
+			});
+		await chooseAll(s, "send_back");
+		await press(s);
+		const counts = await runLanes(s);
+		console.info(`bulk send back, 20 Untitled: ${counts.join(" ")}`);
+		for (const id of ids) {
+			const stored = await request(s, id);
+			expect(stored?.status).toBe("sent_back");
+			expect(stored?.title).not.toBe("Untitled");
+		}
+	});
+
+	it(
+		"200 waiting, all chosen: the confirm step, the press and every turn within the limit",
+		{ timeout: 900_000 },
+		async () => {
+			const s = await site();
+			for (let i = 0; i < 200; i++) await waiting(s, `Page ${i + 1}`);
+			await cold(s);
+			const confirm = await measure(() => chooseAll(s));
+			console.info(describeCalls("bulk confirm, 200 selected", confirm));
+			expect(confirm.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+			await cold(s);
+			const value = await goValue(s);
+			const go = await measure(() =>
+				s.host.admin.act("/overview", "bulk_go", { user: admin(s), value }),
+			);
+			console.info(describeCalls("bulk press, 200 selected", go));
+			expect(go.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+			const counts = await runLanes(s);
+			console.info(
+				`bulk approve and publish, 200 selected: ${counts.length} turns, max ${Math.max(...counts)}`,
+			);
+			expect(Math.max(...counts)).toBeLessThanOrEqual(NEW_BUDGET);
+			await drain();
+			const run = await s.host.inspect.kv.get<{ total: number }>(`state:bulk:${admin(s).id}`);
+			// The list reads one page of requests: EmDash caps a storage query at 100 (the plugin
+			// asks for 200), so "All waiting for you" holds the 100 most recently changed.
+			console.info(`bulk 200: run total ${run?.total}`);
+			expect(run?.total).toBe(100);
+			const published = (await s.host.inspect.storage.list<ApprovalRequest>("requests")).filter(
+				(r) => r.data.status === "published",
+			);
+			expect(published).toHaveLength(run!.total);
+		},
+	);
+
 	it("approve and publish fails for one page: approved, not live, and said so", async () => {
 		const s = await site();
 		for (let i = 0; i < 2; i++) await waiting(s, `Page ${i + 1}`);
 		await chooseAll(s);
-		await s.host.admin.act("/overview", "bulk_go", { user: admin(s) });
+		await press(s);
 		failTimes.set("contentPublish", 1);
 		await runLanes(s);
 		const list = text(await s.host.admin.loadPage("/overview", { user: admin(s) }));

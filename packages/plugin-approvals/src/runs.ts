@@ -62,10 +62,14 @@ export interface Lane {
 	seq: number;
 	rows: Row[];
 	results: RowResult[];
+	/** When its last row was decided. */
+	endedAt?: string;
 }
 
 export interface RunState {
 	run: Run;
+	/** When it finished or was stopped; null while it runs. */
+	endedAt: string | null;
 	lanes: Lane[];
 	results: RowResult[];
 	left: number;
@@ -83,21 +87,56 @@ export function pickOf(entries: ReadonlyMap<string, unknown>, userId: string): P
 	return value as unknown as Pick;
 }
 
-/** This person's bulk run, as the KV holds it, or null. */
-export function runOf(entries: ReadonlyMap<string, unknown>, userId: string): RunState | null {
+/** A lane's KV key: per run, so a stopped run's late turn never writes the next run's lane. */
+export function laneKey(userId: string, runId: string, lane: number): string {
+	return `${RUN_PREFIX}${userId}:${runId}:${lane}`;
+}
+
+function readRun(entries: ReadonlyMap<string, unknown>, userId: string): RunState | null {
 	const run = entries.get(`${RUN_PREFIX}${userId}`);
 	if (!isRecord(run) || typeof run.id !== "string") return null;
 	const lanes: Lane[] = [];
 	for (let i = 0; i < Number(run.lanes); i++) {
-		const lane = entries.get(`${RUN_PREFIX}${userId}:${i}`);
+		const lane = entries.get(laneKey(userId, run.id, i));
 		if (isRecord(lane) && lane.run === run.id) lanes.push(lane as unknown as Lane);
 	}
 	const results = lanes.flatMap((l) => l.results ?? []);
 	const left = lanes.reduce((n, l) => n + (l.rows?.length ?? 0), 0);
-	const state = { run: run as unknown as Run, lanes, results, left, running: false };
-	state.running = left > 0 && !state.run.stopped;
-	if (!state.running && Date.now() - Date.parse(state.run.at) > KEEP_MS) return null;
-	return state;
+	const stopped = typeof run.stopped === "string" ? run.stopped : null;
+	const running = left > 0 && !stopped;
+	const ends = lanes.map((l) => l.endedAt).filter((at): at is string => typeof at === "string");
+	const endedAt = running ? null : (stopped ?? ends.sort().at(-1) ?? String(run.at));
+	return { run: run as unknown as Run, endedAt, lanes, results, left, running };
+}
+
+function expired(state: RunState): boolean {
+	return state.endedAt !== null && Date.now() - Date.parse(state.endedAt) > KEEP_MS;
+}
+
+/** This person's bulk run, as the KV holds it, or null (none, or kept past its time). */
+export function runOf(entries: ReadonlyMap<string, unknown>, userId: string): RunState | null {
+	const state = readRun(entries, userId);
+	return state && !expired(state) ? state : null;
+}
+
+/**
+ * This person's keys that are no longer needed: a run kept past its time (7 days after it
+ * ended) with its lanes, lanes of an earlier run, and a selection older than an hour.
+ */
+export function staleKeys(entries: ReadonlyMap<string, unknown>, userId: string): string[] {
+	const keys: string[] = [];
+	const state = readRun(entries, userId);
+	const keep = state && !expired(state) ? state.run.id : null;
+	if (state && !keep) keys.push(`${RUN_PREFIX}${userId}`);
+	const lanePrefix = `${RUN_PREFIX}${userId}:`;
+	for (const key of entries.keys()) {
+		if (!key.startsWith(lanePrefix)) continue;
+		if (keep && key.startsWith(`${lanePrefix}${keep}:`)) continue;
+		keys.push(key);
+	}
+	const pick = entries.get(`${PICK_PREFIX}${userId}`);
+	if (pick !== undefined && !pickOf(entries, userId)) keys.push(`${PICK_PREFIX}${userId}`);
+	return keys;
 }
 
 /** Store what the confirm step shows, so the press needs nothing from the browser. One call. */
@@ -105,8 +144,11 @@ export async function storePick(ctx: PluginContext, userId: string, pick: Pick):
 	await ctx.kv.set(`${PICK_PREFIX}${userId}`, pick);
 }
 
-function taskName(run: string, lane: number, seq: number): string {
-	return `${RUN_TASK}-${run}-${lane}-${seq}`;
+/** A run's task: with the person and a random run id, so two approvers' tasks never share a name. */
+function taskName(userId: string, run: string, lane: number, seq: number): string {
+	return `${RUN_TASK}-${userId}-${run}-${lane}-${seq}`
+		.replace(/[^a-zA-Z0-9_-]/g, "_")
+		.slice(0, 128);
 }
 
 /**
@@ -117,6 +159,8 @@ export async function startRun(
 	ctx: PluginContext,
 	user: UserInfo,
 	entries: ReadonlyMap<string, unknown>,
+	/** The selection the pressed button belongs to (its confirm step's time). */
+	token: unknown,
 ): Promise<{ ok: boolean; message: string }> {
 	const current = runOf(entries, user.id);
 	if (current?.running)
@@ -126,9 +170,10 @@ export async function startRun(
 				"Your earlier bulk decision is still running. Wait for it to finish, or stop it, then try again.",
 		};
 	const pick = pickOf(entries, user.id);
-	if (!pick || pick.rows.length === 0 || !ctx.cron)
+	// Only the selection this button showed: another tab may have stored a newer one since.
+	if (!pick || pick.at !== token || pick.rows.length === 0 || !ctx.cron)
 		return { ok: false, message: "Choose the pages again, then press Check selection." };
-	const id = Date.now().toString(36);
+	const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 	const lanes = Math.min(LANES, Math.ceil(pick.rows.length / 4));
 	const split: Row[][] = Array.from({ length: lanes }, () => []);
 	// Round robin keeps each lane oldest first.
@@ -144,11 +189,11 @@ export async function startRun(
 	await ctx.kv.set(`${RUN_PREFIX}${user.id}`, run);
 	for (let lane = 0; lane < lanes; lane++) {
 		const state: Lane = { run: id, seq: 0, rows: split[lane]!, results: [] };
-		await ctx.kv.set(`${RUN_PREFIX}${user.id}:${lane}`, state);
+		await ctx.kv.set(laneKey(user.id, id, lane), state);
 	}
 	const now = new Date().toISOString();
 	for (let lane = 0; lane < lanes; lane++) {
-		await ctx.cron.schedule(taskName(id, lane, 0), {
+		await ctx.cron.schedule(taskName(user.id, id, lane, 0), {
 			schedule: now,
 			data: { user: user.id, run: id, lane, seq: 0 },
 		});
@@ -180,13 +225,13 @@ export async function runLane(
 	if (!userId || !runId || laneNo < 0) return;
 	const { config, entries } = await loadEntries(ctx);
 	const run = entries.get(`${RUN_PREFIX}${userId}`) as Run | undefined;
-	const laneKey = `${RUN_PREFIX}${userId}:${laneNo}`;
-	const lane = entries.get(laneKey) as Lane | undefined;
+	const key = laneKey(userId, runId, laneNo);
+	const lane = entries.get(key) as Lane | undefined;
 	if (!run || run.id !== runId || !lane || lane.run !== runId) return;
 	// Run again after its lane was written but before the next task was set (EmDash retries a
 	// failed task): set it now, so the lane goes on.
 	if (lane.seq === seq + 1 && lane.rows.length > 0 && ctx.cron && !run.stopped) {
-		await ctx.cron.schedule(taskName(runId, laneNo, lane.seq), {
+		await ctx.cron.schedule(taskName(userId, runId, laneNo, lane.seq), {
 			schedule: new Date().toISOString(),
 			data: { user: userId, run: runId, lane: laneNo, seq: lane.seq },
 		});
@@ -195,12 +240,22 @@ export async function runLane(
 	// A task already done (run twice, or an older run's): nothing to do.
 	if (lane.seq !== seq || lane.rows.length === 0) return;
 	const store = (rows: Row[], results: RowResult[]) =>
-		ctx.kv.set(laneKey, { run: runId, seq: seq + 1, rows, results } satisfies Lane);
+		ctx.kv.set(key, {
+			run: runId,
+			seq: seq + 1,
+			rows,
+			results,
+			...(rows.length === 0 ? { endedAt: new Date().toISOString() } : {}),
+		} satisfies Lane);
 	if (run.stopped || !config) {
-		await store([], [...lane.results, ...lane.rows.map((r) => stoppedResult(r))]);
+		const text = run.stopped
+			? "Not done: you stopped the run."
+			: "Not done: the approval settings could not be read, so the run stopped. Decide it from the list.";
+		await store([], [...lane.results, ...lane.rows.map((r) => notDone(r, text))]);
 		return;
 	}
-	const user = await ctx.users?.get(userId).catch(() => null);
+	// A failed read throws, and EmDash runs the task again; only a person who is gone is final.
+	const user = ctx.users ? await ctx.users.get(userId) : null;
 	if (!user || user.role < approverRole(config.preset)) {
 		await store(
 			[],
@@ -216,22 +271,26 @@ export async function runLane(
 		);
 		return;
 	}
-	const { results, rest } = await decideRows(m, config, user, run.do, run.reason, lane.rows, 2);
+	const { results, rest } = await decideRows(
+		m,
+		config,
+		user,
+		run.do,
+		run.reason,
+		lane.rows,
+		2,
+		run.at,
+	);
 	await store(rest, [...lane.results, ...results]);
 	if (rest.length > 0 && ctx.cron)
-		await ctx.cron.schedule(taskName(runId, laneNo, seq + 1), {
+		await ctx.cron.schedule(taskName(userId, runId, laneNo, seq + 1), {
 			schedule: new Date().toISOString(),
 			data: { user: userId, run: runId, lane: laneNo, seq: seq + 1 },
 		});
 }
 
-function stoppedResult(row: Row): RowResult {
-	return {
-		key: row.key,
-		title: row.title ?? row.key,
-		state: "failed",
-		text: "Not done: you stopped the run.",
-	};
+function notDone(row: Row, text: string): RowResult {
+	return { key: row.key, title: row.title ?? row.key, state: "failed", text };
 }
 
 /** Stop this person's run: each lane stops at its next turn. One call. */
@@ -252,9 +311,9 @@ export async function dismissRun(
 	userId: string,
 	entries: ReadonlyMap<string, unknown>,
 ): Promise<void> {
-	const state = runOf(entries, userId);
+	const state = readRun(entries, userId);
 	if (!state || state.running) return;
-	for (let i = 0; i < state.run.lanes; i++) await ctx.kv.delete(`${RUN_PREFIX}${userId}:${i}`);
+	for (let i = 0; i < state.run.lanes; i++) await ctx.kv.delete(laneKey(userId, state.run.id, i));
 	await ctx.kv.delete(`${RUN_PREFIX}${userId}`);
 }
 
@@ -292,7 +351,7 @@ export function runBlocks(state: RunState | null, ticked = 0): Block[] {
 						style: "danger",
 						confirm: {
 							title: "Stop this run?",
-							text: "What is already decided stays decided. The rest stays in Waiting.",
+							text: "The pages being decided right now finish first. What is decided stays decided; the rest stays in Waiting.",
 							confirm: "Stop",
 							deny: "Keep going",
 						},

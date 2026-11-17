@@ -208,7 +208,10 @@ export async function queueTool(ctx: PluginContext, user: UserInfo | undefined) 
 		id: request.entryId,
 		...asked(request),
 		thingsToCheck: thingsToCheck(config, request),
+		// With "AI tools may approve" on, an AI tool may decide this person's own requests too.
+		...(aiDecides && yours.includes(request) ? { aiToolMayDecide: true } : {}),
 	});
+	const aiDecides = Boolean(config && mayApproveAsAgent(config, user));
 	return {
 		approvalOn: config !== null,
 		...(approver || !config ? { forYou: forYou.map(row) } : {}),
@@ -399,7 +402,7 @@ function clip(text: string): { text: string; truncated?: true; length?: number }
 }
 
 export const NOT_SHOWN =
-	"Compares the entry's own fields as text. A field longer than 2,000 characters is truncated: only the part that changed is returned, with some text around it, marked truncated: true with the full lengths (beforeLength, afterLength); open the entry to read all of it. Not shown: the SEO panel (search title, description, sharing picture), categories, tags, bylines and menus; pictures and files are named as changed, not shown; formatting and link addresses inside rich text are left out, only its words are shown.";
+	"Compares the entry's own fields as text, and the page's address (address, when it changes). A field longer than 2,000 characters is truncated: only the part that changed is returned, with some text around it, marked truncated: true with the full lengths (beforeLength, afterLength); open the entry to read all of it. Not shown: the SEO panel (search title, description, sharing picture), categories, tags, bylines and menus; pictures and files are named as changed, not shown; formatting and link addresses inside rich text are left out, only its words are shown.";
 
 /**
  * What a request would change, field by field. 5 calls: settings, the request, the page (2),
@@ -487,6 +490,10 @@ export async function changesTool(ctx: PluginContext, user: UserInfo | undefined
 		),
 		state: request ? request.status : "none",
 		liveNow: draft.live !== null,
+		// The address is part of the version; shown when it changes.
+		...(draft.live && draft.item.slug !== draft.slug
+			? { address: { before: draft.item.slug, after: draft.slug } }
+			: {}),
 		comparedWith: draft.live ? "the live page" : "nothing: the entry is not live",
 		version: draft.fingerprint,
 		...(waiting && config
