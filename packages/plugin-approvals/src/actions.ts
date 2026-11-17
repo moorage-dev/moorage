@@ -29,6 +29,7 @@ import {
 	approvers,
 	collectionInfo,
 	copyOf,
+	liveChange,
 	mayApprove,
 	personName,
 	readDraft,
@@ -456,6 +457,7 @@ export async function ask(
 		now,
 	);
 	result.request.checks = missingChecks(draft, info.hasSeo);
+	if (!result.again) result.request.changed = liveChange(draft.live?.data ?? null, draft.data);
 	if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
 	await store.put(key, result.request);
 	if (result.notify) await scheduleAsked(ctx, config, key, now, !result.again);

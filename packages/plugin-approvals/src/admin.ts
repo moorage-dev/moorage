@@ -5,6 +5,19 @@ import type { PluginContext } from "emdash";
 
 import { approve, ask, sendBack, withdraw, type Decision, type Outcome } from "./actions.js";
 import {
+	BULK,
+	bulkBlocks,
+	changedText,
+	confirmView,
+	readDo,
+	readItems,
+	resultView,
+	runBulk,
+	type BulkState,
+	type Names,
+	wantsText,
+} from "./bulk.js";
+import {
 	approverRole,
 	CONFIG,
 	DEFAULT_CONFIG,
@@ -105,6 +118,16 @@ type CollectionList = NonNullable<
 	Awaited<ReturnType<NonNullable<PluginContext["schema"]>["listCollections"]>>
 >;
 
+/** Content type and field labels, from one read of the content types. */
+function namesOf(collections: CollectionList): Names {
+	return {
+		types: new Map(collections.map((c) => [c.slug, c.label])),
+		fields: new Map(
+			collections.map((c) => [c.slug, new Map(c.fields.map((f) => [f.slug, f.label]))]),
+		),
+	};
+}
+
 /** "2 things to check", noted on the request when the page was saved or held. */
 function checkCount(config: Config | null, request: ApprovalRequest): number {
 	if (!config || config.checks === "off" || !request.checks) return 0;
@@ -120,11 +143,7 @@ function openLink(request: ApprovalRequest) {
 }
 
 /** Requests this person may decide on. */
-function forYouRows(
-	list: ApprovalRequest[],
-	names: Map<string, string>,
-	config: Config | null,
-): Block[] {
+function forYouRows(list: ApprovalRequest[], names: Names, config: Config | null): Block[] {
 	if (list.length === 0) {
 		return [
 			{
@@ -154,11 +173,15 @@ function forYouRows(
 			{
 				type: "context",
 				text: [
-					names.get(request.collection) ?? request.collection,
+					names.types.get(request.collection) ?? request.collection,
 					asker,
 					ago(request.requestedAt),
+					...(request.wants === "schedule" ? [wantsText(request)] : []),
+					changedText(request, names.fields.get(request.collection)),
 					...(checks > 0 ? [`${checks} ${checks === 1 ? "thing" : "things"} to check`] : []),
-				].join(" · "),
+				]
+					.filter(Boolean)
+					.join(" · "),
 			},
 			{ type: "divider" },
 		);
@@ -668,10 +691,13 @@ async function listPage(
 	toast?: BlockResponse["toast"],
 	/** Read the pages already scheduled for the Settings tab, with the calls this run has left. */
 	scheduledWith?: Meter,
+	/** The "Decide several at once" form as it should open (ticked, open). */
+	bulk?: BulkState,
 ): Promise<BlockResponse> {
 	const lists = await loadLists(ctx);
 	const collections = (await ctx.schema?.listCollections()) ?? [];
 	const names = new Map(collections.map((c) => [c.slug, c.label]));
+	const labels = namesOf(collections);
 	const approver = isApprover(config, user);
 	const waiting = visible(config, user, lists.waiting);
 	const sentBack = visible(config, user, lists.sentBack);
@@ -725,7 +751,8 @@ async function listPage(
 	if (approver) {
 		waitingBlocks.push(
 			{ type: "header", text: "For you to approve" },
-			...forYouRows(forYou, names, config),
+			...forYouRows(forYou, labels, config),
+			...bulkBlocks(forYou, labels, bulk),
 		);
 		if (yours.length > 0)
 			waitingBlocks.push(
@@ -1015,6 +1042,58 @@ async function adminScreen(
 			const toast = await ask(ctx, config, user, target.collection, target.id);
 			return doneView({ ok: toast.type !== "error", message: toast.message }, toast);
 		}
+	}
+	if (config && interaction.type === "block_action") {
+		const raw = isRecord(interaction.value) ? interaction.value : {};
+		if (action === BULK.all || action === BULK.none) {
+			const lists = action === BULK.all ? await loadLists(ctx) : null;
+			const ticked = new Set(
+				(lists?.waiting ?? []).filter((r) => canDecide(config, r, user)).map((r) => key(r)),
+			);
+			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, { ticked });
+		}
+		if (action === BULK.back) {
+			const ticked = new Set(readItems(raw.items).map((item) => item.key));
+			return listPage(ctx, config, user, TABS.waiting, undefined, undefined, { ticked });
+		}
+		if (action === BULK.go) {
+			const what = readDo(raw.do);
+			const reason = typeof raw.reason === "string" ? raw.reason.trim() : "";
+			const { results, rest } = await runBulk(m, config, user, what, reason, readItems(raw.items));
+			return resultView(what, reason, results, rest);
+		}
+	}
+	if (config && interaction.type === "form_submit" && action === BULK.review) {
+		const values = isRecord(interaction.values) ? interaction.values : {};
+		const items = readItems(values.pick);
+		const what = readDo(values.do);
+		const reason = typeof values.reason === "string" ? values.reason.trim() : "";
+		const state: BulkState = {
+			ticked: new Set(items.map((item) => item.key)),
+			do: what,
+			...(reason ? { reason } : {}),
+		};
+		const problem =
+			items.length === 0
+				? "Tick at least one page, then press Continue."
+				: what === "send_back" && reason === ""
+					? "Write what should change, then press Continue."
+					: null;
+		if (problem) {
+			const toast = { type: "error" as const, message: problem };
+			return listPage(ctx, config, user, TABS.waiting, toast, undefined, state);
+		}
+		const lists = await loadLists(ctx);
+		const collections = (await ctx.schema?.listCollections()) ?? [];
+		return confirmView({
+			config,
+			user,
+			items,
+			waiting: lists.waiting,
+			names: namesOf(collections),
+			do: what,
+			reason,
+		});
 	}
 	if (config && interaction.type === "block_action") {
 		const value = buttonValue(interaction.value);

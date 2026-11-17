@@ -779,4 +779,123 @@ test.describe.serial("Content Approval", () => {
 			await leave(jo);
 		}
 	});
+	let batch: string[] = [];
+
+	test("Ellen approves and publishes three pages at once from the Waiting list", async () => {
+		batch = [];
+		for (const [title, headline] of [
+			["Bread prices", "Sourdough 4.50"],
+			["Cake of the week", "Lemon drizzle"],
+			["Holiday hours", "Closed on the 25th"],
+		] as const) {
+			const id = await createPage(sam, title, headline);
+			created.push(id);
+			batch.push(id);
+			expect((await publishByApi(sam, id)).ok).toBe(false);
+		}
+		const page = await front(ellen);
+		await page.goto(APPROVALS);
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible({
+			timeout: 60_000,
+		});
+		// Each row says what it is and what it changes.
+		await expect(
+			page.getByText(/Pages · asked by Sam Reyes · .* · new page/).first(),
+		).toBeVisible();
+		await page.getByText("Decide several at once").click();
+		// "Select all" draws the form again with every box ticked; what is submitted is what shows.
+		await page.getByRole("button", { name: /^Select all \(\d+\)$/ }).click();
+		const boxes = page.getByRole("checkbox");
+		await expect(page.getByRole("button", { name: "Clear all" })).toBeVisible();
+		const count = await boxes.count();
+		expect(count).toBeGreaterThanOrEqual(4);
+		for (let i = 0; i < count; i++) await expect(boxes.nth(i)).toBeChecked();
+		// Untick Summer menu, still waiting from earlier: the three new pages stay ticked.
+		await page.getByRole("checkbox", { name: /^Summer menu · Pages/ }).click();
+		await expect(page.getByRole("checkbox", { name: /^Summer menu · Pages/ })).not.toBeChecked();
+		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
+			await expect(
+				page.getByRole("checkbox", { name: new RegExp(`^${title} · Pages`) }),
+			).toBeChecked();
+		await page.getByRole("button", { name: "Continue", exact: true }).click();
+		await expect(page.getByRole("heading", { name: "Approve and publish these 3?" })).toBeVisible();
+		for (const title of ["Bread prices", "Cake of the week", "Holiday hours"])
+			await expect(page.getByText(title, { exact: true })).toBeVisible();
+		await expect(page.getByText("Summer menu", { exact: true })).toHaveCount(0);
+		await page.getByRole("button", { name: "Approve and publish 3" }).click();
+		await expect(page.getByText("Approved and published 3.")).toBeVisible({ timeout: 60_000 });
+		for (const id of batch) await expect.poll(() => status(ellen, id)).toBe("published");
+		await page.getByRole("button", { name: "‹ Back to the list" }).click();
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible();
+		// Summer menu, left unticked, still waits.
+		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible();
+	});
+
+	test("a content type without a title field, like Releases, is named by its declared title field, never Untitled", async () => {
+		const schema = async (method: "post" | "put", path: string, data: unknown) => {
+			const response = await ellen.page.request[method](`${API}/schema/collections${path}`, {
+				headers: HEADERS,
+				data,
+			});
+			expect(response.ok(), await response.text()).toBe(true);
+		};
+		await schema("post", "", {
+			slug: "releases",
+			label: "Releases",
+			labelSingular: "Release",
+			supports: ["drafts", "revisions"],
+		});
+		try {
+			for (const [slug, label, type] of [
+				["plugin", "Plugin", "string"],
+				["release_version", "Version", "string"],
+				["summary", "Summary", "text"],
+			] as const)
+				await schema("post", "/releases/fields", { slug, label, type });
+			await schema("put", "/releases", { titleField: "release_version" });
+			await saveSettings({
+				collections: ["pages", "releases"],
+				preset: "others",
+				ai: true,
+				checks: "remind",
+				remind: true,
+			});
+			const made = await sam.page.request.post(`${API}/content/releases`, {
+				headers: HEADERS,
+				data: {
+					slug: "seo-0-3-1",
+					data: { plugin: "seo", release_version: "0.3.1", summary: "Fixes." },
+				},
+			});
+			expect(made.ok(), await made.text()).toBe(true);
+			const id = ((await made.json()) as { data: { item: { id: string } } }).data.item.id;
+			const held = await sam.page.request.post(`${API}/content/releases/${id}/publish`, {
+				headers: HEADERS,
+			});
+			expect(held.ok()).toBe(false);
+			const page = await front(ellen);
+			await page.goto(APPROVALS);
+			await expect(page.getByText("0.3.1", { exact: true })).toBeVisible({ timeout: 60_000 });
+			await expect(page.getByText(/Releases · asked by Sam Reyes/).first()).toBeVisible();
+			await expect(page.locator("main")).not.toContainText("Untitled");
+			const trashed = await ellen.page.request.delete(`${API}/content/releases/${id}`, {
+				headers: HEADERS,
+			});
+			expect(trashed.ok(), await trashed.text()).toBe(true);
+			await ellen.page.request.delete(`${API}/content/releases/${id}/permanent`, {
+				headers: HEADERS,
+			});
+		} finally {
+			await saveSettings({
+				collections: ["pages"],
+				preset: "others",
+				ai: true,
+				checks: "remind",
+				remind: true,
+			});
+			await ellen.page.request.delete(`${API}/schema/collections/releases?force=true`, {
+				headers: HEADERS,
+			});
+		}
+	});
 });

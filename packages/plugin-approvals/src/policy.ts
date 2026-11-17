@@ -9,6 +9,7 @@ import {
 	approvers,
 	collectionInfo,
 	entryName,
+	liveChange,
 	personName,
 	requestKey,
 	requests,
@@ -347,6 +348,16 @@ export async function gate(
 			result.request.checks?.description !== checks.description ||
 			result.request.checks?.picture !== checks.picture;
 		result.request.checks = checks;
+		if (!result.again) {
+			// What it changes, for the Waiting list: a page that is live is read once for its live
+			// text (one call); a page that is not live is new. Never refuses over this.
+			let live: Record<string, unknown> | null = null;
+			if (content.status === "published") {
+				const item = await ctx.content?.get(event.collection, id).catch(() => null);
+				live = item && isRecord(item.data) ? item.data : null;
+			}
+			if (content.status !== "published" || live) result.request.changed = liveChange(live, data);
+		}
 		if (result.notify && ctx.email && ctx.cron) result.request.emailedAt = now;
 		if (!result.again || result.notify || checksChanged) await store.put(key, result.request);
 		// Email is sent by a one-shot task, so a slow email never delays the publish; that task

@@ -390,6 +390,22 @@ describe("content:beforePublish and content:beforeSchedule (the gate)", () => {
 		expect(m.result?.success).toBe(false);
 	});
 
+	// + contentGet: the live page's text, to note which fields the change touches (0.5.0).
+	it("holds a change to a live page, noting which fields it changes", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await s.host.admin.act("/overview", "approve_publish", {
+			user: admin(s),
+			value: { key: `pages:${id}` },
+		});
+		await drain();
+		await edit(s, id, { ...DATA, content: "Iced coffee £3.40 and lemon tart" });
+		await cold(s);
+		const m = await measure(() => s.host.actions.content.publish("pages", id, actor(s.editor)));
+		pin("beforePublish, held, change to a live page", m, 8);
+		expect((await request(s, id))?.changed).toEqual({ live: true, fields: ["content"] });
+	});
+
 	it("answers 'still waiting' when Publish is pressed again", async () => {
 		const s = await site();
 		const id = await waiting(s);
@@ -2008,5 +2024,154 @@ describe("MCP tools", () => {
 			tool(s, "mcp/status", s.contributor, { collection: "pages", id }),
 		);
 		pinMcp("mcp status, not yours", m, 4);
+	});
+});
+
+/** A button's value in a Block Kit response. */
+function valueOf(response: unknown, actionId: string): unknown {
+	let found: unknown;
+	const walk = (node: unknown) => {
+		if (found !== undefined || typeof node !== "object" || node === null) return;
+		const record = node as Record<string, unknown>;
+		if (record.type === "button" && record.action_id === actionId) {
+			found = record.value;
+			return;
+		}
+		for (const value of Object.values(record)) walk(value);
+	};
+	walk(response);
+	return found;
+}
+
+/** The values of the Waiting tab's tick boxes. */
+function pickValues(response: unknown): string[] {
+	let found: string[] = [];
+	const walk = (node: unknown) => {
+		if (typeof node !== "object" || node === null) return;
+		const record = node as Record<string, unknown>;
+		if (record.type === "checkbox" && record.action_id === "pick") {
+			found = (record.options as Array<{ value: string }>).map((o) => o.value);
+			return;
+		}
+		for (const value of Object.values(record)) walk(value);
+	};
+	walk(response);
+	return found;
+}
+
+describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
+	it("confirm step for 25 selected: reads the list once", async () => {
+		const s = await site();
+		for (let i = 0; i < 25; i++) await waiting(s, `Page ${i + 1}`);
+		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		expect(pick).toHaveLength(25);
+		await cold(s);
+		const m = await measure(() =>
+			s.host.admin.submit("/overview", "bulk_review", { pick, do: "publish" }, { user: admin(s) }),
+		);
+		console.info(describeCalls("bulk confirm, 25 selected", m));
+		// kvList storageQuery schemaListCollections.
+		expect(m.calls.length).toBe(3);
+		expect(text(m.result)).toContain("Approve and publish these 25?");
+	});
+
+	it(
+		"approves and publishes 50 selected in steps, each within the limit, none lost or approved twice",
+		{ timeout: 600_000 },
+		async () => {
+			const s = await site();
+			const ids: string[] = [];
+			for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+			const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+			expect(pick).toHaveLength(50);
+			const confirm = await s.host.admin.submit(
+				"/overview",
+				"bulk_review",
+				{ pick, do: "publish" },
+				{ user: admin(s) },
+			);
+			let value = valueOf(confirm, "bulk_go");
+			const steps: number[] = [];
+			while (value !== undefined) {
+				await cold(s);
+				const m = await measure(async () => {
+					const out = await s.host.admin.act("/overview", "bulk_go", { user: admin(s), value });
+					return out;
+				});
+				expect(m.error).toBeUndefined();
+				// After the route returns, EmDash runs content:afterPublish for each page published,
+				// each its own invocation (storageGet cronSchedule storagePut): split them off.
+				const end = m.calls.lastIndexOf("contentPublish") + 1;
+				const route = m.calls.slice(0, end);
+				const deferred = m.calls.slice(end);
+				console.info(`bulk step ${steps.length + 1}: ${route.length} ${route.join(" ")}`);
+				expect(new Set(deferred)).toEqual(new Set(["storageGet", "cronSchedule", "storagePut"]));
+				steps.push(route.length);
+				expect(route.length, `step ${steps.length}`).toBeLessThanOrEqual(NEW_BUDGET);
+				expect(text(m.result)).not.toContain("could not");
+				value = valueOf(m.result, "bulk_go");
+				if (value !== undefined) expect(text(m.result)).toMatch(/Continue: \d+ more to go/);
+			}
+			await drain();
+			console.info(
+				`bulk approve and publish, 50 selected: ${steps.length} steps: ${steps.join(" ")}`,
+			);
+			for (const id of ids) {
+				const stored = await request(s, id);
+				expect(stored?.status, id).toBe("published");
+				expect(stored?.history.filter((h) => h.text === "Ellen Marsh approved")).toHaveLength(1);
+				expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+			}
+			// Pressing the last Continue again changes nothing.
+		},
+	);
+
+	it("sends back 50 selected in steps, each within the limit", { timeout: 600_000 }, async () => {
+		const s = await site();
+		const ids: string[] = [];
+		for (let i = 0; i < 50; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick, do: "send_back", reason: "Prices are out of date" },
+			{ user: admin(s) },
+		);
+		let value = valueOf(confirm, "bulk_go");
+		let steps = 0;
+		while (value !== undefined) {
+			await cold(s);
+			const m = await measure(() =>
+				s.host.admin.act("/overview", "bulk_go", { user: admin(s), value }),
+			);
+			steps++;
+			expect(m.calls.length).toBeLessThanOrEqual(NEW_BUDGET);
+			value = valueOf(m.result, "bulk_go");
+		}
+		console.info(`bulk send back, 50 selected: ${steps} steps`);
+		for (const id of ids) expect((await request(s, id))?.status).toBe("sent_back");
+	});
+
+	it("a step pressed twice approves nothing twice", async () => {
+		const s = await site();
+		const ids: string[] = [];
+		for (let i = 0; i < 2; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		const pick = pickValues(await s.host.admin.loadPage("/overview", { user: admin(s) }));
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick, do: "publish" },
+			{ user: admin(s) },
+		);
+		const value = valueOf(confirm, "bulk_go");
+		await s.host.admin.act("/overview", "bulk_go", { user: admin(s), value });
+		await drain();
+		const again = await s.host.admin.act("/overview", "bulk_go", { user: admin(s), value });
+		await drain();
+		expect(text(again)).toContain("This request has already been decided.");
+		for (const id of ids)
+			expect(
+				(await request(s, id))?.history.filter((h) => h.text === "Ellen Marsh approved"),
+			).toHaveLength(1);
 	});
 });

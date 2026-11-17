@@ -538,7 +538,9 @@ describe("the Approvals page", () => {
 		const id = created.data.item.id;
 		await s.host.actions.content.publish("articles", id, actor(s.editor));
 		const before = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(before).toContain("Articles · asked by Sam Reyes · just now · 2 things to check");
+		expect(before).toContain(
+			"Articles · asked by Sam Reyes · just now · new page · 2 things to check",
+		);
 
 		const updated = await s.host.actions.content.update("articles", id, {
 			seo: { description: "When the bakery is open" },
@@ -547,7 +549,9 @@ describe("the Approvals page", () => {
 		if (!updated.success) throw new Error(updated.error.message);
 		await settled();
 		const after = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
-		expect(after).toContain("Articles · asked by Sam Reyes · just now · 1 thing to check");
+		expect(after).toContain(
+			"Articles · asked by Sam Reyes · just now · new page · 1 thing to check",
+		);
 	});
 
 	it("keeps a text copy on the History tab", async () => {
@@ -993,5 +997,174 @@ describe("naming a request for an entry without a title field", () => {
 		expect((await s.host.inspect.storage.get<ApprovalRequest>("requests", key))?.title).toBe(
 			"seo-0-3-1",
 		);
+	});
+});
+
+/** The bulk form on the Waiting tab: its tick boxes and their values. */
+function bulkForm(response: unknown): {
+	options: Array<{ label: string; value: string }>;
+	ticked: string[];
+} | null {
+	let found: { options: Array<{ label: string; value: string }>; ticked: string[] } | null = null;
+	const walk = (node: unknown) => {
+		if (found || typeof node !== "object" || node === null) return;
+		const record = node as Record<string, unknown>;
+		if (record.type === "checkbox" && record.action_id === "pick") {
+			found = {
+				options: record.options as Array<{ label: string; value: string }>,
+				ticked: (record.initial_value as string[] | undefined) ?? [],
+			};
+			return;
+		}
+		for (const value of Object.values(record)) walk(value);
+	};
+	walk(response);
+	return found;
+}
+
+async function held(s: Site, title: string, by: User = s.editor): Promise<string> {
+	const id = await s.host.actions.content.create("pages", {
+		data: { title, content: "Iced coffee £3.20 and lemon tart" },
+		slug: title.toLowerCase().replace(/\s+/g, "-"),
+		authorId: by.id,
+		actor: { id: by.id, role: by.role },
+	});
+	if (!id.success) throw new Error(id.error.message);
+	const result = await s.host.actions.content.publish("pages", id.data.item.id, actor(by));
+	if (result.success) throw new Error("expected the publish to be held");
+	return id.data.item.id;
+}
+
+describe("deciding several at once from the Waiting list", () => {
+	it("lists each request the approver may decide as a tick box, with what it is and what changed", async () => {
+		const s = await site(HELD);
+		await held(s, "Summer menu");
+		const live = await held(s, "Opening hours");
+		await s.host.admin.act("/overview", "approve_publish", {
+			user: s.admin,
+			value: { key: `pages:${live}` },
+		});
+		await settled();
+		await edit(s, live, { title: "Opening hours", content: "Open until 9pm" });
+		await s.host.actions.content.publish("pages", live, actor(s.editor));
+		const list = await s.host.admin.loadPage("/overview", { user: s.admin });
+		const form = bulkForm(list);
+		expect(form?.options).toHaveLength(2);
+		expect(form?.ticked).toEqual([]);
+		expect(form?.options[0]?.label).toMatch(
+			/^Summer menu · Pages · asked by Sam Reyes, just now · to publish · new page$/,
+		);
+		expect(form?.options[1]?.label).toMatch(/^Opening hours · .* · changed: Content$/);
+		expect(text(list)).toContain("Approve and publish selected");
+		expect(text(list)).toContain("Send back selected");
+		// Single-row Review stays.
+		expect(text(list)).toContain('"action_id":"review"');
+	});
+
+	it("selects all with one button, and never offers someone their own request", async () => {
+		const s = await site({ ...HELD, preset: "me" });
+		await held(s, "Summer menu");
+		await held(s, "Bake sale");
+		await held(s, "Ellen's own", s.admin);
+		const all = await s.host.admin.act("/overview", "bulk_all", { user: s.admin });
+		const form = bulkForm(all);
+		expect(form?.options.map((o) => o.label.split(" · ")[0])).toEqual(["Summer menu", "Bake sale"]);
+		expect(form?.ticked).toHaveLength(2);
+	});
+
+	it("asks to confirm, listing what is selected, then approves and publishes them oldest first", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		await held(s, "Not this one");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick: [form.options[1]!.value, form.options[0]!.value], do: "publish" },
+			{ user: s.admin },
+		);
+		const body = text(confirm);
+		expect(body).toContain("Approve and publish these 2?");
+		expect(body).toContain('"text":"Summer menu"');
+		expect(body).toContain('"text":"Bake sale"');
+		expect(body).not.toContain("Not this one");
+		const go = buttonValue(confirm, "bulk_go");
+		const done = await s.host.admin.act("/overview", "bulk_go", { user: s.admin, value: go });
+		await settled();
+		expect(done.toast).toEqual({ type: "success", message: "Approved and published 2." });
+		expect(text(done)).toContain("Approved and published. It's live now.");
+		for (const id of [first, second]) {
+			expect((await request(s, id))?.status).toBe("published");
+			expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+		}
+	});
+
+	it("sends back the selected with one shared reason, which is required", async () => {
+		const s = await site(HELD);
+		const first = await held(s, "Summer menu");
+		const second = await held(s, "Bake sale");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const pick = form.options.map((o) => o.value);
+		const empty = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick, do: "send_back", reason: " " },
+			{ user: s.admin },
+		);
+		expect(empty.toast).toEqual({
+			type: "error",
+			message: "Write what should change, then press Continue.",
+		});
+		expect(bulkForm(empty)?.ticked).toEqual(pick);
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick, do: "send_back", reason: "Prices are out of date" },
+			{ user: s.admin },
+		);
+		expect(text(confirm)).toContain("Send back these 2?");
+		const done = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: buttonValue(confirm, "bulk_go"),
+		});
+		expect(done.toast).toEqual({ type: "success", message: "Sent back 2." });
+		for (const id of [first, second]) {
+			expect((await request(s, id))?.sentBack?.note).toBe("Prices are out of date");
+		}
+	});
+
+	it("reports a request that changed since the list was shown, and leaves it selected", async () => {
+		const s = await site(HELD);
+		const changed = await held(s, "Summer menu");
+		const fine = await held(s, "Bake sale");
+		const form = bulkForm(await s.host.admin.loadPage("/overview", { user: s.admin }))!;
+		const confirm = await s.host.admin.submit(
+			"/overview",
+			"bulk_review",
+			{ pick: form.options.map((o) => o.value), do: "publish" },
+			{ user: s.admin },
+		);
+		await edit(s, changed, { title: "Summer menu", content: "Iced coffee £3.40" });
+		await settled();
+		const done = await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: buttonValue(confirm, "bulk_go"),
+		});
+		await settled();
+		expect(done.toast).toEqual({
+			type: "error",
+			message: "Approved and published 1. 1 could not be: see below.",
+		});
+		expect(text(done)).toContain("This page changed while you were looking");
+		expect((await request(s, fine))?.status).toBe("published");
+		expect((await request(s, changed))?.status).toBe("waiting");
+		const back = await s.host.admin.act("/overview", "bulk_back", {
+			user: s.admin,
+			value: buttonValue(done, "bulk_back"),
+		});
+		const ticked = bulkForm(back)?.ticked ?? [];
+		expect(ticked).toHaveLength(1);
+		expect(ticked[0]).toContain(`pages:${changed}@`);
 	});
 });

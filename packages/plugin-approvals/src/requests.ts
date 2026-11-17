@@ -8,7 +8,14 @@ type ContentItem = NonNullable<Awaited<ReturnType<NonNullable<PluginContext["con
 
 import { approverRole, ROLE, type Config } from "./config.js";
 import type { MailJob } from "./notify.js";
-import { fingerprint, textCopy, type FieldInfo, type FieldText } from "./text.js";
+import {
+	changedFields,
+	fieldHashes,
+	fingerprint,
+	textCopy,
+	type FieldInfo,
+	type FieldText,
+} from "./text.js";
 
 export type Status = "waiting" | "sent_back" | "approved" | "published" | "closed";
 
@@ -69,6 +76,12 @@ export interface ApprovalRequest {
 	 * Approvals list can show "things to check" without reading every page.
 	 */
 	checks?: { description: boolean; picture: boolean };
+	/**
+	 * What the waiting version changes, noted when it was held or saved, so the Waiting list can
+	 * say it without reading every page: not live before (a new page), or the fields (slugs) that
+	 * differ from the live page. Missing on requests made before 0.5.0.
+	 */
+	changed?: { live: boolean; fields: string[] };
 	/**
 	 * "Approve and publish" pressed: the publish that follows records "Published by" and sends
 	 * these emails (content:afterPublish), so the button itself stays within its calls.
@@ -342,4 +355,13 @@ export function ago(iso: string, now = Date.now()): string {
 	if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
 	const days = Math.round(hours / 24);
 	return `${days} ${days === 1 ? "day" : "days"} ago`;
+}
+
+/** What a version changes against the live page's data (null: not live). */
+export function liveChange(
+	live: Record<string, unknown> | null,
+	data: Record<string, unknown>,
+): { live: boolean; fields: string[] } {
+	if (!live) return { live: false, fields: [] };
+	return { live: true, fields: changedFields(fieldHashes(live), fieldHashes(data)) };
 }

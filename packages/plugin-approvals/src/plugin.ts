@@ -21,6 +21,7 @@ import { gate } from "./policy.js";
 import {
 	addHistory,
 	collectionInfo,
+	liveChange,
 	personName,
 	readDraft,
 	requestKey,
@@ -106,6 +107,7 @@ async function afterSave(
 		fingerprint: draft.fingerprint,
 		fields: hashes,
 		checks: missingChecks(draft, info.hasSeo),
+		changed: liveChange(draft.live?.data ?? null, draft.data),
 	};
 	if (
 		actor &&
