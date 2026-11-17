@@ -1919,7 +1919,7 @@ test.describe("Picture on top", () => {
 			.click();
 		const dialog = page.getByRole("dialog", { name: REPORT_WORDS.heading });
 		await expect(dialog).toBeVisible();
-		const seen = await page.evaluate(() => {
+		const drawn = await page.evaluate(() => {
 			const root = document.querySelector("#popups")!.shadowRoot!;
 			const img = root.querySelector<HTMLImageElement>(".pan img")!;
 			const close = root.querySelector(".x")!.getBoundingClientRect();
@@ -1938,7 +1938,7 @@ test.describe("Picture on top", () => {
 				close: [Math.round(close.width), Math.round(close.height)],
 			};
 		});
-		expect(seen).toMatchObject({
+		expect(drawn).toMatchObject({
 			top: true,
 			shape: true,
 			panel: "rgb(247, 203, 69)",
@@ -1950,7 +1950,7 @@ test.describe("Picture on top", () => {
 			close: [44, 44],
 		});
 		// The public file address, which visitors can load.
-		expect(seen.src).toMatch(/^\/_emdash\/api\/media\/file\//);
+		expect(drawn.src).toMatch(/^\/_emdash\/api\/media\/file\//);
 		await page.keyboard.press("Escape");
 		await expect(dialog).toBeHidden();
 		await page.context().close();
