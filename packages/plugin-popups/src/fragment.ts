@@ -11,6 +11,7 @@ import {
 	AGAIN_DAYS,
 	buttonText,
 	DECLINE_LABEL,
+	highlightProblem,
 	isLive,
 	showsOn,
 	type Colors,
@@ -81,6 +82,8 @@ export function contentPrint(popup: Popup): string {
 		popup.thanks,
 		popup.start ?? "",
 		popup.end ?? "",
+		// Added in 0.3, and only when filled in, so what older popups say keeps its fingerprint.
+		...(popup.label || popup.note ? [popup.label, popup.note] : []),
 	].join("\u0000");
 	let hash = 0x811c9dc5;
 	for (let i = 0; i < parts.length; i++) {
@@ -96,12 +99,27 @@ export function opensNewTab(popup: Popup): boolean {
 }
 
 /** What the browser needs to know about one popup, and nothing else. Boxes in a page are drawn by the server. */
-export function clientItem(popup: Popup, siteOrigin: string): ClientItem | null {
-	return popup.kind === "inline" ? null : previewItem(popup, siteOrigin);
+export function clientItem(
+	popup: Popup,
+	siteOrigin: string,
+	settings?: Settings,
+): ClientItem | null {
+	return popup.kind === "inline" ? null : previewItem(popup, siteOrigin, settings);
+}
+
+/**
+ * The highlighted words to draw, or "": none when the look's own colours would make them
+ * hard to read (a colour change in Settings after the words were saved); they are then
+ * drawn like the rest of the heading.
+ */
+export function readableHighlight(popup: Popup, settings?: Settings): string {
+	if (!popup.highlight || !settings) return popup.highlight;
+	const { light, dark } = lookColours(settings);
+	return highlightProblem([light, dark].filter((c): c is Colors => !!c)) ? "" : popup.highlight;
 }
 
 /** The same for any kind, a box in a page included: what "Preview on your site" draws. */
-export function previewItem(popup: Popup, siteOrigin: string): ClientItem {
+export function previewItem(popup: Popup, siteOrigin: string, settings?: Settings): ClientItem {
 	const inline = popup.kind === "inline";
 	const c: ClientItem["c"] = {
 		h: popup.heading,
@@ -114,6 +132,15 @@ export function previewItem(popup: Popup, siteOrigin: string): ClientItem {
 		if (popup.picture.width) c.img.w = popup.picture.width;
 		if (popup.picture.height) c.img.h = popup.picture.height;
 	}
+	// Only what is set: an existing popup's page data stays exactly as it was.
+	if (popup.design === "top" && popup.picture) {
+		c.ds = 1;
+		if (popup.panel) c.pn = popup.panel;
+	}
+	if (popup.label) c.lb = popup.label;
+	if (popup.note) c.nt = popup.note;
+	const hl = readableHighlight(popup, settings);
+	if (hl) c.hl = hl;
 	if (popup.contains === "form" && popup.form && popup.kind !== "bar") {
 		c.form = popup.form;
 		c.ty = popup.thanks || "Thank you";
@@ -276,7 +303,7 @@ export function pageFragments(
 			(popup) =>
 				isLive(popup, now) && showsOn(popup, { path: page.path, collection: page.collection }),
 		)
-		.map((popup) => clientItem(popup, origin))
+		.map((popup) => clientItem(popup, origin, store.settings))
 		.filter((item): item is ClientItem => item !== null);
 	const previewId = previewIdOf(page.url);
 	const preview = previewId !== undefined;

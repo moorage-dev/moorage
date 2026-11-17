@@ -8,9 +8,12 @@ import {
 	cleanColor,
 	DECLINE_LABEL,
 	isLive,
+	highlightProblem,
 	isSafeLink,
 	KIND_LABEL,
 	MAX_HEADING,
+	MAX_LABEL,
+	MAX_NOTE,
 	MAX_POPUPS,
 	MAX_TEXT,
 	newId,
@@ -26,6 +29,7 @@ import {
 } from "./config.js";
 import type { ExportRange } from "./export-link.js";
 import { describeCheck, type FormCheck, type FormOption } from "./forms.js";
+import { lookColours } from "./fragment.js";
 import { hiddenFrom, HIDE_ACTION, hideForm } from "./help-line.js";
 import {
 	compare,
@@ -900,7 +904,17 @@ type Field = Record<string, unknown>;
 function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 	const bar = popup.kind === "bar";
 	const inline = popup.kind === "inline";
-	const fields: Field[] = [
+	const fields: Field[] = [];
+	if (!bar)
+		fields.push({
+			type: "text_input",
+			action_id: "label",
+			label: short
+				? `Small label above the heading (optional, up to ${MAX_LABEL} letters)`
+				: `Small label above the heading (optional, up to ${MAX_LABEL} letters), such as "Free guide"`,
+			initial_value: typed(state, "label", popup.label),
+		});
+	fields.push(
 		{
 			type: "text_input",
 			action_id: "heading",
@@ -912,6 +926,18 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 				: "Fresh from the oven, once a month",
 			initial_value: typed(state, "heading", popup.heading),
 		},
+		...(bar
+			? []
+			: [
+					{
+						type: "text_input",
+						action_id: "highlight",
+						label: short
+							? "Highlight these words (optional)"
+							: "Highlight these words (optional): copy a few words from the heading to show them in the button colour",
+						initial_value: typed(state, "highlight", popup.highlight),
+					},
+				]),
 		{
 			type: "text_input",
 			action_id: "text",
@@ -919,7 +945,7 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 			multiline: !bar,
 			initial_value: typed(state, "text", popup.text),
 		},
-	];
+	);
 	if (!bar) {
 		fields.push({
 			type: "combobox",
@@ -929,6 +955,39 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 			options: pictureOptions(state, popup),
 			initial_value: typed(state, "picture", popup.picture?.id ?? "none"),
 		});
+	}
+	if (!bar && state.admin) {
+		fields.push(
+			{
+				type: "radio",
+				action_id: "design",
+				label: "Design",
+				options: [
+					{
+						value: "plain",
+						label: short
+							? "Plain"
+							: "Plain: the picture as a strip across the top, words on the left",
+					},
+					{
+						value: "top",
+						label: short
+							? "Picture on top"
+							: "Picture on top: the whole picture on a coloured panel, words centred, a full-width button",
+					},
+				],
+				initial_value: typed(state, "design", popup.design),
+			},
+			{
+				type: "text_input",
+				action_id: "panel",
+				label:
+					"Panel colour behind the picture (optional, like #fde68a; empty uses the button colour)",
+				placeholder: "#fde68a",
+				initial_value: typed(state, "panel", popup.panel),
+				condition: { field: "design", eq: "top" },
+			},
+		);
 	}
 	if (!bar && state.admin) {
 		fields.push({
@@ -992,6 +1051,15 @@ function step2Fields(state: PageState, popup: Popup, short = false): Field[] {
 			},
 		);
 	}
+	if (!bar)
+		fields.push({
+			type: "text_input",
+			action_id: "note",
+			label: short
+				? `Small note under the button (optional, up to ${MAX_NOTE} letters)`
+				: `Small note under the button (optional, up to ${MAX_NOTE} letters), such as "Takes less than a minute"`,
+			initial_value: typed(state, "note", popup.note),
+		});
 	if (!bar && !inline) {
 		fields.push({
 			type: "select",
@@ -2050,6 +2118,11 @@ export async function handleInteraction(
 				heading: "",
 				text: "",
 				picture: null,
+				design: "plain",
+				panel: "",
+				label: "",
+				note: "",
+				highlight: "",
 				contains: "button",
 				buttonLabel: "",
 				buttonUrl: "",
@@ -2157,6 +2230,36 @@ async function wordsPart(
 		);
 	if (words.length > MAX_TEXT)
 		errors.push(`The text is ${words.length} letters; keep it to ${MAX_TEXT}.`);
+	const bar = popup.kind === "bar";
+	const label = bar ? "" : text(values, "label", popup.label);
+	const note = bar ? "" : text(values, "note", popup.note);
+	// Words typed into the heading's box keep their spacing; the check is on the saved heading.
+	const highlight = bar ? "" : text(values, "highlight", popup.highlight);
+	if (label.length > MAX_LABEL)
+		errors.push(`The label is ${label.length} letters; keep it to ${MAX_LABEL}.`);
+	if (note.length > MAX_NOTE)
+		errors.push(`The note is ${note.length} letters; keep it to ${MAX_NOTE}.`);
+	if (highlight && !heading.includes(highlight))
+		errors.push(
+			`The words to highlight, "${highlight}", are not in the heading. Copy them from the heading exactly, or leave the box empty.`,
+		);
+	else if (highlight) {
+		const { light, dark } = lookColours(state.store.settings);
+		const hard = highlightProblem(
+			[light, dark].filter((c) => !!c) as Array<NonNullable<typeof light>>,
+		);
+		if (hard) errors.push(hard);
+	}
+	const design =
+		state.admin && !bar && has(values, "design")
+			? values.design === "top"
+				? "top"
+				: "plain"
+			: popup.design;
+	const panelText = state.admin && !bar ? text(values, "panel", popup.panel) : popup.panel;
+	const panel = cleanColor(panelText);
+	if (panelText && !panel)
+		errors.push("Write the panel colour like #fde68a, or leave it empty to use the button colour.");
 	const contains =
 		state.admin && popup.kind !== "bar" && has(values, "contains")
 			? values.contains === "form"
@@ -2227,6 +2330,11 @@ async function wordsPart(
 			heading,
 			text: words,
 			picture,
+			design,
+			panel,
+			label,
+			note,
+			highlight,
 			contains,
 			form,
 			thanks: state.admin

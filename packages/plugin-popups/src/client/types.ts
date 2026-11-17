@@ -16,6 +16,13 @@ export interface ClientContent {
 	/** A form from Forms, by short name, and the thank-you heading. */
 	form?: string;
 	ty?: string;
+	/** "Picture on top": 1, with the panel's own colour when set (else the button colour). */
+	ds?: 1;
+	pn?: string;
+	/** A short label above the heading, words of the heading to highlight, a note under the button. */
+	lb?: string;
+	hl?: string;
+	nt?: string;
 	/** The quiet way out's words; empty for "only the close button". */
 	no: string;
 }

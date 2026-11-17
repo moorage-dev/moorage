@@ -157,7 +157,7 @@ describe("the stylesheet", () => {
 		expect(html).toContain("@media(prefers-color-scheme:dark){:host{--g:#1c211e");
 		const code = (out[0] as { code: string }).code;
 		expect(code).toContain('"colDark":{"g":"#1c211e"');
-		expect(gzipSync(code).length).toBeLessThan(9 * 1024);
+		expect(gzipSync(code).length).toBeLessThan(9.5 * 1024);
 	});
 });
 

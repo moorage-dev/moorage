@@ -34,7 +34,14 @@ import {
 } from "./config.js";
 import { checkExport, signExport } from "./export-link.js";
 import { checkForm, listForms, type FormCheck } from "./forms.js";
-import { boxColours, isPopupPreview, opensNewTab, pageFragments, previewItem } from "./fragment.js";
+import {
+	boxColours,
+	isPopupPreview,
+	opensNewTab,
+	pageFragments,
+	previewItem,
+	readableHighlight,
+} from "./fragment.js";
 import { withHelpLine } from "./help-line.js";
 import { fetchOwnSite } from "./self-fetch.js";
 import { forgetSettings, memoSettings } from "./settings-memo.js";
@@ -478,7 +485,7 @@ export function createPlugin() {
 					const store = await readStore(ctx);
 					const popup = store.popups.find((p) => p.id === id);
 					if (!popup) throw PluginRouteError.notFound("No such popup");
-					const item = previewItem(popup, originOf(ctx) ?? "");
+					const item = previewItem(popup, originOf(ctx) ?? "", store.settings);
 					const zone = await siteZone();
 					const now = Date.now();
 					return {
@@ -567,6 +574,15 @@ export function createPlugin() {
 							handle: popup.handle,
 							heading: popup.heading,
 							text: popup.text,
+							// Picture on top only with a picture; new fields only when set.
+							...(popup.design === "top" && popup.picture
+								? { design: "top", ...(popup.panel ? { panel: popup.panel } : {}) }
+								: {}),
+							...(popup.label ? { label: popup.label } : {}),
+							...(popup.note ? { note: popup.note } : {}),
+							...(readableHighlight(popup, store.settings)
+								? { highlight: readableHighlight(popup, store.settings) }
+								: {}),
 							picture: popup.picture
 								? {
 										url: popup.picture.url,
