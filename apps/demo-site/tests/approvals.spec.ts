@@ -845,6 +845,10 @@ test.describe.serial("Content Approval", () => {
 		await expect(page.getByText(/Approved by Ellen Marsh/).first()).toBeVisible();
 		await leave(ellen);
 		await page.goto(APPROVALS);
+		// The page draws its blocks after it loads: wait for them.
+		await expect(page.getByRole("heading", { name: "For you to approve" })).toBeVisible({
+			timeout: 60_000,
+		});
 		// Summer menu, left unticked, still waits.
 		await expect(page.getByText("Summer menu", { exact: true })).toBeVisible();
 	});
