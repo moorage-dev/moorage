@@ -1936,6 +1936,13 @@ test.describe("Picture on top", () => {
 				no: root.querySelector(".q")!.textContent,
 				centred: getComputedStyle(root.querySelector("h2")!).textAlign,
 				close: [Math.round(close.width), Math.round(close.height)],
+				// The page's own fonts: the heading in the page's main heading font, the text in its body font.
+				headingFont:
+					getComputedStyle(root.querySelector("h2")!).fontFamily ===
+					getComputedStyle(document.querySelector("h1")!).fontFamily,
+				textFont:
+					getComputedStyle(root.querySelector("dialog p")!).fontFamily ===
+					getComputedStyle(document.body).fontFamily,
 			};
 		});
 		expect(drawn).toMatchObject({
@@ -1948,11 +1955,44 @@ test.describe("Picture on top", () => {
 			no: "Thanks, I'm not interested",
 			centred: "center",
 			close: [44, 44],
+			headingFont: true,
+			textFont: true,
 		});
 		// The public file address, which visitors can load.
 		expect(drawn.src).toMatch(/^\/_emdash\/api\/media\/file\//);
 		await page.keyboard.press("Escape");
 		await expect(dialog).toBeHidden();
+		await page.context().close();
+	});
+});
+
+test.describe("Picture on top in a box in a page", () => {
+	test("draws the panel, label, highlighted words and note in the server's HTML", async ({
+		browser,
+	}) => {
+		const picture = await uploadPicture(browser);
+		const id = await make({
+			name: "Report box",
+			kind: "inline",
+			s2: { ...REPORT_WORDS, picture, design: "top", panel: "#f7cb45", contains: "button" },
+		});
+		const page = await visitor(browser);
+		await page.goto(`/popups-test?box=${id}`);
+		const region = page.getByRole("region", { name: REPORT_WORDS.heading });
+		await expect(region).toBeVisible();
+		await expect(region).toHaveClass(/popups-box-top/);
+		await expect(region.locator(".popups-box-pan img")).toHaveAttribute(
+			"src",
+			/^\/_emdash\/api\/media\/file\//,
+		);
+		await expect(region.locator(".popups-box-pan")).toHaveCSS(
+			"background-color",
+			"rgb(247, 203, 69)",
+		);
+		await expect(region.locator(".popups-box-label")).toHaveText(REPORT_WORDS.label);
+		await expect(region.locator("h2 .popups-box-hl")).toHaveText(REPORT_WORDS.highlight);
+		await expect(region.locator("h2")).toHaveText(REPORT_WORDS.heading);
+		await expect(region.locator(".popups-box-note")).toHaveText(REPORT_WORDS.note);
 		await page.context().close();
 	});
 });

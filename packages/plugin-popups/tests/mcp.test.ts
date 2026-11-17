@@ -226,6 +226,15 @@ describe("making and changing", () => {
 		expect(stored(fake).popups[0]).toMatchObject({ design: "top", devices: "phone" });
 	});
 
+	it("never lets an Editor finish a half-made popup, so it cannot be turned on before an Admin chooses where", async () => {
+		const fake = fakeContext({ popups: { popups: [popup({ step: 2, on: false })] } });
+		await tool(fake, "update", { id: "abcd1234", text: "New words." }, EDITOR);
+		expect(stored(fake).popups[0]).toMatchObject({ text: "New words.", step: 2, on: false });
+		expect(await refused(tool(fake, "turn_on", { id: "abcd1234" }, EDITOR))).toContain(
+			"not finished",
+		);
+	});
+
 	it("sets a picture from the media library without a signed-in cookie", async () => {
 		const fake = fakeContext({ popups: { popups: [popup()] } });
 		(fake.ctx as unknown as { media: Record<string, unknown> }).media.get = async (id: string) =>

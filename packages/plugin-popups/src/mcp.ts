@@ -558,7 +558,8 @@ export async function runTool(name: ToolName, raw: unknown, deps: ToolDeps): Pro
 	}
 	const changed = await apply(base, input, deps, popup.on);
 	// Checked in full like a finished popup's Save changes, so it counts as finished (still off).
-	const updated = changed.popup;
+	// Only an Admin finishes a half-made popup (where it shows is theirs to choose), as on the page.
+	const updated = state.admin ? changed.popup : { ...changed.popup, step: popup.step };
 	const save = saveWith(store.popups.map((p) => (p.id === popup.id ? updated : p)));
 	const saved = save.popups.find((p) => p.id === popup.id)!;
 	const view = { ...state, store: save };

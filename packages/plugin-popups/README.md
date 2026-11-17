@@ -152,7 +152,7 @@ Editors can change words, pictures, dates and on or off, preview, and read the r
 
 ## Use with an AI assistant (MCP)
 
-An AI assistant connected to your site through EmDash's MCP server can read and change popups with six tools. They are off until an Admin switches them on under Plugins > Popups in EmDash; the assistant's key needs the scope `mcp:tools:popups` (or `mcp:tools`). Each tool follows the same checks and the same rules as the admin page: Editors may change words, pictures, the button, the closing words, dates and on or off; Admins also the kind, the form, where it shows and the design. No tool deletes a popup.
+An AI assistant connected to your site through EmDash's MCP server can read and change popups with six tools. The tools are off until an Admin switches them on for Popups in EmDash's plugin settings. EmDash ties that consent to the tools as they are, so an update that changes a tool switches them off until an Admin switches them on again. The assistant's token needs the scope `mcp:tools:popups` (or `mcp:tools` for every plugin's tools). Needs EmDash 1.5.0 or later. Each tool follows the same checks and the same rules as the admin page: Editors may change words, pictures, the button, the closing words, dates and on or off; Admins also the kind, the form, where it shows and the design. No tool deletes a popup.
 
 | Tool               | What it does                                                                                     | Who                        |
 | ------------------ | ------------------------------------------------------------------------------------------------ | -------------------------- |

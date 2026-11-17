@@ -9,4 +9,4 @@ Needs EmDash 1.5.0 or later.
 - "Thanks, I'm not interested" joins the fixed words to say no.
 - Popups now use your page's own fonts: the page's text font, and its main heading's font for the heading. This changes the look of existing popups on sites whose theme sets its own fonts.
 - A picture can be chosen by an AI assistant's key as well as on the admin page.
-- Tools for an AI assistant (MCP): list, get, create, update, turn on and turn off popups, with the admin page's checks and role rules. They are off until an Admin switches them on in EmDash, and no tool deletes a popup.
+- Tools for an AI assistant (MCP): list, get, create, update, turn on and turn off popups, with the admin page's checks and role rules. They are off until an Admin switches them on in EmDash's plugin settings, and no tool deletes a popup.
