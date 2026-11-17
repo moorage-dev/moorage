@@ -168,23 +168,34 @@ export function rowActions(request: ApprovalRequest, reviewAction: string): Bloc
 	};
 }
 
-/** "Approve and publish all N", above the rows, for two or more waiting for this person. */
-export function allBlocks(forYou: ApprovalRequest[]): Block[] {
-	if (forYou.length < 2) return [];
+/**
+ * "Approve and publish all N", above the rows, for two or more waiting for this person. `cap`:
+ * the most one press can decide when nothing can follow in the background (a site without
+ * scheduled tasks); the button then offers the oldest `cap` and says so.
+ */
+export function allBlocks(all: ApprovalRequest[], cap = Number.POSITIVE_INFINITY): Block[] {
+	if (all.length < 2) return [];
+	const forYou = all.slice(0, Math.max(1, cap));
 	const n = forYou.length;
+	const capped = n < all.length;
 	const schedules = forYou.filter((r) => r.wants === "schedule").length;
 	const live = n - schedules;
+	const every = (k: number) => (k === n && !capped ? `All ${n}` : `${k}`);
 	const text = [
 		live > 0
-			? `${live === n ? `All ${n}` : live} ${live === 1 ? "page goes" : "pages go"} live now, oldest first.`
+			? `${every(live)} ${live === 1 ? "page goes" : "pages go"} live now, oldest first.`
 			: "",
 		schedules > 0
-			? `${schedules === n ? `All ${n}` : schedules} ${schedules === 1 ? "is a request" : "are requests"} to schedule: approved, not published; ${schedules === 1 ? "its writer then schedules it" : "their writers then schedule them"}.`
+			? `${every(schedules)} ${schedules === 1 ? "is a request" : "are requests"} to schedule: approved, not published; ${schedules === 1 ? "its writer then schedules it" : "their writers then schedule them"}.`
+			: "",
+		capped
+			? `This site runs no scheduled tasks, so a press decides ${n} at most: the other ${all.length - n} stay here for the next press.`
 			: "",
 		"A page that changed since this list was drawn is skipped and stays here.",
 	]
 		.filter(Boolean)
 		.join(" ");
+	const label = capped ? `Approve and publish the oldest ${n}` : `Approve and publish all ${n}`;
 	return [
 		{
 			type: "actions",
@@ -192,10 +203,10 @@ export function allBlocks(forYou: ApprovalRequest[]): Block[] {
 				{
 					type: "button",
 					action_id: BULK.all,
-					label: `Approve and publish all ${n}`,
+					label,
 					value: { rows: forYou.map((r) => optionValue(r)) },
 					confirm: {
-						title: `Approve and publish all ${n}?`,
+						title: `${label}?`,
 						text,
 						confirm: `Approve and publish ${n}`,
 						deny: "Cancel",
@@ -267,6 +278,10 @@ export function confirmView(input: {
 	waiting: ApprovalRequest[];
 	names: Names;
 	reason: string;
+	/** Whether what does not fit in the press can follow in the background (scheduled tasks). */
+	background: boolean;
+	/** The most one press decides, said when there is no background. */
+	cap?: number;
 	/** When this selection is stored: the button starts it and nothing else. */
 	at: string;
 }): { response: BlockResponse; rows: BulkItem[] } {
@@ -325,7 +340,9 @@ export function confirmView(input: {
 		notes.push("A request to schedule is approved, not published: its writer then schedules it.");
 	notes.push("Oldest first. A page that changed since this list was drawn is skipped.");
 	notes.push(
-		"A few are decided at once; any more follow in the background, and Waiting shows how far it is.",
+		input.background
+			? "A few are decided at once; any more follow in the background, and Waiting shows how far it is."
+			: `This site runs no scheduled tasks, so a press decides ${input.cap ?? "a few"} at most; the rest stay in Waiting.`,
 	);
 	if (input.reason === "") notes.push("To send them back instead, go back and write a note.");
 	const n = chosen.length;

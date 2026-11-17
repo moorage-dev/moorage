@@ -14,6 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import { runRemindTask } from "../src/actions.js";
+import { allBlocks } from "../src/bulk.js";
 import { DEFAULT_CONFIG, type Config } from "../src/config.js";
 import { meter } from "../src/meter.js";
 import plugin from "../src/plugin.js";
@@ -23,6 +24,8 @@ import {
 	decidedKeys,
 	decideNow,
 	endIfStalled,
+	LIST_CALLS,
+	pressCap,
 	runBlocks,
 	runLane,
 	runOf,
@@ -50,6 +53,7 @@ interface Item {
 	status: string;
 	data: Record<string, unknown>;
 	publishedTimes: number;
+	rev: number;
 }
 
 /** An in-memory site whose every call takes `callMs` of virtual time. */
@@ -67,7 +71,28 @@ class SlowSite {
 	private deadline = Number.POSITIVE_INFINITY;
 	private onTimeout: (() => void) | null = null;
 
-	constructor(public callMs: number) {}
+	/** Called after each KV write: a test may end the invocation there. */
+	afterKvSet?: (key: string) => void;
+	/** Give the plugin an email service (the writers' emails are queued as tasks). */
+	withEmail = false;
+
+	/** End the current invocation now, as EmDash's timeout would. */
+	endNow(): void {
+		this.deadline = this.clock;
+	}
+
+	/** Handlers EmDash stopped waiting for that still run (in-process). */
+	abandoned: Array<Promise<unknown>> = [];
+
+	/**
+	 * `sandboxed`: once the timeout wins, the invocation ends and its later calls never land.
+	 * `in-process`: EmDash stops waiting, but the handler keeps running and its calls still land,
+	 * while the retry may already run.
+	 */
+	constructor(
+		public callMs: number,
+		public mode: "sandboxed" | "in-process" = "sandboxed",
+	) {}
 
 	now = () => this.clock;
 
@@ -76,13 +101,15 @@ class SlowSite {
 	private current = 0;
 
 	private async call<T>(work: () => T, gen = this.current): Promise<T> {
-		if (this.dead || gen !== this.current) throw new Error("the invocation ended");
+		const inProcess = this.mode === "in-process";
+		if (!inProcess && (this.dead || gen !== this.current)) throw new Error("the invocation ended");
 		this.calls++;
 		this.clock += this.callMs;
-		if (this.clock > this.deadline) {
+		if (gen === this.current && this.clock > this.deadline) {
 			this.dead = true;
+			this.deadline = Number.POSITIVE_INFINITY;
 			this.onTimeout?.();
-			throw new Error("the invocation ended");
+			if (!inProcess) throw new Error("the invocation ended");
 		}
 		await Promise.resolve();
 		return work();
@@ -102,6 +129,7 @@ class SlowSite {
 		// The abandoned handler's later calls all fail: none of them changes the site.
 		running.catch(() => {});
 		const result = await Promise.race([running, timedOut]);
+		if (result === "timeout") this.abandoned.push(running.catch(() => {}));
 		this.dead = true;
 		this.deadline = Number.POSITIVE_INFINITY;
 		return result;
@@ -139,7 +167,25 @@ class SlowSite {
 		};
 		return {
 			kv: {
-				set: (key: string, value: unknown) => call(() => void this.kv.set(key, value)),
+				get: (key: string) => call(() => this.kv.get(key) ?? null),
+				getVersioned: (key: string) =>
+					call(() =>
+						this.kv.has(key)
+							? { value: this.kv.get(key), revision: JSON.stringify(this.kv.get(key)) }
+							: null,
+					),
+				compareAndSet: (key: string, revision: string | null, value: unknown) =>
+					call(() => {
+						const now = this.kv.has(key) ? JSON.stringify(this.kv.get(key)) : null;
+						if (now !== revision) return { applied: false };
+						this.kv.set(key, value);
+						return { applied: true };
+					}),
+				set: (key: string, value: unknown) =>
+					call(() => {
+						this.kv.set(key, value);
+						this.afterKvSet?.(key);
+					}),
 				delete: (key: string) => call(() => this.kv.delete(key)),
 			},
 			users: { get: (id: string) => call(() => (id === ADMIN.id ? ADMIN : null)) },
@@ -168,12 +214,15 @@ class SlowSite {
 				getVersioned: (_c: string, id: string) => {
 					return call(() => {
 						const item = this.item(id);
-						return item ? { item, _rev: `rev-${id}` } : null;
+						return item ? { item, _rev: `rev-${id}-${item.rev}` } : null;
 					});
 				},
-				publish: (_c: string, id: string) =>
+				publish: (_c: string, id: string, opts?: { _rev?: string }) =>
 					call(() => {
 						const item = this.items.get(id)!;
+						// EmDash refuses a publish whose revision token is no longer current.
+						if (opts?._rev !== `rev-${id}-${item.rev}`) throw new Error("CONFLICT");
+						item.rev++;
 						item.status = "published";
 						item.publishedTimes++;
 						const r = this.requests.get(`pages:${id}`);
@@ -208,6 +257,8 @@ class SlowSite {
 						})),
 					),
 			},
+			site: { name: "Harbour Street Bakery", url: "https://bakery.test", locale: "en" },
+			...(this.withEmail ? { email: { send: () => call(() => undefined) } } : {}),
 			log: { warn: () => call(() => undefined), info: () => call(() => undefined) },
 		};
 	}
@@ -222,7 +273,14 @@ class SlowSite {
 		for (let i = 1; i <= n; i++) {
 			const id = `p${i}`;
 			const data = { title: `Page ${i}`, content: "Iced coffee" };
-			this.items.set(id, { id, slug: `page-${i}`, status: "draft", data, publishedTimes: 0 });
+			this.items.set(id, {
+				id,
+				slug: `page-${i}`,
+				status: "draft",
+				data,
+				publishedTimes: 0,
+				rev: 0,
+			});
 			const at = new Date(Date.parse(RUN_AT) - (n - i) * 60_000 - 3_600_000).toISOString();
 			this.requests.set(`pages:${id}`, {
 				collection: "pages",
@@ -243,12 +301,12 @@ class SlowSite {
 	}
 
 	/** A run of this person's over `keys`, stored as the press leaves it, and its first task. */
-	async startRun(keys: string[]): Promise<void> {
+	async startRun(keys: string[], what: "publish" | "send_back" = "publish"): Promise<void> {
 		const rows = keys.map((key) => ({ key, seen: this.requests.get(key)!.fingerprint }));
 		const run: Run = {
 			id: "r1",
-			do: "publish",
-			reason: "",
+			do: what,
+			reason: what === "send_back" ? "Prices" : "",
 			total: rows.length,
 			lanes: 1,
 			at: RUN_AT,
@@ -527,4 +585,228 @@ describe("a reminder left from a request decided days ago", () => {
 			expect(site.tasks.size).toBe(0);
 		});
 	}
+});
+
+describe("approvals made meanwhile, and in-process turns that go on after the timeout", () => {
+	/** p2 approved by Ellen after the run started, without publishing (Review's Approve). */
+	async function approvedMeanwhile(site: SlowSite, key: string) {
+		const r = site.requests.get(key)!;
+		site.requests.set(key, {
+			...r,
+			status: "approved",
+			approval: {
+				by: { id: ADMIN.id, name: ADMIN.name },
+				at: new Date(Date.parse(RUN_AT) + 30_000).toISOString(),
+				fingerprint: r.fingerprint,
+				versionId: "v",
+			},
+		});
+	}
+
+	it("leaves a page she approved meanwhile without publishing unpublished, and says so", async () => {
+		const site = new SlowSite(10);
+		const keys = await site.addWaiting(3);
+		await site.startRun(keys);
+		await approvedMeanwhile(site, keys[1]!);
+		while ((await site.tick(cronTimeout())) !== "none");
+		expect(site.items.get("p2")?.status).toBe("draft");
+		expect(site.requests.get(keys[1]!)?.status).toBe("approved");
+		const result = site.lane().results.find((r) => r.key === keys[1]);
+		expect(result).toMatchObject({
+			state: "approved",
+			text: "Approved earlier; not published by this run.",
+		});
+		expect(site.items.get("p1")?.status).toBe("published");
+		expect(site.items.get("p3")?.status).toBe("published");
+		// Not counted as done on the banner.
+		const state = runOf(site.kv, ADMIN.id)!;
+		const done = decidedKeys(state, [...site.requests.values()], ADMIN.id);
+		expect(done.has(keys[1]!)).toBe(false);
+		expect(JSON.stringify(runBlocks(state, 0, done))).toContain(
+			"Approved 2 of 3 pages. 1 approved but not live yet.",
+		);
+	});
+
+	it("a retry that loses the publish to the earlier turn still running reports it live, and publishes once", async () => {
+		const site = new SlowSite(10, "in-process");
+		const keys = await site.addWaiting(1);
+		await site.startRun(keys);
+		// The earlier turn approved it (its note carries this run) and is about to publish.
+		const r = site.requests.get(keys[0]!)!;
+		site.requests.set(keys[0]!, {
+			...r,
+			status: "approved",
+			approval: {
+				by: { id: ADMIN.id, name: ADMIN.name },
+				at: new Date().toISOString(),
+				fingerprint: r.fingerprint,
+				versionId: "v",
+			},
+			publishing: {
+				by: { id: ADMIN.id, name: ADMIN.name },
+				at: new Date().toISOString(),
+				jobs: [],
+				run: "r1",
+			},
+		});
+		const ctx = site.ctx() as {
+			content: { getVersioned: (c: string, id: string) => Promise<unknown> };
+		};
+		const read = ctx.content.getVersioned;
+		// Right after the retry read the page, the earlier turn's publish lands.
+		ctx.content.getVersioned = async (c, id) => {
+			const out = await read(c, id);
+			const item = site.items.get(id)!;
+			item.rev++;
+			item.status = "published";
+			item.publishedTimes++;
+			site.requests.set(keys[0]!, { ...site.requests.get(keys[0]!)!, status: "published" });
+			return out;
+		};
+		await runLane(
+			meter(ctx as never),
+			{ user: ADMIN.id, run: "r1", lane: 0, seq: 0 },
+			async () => ({ config: CONFIG, entries: new Map(site.kv) }),
+		);
+		expect(site.items.get("p1")?.publishedTimes).toBe(1);
+		expect(site.lane().results[0]).toMatchObject({
+			state: "done",
+			text: "Approved and published. It's live now.",
+		});
+	});
+
+	for (const callMs of [500, 1_500]) {
+		it(`in-process at ${callMs} ms a call, with turns EmDash stops waiting for: each page published once, none reported not live`, async () => {
+			const site = new SlowSite(callMs, "in-process");
+			const keys = await site.addWaiting(6);
+			await site.startRun(keys);
+			// A timeout shorter than a turn, so EmDash stops waiting and retries while it goes on.
+			for (let i = 0; i < 40; i++) {
+				const result = await site.tick(4_000);
+				if (result === "none") {
+					await Promise.all(site.abandoned.splice(0));
+					if ([...site.tasks.keys()].length === 0) break;
+				}
+			}
+			await Promise.all(site.abandoned.splice(0));
+			expect(site.decided()).toHaveLength(6);
+			for (const item of site.items.values()) expect(item.publishedTimes, item.id).toBe(1);
+			const results = site.lane().results;
+			for (const r of results) {
+				const live = site.items.get(r.key.split(":")[1]!)?.status === "published";
+				if (live) expect(r.text, r.key).not.toContain("not live");
+			}
+		});
+	}
+});
+
+describe("a turn cut off right after it stored what it decided", () => {
+	it("has already queued the writers' emails and the text copies", async () => {
+		const site = new SlowSite(10);
+		site.withEmail = true;
+		const keys = await site.addWaiting(3);
+		await site.startRun(keys, "send_back");
+		let copies = 0;
+		site.afterKvSet = (key) => {
+			if (key.includes(":r1:")) site.endNow();
+		};
+		const base = site.ctx;
+		site.ctx = () => {
+			const ctx = base.call(site) as { storage: { versions: { putMany: () => Promise<void> } } };
+			const put = ctx.storage.versions.putMany;
+			ctx.storage.versions.putMany = async () => {
+				copies++;
+				return put();
+			};
+			return ctx;
+		};
+		await site.tick(cronTimeout());
+		expect(site.lane().results.filter((r) => r.state === "done")).toHaveLength(3);
+		expect([...site.tasks.keys()].some((name) => name.startsWith("send-"))).toBe(true);
+		// Send back keeps no text copy; an approval does.
+		expect(copies).toBe(0);
+	});
+
+	it("an approval of a request to schedule: its email and its text copy are written before the lane", async () => {
+		const site = new SlowSite(10);
+		site.withEmail = true;
+		const keys = await site.addWaiting(2);
+		for (const key of keys)
+			site.requests.set(key, { ...site.requests.get(key)!, wants: "schedule" });
+		await site.startRun(keys);
+		const order: string[] = [];
+		site.afterKvSet = (key) => {
+			if (key.includes(":r1:")) {
+				order.push("lane");
+				site.endNow();
+			}
+		};
+		const base = site.ctx;
+		site.ctx = () => {
+			const ctx = base.call(site) as {
+				storage: { versions: { putMany: () => Promise<void> } };
+				cron: { schedule: (n: string, o: unknown) => Promise<void> };
+			};
+			const put = ctx.storage.versions.putMany;
+			ctx.storage.versions.putMany = async () => {
+				order.push("copies");
+				return put();
+			};
+			const schedule = ctx.cron.schedule;
+			ctx.cron.schedule = async (n, o) => {
+				if (n.startsWith("send-")) order.push("emails");
+				return schedule(n, o);
+			};
+			return ctx;
+		};
+		await site.tick(cronTimeout());
+		expect(order).toEqual(["emails", "copies", "lane"]);
+	});
+});
+
+describe("the press cut by time with every row in reach", () => {
+	it("keeps the calls to store the rest and draw the list", async () => {
+		const site = new SlowSite(1_500);
+		const keys = await site.addWaiting(4);
+		const rows = keys.map((key) => ({ key, seen: site.requests.get(key)!.fingerprint }));
+		const m = meter(site.ctx() as never);
+		const done = await decideNow(m, CONFIG, ADMIN, new Map(), "publish", "", rows, site.now);
+		expect(done.ok).toBe(true);
+		expect(site.decided().length).toBeLessThan(4);
+		// The settings read before it (1) and the list after it (LIST_CALLS).
+		expect(1 + m.used() + LIST_CALLS).toBeLessThanOrEqual(25);
+		expect(site.tasks.size).toBe(1);
+	});
+});
+
+describe("words", () => {
+	it("a late turn after the run was ended as too slow does not say the person stopped it", async () => {
+		const site = new SlowSite(10);
+		const keys = await site.addWaiting(3);
+		await site.startRun(keys);
+		site.clock = Date.parse(RUN_AT) + 10 * 60_000;
+		const entries = new Map(site.kv);
+		// Its task is listed, but nothing moved for 41 minutes: ended.
+		site.clock = Date.parse(RUN_AT) + 41 * 60_000;
+		expect(await endIfStalled(site.ctx() as never, ADMIN.id, entries, site.clock)).toBe(true);
+		site.kv = entries;
+		await site.tick(cronTimeout());
+		const texts = site.lane().results.map((r) => r.text);
+		expect(texts).toEqual(
+			Array(3).fill("Not done: the run was stopped because this site was too slow."),
+		);
+	});
+
+	it("without scheduled tasks, the all button offers only what one press decides, and says so", async () => {
+		const site = new SlowSite(1);
+		await site.addWaiting(9);
+		const waiting = [...site.requests.values()];
+		const blocks = JSON.stringify(allBlocks(waiting, pressCap("publish", CONFIG)));
+		const cap = pressCap("publish", CONFIG);
+		expect(cap).toBeLessThan(9);
+		expect(blocks).toContain(`"label":"Approve and publish the oldest ${cap}"`);
+		expect(blocks).not.toContain("All 9");
+		expect(blocks).toContain(`the other ${9 - cap} stay here for the next press`);
+		expect(JSON.stringify(allBlocks(waiting))).toContain('"label":"Approve and publish all 9"');
+	});
 });

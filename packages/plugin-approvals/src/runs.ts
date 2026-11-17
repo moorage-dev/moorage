@@ -172,15 +172,21 @@ function taskPrefix(userId: string, run: string): string {
 	return `${RUN_TASK}-${userId}-${run}-`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 100);
 }
 
-/** Calls the list after a press needs: the requests, the approvers, the text copies. */
+/**
+ * Calls the list after a press needs: the requests, the approvers, the text copies. The KV is
+ * not read again: the press knows what it stored.
+ */
 export const LIST_CALLS = 3;
+/** Calls to store what is left after a press: the run read again, the run, its lane, its task. */
+const STORE_CALLS = 4;
 
 /**
  * The press: decide `rows` (oldest first) now, as many as fit in this request's calls and in
  * PRESS_MS, and send the rest to background turns. Its calls: the settings (1, the caller's),
- * the requests and the content types (2), each request (see rows.ts), the copies and the
- * emails (2), then either nothing more (all done) or the run, its lane and its first task (3),
- * and the list drawn after it (LIST_CALLS). Refused while one of this person's runs goes.
+ * the requests and the content types (2), each request (see rows.ts), the emails and the copies
+ * (2, and one kept for a failed publish), then either an earlier finished result removed (1) or
+ * the rest stored (STORE_CALLS), and the list drawn after it (LIST_CALLS). Refused while one of
+ * this person's runs goes.
  */
 export async function decideNow(
 	m: Meter,
@@ -196,53 +202,86 @@ export async function decideNow(
 	message: string;
 	/** What to show on the banner when nothing was stored (everything decided now). */
 	shown?: RunState;
+	/** The KV as it is now, for the list drawn after the press. */
+	entries?: Map<string, unknown>;
 	collections?: Decided["collections"];
 }> {
 	const ctx = m.ctx;
 	const startedAt = now();
 	const current = runOf(entries, user.id);
-	if (current?.running)
-		return {
-			ok: false,
-			message: "Your earlier decision on several pages is still going. Wait for it, or stop it.",
-		};
+	if (current?.running) return { ok: false, message: STILL_GOING };
 	if (rows.length === 0)
 		return { ok: false, message: "None of those is waiting for you any more." };
 	const at = new Date(startedAt).toISOString();
-	// All of them now, if they fit: then nothing is stored. If not, the run, its lane and its task.
-	const fixed = 2 + 2 + LIST_CALLS;
-	const fitAll = Math.floor((m.left(CALLS_PER_RUN_1_5) - fixed) / rowCost(what, config));
-	const reserve = LIST_CALLS + (rows.length <= fitAll ? 0 : 3);
-	const decided = await decideRows(m, config, user, what, reason, rows, reserve, at, {
-		allowanceMs: PRESS_MS,
-		startedAt,
-		now,
-	});
-	const { results, rest } = decided;
 	const id = `${startedAt.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+	// Without scheduled tasks nothing can follow in the background: no calls kept to store it.
+	const background = Boolean(ctx.cron);
+	const earlier = entries.has(`${RUN_PREFIX}${user.id}`) ? 1 : 0;
+	const decided = await decideRows(
+		m,
+		config,
+		user,
+		what,
+		reason,
+		rows,
+		LIST_CALLS + earlier,
+		at,
+		{ allowanceMs: PRESS_MS, startedAt, now },
+		{ runId: id, stopReserve: background ? STORE_CALLS : 0 },
+	);
+	const { results, rest } = decided;
+	// The emails and the text copies first: a press cut off after them loses only what is left.
+	await decided.finish();
+	const done = results.filter((r) => r.state === "done").length;
 	const run: Run = { id, do: what, reason, total: rows.length, lanes: 1, at };
+	const after = new Map(entries);
 	if (rest.length > 0 && ctx.cron) {
+		// Another tab's press may store a run at the same moment: the run record is written only
+		// if it is still what it was just now (compare and set), so one of two presses wins.
+		const runKey = `${RUN_PREFIX}${user.id}`;
 		const lane: Lane = { run: id, seq: 0, rows: rest, results, movedAt: at };
-		// The run's record replaces any earlier one of this person's; its lanes are deleted
-		// when the page next opens (staleKeys).
-		await ctx.kv.set(`${RUN_PREFIX}${user.id}`, run);
+		const stored = await ctx.kv.getVersioned(runKey);
+		const theirs = isRecord(stored?.value) ? stored.value : null;
+		const busy = theirs !== null && theirs.id !== current?.run.id;
+		const won =
+			!busy && (await ctx.kv.compareAndSet(runKey, stored?.revision ?? null, run)).applied;
+		if (!won) {
+			return {
+				ok: false,
+				message: `${done} done. Another decision of yours started at the same time, so the other ${rest.length} were not started: they stay in Waiting.`,
+				entries: theirs ? new Map([...after, [runKey, theirs]]) : after,
+				collections: decided.collections,
+			};
+		}
 		await ctx.kv.set(laneKey(user.id, id, 0), lane);
 		await ctx.cron.schedule(taskName(user.id, id, 0, 0), {
 			schedule: new Date().toISOString(),
 			data: { user: user.id, run: id, lane: 0, seq: 0 },
 		});
-		await decided.finish();
-		const done = results.filter((r) => r.state !== "failed").length;
+		after.set(`${RUN_PREFIX}${user.id}`, run);
+		after.set(laneKey(user.id, id, 0), lane);
 		return {
 			ok: true,
 			message: `${done} done. The other ${rest.length} ${rest.length === 1 ? "follows" : "follow"} in the background; you can leave this page.`,
+			entries: after,
 			collections: decided.collections,
 		};
 	}
-	await decided.finish();
+	// Everything decided now: nothing stored, and an earlier finished result is put away, so it
+	// does not come back on the next load.
+	if (earlier) {
+		await ctx.kv.delete(`${RUN_PREFIX}${user.id}`).catch(() => false);
+		after.delete(`${RUN_PREFIX}${user.id}`);
+	}
 	const endedAt = new Date().toISOString();
-	// Nothing stored: what was decided shows on the list just drawn, and in History.
-	const leftOut = rest.map((r) => notDone(r, "Not done: try it again from the list."));
+	const leftOut = rest.map((r) =>
+		notDone(
+			r,
+			background
+				? "Not done: try it again from the list."
+				: "Not done: this site has no scheduled tasks, so only a few are decided at a time. Decide it from the list.",
+		),
+	);
 	const all = [...results, ...leftOut];
 	const shown: RunState = {
 		run,
@@ -252,7 +291,6 @@ export async function decideNow(
 		left: 0,
 		running: false,
 	};
-	const done = all.filter((r) => r.state === "done").length;
 	return {
 		ok: true,
 		message:
@@ -260,9 +298,25 @@ export async function decideNow(
 				? `Approved ${done} of ${rows.length}.`
 				: `Sent back ${done} of ${rows.length}.`,
 		shown,
+		entries: after,
 		collections: decided.collections,
 	};
 }
+
+/**
+ * The most one press decides when nothing is stored for later (no scheduled tasks): what its
+ * calls allow at the worst cost per page. Paths: the settings, the requests and the content
+ * types, the emails, the copies and one call kept, an earlier result removed, the list.
+ */
+export function pressCap(what: RowDo, config: Config): number {
+	return Math.max(
+		1,
+		Math.floor((CALLS_PER_RUN_1_5 - 1 - 2 - 3 - 1 - LIST_CALLS) / rowCost(what, config)),
+	);
+}
+
+const STILL_GOING =
+	"Your earlier decision on several pages is still going. Wait for it, or stop it.";
 
 /**
  * One lane's turn: re-read who decides (their role may have changed), decide what fits in the
@@ -314,9 +368,11 @@ export async function runLane(
 		} satisfies Lane);
 	};
 	if (run.stopped || !config) {
-		const text = run.stopped
-			? "Not done: you stopped it."
-			: "Not done: the approval settings could not be read, so it stopped. Decide it from the list.";
+		const text = run.stalled
+			? "Not done: the run was stopped because this site was too slow."
+			: run.stopped
+				? "Not done: you stopped it."
+				: "Not done: the approval settings could not be read, so it stopped. Decide it from the list.";
 		await store([], [...lane.results, ...lane.rows.map((r) => notDone(r, text))]);
 		return;
 	}
@@ -337,20 +393,28 @@ export async function runLane(
 		);
 		return;
 	}
-	const decided = await decideRows(m, config, user, run.do, run.reason, lane.rows, 2, run.at, {
-		allowanceMs: clock.allowanceMs ?? TURN_MS,
-		startedAt,
-		now,
-	});
+	const decided = await decideRows(
+		m,
+		config,
+		user,
+		run.do,
+		run.reason,
+		lane.rows,
+		1,
+		run.at,
+		{ allowanceMs: clock.allowanceMs ?? TURN_MS, startedAt, now },
+		{ runId, stopReserve: 1 },
+	);
 	const { results, rest } = decided;
-	// What was decided first, then the next turn, then the copies and the emails.
+	// The emails and the text copies first (a turn cut off after them loses neither; its retry
+	// counts the rows as decided), then what was decided, then the next turn.
+	await decided.finish();
 	await store(rest, [...lane.results, ...results]);
 	if (rest.length > 0 && ctx.cron)
 		await ctx.cron.schedule(taskName(userId, runId, laneNo, seq + 1), {
 			schedule: new Date().toISOString(),
 			data: { user: userId, run: runId, lane: laneNo, seq: seq + 1 },
 		});
-	await decided.finish();
 }
 
 function notDone(row: Row, text: string): RowResult {
@@ -416,9 +480,10 @@ export async function dismissRun(
 export const RUN_ACTION = { stop: "bulk_stop", dismiss: "bulk_dismiss", refresh: "back" } as const;
 
 /**
- * The keys of this run's requests that this person decided since it started, as the requests
- * read for the page say: the count on the banner, right even when a turn was cut off before it
- * stored its lane.
+ * The keys of this run's requests done as asked since it started, as the requests read for the
+ * page say: sent back, or published (a request to schedule: approved). The count on the
+ * banner, right even when a turn was cut off before it stored its lane. An approval not yet
+ * live is not done.
  */
 export function decidedKeys(
 	state: RunState | null,
@@ -426,6 +491,7 @@ export function decidedKeys(
 		collection: string;
 		entryId: string;
 		status: string;
+		wants?: string;
 		approval?: { by: { id: string }; at: string };
 		sentBack?: { by: { id: string }; at: string };
 	}>,
@@ -446,12 +512,13 @@ export function decidedKeys(
 				? request.status === "sent_back"
 					? request.sentBack
 					: undefined
-				: request.status === "approved" || request.status === "published"
+				: request.status === "published" ||
+					  (request.status === "approved" && request.wants === "schedule")
 					? request.approval
 					: undefined;
 		if (by && by.by.id === userId && by.at >= since) keys.add(k);
 	}
-	for (const r of state.results) if (r.state !== "failed") keys.add(r.key);
+	for (const r of state.results) if (r.state === "done") keys.add(r.key);
 	return keys;
 }
 
@@ -464,14 +531,16 @@ export function runBlocks(
 	if (!state) return [];
 	const { run, results } = state;
 	const done = Math.max(results.filter((r) => r.state === "done").length, decided.size);
-	const look = results.filter((r) => r.state !== "done");
+	const look = results.filter((r) => r.state === "failed");
+	const notLive = results.filter((r) => r.state === "approved" && !decided.has(r.key)).length;
+	const notLiveText = notLive > 0 ? `, ${notLive} approved but not live yet` : "";
 	const pages = `${run.total} ${run.total === 1 ? "page" : "pages"}`;
 	const doing = run.do === "publish" ? "Approving" : "Sending back";
 	if (state.running) {
 		return [
 			{
 				type: "banner",
-				title: `${doing} ${pages}: ${done} done${look.length > 0 ? `, ${look.length} need a look` : ""}. You can leave this page.`,
+				title: `${doing} ${pages}: ${done} done${notLiveText}${look.length > 0 ? `, ${look.length} need a look` : ""}. You can leave this page.`,
 				description:
 					"The rest are decided in the background, a few at a time, oldest first. Refresh to see how far it is.",
 			},
@@ -497,12 +566,12 @@ export function runBlocks(
 	}
 	const finished = run.stalled
 		? `Stopped: this site was too slow to finish. ${done} decided; the rest are still waiting.`
-		: `${run.stopped ? "Stopped. " : ""}${run.do === "publish" ? `Approved ${done} of ${pages}.` : `Sent back ${done} of ${pages}.`}`;
+		: `${run.stopped ? "Stopped. " : ""}${run.do === "publish" ? `Approved ${done} of ${pages}.` : `Sent back ${done} of ${pages}.`}${notLive > 0 ? ` ${notLive} approved but not live yet.` : ""}`;
 	const failed = look.length > 0 && !run.stalled;
 	return [
 		{
 			type: "banner",
-			variant: failed || run.stalled ? "alert" : "default",
+			variant: failed || notLive > 0 || run.stalled ? "alert" : "default",
 			title: `${finished}${failed ? ` ${look.length} need a look${ticked > 0 ? `; ${ticked === look.length ? "they are" : `${ticked} still waiting are`} ticked below` : ""}.` : ""}`,
 		},
 		...(results.length > 0
@@ -510,7 +579,7 @@ export function runBlocks(
 					{
 						type: "accordion" as const,
 						label: "Each page",
-						...(look.length > 0 ? { default_open: true } : {}),
+						...(look.length > 0 || notLive > 0 ? { default_open: true } : {}),
 						blocks: results.flatMap((r) => [
 							{ type: "section" as const, text: r.title },
 							{ type: "context" as const, text: r.text },

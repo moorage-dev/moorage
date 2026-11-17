@@ -56,6 +56,7 @@ import {
 	needsLook,
 	pickOf,
 	RUN_ACTION,
+	pressCap,
 	runBlocks,
 	runOf,
 	stopRun,
@@ -215,6 +216,19 @@ function forYouRows(
 	return blocks;
 }
 
+/** "N more are not listed here", under a list cut to keep the page within EmDash's limit. */
+function moreLine(total: number, shown: number): Block[] {
+	const more = total - Math.min(total, shown);
+	return more > 0
+		? [
+				{
+					type: "context",
+					text: `${more} more ${more === 1 ? "is" : "are"} not listed here, to keep this page small.`,
+				},
+			]
+		: [];
+}
+
 /** This person's own requests, each with why it waits. An admin may open theirs to publish it without review. */
 function yoursRows(
 	list: ApprovalRequest[],
@@ -222,6 +236,7 @@ function yoursRows(
 	user: UserInfo | undefined,
 	names: Map<string, string>,
 	others: UserInfo[],
+	limit = list.length,
 ): Block[] {
 	if (list.length === 0) {
 		return [
@@ -237,7 +252,7 @@ function yoursRows(
 		? "needs a second person: nobody else on this site can approve it"
 		: `waiting for ${peopleList(others)}`;
 	const blocks: Block[] = [];
-	for (const request of list) {
+	for (const request of list.slice(0, limit)) {
 		const open = config ? canReview(config, request, user) : false;
 		blocks.push(
 			{
@@ -266,12 +281,18 @@ function yoursRows(
 			{ type: "divider" },
 		);
 	}
+	blocks.push(...moreLine(list.length, limit));
 	return blocks;
 }
 
-function sentBackRows(list: ApprovalRequest[], names: Map<string, string>): Block[] {
-	if (list.length === 0) return [{ type: "empty", title: "Nothing sent back" }];
+function sentBackRows(
+	all: ApprovalRequest[],
+	names: Map<string, string>,
+	limit = all.length,
+): Block[] {
+	if (all.length === 0) return [{ type: "empty", title: "Nothing sent back" }];
 	const blocks: Block[] = [];
+	const list = all.slice(0, limit);
 	for (const request of list) {
 		blocks.push(
 			{ type: "section", text: request.title, accessory: openLink(request) },
@@ -282,6 +303,7 @@ function sentBackRows(list: ApprovalRequest[], names: Map<string, string>): Bloc
 			{ type: "divider" },
 		);
 	}
+	blocks.push(...moreLine(all.length, limit));
 	return blocks;
 }
 
@@ -320,7 +342,12 @@ async function approvedCopies(
 	return ids.length > 0 ? await versions(ctx).getMany(ids) : new Map();
 }
 
-function historyRows(rows: ApprovalRequest[], copies: Map<string, ApprovedVersion>): Block[] {
+function historyRows(
+	all: ApprovalRequest[],
+	copies: Map<string, ApprovedVersion>,
+	limit = all.length,
+): Block[] {
+	const rows = all.slice(0, limit);
 	if (rows.length === 0)
 		return [
 			{
@@ -350,6 +377,7 @@ function historyRows(rows: ApprovalRequest[], copies: Map<string, ApprovedVersio
 		}
 		blocks.push({ type: "divider" });
 	}
+	blocks.push(...moreLine(all.length, limit));
 	return blocks;
 }
 
@@ -827,28 +855,30 @@ async function listPage(
 			const several = !run?.running;
 			waitingBlocks.push(
 				{ type: "header", text: "For you to approve" },
-				...(several ? allBlocks(forYou) : []),
+				...(several && config
+					? allBlocks(forYou, ctx.cron ? undefined : pressCap("publish", config))
+					: []),
 				...forYouRows(forYou, labels, config, rowsShown),
 				...(several ? bulkBlocks(forYou, labels, form) : []),
 			);
 			if (yours.length > 0)
 				waitingBlocks.push(
 					{ type: "header", text: "Yours, waiting" },
-					...yoursRows(yours, config, user, names, others),
+					...yoursRows(yours, config, user, names, others, rowsShown),
 				);
 		} else {
 			waitingBlocks.push(
 				{ type: "header", text: "Yours, waiting" },
-				...yoursRows(yours, config, user, names, others),
+				...yoursRows(yours, config, user, names, others, rowsShown),
 			);
 		}
 
 		// Short labels, no counts: four tabs with counts ran off a 390 px phone's screen.
 		// The numbers at the top of Waiting carry the counts.
-		const history = historyRows(historyShown, copies);
+		const history = historyRows(historyShown, copies, rowsShown);
 		const panels = [
 			{ label: "Waiting", blocks: [...waitingBlocks, ...drafts] },
-			{ label: "Sent back", blocks: sentBackRows(sentBack, names) },
+			{ label: "Sent back", blocks: sentBackRows(sentBack, names, rowsShown) },
 			{ label: "History", blocks: history },
 			...(admin
 				? [
@@ -867,10 +897,11 @@ async function listPage(
 			...(toast ? { toast } : {}),
 		};
 	};
-	let shown = forYou.length;
+	// Every list cut to the same length, longest first, until the page fits.
+	let shown = Math.max(forYou.length, yours.length, sentBack.length, historyShown.length);
 	let response = draw(shown);
 	for (let n = countNodes(response); n > MAX_NODES && shown > 0; n = countNodes(response)) {
-		shown = Math.max(0, shown - Math.ceil((n - MAX_NODES) / 20));
+		shown = Math.max(0, Math.min(shown - 1, shown - Math.ceil((n - MAX_NODES) / 40)));
 		response = draw(shown);
 	}
 	return response;
@@ -1255,7 +1286,7 @@ async function adminScreen(
 				{ type: done.ok ? "success" : "error", message: done.message },
 				undefined,
 				undefined,
-				done.shown ? new Map() : await loadConfigWith(ctx).then((r) => r.entries),
+				done.entries ?? entries,
 				{
 					...(done.shown ? { shown: done.shown } : {}),
 					...(done.collections ? { collections: done.collections } : {}),
@@ -1305,6 +1336,8 @@ async function adminScreen(
 		// The buttons carry this time: they decide this selection and no later one (another tab).
 		const at = new Date().toISOString();
 		const confirm = confirmView({
+			background: Boolean(ctx.cron),
+			cap: pressCap("publish", config),
 			config,
 			user,
 			items: ticked,

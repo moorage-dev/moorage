@@ -3,6 +3,7 @@
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { countNodes } from "../src/admin.js";
 import { HELP_LINE } from "../src/help-line.js";
 import type { ApprovalRequest } from "../src/requests.js";
 
@@ -1634,5 +1635,93 @@ describe("the second audit of bulk runs", () => {
 		expect(lanes).toContain(
 			"Not done: the approval settings could not be read, so it stopped. Decide it from the list.",
 		);
+	});
+});
+
+describe("an earlier result after a newer decision", () => {
+	it("is put away when a newer press decides everything at once, so it does not come back on reload", async () => {
+		const s = await site(HELD);
+		await held(s, "Page 1");
+		await held(s, "Page 2");
+		const pick = allValues(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		// The first decision ends with one that needs a look: it is ticked on the list.
+		await s.host.admin.submit("/overview", "bulk_review", { pick }, { user: s.admin });
+		const stored = await s.host.inspect.kv.get<{ rows: Array<{ key: string; seen: string }> }>(
+			`state:bulk-pick:${s.admin.id}`,
+		);
+		await s.host.fixtures.plugin.kv(`state:bulk-pick:${s.admin.id}`, {
+			...stored,
+			rows: [...stored!.rows, { key: "pages:gone", seen: "x" }],
+		});
+		// A finished result of an earlier, stored run: as the background leaves it.
+		await s.host.fixtures.plugin.kv(`state:bulk:${s.admin.id}`, {
+			id: "old",
+			do: "publish",
+			reason: "",
+			total: 9,
+			lanes: 1,
+			at: new Date(Date.now() - 3_600_000).toISOString(),
+		});
+		await s.host.fixtures.plugin.kv(`state:bulk:${s.admin.id}:old:0`, {
+			run: "old",
+			seq: 3,
+			rows: [],
+			results: [{ key: "pages:x", title: "Old page", state: "failed", text: "Changed." }],
+			endedAt: new Date(Date.now() - 3_000_000).toISOString(),
+		});
+		expect(text(await s.host.admin.loadPage("/overview", { user: s.admin }))).toContain(
+			"Approved 0 of 9 pages.",
+		);
+		await s.host.admin.act("/overview", "bulk_go", {
+			user: s.admin,
+			value: await pickValue(s, s.admin),
+		});
+		await settled();
+		const reload = text(await s.host.admin.loadPage("/overview", { user: s.admin }));
+		expect(reload).not.toContain("Approved 0 of 9 pages.");
+		expect(reload).not.toContain("Old page");
+	});
+});
+
+describe("a page with very many requests", () => {
+	// EmDash returns at most 100 requests to one query, so the page never holds more than 100;
+	// 100 sent back came to 1,953 values before every tab was cut (EmDash refuses over 2,000).
+	it("opens with 150 sent back and 100 waiting, every tab cut to fit, each saying how many more", async () => {
+		const s = await site(HELD);
+		const id = await held(s, "Summer menu");
+		const stored = (await s.host.inspect.storage.get<ApprovalRequest>("requests", `pages:${id}`))!;
+		const at = (i: number) =>
+			new Date(Date.parse("2026-11-01T00:00:00Z") + i * 60_000).toISOString();
+		for (let i = 0; i < 150; i++)
+			await s.host.fixtures.plugin.storage("requests", `pages:back${i}`, {
+				...stored,
+				entryId: `back${i}`,
+				title: `Sent back ${i + 1}`,
+				status: "sent_back",
+				sentBack: {
+					by: { id: s.admin.id, name: "Ellen Marsh" },
+					at: at(i),
+					note: "The prices on this page are out of date; please check them against the new menu.",
+				},
+				// EmDash returns at most 100 requests to one query: the most recently changed. Sent back
+				// last, they fill it.
+				updatedAt: at(i + 600),
+			});
+		for (let i = 0; i < 99; i++)
+			await s.host.fixtures.plugin.storage("requests", `pages:wait${i}`, {
+				...stored,
+				entryId: `wait${i}`,
+				title: `Waiting ${i + 1}`,
+				requestedAt: at(i),
+				updatedAt: at(i + 400),
+			});
+		const page = await s.host.admin.loadPage("/overview", { user: s.admin });
+		const body = text(page);
+		console.info(
+			`very many: ${countNodes(page)} values, ${body.length} bytes; ${(body.match(/not listed/g) ?? []).length} cut lists; ${(body.match(/"Sent back \d+"/g) ?? []).length} sent back rows`,
+		);
+		expect(body).toContain('"label":"Waiting"');
+		expect(countNodes(page)).toBeLessThanOrEqual(1_950);
+		expect(body).toMatch(/\d+ more are not listed here, to keep this page small\./);
 	});
 });

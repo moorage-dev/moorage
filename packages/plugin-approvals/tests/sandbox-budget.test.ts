@@ -2308,6 +2308,56 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 		});
 	}
 
+	// The audit's worst cases for the press that stores what is left: checks off, the first rows
+	// refused as changed (cheaper than a decision, so more rows are reached), the rest decided.
+	for (const changedFirst of [1, 3]) {
+		it(`the press, ${changedFirst} changed first, checks off, 12 chosen: within the limit with the list`, async () => {
+			const s = await site({ config: { ...HELD, checks: "off" } });
+			const ids: string[] = [];
+			for (let i = 0; i < 12; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+			const list = await s.host.admin.loadPage("/overview", { user: admin(s) });
+			const value = allButtonValue(list);
+			for (const id of ids.slice(0, changedFirst))
+				await edit(s, id, { ...DATA, title: `Page ${ids.indexOf(id) + 1}`, content: "Changed" });
+			await drain();
+			await cold(s);
+			const m = await measure(() =>
+				s.host.admin.act("/overview", "bulk_all", { user: admin(s), value }),
+			);
+			const { own } = splitDeferred(m.calls);
+			console.info(`bulk all 12, ${changedFirst} changed first: ${own.length} ${own.join(" ")}`);
+			expect(m.error).toBeUndefined();
+			expect(own.length).toBeLessThanOrEqual(NEW_BUDGET);
+			expect(text(m.result)).toContain("You can leave this page.");
+		});
+	}
+
+	// Two tabs pressed at once: both read the KV before either stored its run.
+	it("two presses at once: the second keeps the first's run and says what it left", async () => {
+		const s = await site();
+		const ids: string[] = [];
+		for (let i = 0; i < 16; i++) ids.push(await waiting(s, `Page ${i + 1}`));
+		const list = await s.host.admin.loadPage("/overview", { user: admin(s) });
+		const value = allButtonValue(list) as { rows: string[] };
+		const first = { rows: value.rows.slice(0, 8) };
+		const second = { rows: value.rows.slice(8) };
+		const [a, b] = await Promise.all([
+			s.host.admin.act("/overview", "bulk_all", { user: admin(s), value: first }),
+			s.host.admin.act("/overview", "bulk_all", { user: admin(s), value: second }),
+		]);
+		const toasts = [a.toast?.message, b.toast?.message].join(" | ");
+		console.info(`two presses: ${toasts}`);
+		const run = await s.host.inspect.kv.get<{ id: string; total: number }>(
+			`state:bulk:${admin(s).id}`,
+		);
+		const lanes = (await s.host.inspect.kv.list()).filter((e) =>
+			e.id.startsWith(`state:bulk:${admin(s).id}:`),
+		);
+		// Exactly one run stored, and its lane is the one the run record names.
+		expect(lanes.map((l) => l.id)).toEqual([`state:bulk:${admin(s).id}:${run!.id}:0`]);
+		expect(toasts).toContain("Another decision of yours started at the same time");
+	});
+
 	// kvList storageGetMany (the button carries the list: no query), schemaListCollections, the
 	// pages, storagePutMany, then the list.
 	it("Approve and publish all 4: decided at once, within the limit", async () => {
