@@ -530,6 +530,14 @@ function settingsBlocks(
 				initial_value: current.ai,
 			},
 			{
+				type: "toggle",
+				action_id: "aiApprove",
+				label: "AI tools may approve",
+				description:
+					"Lets an AI tool connected to your site approve and publish, or send back, what waits for approval, acting for the person whose key it uses, that person's own requests included. Each decision is recorded as made by an AI tool for that person. Off: only people decide.",
+				initial_value: current.aiApprove,
+			},
+			{
 				type: "select",
 				action_id: "checks",
 				label: "Check for a search description and a sharing picture",
@@ -573,7 +581,9 @@ function settingsBlocks(
 		},
 		{
 			type: "context",
-			text: "Nobody approves their own request. A change after approval needs approval again.",
+			text: current.aiApprove
+				? "Nobody approves their own request on these pages; an AI tool may, as set above. A change after approval needs approval again."
+				: "Nobody approves their own request. A change after approval needs approval again.",
 		},
 		{ type: "divider" },
 		{ type: "header", text: "What approval can't hold" },

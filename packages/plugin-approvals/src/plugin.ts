@@ -13,7 +13,20 @@ import {
 } from "./actions.js";
 import { handleAdmin } from "./admin.js";
 import { approverRole, isHeldRole, loadConfig } from "./config.js";
-import { QUEUE_ROUTE, queueTool, STATUS_ROUTE, statusTool, tools } from "./mcp.js";
+import {
+	APPROVE_ROUTE,
+	ASK_ROUTE,
+	askTool,
+	CHANGES_ROUTE,
+	changesTool,
+	decideTool,
+	QUEUE_ROUTE,
+	queueTool,
+	SEND_BACK_ROUTE,
+	STATUS_ROUTE,
+	statusTool,
+	tools,
+} from "./mcp.js";
 import { meter } from "./meter.js";
 import { deliver, queueMail, readJobs, SEND_TASK } from "./notify.js";
 import { handlePanel } from "./panel.js";
@@ -243,7 +256,7 @@ const plugin: SandboxedPlugin = {
 				return { toast, refresh: true };
 			},
 		},
-		// MCP tools (read-only); an Admin switches them on in EmDash. Anyone who can read content
+		// MCP tools; an Admin switches them on in EmDash. queue and status: anyone who can read content
 		// may call them, and each handler shows a person only what the plugin's own pages do.
 		[QUEUE_ROUTE]: {
 			permission: "content:read",
@@ -252,6 +265,28 @@ const plugin: SandboxedPlugin = {
 		[STATUS_ROUTE]: {
 			permission: "content:read",
 			handler: async (routeCtx, ctx) => statusTool(ctx, routeCtx.user, routeCtx.input),
+		},
+		// For a reviewer that is an AI tool. Approving and sending back need what approvers have
+		// (Editors and up may publish others' pages); the handlers then apply the plugin's own rule
+		// (who approves under the settings) and refuse unless an Admin allowed AI approval.
+		[CHANGES_ROUTE]: {
+			permission: "content:read_drafts",
+			handler: async (routeCtx, ctx) => changesTool(ctx, routeCtx.user, routeCtx.input),
+		},
+		[APPROVE_ROUTE]: {
+			permission: "content:publish_any",
+			handler: async (routeCtx, ctx) =>
+				decideTool(ctx, routeCtx.user, routeCtx.input, routeCtx.request, "approve"),
+		},
+		[SEND_BACK_ROUTE]: {
+			permission: "content:publish_any",
+			handler: async (routeCtx, ctx) =>
+				decideTool(ctx, routeCtx.user, routeCtx.input, routeCtx.request, "send_back"),
+		},
+		[ASK_ROUTE]: {
+			permission: "content:read_drafts",
+			handler: async (routeCtx, ctx) =>
+				askTool(ctx, routeCtx.user, routeCtx.input, routeCtx.request),
 		},
 	},
 	mcp: { tools },

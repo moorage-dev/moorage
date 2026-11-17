@@ -1987,6 +1987,8 @@ function tool(s: Site, route: string, user: User, body: unknown = {}): Promise<R
 		user,
 		body,
 		headers: { "X-EmDash-Request": "1" },
+		// As EmDash's MCP server calls it: with the request it received.
+		url: "https://bakery.test/_emdash/api/mcp",
 	});
 }
 
@@ -2173,5 +2175,63 @@ describe(`deciding several at once (new paths: <= ${NEW_BUDGET} calls)`, () => {
 			expect(
 				(await request(s, id))?.history.filter((h) => h.text === "Ellen Marsh approved"),
 			).toHaveLength(1);
+	});
+});
+
+describe("MCP tools for a reviewer that is an AI tool", () => {
+	const AI_ON = { ...HELD, aiApprove: true };
+
+	// kvList storageGet contentGet contentGetRevision schemaGetCollection.
+	it("changes: a waiting page", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() => tool(s, "mcp/changes", admin(s), { collection: "pages", id }));
+		pinMcp("mcp changes", m, 5);
+	});
+
+	// kvList, then approve(): storageGetVersioned contentGetVersioned contentGetRevision
+	// schemaGetCollection storageCompareAndSet storagePut contentPublish; "Published by" and the
+	// writer's email follow in content:afterPublish.
+	it("approve: approves and publishes", async () => {
+		const s = await site({ config: AI_ON });
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measureWithDeferred(() =>
+			tool(s, "mcp/approve", admin(s), { collection: "pages", id }),
+		);
+		pinMcp("mcp approve and publish", m.route as Measured<Response>, 8);
+		expectDeferredAfterPublish(m);
+		expect((await request(s, id))?.status).toBe("published");
+	});
+
+	// kvList: refused before anything else is read.
+	it("approve: refused while AI approval is off", async () => {
+		const s = await site();
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() => tool(s, "mcp/approve", admin(s), { collection: "pages", id }));
+		pinMcp("mcp approve, AI approval off", m, 1);
+	});
+
+	// kvList storageGetVersioned storageCompareAndSet cronSchedule (the writer's email).
+	it("send_back", async () => {
+		const s = await site({ config: AI_ON });
+		const id = await waiting(s);
+		await cold(s);
+		const m = await measure(() =>
+			tool(s, "mcp/send-back", admin(s), { collection: "pages", id, reason: "Prices" }),
+		);
+		pinMcp("mcp send back", m, 4);
+	});
+
+	// As editor/ask: kvList schemaGetCollection storageGet contentGet contentGetRevision storagePut
+	// cronSchedule userList.
+	it("ask_approval", async () => {
+		const s = await site();
+		const id = await page(s);
+		await cold(s);
+		const m = await measure(() => tool(s, "mcp/ask", s.editor, { collection: "pages", id }));
+		pinMcp("mcp ask", m, 8);
 	});
 });

@@ -898,4 +898,78 @@ test.describe.serial("Content Approval", () => {
 			});
 		}
 	});
+	test("an AI reviewer reads what changed, is refused while AI approval is off, then approves and sends back once Ellen allows it", async () => {
+		const first = await createPage(sam, "Scones", "Fresh scones daily");
+		const second = await createPage(sam, "Jam", "Strawberry jam");
+		created.push(first, second);
+		for (const id of [first, second]) expect((await publishByApi(sam, id)).ok).toBe(false);
+		const settings = {
+			collections: ["pages"],
+			preset: "others",
+			ai: true,
+			checks: "remind",
+			remind: true,
+		};
+		const token = await apiToken(ellen, ["mcp:tools:approvals"]);
+		try {
+			await mcpTools(ellen, true);
+			const listed = toolNames(await mcp(token.token, "tools/list"));
+			expect(listed).toEqual(
+				expect.arrayContaining([
+					"approvals__changes",
+					"approvals__approve",
+					"approvals__send_back",
+					"approvals__ask_approval",
+				]),
+			);
+			const changes = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__changes",
+					arguments: { collection: "pages", id: first },
+				}),
+			);
+			expect(changes).toMatchObject({ title: "Scones", state: "waiting", liveNow: false });
+			expect(changes.fields).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ field: "title", before: null, after: "Scones" }),
+				]),
+			);
+			const refused = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__approve",
+					arguments: { collection: "pages", id: first },
+				}),
+			);
+			expect(refused.error).toBe(
+				"AI tools may not approve or send back on this site. An Admin can switch this on in Approvals > Settings: AI tools may approve.",
+			);
+			expect(await status(ellen, first)).toBe("draft");
+
+			await saveSettings({ ...settings, aiApprove: true });
+			const approved = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__approve",
+					arguments: { collection: "pages", id: first, version: changes.version },
+				}),
+			);
+			expect(approved).toMatchObject({ ok: true, state: "published", title: "Scones" });
+			await expect.poll(() => status(ellen, first)).toBe("published");
+			const sent = toolData(
+				await mcp(token.token, "tools/call", {
+					name: "approvals__send_back",
+					arguments: { request: `pages:${second}`, reason: "Say which fruit" },
+				}),
+			);
+			expect(sent).toMatchObject({ ok: true, state: "sent_back" });
+			await openPanel(sam, second);
+			await expect(
+				sam.page.getByText(/^Sent back by An AI tool acting for Ellen Marsh/),
+			).toBeVisible();
+			await leave(sam);
+		} finally {
+			await saveSettings(settings);
+			await mcpTools(ellen, false);
+			await removeToken(ellen, token.id);
+		}
+	});
 });

@@ -1,0 +1,9 @@
+---
+"@moorage/plugin-approvals": minor
+---
+
+Requests for entries in a content type without a title field (such as a Releases type named by its version) no longer show as "Untitled": an entry is named by its content type's title field, else a field called title or name, else its address (slug), else its id, on the Approvals page, in the editor panel, in emails and in the MCP tools. Requests stored as "Untitled" by earlier versions are named again when the Approvals page opens.
+
+Approvers can decide several requests at once: **Decide several at once**, under the Waiting rows, lists each request waiting for them as a tick box, with its name, content type, who asked and when, publish or schedule, and what it changes ("new page", or which fields). Tick some or press **Select all**, choose **Approve and publish selected** or **Send back selected** (one note for every writer), and press **Continue** to see the list before anything happens. A few are decided per press, oldest first, each exactly as from its own Review; **Continue: N more to go** does the rest, and any request that could not be decided is explained and left ticked. Each row also says what it changes.
+
+New MCP tools for a reviewer that is an AI tool: `approvals__changes` (read-only: what a request would change, field by field, before and after), `approvals__approve` and `approvals__send_back`, and `approvals__ask_approval` (ask for approval of a draft without a publish). Approving and sending back are off until an Admin switches on the new setting **AI tools may approve**; then an AI tool may decide for the person whose key it uses, their own requests included, and the history and the writer's email say it was "An AI tool acting for" that person. A held publish's SEO panel values still go live at once on EmDash 1.5.0, as before.

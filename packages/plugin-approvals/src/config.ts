@@ -23,6 +23,11 @@ export interface Config {
 	preset: Preset;
 	/** Anything an AI tool publishes is held, on every content type. */
 	ai: boolean;
+	/**
+	 * AI tools (MCP) may approve and send back, acting for the person whose key they use, their
+	 * own requests included. Off unless an Admin switches it on.
+	 */
+	aiApprove: boolean;
 	checks: Checks;
 	/** Remind approvers once after two days. */
 	remind: boolean;
@@ -34,6 +39,7 @@ export const DEFAULT_CONFIG: Config = {
 	collections: [],
 	preset: "others",
 	ai: true,
+	aiApprove: false,
 	checks: "remind",
 	remind: true,
 	hideHelpLine: false,
@@ -52,6 +58,7 @@ export function normalizeConfig(value: unknown): Config {
 		collections,
 		preset: raw.preset === "me" ? "me" : "others",
 		ai: raw.ai !== false,
+		aiApprove: raw.aiApprove === true,
 		checks: raw.checks === "require" || raw.checks === "off" ? raw.checks : "remind",
 		remind: raw.remind !== false,
 		hideHelpLine: raw.hideHelpLine === true,

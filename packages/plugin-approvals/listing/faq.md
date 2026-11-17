@@ -4,7 +4,7 @@ Install this plugin, open **Approvals > Settings**, tick the content types that 
 
 ## Who approves?
 
-Choose "Others need my OK before publishing" and site admins approve everyone else's changes. Choose "I need someone else's OK before publishing" and everyone needs approval, admins too; an editor or another admin approves. Nobody approves their own request.
+Choose "Others need my OK before publishing" and site admins approve everyone else's changes. Choose "I need someone else's OK before publishing" and everyone needs approval, admins too; an editor or another admin approves. Nobody approves their own request. If you switch on "AI tools may approve", an AI tool connected to your site may approve or send back for the person whose key it uses, that person's own requests included.
 
 ## Why does the editor say "Failed to publish"?
 

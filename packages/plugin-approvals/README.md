@@ -66,10 +66,11 @@ One Settings tab, for admins:
 | Which content needs approval                                                                                                                                                                                            | none               |
 | Who needs approval: **Others need my OK before publishing** (everyone below admin is held; admins approve) or **I need someone else's OK before publishing** (everyone is held, admins too; editors and admins approve) | Others need my OK  |
 | AI tools connected to your site always need a person's OK (on every content type, even those not ticked)                                                                                                                | on                 |
+| AI tools may approve: an AI tool connected to your site may approve and publish, or send back, acting for the person whose key it uses, their own requests included (see "Use with an AI assistant")                    | off                |
 | Check for a search description and a sharing picture: show as a reminder, require before approval, don't check                                                                                                          | show as a reminder |
 | Remind approvers once after 2 days (only when the site can send email)                                                                                                                                                  | on                 |
 
-Nobody approves their own request. Work from an AI tool is the exception: the person whose key the tool uses may approve it.
+Nobody approves their own request. Work from an AI tool is the exception: the person whose key the tool uses may approve it. With **AI tools may approve** on, an AI tool may also approve a request made by the person it acts for.
 
 ## Safety
 
@@ -78,24 +79,32 @@ Nobody approves their own request. Work from an AI tool is the exception: the pe
 
 ## Use with an AI assistant (MCP)
 
-An AI assistant connected to your site through EmDash's MCP server (`/_emdash/api/mcp`) can read approvals with two tools. Both are read-only: they never publish, approve or change anything, and never return email addresses.
+An AI assistant connected to your site through EmDash's MCP server (`/_emdash/api/mcp`) can work with approvals through these tools. They never delete anything and never return email addresses.
 
-| Tool                | What it returns                                                                                                                                                                                                                                               |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `approvals__queue`  | The pages waiting for approval, as the Approvals page lists them for you: those waiting for you to approve and your own that wait, each with title, content type, id, who asked, when, publish or schedule, and counts.                                       |
-| `approvals__status` | One entry's approval (give `collection` and `id`), as its Approval panel shows it: whether publishing it needs approval (for you, and for an AI tool on your key), waiting, approved, sent back or published, by whom and when, and the latest history lines. |
+| Tool                      | What it does                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `approvals__queue`        | Read-only. The pages waiting for approval, as the Approvals page lists them for you: those waiting for you to approve and your own that wait, each with title, content type, id, who asked, when, publish or schedule, and counts.                                                                                                                   |
+| `approvals__status`       | Read-only. One entry's approval (give `collection` and `id`), as its Approval panel shows it: whether publishing it needs approval (for you, and for an AI tool on your key), waiting, approved, sent back or published, by whom and when, and the latest history lines.                                                                             |
+| `approvals__changes`      | Read-only. What a request would change, field by field (give `collection` and `id`, or `request` as `collection:id`): for a live page, each field that differs with its text now (`before`), the text that would go live (`after`) and the change in words; for a page not live yet, every filled-in field. Also the `version` to pass to `approve`. |
+| `approvals__approve`      | Approves a waiting request and publishes it (`publish: false` approves only). With `version`, only that version. Only when **AI tools may approve** is on.                                                                                                                                                                                           |
+| `approvals__send_back`    | Sends a waiting request back with a `reason`. Only when **AI tools may approve** is on.                                                                                                                                                                                                                                                              |
+| `approvals__ask_approval` | Asks for approval of a saved draft without a publish (give `collection` and `id`), as an AI tool on your key.                                                                                                                                                                                                                                        |
 
 Each person gets only their part, as on the Approvals page: approvers see every waiting page; Authors and Contributors only their own; Subscribers nothing.
 
+**AI tools as reviewers.** `approve` and `send_back` need a key of someone who may publish others' pages (Editor and up), and do only what that person may do on the Approvals page under your settings, with one difference: they may decide that person's own requests too. They refuse, saying where to switch it on, until an Admin turns on **AI tools may approve** in **Approvals > Settings** (off by default; it applies to every content type that needs approval). They work only through MCP: a call to their address from a signed-in browser is refused. Each decision is recorded in the page's history as made by "An AI tool acting for" that person, and the writer gets the usual email, also when the writer is that same person. Approve without review is never offered to a tool.
+
+What `changes` can show: the entry's own fields as text, compared with the live page (for a page not live yet, everything filled in); dates as people write them. What it cannot show: the SEO panel (search title, description, sharing picture), categories, tags, bylines and menus; the pictures or files themselves (named as changed); formatting and link addresses inside rich text (only its words). The Approval panel and Revisions show the full page.
+
 The tools are off until an Admin switches them on for Content Approval in EmDash's plugin settings (after a Registry update that adds tools, EmDash asks again). The assistant's token needs the scope `mcp:tools:approvals` (or `mcp:tools` for every plugin's tools). Needs EmDash 1.5.0 or later.
 
-An AI tool that changes the SEO panel of a page that is already live saves it straight to the live page, and EmDash does not yet tell plugins that such a save came from an AI tool, so it is not held or noted (see "What it does not do").
+**What the plugin cannot control.** An AI tool that changes the SEO panel of a page that is already live saves it straight to the live page, even when its publish is then held for approval (EmDash 1.5.0), and EmDash does not tell plugins that such a save came from an AI tool, so it is not held or noted (see "What it does not do"). A plain save through MCP is reported to plugins like an editor's save, so only publishes, schedules and `ask_approval` are known to come from an AI tool.
 
-To let an AI tool change a live page's text safely, have it save the change as a draft and then publish: the publish is held for approval like anyone else's, and the AI tool is told a person will approve it. This does not cover the SEO panel, which EmDash saves live at once (above). Approving always stays with a person; no tool approves.
+To let an AI tool change a live page's text safely, have it save the change as a draft and then publish (or call `ask_approval`): the publish is held for approval like anyone else's, and the AI tool is told a person will approve it. This does not cover the SEO panel, which EmDash saves live at once (above).
 
 ## Permissions
 
-Holds publishing (`hooks.content-policy:register`); reads content, drafts and the content schema to show what changed (`content:read`, `content:revisions:read`, `schema:read`); publishes when an approver presses Approve and publish (`content:publish`); reads users' names and emails to address approvers (`users:read`); sends email (`email:send`). Contributors and up can open the Approvals page; each person sees only their part.
+Holds publishing (`hooks.content-policy:register`); reads content, drafts and the content schema to show what changed (`content:read`, `content:revisions:read`, `schema:read`); publishes when an approver presses Approve and publish, or an allowed AI tool approves (`content:publish`); reads users' names and emails to address approvers (`users:read`); sends email (`email:send`). Contributors and up can open the Approvals page; each person sees only their part.
 
 ## FAQ
 

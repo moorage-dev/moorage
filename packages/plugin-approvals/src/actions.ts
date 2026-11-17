@@ -2,7 +2,7 @@
 
 import type { PluginContext } from "emdash";
 
-import { ROLE, type Config } from "./config.js";
+import { approverRole, ROLE, type Config } from "./config.js";
 import { warnIfRoom, type Meter } from "./meter.js";
 import {
 	askedJob,
@@ -96,6 +96,16 @@ export function missingChecks(draft: Draft, hasSeo: boolean): Checks {
 	return seoGaps(hasSeo ? draft.item.seo : null, draft.data);
 }
 
+/** Who an AI tool's decision is recorded as: "An AI tool acting for Ellen Marsh". */
+export function agentFor(user: UserInfo) {
+	return { id: user.id, name: `An AI tool acting for ${personName(user)}` };
+}
+
+/** An AI tool may decide for anyone who approves on this site, on any request, theirs too. */
+export function mayApproveAsAgent(config: Config, user: { role: number } | undefined): boolean {
+	return Boolean(config.aiApprove && user && user.role >= approverRole(config.preset));
+}
+
 export function firstName(name: string): string {
 	return name.split(" ")[0] || name;
 }
@@ -124,7 +134,13 @@ export async function approve(
 	config: Config,
 	user: UserInfo | undefined,
 	key: string,
-	options: { seen: unknown; publish: boolean; override?: string },
+	options: {
+		seen: unknown;
+		publish: boolean;
+		override?: string;
+		/** An AI tool decides, acting for `user`: their own requests too (setting "AI tools may approve"). */
+		agent?: boolean;
+	},
 	known: { info?: CollectionInfo; meter?: Meter } = {},
 ): Promise<Decision> {
 	const store = requests(ctx);
@@ -137,9 +153,11 @@ export async function approve(
 		if (user.role < ROLE.admin) return fail("Only admins can approve without review.", { request });
 		if (request.ai) return fail("Work from an AI tool always needs a review.", { request });
 		if (options.override.trim() === "") return fail("Write the reason first.", { request });
-	} else if (!mayApprove(config, request, user)) {
+	} else if (
+		options.agent ? !mayApproveAsAgent(config, user) : !mayApprove(config, request, user)
+	) {
 		return fail(
-			request.requestedBy?.id === user.id
+			!options.agent && request.requestedBy?.id === user.id
 				? "You asked for this approval, so someone else needs to approve it."
 				: "You can't approve on this site.",
 			{ request },
@@ -180,7 +198,7 @@ export async function approve(
 	}
 
 	const now = new Date().toISOString();
-	const by = personFromUser(user);
+	const by = options.agent ? agentFor(user) : personFromUser(user);
 	const versionId = `${key}#${now}`;
 	// The text copy is written after the request, so a request withdrawn or decided meanwhile
 	// leaves no copy of an approval that did not happen.
@@ -213,8 +231,8 @@ export async function approve(
 			? `${by.name} approved without review: "${options.override.trim()}"`
 			: `${by.name} approved`,
 	);
-	// Nobody is emailed about their own decision.
-	const ownRequest = approved.requestedBy?.id === user.id;
+	// Nobody is emailed about their own decision; an AI tool's decision is told to the writer.
+	const ownRequest = !options.agent && approved.requestedBy?.id === user.id;
 	const override = options.override !== undefined;
 	const writer = approved.requestedBy?.name;
 
@@ -304,18 +322,20 @@ export async function sendBack(
 	key: string,
 	note: unknown,
 	meter?: Meter,
+	/** An AI tool decides, acting for `user` (see approve). */
+	agent = false,
 ): Promise<Decision> {
 	const store = requests(ctx);
 	const stored = await store.getVersioned(key);
 	const request = stored?.value ?? null;
 	if (!stored || !request || request.status !== "waiting")
 		return fail("This request has already been decided.", request ? { request } : {});
-	if (!mayApprove(config, request, user) || !user)
+	if (!user || (agent ? !mayApproveAsAgent(config, user) : !mayApprove(config, request, user)))
 		return fail("You can't decide on this request.", { request });
 	const text = typeof note === "string" ? note.trim() : "";
 	if (text === "") return fail("Write what should change, then press Send back.", { request });
 	const now = new Date().toISOString();
-	const by = personFromUser(user);
+	const by = agent ? agentFor(user) : personFromUser(user);
 	const sent: ApprovalRequest = {
 		...request,
 		status: "sent_back",
@@ -408,6 +428,8 @@ export async function ask(
 	user: UserInfo | undefined,
 	collection: string,
 	id: string,
+	/** Asked by an AI tool on `user`'s key (MCP ask_approval). */
+	fromAi = false,
 ): Promise<{ type: "success" | "info" | "error"; message: string }> {
 	if (!config)
 		return {
@@ -450,9 +472,9 @@ export async function ask(
 			fingerprint: draft.fingerprint,
 			fields: fieldHashes(draft.data),
 			requestedBy: personFromUser(user),
-			ai: false,
+			ai: fromAi,
 			wants: "publish",
-			how: "pressed Ask for approval",
+			how: fromAi ? "asked from an AI tool" : "pressed Ask for approval",
 		},
 		now,
 	);

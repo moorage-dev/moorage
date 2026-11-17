@@ -6,6 +6,8 @@
 import { createPluginRuntimeTestHost, type PluginRuntimeTestHost } from "@emdash-cms/plugin-test";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { ApprovalRequest } from "../src/requests.js";
+
 let host: PluginRuntimeTestHost | undefined;
 
 afterEach(async () => {
@@ -101,11 +103,14 @@ async function call(
 	route: string,
 	by: User,
 	input: unknown = {},
+	{ mcp = true }: { mcp?: boolean } = {},
 ): Promise<{ status: number; data: Record<string, unknown> }> {
+	// EmDash's MCP server calls a tool's route with the request it received, at /_emdash/api/mcp.
 	const response = await s.host.actions.routes.request(route, {
 		user: by,
 		body: input,
 		headers: { "X-EmDash-Request": "1" },
+		...(mcp ? { url: "https://bakery.test/_emdash/api/mcp" } : {}),
 	});
 	const body = (await response.json()) as { data?: Record<string, unknown> };
 	return { status: response.status, data: body.data ?? (body as Record<string, unknown>) };
@@ -114,10 +119,43 @@ async function call(
 const EMAIL = /[^\s"]+@[^\s"]+\.[a-z]+/i;
 
 describe("the manifest", () => {
-	it("declares both tools, read-only, on content:read routes", async () => {
+	it("declares the reviewer's tools: changes to read, approve and send_back marked destructive", async () => {
 		const s = await site();
 		const tools = s.host.manifest.mcp?.tools ?? [];
-		expect(tools.map((t) => t.name).sort()).toEqual(["queue", "status"]);
+		expect(tools.find((t) => t.name === "changes")).toMatchObject({
+			route: "mcp/changes",
+			permission: "content:read_drafts",
+			destructive: false,
+		});
+		for (const name of ["approve", "send_back"]) {
+			expect(tools.find((t) => t.name === name)).toMatchObject({
+				route: `mcp/${name.replace("_", "-")}`,
+				permission: "content:publish_any",
+				destructive: true,
+			});
+		}
+		expect(tools.find((t) => t.name === "send_back")?.inputSchema).toMatchObject({
+			required: ["reason"],
+		});
+		expect(tools.find((t) => t.name === "ask_approval")).toMatchObject({
+			route: "mcp/ask",
+			permission: "content:read_drafts",
+			destructive: false,
+		});
+		for (const tool of tools) expect(tool.description).not.toMatch(/moorage|hosting/i);
+	});
+
+	it("declares both read tools, read-only, on content:read routes", async () => {
+		const s = await site();
+		const tools = s.host.manifest.mcp?.tools ?? [];
+		expect(tools.map((t) => t.name).sort()).toEqual([
+			"approve",
+			"ask_approval",
+			"changes",
+			"queue",
+			"send_back",
+			"status",
+		]);
 		const queue = tools.find((t) => t.name === "queue")!;
 		expect(queue).toMatchObject({
 			route: "mcp/queue",
@@ -292,5 +330,182 @@ describe("tool status", () => {
 		const { data } = await call(s, "mcp/status", s.admin, { collection: "pages", id });
 		expect(data.askedBy).toBe("Someone");
 		expect(JSON.stringify(data)).not.toMatch(EMAIL);
+	});
+});
+
+const AI_ON = { ...HELD, aiApprove: true };
+
+describe("tool changes", () => {
+	it("shows a new page field by field, with nothing before", async () => {
+		const s = await site();
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/changes", s.admin, { collection: "pages", id });
+		expect(data).toMatchObject({
+			collection: "pages",
+			id,
+			title: "Summer menu",
+			state: "waiting",
+			liveNow: false,
+			youMayDecide: true,
+		});
+		expect(typeof data.version).toBe("string");
+		expect(data.fields).toEqual([
+			{ field: "title", label: "Title", before: null, after: "Summer menu", change: "new" },
+			{
+				field: "content",
+				label: "Content",
+				before: null,
+				after: "Iced coffee £3.20 and lemon tart",
+				change: "new",
+			},
+		]);
+		expect(String(data.notShown)).toMatch(/SEO panel/);
+	});
+
+	it("shows only what differs from the live page, before and after, from a request id", async () => {
+		const s = await site(AI_ON);
+		const id = await waiting(s, s.editor, "Summer menu");
+		await call(s, "mcp/approve", s.admin, { collection: "pages", id });
+		await settled();
+		const updated = await s.host.actions.content.update("pages", id, {
+			data: { content: "Iced coffee £3.40 and lemon tart" },
+			actor: { id: s.editor.id, role: s.editor.role },
+		});
+		if (!updated.success) throw new Error(updated.error.message);
+		await s.host.actions.content.publish("pages", id, {
+			actor: { id: s.editor.id, role: s.editor.role },
+			origin: { source: "api" },
+		});
+		await settled();
+		const { data } = await call(s, "mcp/changes", s.admin, { request: `pages:${id}` });
+		expect(data.liveNow).toBe(true);
+		expect(data.fields).toEqual([
+			{
+				field: "content",
+				label: "Content",
+				before: "Iced coffee £3.20 and lemon tart",
+				after: "Iced coffee £3.40 and lemon tart",
+				change: '"£3.20" becomes "£3.40".',
+			},
+		]);
+	});
+
+	it("shows an Author only their own pages", async () => {
+		const s = await site();
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/changes", s.author, { collection: "pages", id });
+		expect(data).toEqual({ error: "You can see the approval of your own pages only." });
+	});
+});
+
+describe("tools approve and send_back", () => {
+	it("refuse while AI approval is off, and say where to switch it on", async () => {
+		const s = await site();
+		const id = await waiting(s, s.editor, "Summer menu");
+		for (const route of ["mcp/approve", "mcp/send-back"]) {
+			const { data } = await call(s, route, s.admin, { collection: "pages", id, reason: "x" });
+			expect(data.error).toBe(
+				"AI tools may not approve or send back on this site. An Admin can switch this on in Approvals > Settings: AI tools may approve.",
+			);
+		}
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+	});
+
+	it("approve and publish, recorded as an AI tool acting for the person", async () => {
+		const s = await site(AI_ON);
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/approve", s.admin, { collection: "pages", id });
+		await settled();
+		expect(data).toMatchObject({ ok: true, state: "published" });
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("published");
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `pages:${id}`);
+		expect(stored?.history.map((h) => h.text)).toContain(
+			"An AI tool acting for Ellen Marsh approved",
+		);
+		expect(stored?.history[0]?.text).toBe("Published by An AI tool acting for Ellen Marsh");
+	});
+
+	it("approve without publishing when asked", async () => {
+		const s = await site(AI_ON);
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/approve", s.admin, {
+			collection: "pages",
+			id,
+			publish: false,
+		});
+		expect(data).toMatchObject({ ok: true, state: "approved" });
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+	});
+
+	it("may approve a request made by the same person when AI approval is on", async () => {
+		const s = await site({ ...AI_ON, preset: "me" });
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/approve", s.editor, { collection: "pages", id });
+		await settled();
+		expect(data).toMatchObject({ ok: true, state: "published" });
+	});
+
+	it("refuse a version other than the one given", async () => {
+		const s = await site(AI_ON);
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(s, "mcp/approve", s.admin, {
+			collection: "pages",
+			id,
+			version: "an older version",
+		});
+		expect(data.error).toMatch(/This page changed/);
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+	});
+
+	it("refuse someone who does not approve on this site", async () => {
+		const s = await site(AI_ON);
+		const id = await waiting(s, s.author, "Summer menu");
+		const { data } = await call(s, "mcp/approve", s.editor, { collection: "pages", id });
+		expect(data.error).toBe("You can't approve on this site.");
+	});
+
+	it("refuse a call that did not come through an AI tool (MCP)", async () => {
+		const s = await site({ ...AI_ON, preset: "me" });
+		const id = await waiting(s, s.editor, "Summer menu");
+		const { data } = await call(
+			s,
+			"mcp/approve",
+			s.editor,
+			{ collection: "pages", id },
+			{ mcp: false },
+		);
+		expect(data.error).toMatch(/only through an AI tool connected with MCP/);
+		expect((await s.host.inspect.content.get("pages", id))?.status).toBe("draft");
+	});
+
+	it("send back with a reason, which is required", async () => {
+		const s = await site(AI_ON);
+		const id = await waiting(s, s.editor, "Summer menu");
+		const empty = await call(s, "mcp/send-back", s.admin, { collection: "pages", id, reason: "" });
+		expect(empty.data.error).toBe("Give the reason: what should change.");
+		const { data } = await call(s, "mcp/send-back", s.admin, {
+			collection: "pages",
+			id,
+			reason: "Prices are out of date",
+		});
+		expect(data).toMatchObject({ ok: true, state: "sent_back" });
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `pages:${id}`);
+		expect(stored?.sentBack?.note).toBe("Prices are out of date");
+		expect(stored?.history[0]?.text).toBe(
+			'An AI tool acting for Ellen Marsh sent it back: "Prices are out of date"',
+		);
+	});
+});
+
+describe("tool ask_approval", () => {
+	it("asks for approval of a draft without a publish, as from an AI tool", async () => {
+		const s = await site();
+		const id = await page(s, s.author, "Summer menu");
+		const { data } = await call(s, "mcp/ask", s.author, { collection: "pages", id });
+		expect(data).toMatchObject({ ok: true });
+		expect(String(data.message)).toMatch(/^Sent for approval\./);
+		const stored = await s.host.inspect.storage.get<ApprovalRequest>("requests", `pages:${id}`);
+		expect(stored).toMatchObject({ status: "waiting", ai: true });
+		expect(stored?.history[0]?.text).toMatch(/^An AI tool \(Ana Lopes\) asked for approval/);
 	});
 });
