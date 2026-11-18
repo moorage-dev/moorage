@@ -17,6 +17,12 @@
  * - Only the settings, never anything that depends on the visitor or the request.
  * - Every caller gets its own copy, so code that changes the object it was given
  *   cannot change what the next page view sees.
+ * - What is kept is the value that was read, never the promise of it. On
+ *   Cloudflare Workers a promise that does I/O belongs to the request that made
+ *   it: when that request ends first, every other request waiting on it fails
+ *   ("This promise was created by a request that has since ended"), and the page
+ *   goes out without the plugin's output. So page views that arrive together on
+ *   a cold isolate each do their own read; the ones after them get the value.
  *
  * The same file is in each plugin that uses it; keep the copies identical.
  */
@@ -25,7 +31,7 @@
 export const SETTINGS_TTL_MS = 30_000;
 
 interface Held {
-	value: Promise<unknown>;
+	value: unknown;
 	until: number;
 }
 
@@ -57,19 +63,14 @@ export async function memoSettings<T>(
 	const site = ctx.site?.url ?? "";
 	let sites = held.get(ctx.plugin.id);
 	if (!sites) held.set(ctx.plugin.id, (sites = new Map()));
-	let entry = sites.get(site);
-	if (fresh || !entry || now >= entry.until) {
-		// Kept as a promise, so page views that arrive together share one read.
-		const value: Promise<unknown> = read();
-		const next: Held = { value, until: now + SETTINGS_TTL_MS };
-		sites.set(site, next);
-		// A failed read is not kept: the next page view tries again.
-		value.catch(() => {
-			if (sites.get(site) === next) sites.delete(site);
-		});
-		entry = next;
-	}
-	return structuredClone((await entry.value) as T);
+	const entry = sites.get(site);
+	if (!fresh && entry && now < entry.until) return structuredClone(entry.value as T);
+	// This request's own read. A failed read throws here, so nothing is kept and the next page view tries again.
+	const value = await read();
+	// A save while the read was out took this plugin's map away (`forgetSettings`), and what was
+	// read may be older than the save: keep it only where the map is still the one in use.
+	if (held.get(ctx.plugin.id) === sites) sites.set(site, { value, until: now + SETTINGS_TTL_MS });
+	return structuredClone(value);
 }
 
 /** Forget this plugin's settings in this isolate, for every site. Call after each save. */
