@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { STORE_KEY } from "../src/config.js";
 import { createPlugin } from "../src/index.js";
-import { SETTINGS_TTL_MS } from "../src/settings-memo.js";
+import { forgetSettings, memoSettings, SETTINGS_TTL_MS } from "../src/settings-memo.js";
 import { fakeContext, popup, type FakeContext } from "./helpers.js";
 
 type Hook = (event: PageFragmentEvent, ctx: PluginContext) => Promise<unknown>;
@@ -98,5 +98,36 @@ describe("popups kept between page views", () => {
 		expect(fake.reads()).toBe(1);
 		await toggle(fake);
 		expect(await route(fake, "box", { id: "abcd1234" })).toEqual({ box: null });
+	});
+});
+
+describe("memoSettings", () => {
+	const owner = (id: string, url?: string) => ({ plugin: { id }, site: url ? { url } : undefined });
+
+	// Issue #46: on Cloudflare Workers a promise that does I/O belongs to the request that made it.
+	// When that request ends first, every other request waiting on the same promise fails, and the
+	// page goes out without this plugin's output.
+	it("never makes one request wait on another request's read", async () => {
+		const site = owner("w", "https://a.test");
+		// The first request's read never settles: its request ended before the database answered.
+		const first = memoSettings(site, () => new Promise<{ n: number }>(() => {}), { now: 0 });
+		void first;
+		const second = memoSettings(site, async () => ({ n: 2 }), { now: 0 });
+		const late = new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 50));
+		expect(await Promise.race([second, late])).toEqual({ n: 2 });
+		// And a read that has finished is kept as a plain value for the page views after it.
+		expect(await memoSettings(site, async () => ({ n: 3 }), { now: 1 })).toEqual({ n: 2 });
+	});
+
+	it("does not keep a read that was under way when the settings were saved", async () => {
+		const site = owner("s", "https://a.test");
+		let finish: (value: { n: number }) => void = () => {};
+		const slow = memoSettings(site, () => new Promise<{ n: number }>((r) => (finish = r)), {
+			now: 0,
+		});
+		forgetSettings("s"); // a save in this isolate, while the old read is still out
+		finish({ n: 1 });
+		expect(await slow).toEqual({ n: 1 });
+		expect(await memoSettings(site, async () => ({ n: 2 }), { now: 1 })).toEqual({ n: 2 });
 	});
 });

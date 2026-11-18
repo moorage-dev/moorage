@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CONFIG_KEY } from "../src/config.js";
 import { createPlugin } from "../src/index.js";
-import { memoSettings, SETTINGS_TTL_MS } from "../src/settings-memo.js";
+import { forgetSettings, memoSettings, SETTINGS_TTL_MS } from "../src/settings-memo.js";
 import { fakeContext, type FakeContext } from "./helpers.js";
 
 type Hook = (event: PageFragmentEvent, ctx: PluginContext) => Promise<unknown>;
@@ -90,13 +90,11 @@ describe("settings kept between page views", () => {
 describe("memoSettings", () => {
 	const owner = (id: string, url?: string) => ({ plugin: { id }, site: url ? { url } : undefined });
 
-	it("keeps sites apart, shares a read in flight, gives copies, and forgets a failed read", async () => {
+	it("keeps sites apart, gives copies, and forgets a failed read", async () => {
 		let reads = 0;
 		const read = async () => ({ n: ++reads });
-		const [a, b] = await Promise.all([
-			memoSettings(owner("p", "https://a.test"), read, { now: 0 }),
-			memoSettings(owner("p", "https://a.test"), read, { now: 0 }),
-		]);
+		const a = await memoSettings(owner("p", "https://a.test"), read, { now: 0 });
+		const b = await memoSettings(owner("p", "https://a.test"), read, { now: 0 });
 		expect(reads).toBe(1);
 		expect(a).toEqual(b);
 		expect(a).not.toBe(b);
@@ -109,5 +107,32 @@ describe("memoSettings", () => {
 		};
 		await expect(memoSettings(owner("q"), failing, { now: 0 })).rejects.toThrow("database away");
 		expect(await memoSettings(owner("q"), read, { now: 1 })).toEqual({ n: 3 });
+	});
+
+	// Issue #46: on Cloudflare Workers a promise that does I/O belongs to the request that made it.
+	// When that request ends first, every other request waiting on the same promise fails, and the
+	// page goes out without this plugin's output.
+	it("never makes one request wait on another request's read", async () => {
+		const site = owner("w", "https://a.test");
+		// The first request's read never settles: its request ended before the database answered.
+		const first = memoSettings(site, () => new Promise<{ n: number }>(() => {}), { now: 0 });
+		void first;
+		const second = memoSettings(site, async () => ({ n: 2 }), { now: 0 });
+		const late = new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 50));
+		expect(await Promise.race([second, late])).toEqual({ n: 2 });
+		// And a read that has finished is kept as a plain value for the page views after it.
+		expect(await memoSettings(site, async () => ({ n: 3 }), { now: 1 })).toEqual({ n: 2 });
+	});
+
+	it("does not keep a read that was under way when the settings were saved", async () => {
+		const site = owner("s", "https://a.test");
+		let finish: (value: { n: number }) => void = () => {};
+		const slow = memoSettings(site, () => new Promise<{ n: number }>((r) => (finish = r)), {
+			now: 0,
+		});
+		forgetSettings("s"); // a save in this isolate, while the old read is still out
+		finish({ n: 1 });
+		expect(await slow).toEqual({ n: 1 });
+		expect(await memoSettings(site, async () => ({ n: 2 }), { now: 1 })).toEqual({ n: 2 });
 	});
 });
