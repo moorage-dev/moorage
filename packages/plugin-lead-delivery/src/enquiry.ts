@@ -250,6 +250,8 @@ export async function fromEmail(
 		if (!knownLabels.has(label)) knownLabels.set(label, { key: HUTK_FIELD, label });
 	}
 
+	const allLabelsKnown = known?.source === "definition" && known.fields.length > 0;
+
 	const lines = text.split(/\r?\n/);
 	const fields: Enquiry["fields"] = [];
 	let hasFiles = false;
@@ -268,11 +270,15 @@ export async function fromEmail(
 			if (last && lines[index + 1] && !/^[^:]{1,120}: /.test(lines[index + 1]!)) last.value += "\n";
 			continue;
 		}
-		// A new field starts with a known label, or (form unknown) with "Label: ".
+		// A new field starts with a known label, or with any "Label: ". Only a form's own definition
+		// lists every label, so only then is another "Word: " line read as more of the field before
+		// it (a message over several lines). Labels learned from earlier enquiries are never the
+		// whole list (Forms leaves empty fields out), and nothing is read before the first field,
+		// so there such a line starts a field of its own instead of being lost.
 		const knownLabel = [...knownLabels.keys()].find((label) => line.startsWith(`${label}: `));
 		const match = knownLabel
 			? [line, knownLabel, line.slice(knownLabel.length + 2)]
-			: knownLabels.size > 0
+			: allLabelsKnown && fields.length > 0
 				? null
 				: /^([^:]{1,120}): (.*)$/.exec(line);
 		if (match) {

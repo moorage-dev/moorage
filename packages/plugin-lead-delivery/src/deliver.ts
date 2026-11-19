@@ -139,11 +139,22 @@ export function weekCounts(state: State): { received: number; delivered: number 
 	return { received, delivered };
 }
 
-/** The forms with this one remembered: its name, its fields, when it last sent, how it is connected. */
-function noteForm(forms: Record<string, KnownForm>, enquiry: Enquiry): Record<string, KnownForm> {
+/**
+ * The forms with this one remembered: its name, its fields, when it last sent, how it is connected.
+ * Fields learned from enquiries only ever grow: Forms leaves empty fields out of what it sends, so
+ * a short enquiry must not make the plugin forget the fields an earlier one had.
+ */
+export function noteForm(
+	forms: Record<string, KnownForm>,
+	enquiry: Enquiry,
+): Record<string, KnownForm> {
 	const now = enquiry.receivedAt;
 	const known = forms[enquiry.formId];
-	const fields = fieldsOf(enquiry);
+	const seen = fieldsOf(enquiry);
+	const fields = [
+		...(known?.fields ?? []).map((had) => seen.find((f) => f.key === had.key) ?? had),
+		...seen.filter((f) => !(known?.fields ?? []).some((had) => had.key === f.key)),
+	];
 	const days = [...new Set([...(known?.days ?? []), day(now)])].slice(-30);
 	const way = enquiry.via === "email" ? "email" : "straight";
 	return {

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { isPrivateHost, privateAddressError } from "../src/address.js";
 import { chatBody, classifyChat, maskChatUrl, parseChatUrl } from "../src/chat.js";
 import { ago, parseAddresses, privateEmail, since } from "../src/config.js";
-import { emailFailure, isQuiet } from "../src/deliver.js";
+import { emailFailure, isQuiet, noteForm } from "../src/deliver.js";
 import { fromEmail, fromWebhook, hubspotToken, humanize } from "../src/enquiry.js";
 import { fieldsFromPages, withListed } from "../src/forms.js";
 import {
@@ -162,6 +162,91 @@ describe("enquiries from the forms plugin", () => {
 		const again = await fromEmail("New submission: Wedding cakes", text, {});
 		expect(again?.id).toBe(received?.id);
 		expect(again?.enquiry.formId).toBe("wedding-cakes");
+	});
+
+	// LD-2: Forms leaves empty fields out of its email, so a form learned from one short enquiry
+	// (only "Email" filled) knew one label, and every later email lost its other lines.
+	it("keeps every line of the email when the form is known only from a shorter enquiry", async () => {
+		const learned: KnownForm = {
+			slug: "feedback",
+			name: "Feedback",
+			fields: [{ key: "Email", label: "Email" }],
+			source: "enquiry",
+			addedAt: "2026-11-16T00:00:00.000Z",
+			days: [],
+		};
+		const text = [
+			'New submission for "Feedback"',
+			"",
+			"Name: Tom Reyes",
+			"Email: tom@example.com",
+			"Rating: 5",
+			"Message: Three tiers.",
+			"Lemon and elderflower.",
+			"",
+			"Submitted at: 2026-11-16T09:00:00.000Z",
+		].join("\n");
+		const received = await fromEmail("New submission: Feedback", text, { feedback: learned });
+		expect(received?.enquiry.fields.map((f) => [f.label, f.value])).toEqual([
+			["Name", "Tom Reyes"],
+			["Email", "tom@example.com"],
+			["Rating", "5"],
+			["Message", "Three tiers.\nLemon and elderflower."],
+		]);
+	});
+
+	it("keeps a first line under a label the form's definition does not have", async () => {
+		const text = [
+			'New submission for "Wedding cakes"',
+			"",
+			"Budget: 400",
+			"Your name: Tom Reyes",
+			"Email address: tom@example.com",
+			"",
+			"Submitted at: 2026-11-16T09:00:00.000Z",
+		].join("\n");
+		const received = await fromEmail("New submission: Wedding cakes", text, {
+			[CAKES.slug]: CAKES,
+		});
+		expect(received?.enquiry.fields.map((f) => [f.label, f.value]).slice(0, 2)).toEqual([
+			["Budget", "400"],
+			["Your name", "Tom Reyes"],
+		]);
+	});
+
+	it("never forgets a field of a form it learned from enquiries when a shorter one arrives", () => {
+		const enquiry = (fields: [string, string][]): Enquiry => ({
+			formId: "feedback",
+			formName: "Feedback",
+			receivedAt: "2026-11-16T09:00:00.000Z",
+			via: "email",
+			throwaway: false,
+			hasFiles: false,
+			fields: fields.map(([label, value]) => ({ key: label, label, value })),
+		});
+		let forms = noteForm(
+			{},
+			enquiry([
+				["Name", "Tom"],
+				["Email", "tom@example.com"],
+				["Rating", "5"],
+			]),
+		);
+		forms = noteForm(forms, enquiry([["Email", "priya@example.com"]]));
+		expect(forms.feedback!.fields.map((f) => f.label)).toEqual(["Name", "Email", "Rating"]);
+		forms = noteForm(
+			forms,
+			enquiry([
+				["Email", "sam@example.com"],
+				["Message", "Hello"],
+			]),
+		);
+		expect(forms.feedback!.fields.map((f) => f.label)).toEqual([
+			"Name",
+			"Email",
+			"Rating",
+			"Message",
+		]);
 	});
 
 	it("lists an unticked checkbox as no, where the form says it has one", async () => {
