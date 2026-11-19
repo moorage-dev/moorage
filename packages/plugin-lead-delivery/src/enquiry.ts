@@ -270,15 +270,20 @@ export async function fromEmail(
 			if (last && lines[index + 1] && !/^[^:]{1,120}: /.test(lines[index + 1]!)) last.value += "\n";
 			continue;
 		}
-		// A new field starts with a known label, or with any "Label: ". Only a form's own definition
-		// lists every label, so only then is another "Word: " line read as more of the field before
-		// it (a message over several lines). Labels learned from earlier enquiries are never the
-		// whole list (Forms leaves empty fields out), and nothing is read before the first field,
-		// so there such a line starts a field of its own instead of being lost.
+		// A new field starts with a known label. A line under any other "Label: " is harder: it is
+		// either a field the plugin has not seen (Forms leaves empty fields out, so labels learned
+		// from enquiries are never the whole list) or a line of the message before it ("Date: 12 May").
+		// A form's own definition lists every label, so there it is more of the message. Otherwise it
+		// starts a field unless the field before it reads as free text; nothing is thrown away either
+		// way, and nothing is read as more of a field before the first one.
 		const knownLabel = [...knownLabels.keys()].find((label) => line.startsWith(`${label}: `));
+		const last = fields.at(-1);
+		const moreOfLast =
+			last !== undefined &&
+			(allLabelsKnown || fields.length >= MAX_EMAIL_FIELDS || readsAsFreeText(last));
 		const match = knownLabel
 			? [line, knownLabel, line.slice(knownLabel.length + 2)]
-			: allLabelsKnown && fields.length > 0
+			: moreOfLast
 				? null
 				: /^([^:]{1,120}): (.*)$/.exec(line);
 		if (match) {
@@ -319,6 +324,27 @@ export async function fromEmail(
 			requiredKeys(known),
 		),
 	};
+}
+
+/** As many fields as an enquiry from the forms plugin itself may carry (`fromWebhook`). */
+const MAX_EMAIL_FIELDS = 100;
+
+/**
+ * Whether a field read from the email so far looks like a message, whose next lines belong to it:
+ * it already runs over several lines, its label says so, or its first line reads as a sentence.
+ * A name, an address, a number or a choice does not, and cannot hold a line break.
+ */
+function readsAsFreeText(field: { label: string; type?: string; value: string }): boolean {
+	if (field.type === "textarea") return true;
+	const value = field.value.trim();
+	if (value.includes("\n")) return true;
+	if (
+		/message|comment|note|detail|question|enquiry|inquiry|describe|description|tell us|help|feedback|anything/i.test(
+			field.label,
+		)
+	)
+		return true;
+	return /[.!?,;]$/.test(value) || value.split(/\s+/).length > 6;
 }
 
 /** Fields of a form as the plugin knows them, for matching and tests. */
