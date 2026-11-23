@@ -12,6 +12,7 @@
     "typecheck": "turbo run typecheck",
     "validate": "turbo run validate",
     "check": "turbo run build typecheck test validate && oxlint && oxfmt --check",
+    "check:local": "turbo run build typecheck validate --concurrency=4 && turbo run test --concurrency=2 --filter=...[origin/main] && oxlint && oxfmt --check",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "turbo run build && changeset publish"
