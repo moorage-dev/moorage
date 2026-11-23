@@ -139,11 +139,33 @@ export function weekCounts(state: State): { received: number; delivered: number 
 	return { received, delivered };
 }
 
-/** The forms with this one remembered: its name, its fields, when it last sent, how it is connected. */
-function noteForm(forms: Record<string, KnownForm>, enquiry: Enquiry): Record<string, KnownForm> {
+/** The most fields the plugin remembers for a form it knows only from its enquiries. */
+export const MAX_LEARNED_FIELDS = 100;
+
+/**
+ * The forms with this one remembered: its name, its fields, when it last sent, how it is connected.
+ * Fields learned from emailed enquiries only grow: Forms leaves empty fields out of its email, so
+ * a short enquiry must not make the plugin forget the fields an earlier one had.
+ */
+export function noteForm(
+	forms: Record<string, KnownForm>,
+	enquiry: Enquiry,
+): Record<string, KnownForm> {
 	const now = enquiry.receivedAt;
 	const known = forms[enquiry.formId];
-	const fields = fieldsOf(enquiry);
+	const seen = fieldsOf(enquiry).filter((f, i, all) => all.findIndex((o) => o.key === f.key) === i);
+	const had = known?.fields ?? [];
+	// Only the email way leaves fields out, so only there are earlier fields kept. An email that
+	// could not be read says nothing about the form's fields. A visitor's text can look like a
+	// field (see `fromEmail`), so the list stops growing at `MAX_LEARNED_FIELDS`.
+	const fields = enquiry.unreadable
+		? had
+		: enquiry.via === "email"
+			? [
+					...had.map((old) => seen.find((f) => f.key === old.key) ?? old),
+					...seen.filter((f) => !had.some((old) => old.key === f.key)),
+				].slice(0, MAX_LEARNED_FIELDS)
+			: seen;
 	const days = [...new Set([...(known?.days ?? []), day(now)])].slice(-30);
 	const way = enquiry.via === "email" ? "email" : "straight";
 	return {
@@ -152,7 +174,9 @@ function noteForm(forms: Record<string, KnownForm>, enquiry: Enquiry): Record<st
 			? {
 					...known,
 					name: enquiry.formName || known.name,
-					...(known.source === "enquiry" || known.fields.length === 0 ? { fields } : {}),
+					...((known.source === "enquiry" || known.fields.length === 0) && !enquiry.unreadable
+						? { fields }
+						: {}),
 					lastAt: now,
 					days,
 					connectedAt: known.connectedAt ?? now,

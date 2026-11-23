@@ -250,6 +250,8 @@ export async function fromEmail(
 		if (!knownLabels.has(label)) knownLabels.set(label, { key: HUTK_FIELD, label });
 	}
 
+	const allLabelsKnown = known?.source === "definition" && known.fields.length > 0;
+
 	const lines = text.split(/\r?\n/);
 	const fields: Enquiry["fields"] = [];
 	let hasFiles = false;
@@ -268,11 +270,22 @@ export async function fromEmail(
 			if (last && lines[index + 1] && !/^[^:]{1,120}: /.test(lines[index + 1]!)) last.value += "\n";
 			continue;
 		}
-		// A new field starts with a known label, or (form unknown) with "Label: ".
+		// A new field starts with a known label, or, on a form with no known labels, with any
+		// "Label: ". On a known form a line under another "Label: " is either more of the message
+		// before it ("Date: 12 May") or a field the plugin has not seen: Forms leaves empty fields out,
+		// so labels learned from enquiries are never the whole list. It is read as a new field only
+		// where it cannot be more of a message: before the first field, or after a field that holds
+		// one short value (an address, a number, a name). Otherwise it stays with the field before
+		// it, as it always has, so nothing is lost either way.
 		const knownLabel = [...knownLabels.keys()].find((label) => line.startsWith(`${label}: `));
+		const last = fields.at(-1);
+		const moreOfLast =
+			last !== undefined &&
+			(fields.length >= MAX_EMAIL_FIELDS ||
+				(knownLabels.size > 0 && (allLabelsKnown || !holdsOneShortValue(last))));
 		const match = knownLabel
 			? [line, knownLabel, line.slice(knownLabel.length + 2)]
-			: knownLabels.size > 0
+			: moreOfLast
 				? null
 				: /^([^:]{1,120}): (.*)$/.exec(line);
 		if (match) {
@@ -313,6 +326,34 @@ export async function fromEmail(
 			requiredKeys(known),
 		),
 	};
+}
+
+/** As many fields as an enquiry from the forms plugin itself may carry (`fromWebhook`). */
+const MAX_EMAIL_FIELDS = 100;
+
+/**
+ * Whether a field read from the email so far can only be one short value, so the line after it
+ * cannot be more of it: an email address, a phone number, a number, a web address, a date, yes or
+ * no, or a few words under a label that names such a thing. A message never counts.
+ */
+function holdsOneShortValue(field: { label: string; type?: string; value: string }): boolean {
+	const value = field.value.trim();
+	if (field.type === "textarea" || value.includes("\n") || value.length > 80) return false;
+	// A message that happens to open with a number or a web address is still a message.
+	if (
+		/message|comment|note|tell us|about|describe|detail|question|enquiry|inquiry|how can|anything/i.test(
+			field.label,
+		)
+	)
+		return false;
+	if (/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(value)) return true;
+	if (/^[+()\d][\d\s().\-/:]*$/.test(value)) return true;
+	if (/^https?:\/\/\S+$/i.test(value) || /^(yes|no)$/i.test(value)) return true;
+	return (
+		/\b(name|e-?mail|phone|tel|telephone|mobile|company|business|organi[sz]ation|website|city|town|country|postcode|zip)\b/i.test(
+			field.label,
+		) && value.split(/\s+/).length <= 6
+	);
 }
 
 /** Fields of a form as the plugin knows them, for matching and tests. */
