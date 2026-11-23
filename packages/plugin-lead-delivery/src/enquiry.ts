@@ -339,6 +339,13 @@ const MAX_EMAIL_FIELDS = 100;
 function holdsOneShortValue(field: { label: string; type?: string; value: string }): boolean {
 	const value = field.value.trim();
 	if (field.type === "textarea" || value.includes("\n") || value.length > 80) return false;
+	// A message that happens to open with a number or a web address is still a message.
+	if (
+		/message|comment|note|tell us|about|describe|detail|question|enquiry|inquiry|how can|anything/i.test(
+			field.label,
+		)
+	)
+		return false;
 	if (/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(value)) return true;
 	if (/^[+()\d][\d\s().\-/:]*$/.test(value)) return true;
 	if (/^https?:\/\/\S+$/i.test(value) || /^(yes|no)$/i.test(value)) return true;

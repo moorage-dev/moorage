@@ -311,6 +311,38 @@ describe("enquiries from the forms plugin", () => {
 		]);
 	});
 
+	it("keeps a message whole when it opens with a phone number or a web address", async () => {
+		const learned: KnownForm = {
+			slug: "quote",
+			name: "Quote",
+			fields: ["Name", "Message", "Tell us about your business"].map((label) => ({
+				key: label,
+				label,
+			})),
+			source: "enquiry",
+			addedAt: "2026-11-16T00:00:00.000Z",
+			days: [],
+		};
+		const text = [
+			'New submission for "Quote"',
+			"",
+			"Name: Tom Reyes",
+			"Message: 07700 900123",
+			"Best time: after 5pm",
+			"Thanks",
+			"Tell us about your business: Small bakery",
+			"Staff: 4",
+			"",
+			"Submitted at: 2026-11-16T09:00:00.000Z",
+		].join("\n");
+		const received = await fromEmail("New submission: Quote", text, { quote: learned });
+		expect(received?.enquiry.fields.map((f) => [f.label, f.value])).toEqual([
+			["Name", "Tom Reyes"],
+			["Message", "07700 900123\nBest time: after 5pm\nThanks"],
+			["Tell us about your business", "Small bakery\nStaff: 4"],
+		]);
+	});
+
 	it("reads at most 100 fields from one email", async () => {
 		const text = [
 			'New submission for "Junk"',
