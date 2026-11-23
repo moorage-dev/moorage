@@ -13,6 +13,7 @@ no company website, no private services, no secrets, no customer data.
 ## Commands
 
 - `pnpm check` runs everything CI runs: build, typecheck, test, validate, lint, format check.
+- `pnpm check:local` is the one to run while working: the same steps, but tests only for the packages the branch changed since `origin/main` (and the packages that depend on them), two packages at a time. Each package's tests start their own Workers runtime, so the full `pnpm check` next to a dev server or another test run can exhaust a laptop. The full test set and every browser test run on GitHub for each pull request and push; do not run the Playwright suite locally except to debug one spec (`pnpm --filter demo-site test:e2e tests/<file>.spec.ts`).
 - Per package: `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm validate` (sandbox-capable only).
 - `pnpm changeset` for every change to a publishable package.
 - Version pins live in the `catalog` of `pnpm-workspace.yaml`; use `"catalog:"` in package manifests. Native build scripts are allowed in `allowBuilds` there.
