@@ -246,6 +246,71 @@ describe("enquiries from the forms plugin", () => {
 		);
 	});
 
+	it("starts a field it has not seen only after a field that holds one short value", async () => {
+		const learned = (labels: string[]): KnownForm => ({
+			slug: "quote",
+			name: "Quote",
+			fields: labels.map((label) => ({ key: label, label })),
+			source: "enquiry",
+			addedAt: "2026-11-16T00:00:00.000Z",
+			days: [],
+		});
+		const read = async (lines: string[], form?: KnownForm) =>
+			(
+				await fromEmail(
+					"New submission: Quote",
+					[
+						'New submission for "Quote"',
+						"",
+						...lines,
+						"",
+						"Submitted at: 2026-11-16T09:00:00.000Z",
+					].join("\n"),
+					form ? { quote: form } : {},
+				)
+			)?.enquiry;
+
+		// A form not known yet: every "Label: " line is a field, as before, and the address is found.
+		const first = await read([
+			"Name: Tom Reyes",
+			"Message: Please call me back.",
+			"Phone: 07700 900123",
+			"Email: tom@example.com",
+		]);
+		expect(first?.fields.map((f) => f.label)).toEqual(["Name", "Message", "Phone", "Email"]);
+		expect(first?.email).toBe("tom@example.com");
+
+		// Known from a short enquiry: new fields after a name, a company or a number are fields.
+		const grown = await read(
+			[
+				"Name: Tom Reyes",
+				"Company: Acme Inc.",
+				"Guests: 120",
+				"Email: tom@example.com",
+				"Phone: 07700 900123",
+			],
+			learned(["Name", "Email"]),
+		);
+		expect(grown?.fields.map((f) => [f.label, f.value])).toEqual([
+			["Name", "Tom Reyes"],
+			["Company", "Acme Inc."],
+			["Guests", "120"],
+			["Email", "tom@example.com"],
+			["Phone", "07700 900123"],
+		]);
+
+		// After a message, a line that looks like a field stays in the message, whatever its label
+		// or language, so the message reaches every delivery whole.
+		const message = await read(
+			["Name: Tom Reyes", "Nachricht: Hallo", "Datum: 12 Mai", "Budget: 400"],
+			learned(["Name", "Nachricht"]),
+		);
+		expect(message?.fields.map((f) => [f.label, f.value])).toEqual([
+			["Name", "Tom Reyes"],
+			["Nachricht", "Hallo\nDatum: 12 Mai\nBudget: 400"],
+		]);
+	});
+
 	it("reads at most 100 fields from one email", async () => {
 		const text = [
 			'New submission for "Junk"',

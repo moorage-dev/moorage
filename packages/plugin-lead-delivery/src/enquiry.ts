@@ -270,17 +270,19 @@ export async function fromEmail(
 			if (last && lines[index + 1] && !/^[^:]{1,120}: /.test(lines[index + 1]!)) last.value += "\n";
 			continue;
 		}
-		// A new field starts with a known label. A line under any other "Label: " is harder: it is
-		// either a field the plugin has not seen (Forms leaves empty fields out, so labels learned
-		// from enquiries are never the whole list) or a line of the message before it ("Date: 12 May").
-		// A form's own definition lists every label, so there it is more of the message. Otherwise it
-		// starts a field unless the field before it reads as free text; nothing is thrown away either
-		// way, and nothing is read as more of a field before the first one.
+		// A new field starts with a known label, or, on a form with no known labels, with any
+		// "Label: ". On a known form a line under another "Label: " is either more of the message
+		// before it ("Date: 12 May") or a field the plugin has not seen: Forms leaves empty fields out,
+		// so labels learned from enquiries are never the whole list. It is read as a new field only
+		// where it cannot be more of a message: before the first field, or after a field that holds
+		// one short value (an address, a number, a name). Otherwise it stays with the field before
+		// it, as it always has, so nothing is lost either way.
 		const knownLabel = [...knownLabels.keys()].find((label) => line.startsWith(`${label}: `));
 		const last = fields.at(-1);
 		const moreOfLast =
 			last !== undefined &&
-			(allLabelsKnown || fields.length >= MAX_EMAIL_FIELDS || readsAsFreeText(last));
+			(fields.length >= MAX_EMAIL_FIELDS ||
+				(knownLabels.size > 0 && (allLabelsKnown || !holdsOneShortValue(last))));
 		const match = knownLabel
 			? [line, knownLabel, line.slice(knownLabel.length + 2)]
 			: moreOfLast
@@ -330,21 +332,21 @@ export async function fromEmail(
 const MAX_EMAIL_FIELDS = 100;
 
 /**
- * Whether a field read from the email so far looks like a message, whose next lines belong to it:
- * it already runs over several lines, its label says so, or its first line reads as a sentence.
- * A name, an address, a number or a choice does not, and cannot hold a line break.
+ * Whether a field read from the email so far can only be one short value, so the line after it
+ * cannot be more of it: an email address, a phone number, a number, a web address, a date, yes or
+ * no, or a few words under a label that names such a thing. A message never counts.
  */
-function readsAsFreeText(field: { label: string; type?: string; value: string }): boolean {
-	if (field.type === "textarea") return true;
+function holdsOneShortValue(field: { label: string; type?: string; value: string }): boolean {
 	const value = field.value.trim();
-	if (value.includes("\n")) return true;
-	if (
-		/message|comment|note|detail|question|enquiry|inquiry|describe|description|tell us|help|feedback|anything/i.test(
+	if (field.type === "textarea" || value.includes("\n") || value.length > 80) return false;
+	if (/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(value)) return true;
+	if (/^[+()\d][\d\s().\-/:]*$/.test(value)) return true;
+	if (/^https?:\/\/\S+$/i.test(value) || /^(yes|no)$/i.test(value)) return true;
+	return (
+		/\b(name|e-?mail|phone|tel|telephone|mobile|company|business|organi[sz]ation|website|city|town|country|postcode|zip)\b/i.test(
 			field.label,
-		)
-	)
-		return true;
-	return /[.!?,;]$/.test(value) || value.split(/\s+/).length > 6;
+		) && value.split(/\s+/).length <= 6
+	);
 }
 
 /** Fields of a form as the plugin knows them, for matching and tests. */
