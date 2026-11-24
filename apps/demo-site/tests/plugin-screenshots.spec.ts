@@ -653,7 +653,7 @@ test("Site Health", async ({ browser }) => {
 			const tab = page.getByRole("button", { name: "Links on this page" }).first();
 			if (width < 400) {
 				await page
-					.getByRole("button", { name: "Settings", exact: true })
+					.getByRole("button", { name: "Show settings", exact: true })
 					.click({ timeout: 120_000 });
 				if (!(await page.getByText("To fix (1)").isVisible())) await tab.click();
 			} else {

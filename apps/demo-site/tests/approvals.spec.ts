@@ -434,7 +434,7 @@ test.describe.serial("Content Approval", () => {
 			await shot(page, `withdraw-panel-${VERSION}`, 1280, panelTop);
 			// On a phone the editor's settings, plugin panels included, open as a sheet.
 			await page.setViewportSize({ width: 390, height: 844 });
-			await page.getByRole("button", { name: "Settings", exact: true }).click();
+			await page.getByRole("button", { name: "Show settings", exact: true }).click();
 			const waiting = page.getByText("Waiting for approval", { exact: true });
 			if (!(await waiting.isVisible())) await panelTop.click();
 			await expect(waiting).toBeVisible();
@@ -573,7 +573,7 @@ test.describe.serial("Content Approval", () => {
 		if (SCREENSHOTS) {
 			// On a phone the editor's settings, plugin panels included, open as a sheet.
 			await ellen.page.setViewportSize({ width: 390, height: 844 });
-			await ellen.page.getByRole("button", { name: "Settings", exact: true }).click();
+			await ellen.page.getByRole("button", { name: "Show settings", exact: true }).click();
 			const waiting = ellen.page.getByText("Waiting for your approval");
 			if (!(await waiting.isVisible())) await panelTop.click();
 			await expect(waiting).toBeVisible();
