@@ -11,7 +11,7 @@
 // call to the site takes CALL_MS, and once a turn has used up the hook's timeout every further
 // call fails without effect, as on Workers, where it never completes. No real waiting.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { runRemindTask } from "../src/actions.js";
 import { allBlocks } from "../src/bulk.js";
@@ -498,12 +498,19 @@ describe("a run EmDash stopped running", () => {
 		const ctx = site.ctx() as never;
 		expect(await endIfStalled(ctx, ADMIN.id, entries, site.clock)).toBe(true);
 		expect(site.calls).toBe(2); // cron.list, kv.set
-		const state = runOf(entries, ADMIN.id)!;
-		expect(state.running).toBe(false);
-		const banner = JSON.stringify(runBlocks(state, 0, new Set(["pages:p1"])));
-		expect(banner).toContain(
-			"Stopped: this site was too slow to finish. 1 decided; the rest are still waiting.",
-		);
+		// A finished run is kept for 7 days by the real clock, and this one ended at the site's clock
+		// (a fixed date): read it at that moment, or the test fails a week after RUN_AT.
+		vi.useFakeTimers({ toFake: ["Date"], now: site.clock });
+		try {
+			const state = runOf(entries, ADMIN.id)!;
+			expect(state.running).toBe(false);
+			const banner = JSON.stringify(runBlocks(state, 0, new Set(["pages:p1"])));
+			expect(banner).toContain(
+				"Stopped: this site was too slow to finish. 1 decided; the rest are still waiting.",
+			);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("leaves it while EmDash still has its task (retrying), or while its lane moved lately", async () => {

@@ -972,7 +972,9 @@ describe("the Links on this page panel", () => {
 			actor: { id: editor.id, role: editor.role },
 		});
 		expect(published.success).toBe(true);
-		// The test host does not run hooks for its actions; EmDash does.
+		// Whatever the save and the publish left running ends first: a second refresh beside it can
+		// read the old summary and leave it standing.
+		await runtime.waitForDeferredTasks();
 		await runtime.transport.invokeHook("content:afterPublish", {
 			collection: "pages",
 			content: { id: home },
@@ -996,6 +998,9 @@ describe("the Links on this page panel", () => {
 		});
 		expect(moved.success).toBe(true);
 		expect((await runtime.actions.content.publish("pages", home)).success).toBe(true);
+		// Whatever the save and the publish left running ends first: a second refresh beside it can
+		// read the old summary and leave it standing.
+		await runtime.waitForDeferredTasks();
 		await runtime.transport.invokeHook("content:afterPublish", {
 			collection: "pages",
 			content: { id: home },
@@ -1124,6 +1129,7 @@ describe("left over from WordPress", () => {
 		});
 		expect(fixed.success).toBe(true);
 		expect((await runtime.actions.content.publish("pages", contact)).success).toBe(true);
+		await runtime.waitForDeferredTasks();
 		await runtime.transport.invokeHook("content:afterPublish", {
 			collection: "pages",
 			content: { id: contact },

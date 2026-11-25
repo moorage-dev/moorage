@@ -388,7 +388,8 @@ test.describe("admin", () => {
 			expect(r.x + r.width, what).toBeLessThanOrEqual(width);
 		};
 		// "When it opens" and each of its long choices wrap inside the 390 px screen.
-		const opens = page.getByRole("group", { name: "When it opens" });
+		// Kumo 2.19 (EmDash 1.6) names the radiogroup itself by its legend; 2.15 named an inner group.
+		const opens = page.getByRole("radiogroup", { name: "When it opens" });
 		await expect(opens).toBeVisible();
 		await inside(opens);
 		const choices = opens.getByRole("radio");
