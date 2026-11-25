@@ -50,6 +50,8 @@ export default defineConfig({
 		url: LOCAL_URL,
 		// Never reuse: a server already on this port is not guaranteed to be this site.
 		reuseExistingServer: false,
+		stdout: "pipe",
+		stderr: "pipe",
 		timeout: 120_000,
 		env: {
 			// DEMO_SITE_PUBLIC_URL (screenshots only): the address the plugins print, instead of localhost.

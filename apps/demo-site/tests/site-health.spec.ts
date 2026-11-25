@@ -70,6 +70,7 @@ async function createPage(
 test("on a site that is not public yet, content links are checked and a dead address is fixed with a picked page", async ({
 	page,
 }) => {
+	test.setTimeout(600_000);
 	await open(page);
 	await createPage(page, "christmas-orders", "Christmas orders", [], false);
 	const spring = await createPage(
@@ -82,22 +83,29 @@ test("on a site that is not public yet, content links are checked and a dead add
 	// Start a full check that sees the new pages, then move it along.
 	await page.reload();
 	await waitForResults(page);
+	// A check that began before these pages (or the site's own) existed must not stand in for a
+	// full one: let whatever is running finish, start a fresh check, and wait for that one to end.
 	const again = page.getByRole("button", { name: "Check everything again" });
-	if (await again.isVisible()) await again.click();
-	await waitForResults(page);
-	await expect
-		.poll(
-			async () => {
-				const refresh = page.getByRole("button", { name: "Refresh" });
-				if (await refresh.isVisible()) await refresh.click();
-				await page.waitForTimeout(300);
-				return page
-					.getByText("/christmas-orders goes to a page that is not published yet.")
-					.isVisible();
-			},
-			{ timeout: 60_000, intervals: [500] },
-		)
-		.toBe(true);
+	const finished = async () =>
+		expect
+			.poll(
+				async () => {
+					if (await again.isVisible()) return true;
+					const refresh = page.getByRole("button", { name: "Refresh" });
+					if (await refresh.isVisible()) await refresh.click();
+					await page.waitForTimeout(300);
+					return again.isVisible();
+				},
+				{ timeout: 240_000, intervals: [1000] },
+			)
+			.toBe(true);
+	await finished();
+	await again.click();
+	await expect(again).toBeHidden({ timeout: 30_000 });
+	await finished();
+	await expect(
+		page.getByText("/christmas-orders goes to a page that is not published yet."),
+	).toBeVisible();
 
 	// localhost cannot be opened by plugins: one plain banner, and nothing that needed the live page is broken.
 	await expect(page.getByText("This site is not public yet")).toBeVisible();
