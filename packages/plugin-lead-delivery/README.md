@@ -84,7 +84,7 @@ It needs EmDash 1.3 or later and the official forms plugin. Use the forms plugin
 
 ## Connecting a form
 
-EmDash's form editor cannot yet be pointed at another plugin. When you make a form's first delivery, **Connect this form** comes next. It works one of two ways.
+A form has to be told to hand each enquiry to Lead Delivery. When you make a form's first delivery, **Connect this form** comes next. It works one of three ways.
 
 **In one step, with EmDash's approval** (only when the site can call its own address, see below, and only for admins):
 
@@ -94,7 +94,13 @@ EmDash's form editor cannot yet be pointed at another plugin. When you make a fo
 
 If the form already sends to another address (Zapier, for example), nothing is changed: Lead Delivery names that address's host and asks first. **Replace it** takes one more approval; **Keep it** shows the instructions for the email way, which keeps that address. If EmDash answers in any way Lead Delivery does not expect (a later EmDash may change its approval page), the screen falls back to the written instructions with a short note. In the rare case that throwing the access away fails twice, the page and an email to the alert list say so: nobody holds it (it was only in memory for that one step), EmDash ends it by itself within 90 days, and another admin can end it now by disabling your account under Users and enabling it again.
 
-**By hand, with written instructions** (every other site, and always available under "Instructions for your web person"): someone who looks after the site's code connects each form once. The screen shows the instructions for that form and can email them to your web person. Press **I have done this** once they have, or **Skip for now**: the delivery's page says "Not sending yet: … is not connected" with a **Connect this form** button until the form is connected.
+**By hand, in Forms yourself** (only when the site can call its own address, and only for admins; needs the forms plugin 0.2.13 or later, which has the box):
+
+1. Open **Do it yourself in Forms** on the Connect screen. Select the address and copy it. Keep it private: anyone who has it can send enquiries to your deliveries.
+2. Open **Forms** and press the pencil (**Edit**) next to the form. Paste the address into **Webhook URL (optional)**, under Settings. Press **Save Changes**. If the box already holds another address, pasting replaces it, and that address stops getting enquiries.
+3. Come back and press **I have pasted it**.
+
+**By hand, with written instructions** (every other site, and always available under "Instructions for your web person"): someone who looks after the site's code connects each form once. Where the site cannot call its own address, the form hands enquiries over through its notification emails, and the form editor has no box for those yet, so this is the only way there. The screen shows the instructions for that form and can email them to your web person. Press **I have done this** once they have, or **Skip for now**: the delivery's page says "Not sending yet: … is not connected" with a **Connect this form** button until the form is connected.
 
 In **New delivery**, "Which form?" lists the forms Lead Delivery already knows (from enquiries, and from forms named before). For another form, choose **Another form** and type its short name: it is in the **Slug** column under Forms.
 

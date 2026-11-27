@@ -1457,6 +1457,13 @@ async function connectPage(
 			? await peekApproval(ctx, approvalKey(d.id, userId), knownCode(data, d.id, userId))
 			: undefined;
 	const code = live?.intent.form === view.form ? live : undefined;
+	// Where the form can post straight to Lead delivery, an admin can paste the address into the
+	// form's Webhook URL box (the Forms plugin's editor has one from 0.2.13). The email way has no
+	// box in the editor, and a form whose other address is kept or asked about is left alone.
+	const paste =
+		reach !== "email" && reach !== "none" && !view.conflict && !view.kept && data.origin
+			? inboundUrl(data.origin, config.key)
+			: undefined;
 	const blocks: Block[] = [back(`Back to ${d.name}`, "open", d.id)];
 	if (view.secret && d.kind === "app") blocks.push(secretAccordion(view.secret, d));
 	blocks.push(header(`Connect ${name}`));
@@ -1551,20 +1558,44 @@ async function connectPage(
 		} else {
 			blocks.push(
 				section(
-					"Your form needs to be told to hand each enquiry to Lead delivery. EmDash's form editor cannot do that yet, so someone who looks after the site's code does it once. It takes about five minutes.",
+					paste
+						? "Your form needs to be told to hand each enquiry to Lead delivery. You can do that yourself in Forms. It takes about two minutes."
+						: "Your form needs to be told to hand each enquiry to Lead delivery. On this site that goes through the form's email, and EmDash's form editor has no box for that yet, so someone who looks after the site's code does it once. It takes about five minutes.",
 				),
 			);
 		}
 	}
 	const byHand = !code && !view.conflict;
+	if (paste) {
+		blocks.push({
+			type: "accordion",
+			label: "Do it yourself in Forms",
+			default_open: byHand,
+			blocks: [
+				section("1. Select this address and copy it:"),
+				{ type: "code", code: paste },
+				section(
+					`2. Open Forms and press the pencil (Edit) next to ${name}. Paste it into Webhook URL (optional), under Settings. Press Save Changes.`,
+				),
+				section("3. Come back here and press I have pasted it."),
+				actions([
+					button("connected", "I have pasted it", { value: { id: d.id, form: view.form } }),
+				]),
+				context(
+					"Keep this address private: anyone who has it can send enquiries to your deliveries. If the box already holds another address, pasting replaces it, and that address stops getting enquiries. No Webhook URL box? The site's Forms plugin is older than 0.2.13: update it, or use the instructions for your web person.",
+				),
+			],
+		});
+	}
 	// Keeping the form's other address: the email way adds to it instead of replacing it.
 	const emailWay = Boolean(view.kept && ctx.email);
 	blocks.push({
 		type: "accordion",
-		label: byHand
-			? "Instructions for your web person"
-			: "Instructions for your web person (do it by hand instead)",
-		default_open: byHand,
+		label:
+			byHand && !paste
+				? "Instructions for your web person"
+				: "Instructions for your web person (do it by hand instead)",
+		default_open: byHand && !paste,
 		blocks: [
 			context("Select the text and copy it, or email it."),
 			{
