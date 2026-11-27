@@ -159,11 +159,16 @@ function button(response: BlockResponse, label: string) {
 	return undefined;
 }
 
+const accordion = (response: BlockResponse, label: string) => {
+	const found = response.blocks.find((b) => b.type === "accordion" && b.label.startsWith(label));
+	return found?.type === "accordion" ? found : undefined;
+};
+const PASTE = "Do it yourself in Forms";
+const WEB_PERSON = "Instructions for your web person";
+
+/** Whether a by-hand way is open: pasting the address in Forms where the site allows it, else the web person's. */
 function instructionsOpen(response: BlockResponse): boolean | undefined {
-	const accordion = response.blocks.find(
-		(b) => b.type === "accordion" && b.label.startsWith("Instructions for your web person"),
-	);
-	return accordion?.type === "accordion" ? accordion.default_open : undefined;
+	return (accordion(response, PASTE) ?? accordion(response, WEB_PERSON))?.default_open;
 }
 
 async function approvalEntries(runtime: PluginRuntimeTestHost) {
@@ -189,6 +194,67 @@ async function expectNoSecrets(runtime: PluginRuntimeTestHost, responses: BlockR
 	for (const secret of [ACCESS, REFRESH, "ec_oat_", "ec_ort_", "access_token", "refresh_token"])
 		expect(open).not.toContain(secret);
 }
+
+describe("connect by hand: paste the address in Forms", () => {
+	it("gives an admin the address to paste into the form's Webhook URL box when the site can call itself", async () => {
+		const { runtime, admin, key } = await start("self", "");
+		const screen = await connect(runtime, admin);
+		expect(validateBlockResponse(screen, { pluginPagePaths: [PAGE] })).toEqual({
+			valid: true,
+			errors: [],
+		});
+		const paste = accordion(screen, PASTE);
+		expect(paste?.default_open).toBe(true);
+		// The web person's instructions stay, folded.
+		expect(accordion(screen, WEB_PERSON)?.default_open).toBe(false);
+		const code = paste?.blocks.find((b) => b.type === "code");
+		expect(code?.type === "code" && code.code).toMatch(/^https?:\/\/\S+$/);
+		expect(code?.type === "code" && code.code).toContain(key);
+		expect(text(screen)).toContain(
+			"2. Open Forms and press the pencil (Edit) next to Contact form. Paste it into Webhook URL (optional), under Settings. Press Save Changes.",
+		);
+		expect(text(screen)).not.toContain("EmDash's form editor cannot do that yet");
+		expect(button(screen, "I have pasted it")).toMatchObject({
+			action_id: "connected",
+			value: { id: D.id, form: "contact" },
+		});
+	});
+
+	it("marks the form connected on I have pasted it", async () => {
+		const { runtime, admin } = await start("self", "");
+		await connect(runtime, admin);
+		const done = await runtime.admin.act(PAGE, "connected", {
+			user: admin,
+			value: { id: D.id, form: "contact" },
+		});
+		expect(text(done)).not.toContain("is not connected");
+	});
+
+	it("keeps it folded while one-click connect is on offer", async () => {
+		const { runtime, admin } = await start();
+		await runtime.http.respond(CODE, codeAnswer());
+		const screen = await connect(runtime, admin);
+		expect(accordion(screen, PASTE)?.default_open).toBe(false);
+		expect(accordion(screen, WEB_PERSON)?.default_open).toBe(false);
+	});
+
+	it("is not offered where the form hands enquiries over by email: the form editor has no box for that", async () => {
+		const { runtime, admin } = await start("email");
+		const screen = await connect(runtime, admin);
+		expect(accordion(screen, PASTE)).toBeUndefined();
+		expect(accordion(screen, WEB_PERSON)?.default_open).toBe(true);
+		expect(text(screen)).toContain("someone who looks after the site's code does it once");
+	});
+
+	it("is not offered while the form's other address is being kept or asked about", async () => {
+		const { runtime, admin } = await start();
+		const keep = await runtime.admin.act(PAGE, "connect_keep", {
+			user: admin,
+			value: { id: D.id, form: "contact", host: "hooks.zapier.com" },
+		});
+		expect(accordion(keep, PASTE)).toBeUndefined();
+	});
+});
 
 describe("one-click connect: when it is offered", () => {
 	it("is not offered when the site cannot call its own address: written instructions only", async () => {

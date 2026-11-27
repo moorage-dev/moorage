@@ -20,6 +20,8 @@ test.skip(process.env.DEMO_SITE_SELF_ALIAS !== "1", "needs DEMO_SITE_SELF_ALIAS=
 test.describe.configure({ mode: "serial" });
 
 let adminContext: BrowserContext;
+/** The address the Connect screen offers for pasting into the form's Webhook URL box. */
+let pasteAddress = "";
 /** A signed-in page the API calls are made from: only the browser knows the made-up name. */
 let apiPage: Page;
 
@@ -160,6 +162,20 @@ test("one-click connect: the code screen, an empty approval page, and a denial t
 	await expect(link).toHaveAttribute("target", "_blank");
 	if (shots) await shot(page, `${shots}/connect.png`, 1280);
 
+	// The by-hand way is folded under it: the address to paste into the form's Webhook URL box.
+	await page.getByRole("button", { name: "Do it yourself in Forms" }).click();
+	await expect(page.getByText("1. Select this address and copy it:")).toBeVisible();
+	pasteAddress = (
+		(await page
+			.getByText(/\/_emdash\/api\/plugins\/lead-delivery\/inbound\?key=[A-Za-z0-9]{32}$/)
+			.first()
+			.textContent()) ?? ""
+	).trim();
+	expect(pasteAddress).toMatch(
+		new RegExp(`^${baseURL}/_emdash/api/plugins/lead-delivery/inbound\\?key=[A-Za-z0-9]{32}$`),
+	);
+	expect(await formWebhook()).toBeUndefined();
+
 	// Pressed too early: not approved yet, and the code stays.
 	await page.getByRole("button", { name: "Done, connect" }).click();
 	await expect(page.getByText(/EmDash has not been approved yet/)).toBeVisible({ timeout: 30_000 });
@@ -274,5 +290,67 @@ test("one-click connect: approved in EmDash, the form is connected and a form se
 		.toBe(true);
 	// No alert about access left behind: it was thrown away.
 	expect(JSON.stringify(await devEmails())).not.toContain("could not be thrown away");
+	await page.close();
+});
+
+test("by hand: the address pasted into the form's Webhook URL box in Forms delivers an enquiry", async () => {
+	// The address offered for pasting is the one one-click set, which the test above saw deliver.
+	expect(pasteAddress).not.toBe("");
+	expect(await formWebhook()).toBe(pasteAddress);
+
+	const page = await adminContext.newPage();
+	const welcome = page.getByRole("dialog", { name: /Welcome to EmDash/ });
+	await page.addLocatorHandler(welcome, async () => {
+		await welcome.getByRole("button", { name: "Get Started" }).click();
+	});
+	const editForm = async () => {
+		await page.goto("/_emdash/admin/plugins/emdash-forms/");
+		// Other tests make forms too: press the pencil (Edit) on this form's row.
+		await page
+			.getByRole("row")
+			.filter({ hasText: FORM_NAME })
+			.getByRole("button", { name: "Edit" })
+			.click({ timeout: 60_000 });
+		await expect(page.getByRole("heading", { name: "Edit Form" })).toBeVisible();
+		await expect(page.getByText(`Editing: ${FORM_NAME}`)).toBeVisible();
+		return page.getByRole("textbox", { name: "Webhook URL (optional)" });
+	};
+	const save = async () => {
+		await page.getByRole("button", { name: "Save Changes" }).click();
+		await expect(page.getByRole("heading", { name: "Edit Form" })).toHaveCount(0, {
+			timeout: 30_000,
+		});
+	};
+
+	// The owner's way, in the Forms editor itself: empty the box, then paste the address and save.
+	let box = await editForm();
+	await expect(box).toHaveValue(pasteAddress);
+	await box.fill("");
+	await save();
+	expect((await formWebhook()) ?? "").toBe("");
+	box = await editForm();
+	await expect(box).toHaveValue("");
+	await box.fill(pasteAddress);
+	await save();
+	expect(await formWebhook()).toBe(pasteAddress);
+
+	await call("DELETE", "/_emdash/api/dev/emails");
+	await page.goto("/lead-test");
+	await page.getByLabel("Your name").fill("Mira Okafor");
+	await page.getByLabel("Email address").fill("mira@example.com");
+	await page.getByLabel("Message").fill("A dozen sourdough loaves for Friday.");
+	await page.getByRole("button", { name: /Submit|Send/ }).click();
+	await expect(page.getByText(/Thank you|Thanks/).first()).toBeVisible({ timeout: 30_000 });
+	await expect
+		.poll(
+			async () =>
+				(await devEmails()).some(
+					(e) =>
+						e.message.to === "orders@acme.test" &&
+						e.message.subject.includes("new enquiry from Mira Okafor"),
+				),
+			{ timeout: 100_000, intervals: [2_000] },
+		)
+		.toBe(true);
 	await page.close();
 });
